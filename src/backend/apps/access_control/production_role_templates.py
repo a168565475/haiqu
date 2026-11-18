@@ -44,6 +44,7 @@ def templates(workshops, coating_craft_ids=()):
     finance = module_rows(*(f'finance.{action}_{resource}' for resource in ('financeaccount', 'accountingsubject')
                             for action in ('view', 'add', 'change', 'delete')))
     finance += module_rows(*(f'finance.{action}_receivablestatement' for action in ('view', 'add', 'change', 'void', 'delete')))
+    finance += module_rows(*(f'finance.{action}_purchasepayable' for action in ('view', 'add', 'change', 'confirm', 'void', 'delete')))
     finance += module_rows(*(f'finance.{action}_receipt' for action in ('view', 'add', 'void', 'delete')))
     finance += module_rows(*TASK_READ, 'production_tasks.manage_productiontaskexpense')
     result.update({code: list(finance) for code in ('FINANCE', 'CASHIER')})
@@ -129,7 +130,7 @@ def templates(workshops, coating_craft_ids=()):
         'outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder', 'outsourcing.change_outsourcingorder',
         'outsourcing.cancel_outsourcingorder', 'material_issues.view_metalprocessingsource', 'procurement.view_purchaseorder',
         'procurement.view_supplierpurchasesheet', 'finance.view_financeaccount', 'finance.view_accountingsubject',
-        'finance.view_receivablestatement', 'finance.view_receipt'))
+        'finance.view_receivablestatement', 'finance.view_purchasepayable', 'finance.view_receipt'))
     result['FACTORY_MANAGER'] = module_rows(*sorted(factory_codes))
     # 车间员工配置仅补给三主任，不纳入上面的厂长动作并集。
     for role, workshop in DIRECTORS.items():

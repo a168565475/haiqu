@@ -6,6 +6,9 @@ from apps.inventory.public_stock_identity import validate_public_identity
 
 
 def processing_line_fields(*, bom_line, row, craft):
+    if bom_line.component_kind in {'CUT_PIECE', 'SEWN_PART'} and row.get('snapshot', {}).get('part_flow'):
+        # 部位/裁片档案引用只作属性展示，不是旧材料加工前后快照。
+        return {}
     if not bom_line.material_catalog_id:
         return {}
     frozen = row.get('snapshot', {})

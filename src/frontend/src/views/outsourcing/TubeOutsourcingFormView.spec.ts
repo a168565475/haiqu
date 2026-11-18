@@ -54,8 +54,11 @@ interface ViewModel {
   checkDispatch: () => void; save: () => Promise<void>; loadSource: (preserve?: boolean) => Promise<void>
   requestChange: (kind: string, value: string) => void; applyChange: () => Promise<void>
 }
-async function mountPage() {
-  const wrapper = shallowMount(TubeOutsourcingFormView, { global: { plugins: [ElementPlus] } })
+async function mountPage(renderInputs = false) {
+  const wrapper = shallowMount(TubeOutsourcingFormView, { global: { plugins: [ElementPlus], stubs: renderInputs ? {
+    ElInput: false, ComponentSourceMaterials: false,
+    AppWindowDialog: { props: ['modelValue'], template: '<section v-if="modelValue"><slot /></section>' },
+  } : {} } })
   await flushPromises()
   const vm = wrapper.vm as unknown as ViewModel
   vm.returnDate = '2099-10-14'
@@ -73,11 +76,23 @@ describe('管材建单与异常恢复', () => {
     vi.mocked(api.findTubeOrder).mockRejectedValue(httpError(404))
     vi.mocked(api.createTubeOrder).mockImplementation(async payload => result(payload))
   })
-  it('普通新建默认未入库半成品，不请求仓库库存来源', async () => {
+  it('普通新建只请求需求计划，不让用户选择材料来源和库区', async () => {
     delete routing.query.source_kind
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null })
     const { wrapper } = await mountPage()
-    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'METAL', is_plan: true })
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
+    for (const name of ['材料来源', '来源仓库', '库区']) expect(wrapper.find(`[aria-label="${name}"]`).exists()).toBe(false)
+    expect(wrapper.find('.status').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('没有仓库库区仍可加载并保存管材需求，旧链接来源不绑定计划', async () => {
+    routing.query.zone_id = 'old-zone'
+    vi.mocked(api.fetchTubeOptions).mockResolvedValue({ ...structuredClone(options), zones: [] })
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null })
+    const { wrapper, vm } = await mountPage()
+    fill(vm); await vm.save()
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ is_plan: true, source_kind: 'METAL', zone_id: null }))
     wrapper.unmount()
   })
   it.each(['uid', 'generation', 'request', 'ready'] as const)('POST在%s边界后迟到成功不清记录、不导航、不提示', async boundary => {
@@ -264,7 +279,8 @@ describe('管材建单与异常恢复', () => {
     vm.returnDate = '2099-10-14'; fill(vm); vm.rows[0]!.quantity = '601'; vm.checkDispatch(); await flushPromises()
     expect(wrapper.get('.confirm-table').text()).toContain('Q195')
     expect(wrapper.get('.confirm-table').text()).toContain('测试加工厂')
-    expect(wrapper.get('.confirm-table').text()).toContain('发货时换算')
+    expect(wrapper.get('.confirm-table').text()).not.toContain('折合')
+    expect(wrapper.text()).not.toContain('材料来源')
     expect(wrapper.text()).toContain('空白或0不纳入本单')
     expect(wrapper.text()).toContain('刷新BOM')
     expect(wrapper.text()).toContain('后续可分次外发、独立分次入库')
@@ -275,7 +291,7 @@ describe('管材建单与异常恢复', () => {
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null, material_rows: [structuredClone(hardware)] })
     const { wrapper, vm } = await mountPage()
     vm.requestChange('source', 'METAL'); await flushPromises()
-    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'METAL', is_plan: true })
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
     expect(vm.context?.source_kind).toBe('METAL'); expect(vm.materialRows).toEqual([])
     wrapper.unmount()
   })
@@ -368,6 +384,7 @@ describe('管材建单与异常恢复', () => {
     wrapper.unmount()
   })
   it('服务端400校验仅显示气泡，不在页面顶部重复展示', async () => {
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null })
     const { wrapper, vm } = await mountPage(); fill(vm)
     vi.mocked(api.createTubeOrder).mockRejectedValueOnce(httpError(400))
     await vm.save(); await flushPromises()
@@ -387,12 +404,12 @@ describe('管材建单与异常恢复', () => {
     wrapper.unmount()
   })
   it('半成品库存为0仍可按BOM建计划，不为找库存自动切换库区', async () => {
-    const empty = { ...context, source_kind: 'PUBLIC_SEMI' as const, zone_id: 'semi-empty', rows: [{ ...row, max_quantity: '0' }] }
+    const empty = { ...context, source_kind: 'METAL' as const, zone_id: null, rows: [{ ...row, max_quantity: '0' }] }
     const { wrapper, vm } = await mountPage()
     vi.mocked(api.fetchTubeSource).mockReset(); vi.mocked(api.fetchTubeSource).mockResolvedValue(empty)
-    vm.requestChange('source', 'PUBLIC_SEMI'); await flushPromises()
-    expect(api.fetchTubeSource).toHaveBeenCalledExactlyOnceWith({ schedule_product_id: 'schedule-product', source_kind: 'PUBLIC_SEMI', zone_id: 'semi-empty', is_plan: true })
-    expect(vm.zoneId).toBe('semi-empty'); expect(vm.sourceHint).toBe('')
+    await vm.loadSource(false); await flushPromises()
+    expect(api.fetchTubeSource).toHaveBeenCalledExactlyOnceWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
+    expect(vm.zoneId).toBe(''); expect(vm.sourceHint).toBe('')
     expect(vm.rows[0]!.quantity).toBe('2000')
     wrapper.unmount()
   })
@@ -479,8 +496,11 @@ describe('管材建单与异常恢复', () => {
     localStorage.setItem(key, JSON.stringify(payload))
     const { wrapper, vm } = await mountPage()
     vi.mocked(api.createTubeOrder).mockRejectedValueOnce(httpError(400))
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null })
     await vm.save()
     expect(api.createTubeOrder).toHaveBeenCalledExactlyOnceWith(payload)
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
+    expect(vm.context?.source_kind).toBe('METAL')
     expect(vm.pending).toBeNull(); expect(vm.rows[0]!.unitPrice).toBe('')
     expect(ElMessage.warning).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('请重新填写加工单价并选择五金加工厂') }))
     wrapper.unmount()
@@ -507,7 +527,7 @@ describe('原管材表单复用裁片模式', () => {
     tasks: options.tasks.map(task => ({ ...task, products: task.products.map(product => ({ ...product, craft_ids: cuttingCrafts.map(craft => craft.id) })) })),
     source_kinds: [{ value: 'PUBLIC_CUTTING', label: '已入库裁片半成品' }, { value: 'SEWING', label: '车缝完成未入库直发' }],
   })
-  const cuttingContext = (): TubeSourceContext => ({ ...structuredClone(context), source_kind: 'PUBLIC_CUTTING', category: 'cutting', craft_id: 'embroidery', craft_name: '刺绣',
+  const cuttingContext = (): TubeSourceContext => ({ ...structuredClone(context), source_kind: 'SEWING', category: 'cutting', craft_id: 'embroidery', craft_name: '刺绣',
     rows: [{ ...row, part_name: '座布', fabric_material: '涤纶', specification: '420×380', fabric_specification: '600D', fabric_color: '蓝色', pieces_per_set: '2', completed_craft_name: '车缝完成', pieces_per_bar: null, raw_bar_length_m: null, stock_unit: '套', max_quantity: '100', current_reported_minimum: '200', purchase_reference: { quantity: '3000', unit: '套', purchased_quantity: '1500', purchase_unit: '米', conversion_note: '采购实际入库1500米 ÷ 每成品0.5米 = 3000套。' } }],
     material_rows: [{ ...structuredClone(hardware), name: '织唛', unit: '个' }], material_source_revision: 'cutting-material-revision',
   })
@@ -515,9 +535,57 @@ describe('原管材表单复用裁片模式', () => {
     vi.resetAllMocks(); localStorage.clear(); resetIdentity()
     routing.query = { schedule_product_id: 'schedule-product', category: 'cutting' }
     vi.mocked(api.fetchTubeOptions).mockResolvedValue(cuttingOptions())
-    vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...cuttingContext(), source_kind: params.source_kind, zone_id: params.zone_id || null, craft_id: params.craft_id }))
+    vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...cuttingContext(), source_kind: params.source_kind || 'SEWING', zone_id: params.zone_id || null, craft_id: params.craft_id }))
     vi.mocked(api.createTubeOrder).mockImplementation(async payload => result(payload))
     vi.mocked(api.findTubeOrder).mockRejectedValue(httpError(404))
+  })
+  it('新车缝主表和保存确认拆分多来源列，部位规格独立且单价计算和保存不变', async () => {
+    routing.query.source_kind = 'CUTTING'
+    const config = cuttingOptions()
+    config.source_kinds = [{ value: 'CUTTING', label: '车间裁片直发' }]
+    config.crafts = [{ id: 'sewing-craft', name: '车缝', outsourcing_code: 'SEWING' }]
+    vi.mocked(api.fetchTubeOptions).mockResolvedValue(config)
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...cuttingContext(), source_kind: 'CUTTING',
+      part_flow: true, sewing_inputs: true, fees_deferred: false, craft_id: 'sewing-craft', craft_name: '车缝', zone_id: null,
+      rows: [{ ...row, part_name: '椅面', unit: '个', order_required: '10', material: '错误父材质',
+        component_source_materials: [
+          { source_bom_line_id: 'fabric', name: '面布', material: '涤纶', color: '蓝色', color_code: 'B1', fabric_spec: '600D', width: '150', unit: '米' },
+          { source_bom_line_id: 'lining', name: '底布', material: '棉', color: '', color_code: '', fabric_spec: '300D', width: '140', unit: '米' },
+        ] },
+        { ...row, component_identity: 'bag', part_name: '外袋', unit: '件', order_required: '20' }] })
+    const { wrapper, vm } = await mountPage(true)
+    try {
+      vm.rows[0]!.quantity = '10'; vm.rows[0]!.factoryId = 'factory'; vm.rows[0]!.unitPrice = '1.20'
+      vm.rows[1]!.quantity = '20'; vm.rows[1]!.factoryId = 'factory'; vm.rows[1]!.unitPrice = '2.50'
+      await flushPromises()
+      expect(wrapper.findAll('#tube-items th').map(item => item.text())).toContain('目标部位')
+      expect(wrapper.findAll('#tube-items th').map(item => item.text())).not.toContain('加工单价（元/套）')
+      expect(wrapper.get('.footer-bar').text()).toContain('10 个、20 件')
+      expect(wrapper.findAll('#tube-items th').map(item => item.text())).toContain('部位单价')
+      expect(wrapper.get('#tube-items').text()).toContain('元/个')
+      expect(wrapper.get('#tube-items').text()).toContain('元/件')
+      expect(wrapper.get('#tube-items').text()).not.toContain('错误父材质')
+      expect(vm.plannedAmount).toBe('62.00')
+      vm.checkDispatch(); await flushPromises()
+      for (const table of [wrapper.get('#tube-items table'), wrapper.get('.confirm-table')]) {
+        const headers = table.findAll('thead th').map(item => item.text())
+        const cells = table.findAll('tbody tr')[0]!.findAll('td')
+        for (const [label, values] of Object.entries({ 来源布料: ['面布', '底布'], 材质: ['涤纶', '棉'], 颜色: ['蓝色', '未记录'], 面料规格: ['600D', '300D'] })) {
+          expect(headers.filter(value => value === label)).toHaveLength(1)
+          expect(cells[headers.indexOf(label)]!.findAll('.component-source-value').map(item => item.text())).toEqual(values)
+        }
+        expect(cells[headers.indexOf('规格')]!.text()).toBe('Φ22')
+        expect(cells[headers.indexOf('规格')]!.find('.component-source-value').exists()).toBe(false)
+        const width = table.findAll('col').reduce((sum, col) => sum + parseFloat((col.element as HTMLTableColElement).style.width), 0)
+        expect((table.element as HTMLTableElement).style.minWidth).toBe(`${width}px`)
+        expect(table.element.parentElement!.classList.contains('tube-table-wrap')).toBe(true)
+      }
+      expect(wrapper.get('.confirm-table').text()).not.toContain('错误父材质')
+      await vm.save()
+      expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'CUTTING', zone_id: null,
+        lines: [{ component_identity: 'front', quantity: '10', factory_id: 'factory', unit_price: '1.20' },
+          { component_identity: 'bag', quantity: '20', factory_id: 'factory', unit_price: '2.50' }] }))
+    } finally { wrapper.unmount() }
   })
   it('裁片采购入库参考显示套数并悬浮说明面料换算，不改默认计划套数', async () => {
     const current = cuttingContext()
@@ -547,7 +615,7 @@ describe('原管材表单复用裁片模式', () => {
   })
   it('附带料建单与保存确认沿来源快照展示投入材料和保存单位', async () => {
     const current = cuttingContext()
-    current.material_rows![0] = { ...current.material_rows![0]!, name: auxiliarySnapshot.name, unit: auxiliarySnapshot.unit_name,
+    current.material_rows![0] = { ...current.material_rows![0]!, name: auxiliarySnapshot.name, unit: auxiliarySnapshot.unit_name, specification: '20mm',
       material_catalog_id: auxiliarySnapshot.catalog_id, material_selection_snapshot: auxiliarySnapshot }
     vi.mocked(api.fetchTubeSource).mockResolvedValue(current)
     const wrapper = shallowMount(TubeOutsourcingFormView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true,
@@ -562,13 +630,20 @@ describe('原管材表单复用裁片模式', () => {
       expect(details.every(item => item.props('materials').output_material_selection_snapshot === undefined)).toBe(true)
       expect(wrapper.text()).toContain('保存织带')
       expect(wrapper.text()).toContain('2.5 米')
+      for (const table of [wrapper.get('#hardware-items table'), wrapper.get('.confirm-material-table')]) {
+        const headers = table.findAll('th').map(item => item.text())
+        expect(headers.filter(value => value === '规格')).toHaveLength(1)
+        const specification = table.findAll('tbody tr')[0]!.findAll('td')[headers.indexOf('规格')]!
+        expect(specification.text()).toBe('20mm')
+        expect(specification.attributes('title')).toBe('20mm')
+      }
     } finally { wrapper.unmount() }
   })
-  it('库存裁片按套填写，与辅料在同一原接口提交工艺和各自库区', async () => {
+  it('裁片需求按套填写，辅料无需库区即可提交计划', async () => {
     localStorage.setItem(key, '管材页未确认记录')
     const { wrapper, vm } = await mountPage()
     expect(api.fetchTubeOptions).toHaveBeenCalledWith('cutting')
-    expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'PUBLIC_CUTTING', zone_id: 'semi-empty', craft_id: 'embroidery', is_plan: true })
+    expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-product', category: 'cutting', craft_id: 'embroidery', is_plan: true })
     expect(wrapper.text()).toContain('新建裁片委外加工单')
     expect(wrapper.text()).toContain('加工单价（元/套）')
     expect(wrapper.text()).not.toContain('计价方式')
@@ -578,24 +653,42 @@ describe('原管材表单复用裁片模式', () => {
     vm.rows[0]!.quantity = '40'; vm.rows[0]!.factoryId = 'factory'; vm.rows[0]!.unitPrice = '0'
     vm.materialRows[0]!.quantity = '12.3456'; vm.materialRows[0]!.factoryId = 'hardware-factory'
     await vm.save()
-    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'PUBLIC_CUTTING', craft_id: 'embroidery', zone_id: 'semi-empty',
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'SEWING', craft_id: 'embroidery', zone_id: null,
       lines: [{ component_identity: 'front', quantity: '40', factory_id: 'factory', unit_price: '0' }],
-      materials: [{ bom_line_id: 'hardware', factory_id: 'hardware-factory', quantity: '12.3456', zone_id: 'hardware-zone' }],
+      materials: [{ bom_line_id: 'hardware', factory_id: 'hardware-factory', quantity: '12.3456' }],
     }))
     expect(localStorage.getItem(key)).toBe('管材页未确认记录')
     wrapper.unmount()
   })
-  it('车缝直发不提交主库区，辅料仍提交真实来源库区', async () => {
+  it('忽略新建链接中的来源，辅料计划也不提交来源库区', async () => {
     routing.query.source_kind = 'SEWING'
     const { wrapper, vm } = await mountPage()
-    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'SEWING', craft_id: 'embroidery', is_plan: true })
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'cutting', craft_id: 'embroidery', is_plan: true })
     expect(wrapper.find('[aria-label="来源仓库"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('报工完成（套）')
+    expect(wrapper.text()).not.toContain('报工完成（套）')
+    expect(wrapper.text()).not.toContain('库存可用')
+    expect(wrapper.find('[aria-label="织唛来源库区"]').exists()).toBe(false)
     vm.rows[0]!.quantity = '20'; vm.rows[0]!.factoryId = 'factory'; vm.rows[0]!.unitPrice = '1.5'
     vm.materialRows[0]!.quantity = '1'; vm.materialRows[0]!.factoryId = 'hardware-factory'
     await vm.save()
-    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'SEWING', zone_id: null, craft_id: 'embroidery', materials: [expect.objectContaining({ zone_id: 'hardware-zone' })] }))
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'SEWING', zone_id: null, craft_id: 'embroidery', materials: [{ bom_line_id: 'hardware', factory_id: 'hardware-factory', quantity: '1' }] }))
     wrapper.unmount()
+  })
+  it('辅料无库区的需求提交超时后仍可恢复并核对原请求', async () => {
+    const current = cuttingContext(); current.material_rows![0]!.zones = []
+    vi.mocked(api.fetchTubeSource).mockResolvedValue(current)
+    vi.mocked(api.createTubeOrder).mockRejectedValue(new AxiosError('超时'))
+    const { wrapper, vm } = await mountPage()
+    fill(vm); vm.materialRows[0]!.quantity = '1'; vm.materialRows[0]!.factoryId = 'hardware-factory'
+    await vm.save()
+    const request = vi.mocked(api.createTubeOrder).mock.calls[0]![0]
+    expect(request.materials![0]).not.toHaveProperty('zone_id')
+    wrapper.unmount()
+    const restored = await mountPage()
+    expect(restored.vm.pending).toEqual(request)
+    expect(api.findTubeOrder).toHaveBeenLastCalledWith(request.client_request_id)
+    expect(api.createTubeOrder).toHaveBeenCalledTimes(1)
+    restored.wrapper.unmount()
   })
   it.each(cuttingCrafts)('无加工厂仍可选择 $name，主料和辅料提示先添加关联且不能提交', async craft => {
     vi.mocked(api.fetchTubeOptions).mockResolvedValue({ ...cuttingOptions(), crafts: structuredClone(cuttingCrafts), factories: [] })
@@ -623,18 +716,16 @@ describe('原管材表单复用裁片模式', () => {
     wrapper.unmount()
   })
   it.each(cuttingCrafts.flatMap(craft => (['PUBLIC_CUTTING', 'SEWING'] as const).map(source => ({ ...craft, source }))))(
-    '$source 来源选择 $name 后按原接口提交该工艺编号', async craft => {
+    '旧链接含 $source 时只按 $name 加载需求并提交工艺编号', async craft => {
       routing.query.source_kind = craft.source
       vi.mocked(api.fetchTubeOptions).mockResolvedValue({ ...cuttingOptions(), crafts: structuredClone(cuttingCrafts) })
       const { wrapper, vm } = await mountPage()
       expect(api.fetchTubeSource).not.toHaveBeenCalled()
       vm.requestChange('craft', craft.id); await flushPromises()
-      expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', source_kind: craft.source,
-        craft_id: craft.id, is_plan: true, ...(craft.source === 'PUBLIC_CUTTING' ? { zone_id: 'semi-empty' } : {}) })
+      expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', category: 'cutting', craft_id: craft.id, is_plan: true })
       vm.rows[0]!.quantity = '2'; vm.rows[0]!.factoryId = 'factory'; vm.rows[0]!.unitPrice = '1'
       await vm.save()
-      expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ craft_id: craft.id, source_kind: craft.source,
-        zone_id: craft.source === 'PUBLIC_CUTTING' ? 'semi-empty' : null,
+      expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ craft_id: craft.id, source_kind: 'SEWING', zone_id: null,
         lines: [{ component_identity: 'front', quantity: '2', factory_id: 'factory', unit_price: '1' }] }))
       wrapper.unmount()
     },

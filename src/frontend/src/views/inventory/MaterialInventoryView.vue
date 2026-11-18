@@ -1,26 +1,21 @@
 <script setup lang="ts">
-import { compactDecimal } from '@/utils/compactDecimal'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, Refresh, Setting } from '@element-plus/icons-vue'
+import { Refresh, Setting } from '@element-plus/icons-vue'
 
 import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
-import ManualMaterialInboundDialog from '@/components/inventory/ManualMaterialInboundDialog.vue'
 import { fetchMaterialInventory, fetchMaterialFilterOptions } from '@/api/inventory'
 import searchIcon from '@/assets/crm-v2/search.svg'
-import { router } from '@/router'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialFilterOptions, MaterialInventoryRow } from '@/types/inventory'
 
-const props = defineProps<{ openInboundInitially?: boolean }>()
-const inboundOpen = ref(!!props.openInboundInitially)
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const can = (permission: string) => auth.user?.is_superuser === true || auth.hasPermission(permission)
 const canView = computed(() => can('inventory.view_materialinbound'))
-const canReceive = computed(() => can('inventory.receive_material'))
 const canViewReceipts = computed(() => can('inventory.view_material_receipt'))
 const canConfigure = computed(() => can('inventory.view_warehouse') || can('inventory.view_warehousezone'))
 const rows = ref<MaterialInventoryRow[]>([])
@@ -58,8 +53,13 @@ function formatQuantity(value: string | number): string {
 function stockQuantityText(row: MaterialInventoryRow): string {
   const quantity = formatQuantity(row.inventory_quantity)
   return row.measurement_kind === 'PIPE'
-    ? `${quantity} · ${row.meter_quantity || '—'} 米 · ${row.raw_bar_length_m || '—'} 米/根`
+    ? `${quantity} 根 · ${stockWeightText(row)}`
+    : row.measurement_kind === 'HARDWARE_WEIGHT' ? `${quantity} ${row.unit} · ${stockWeightText(row)}`
     : quantity
+}
+function stockWeightText(row: MaterialInventoryRow): string {
+  const weight = row.weight_quantity_kg ?? row.weight_quantity
+  return weight != null && /^\d+(?:\.\d+)?$/.test(String(weight)) ? `${formatQuantity(weight)} kg` : '重量待核对'
 }
 function sectionLabel(row: MaterialInventoryRow): string {
   return stockKind.value === 'SEMI' && row.section_type === 'PROFILE' ? '管材' : row.section_title
@@ -95,11 +95,6 @@ async function loadOptions() {
   catch (error) { ElMessage.error(apiMessage(error, '材料仓库配置加载失败。')) }
 }
 function refresh() { void Promise.all([loadRows(), loadOptions()]) }
-function closeInbound() {
-  inboundOpen.value = false
-  if (props.openInboundInitially) void router.replace({ name: 'material-inventory' })
-}
-function inboundSaved() { closeInbound(); if (canView.value) refresh() }
 function openConfig(kind: 'warehouse' | 'location') { void warehouseConfiguration.value?.open(kind) }
 function openMaterialDetail(row: MaterialInventoryRow, tab: 'issues' | 'purchases' = 'issues') {
   if (!row.stock_item_id) { ElMessage.warning('该库存行缺少稳定原料标识，暂不能查看订单追溯。'); return }
@@ -127,12 +122,11 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
         <span class="heading-space" />
         <div class="head-actions">
           <ElButton class="erp-button-motion" :icon="Refresh" @click="refresh">刷新</ElButton>
-          <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' &amp;&amp; (auth.user?.is_superuser || auth.hasPermission('inventory.view_internalsemifinishedreceipt'))" @click="router.push({name: 'semi-receipt-records'})">入库记录</ElButton><ElButton class="erp-button-motion" v-if="stockKind === 'RAW' &amp;&amp; canViewReceipts" @click="router.push({ name: 'material-inbound-details' })">入库明细</ElButton>
+          <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' &amp;&amp; (auth.user?.is_superuser || auth.hasPermission('inventory.view_internalsemifinishedreceipt'))" @click="router.push({name: 'semi-receipt-records'})">入库记录</ElButton><ElButton class="erp-button-motion" v-if="stockKind === 'RAW' &amp;&amp; canViewReceipts" @click="router.push({ name: 'material-inbound-records' })">收发记录</ElButton>
           <ElDropdown v-if="canConfigure">
             <ElButton class="erp-button-motion" :icon="Setting">配置</ElButton>
             <template #dropdown><ElDropdownMenu><ElDropdownItem @click="openConfig('warehouse')">仓库信息</ElDropdownItem><ElDropdownItem @click="openConfig('location')">库区设置</ElDropdownItem></ElDropdownMenu></template>
           </ElDropdown>
-          <ElButton class="erp-button-motion" v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="inboundOpen = true">材料入库</ElButton>
         </div>
       </header>
 
@@ -148,7 +142,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
             <ElOption value="METAL" label="未喷塑" />
             <ElOption value="POWDER_COATING" label="已喷塑" />
           </ElSelect>
-          <ElSelect v-model="filters.warehouseId" class="filter-control filter-control--warehouse" clearable aria-label="材料仓" placeholder="材料仓：全部" @change="warehouseChanged"><ElOption v-for="item in warehousesForFilter" :key="item.id" :value="item.id" :label="`${item.warehouse_number} · ${item.warehouse_name}`" /></ElSelect>
+          <ElSelect v-model="filters.warehouseId" class="filter-control filter-control--warehouse" clearable aria-label="材料仓" placeholder="材料仓：全部" @change="warehouseChanged"><ElOption v-for="item in warehousesForFilter" :key="item.id" :value="item.id" :label="item.warehouse_name" /></ElSelect>
           <ElSelect v-model="filters.zoneId" class="filter-control filter-control--zone" clearable aria-label="库区" placeholder="库区：全部" @change="search"><ElOption v-for="item in zonesForFilter" :key="item.id" :value="item.id" :label="item.zone_name" /></ElSelect>
           <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="reset">重置</ElButton><ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton></div>
         </form>
@@ -167,7 +161,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
           <ElTableColumn prop="color" label="颜色" width="110"><template #default="{ row }">{{ row.color || '—' }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格/切割长度" min-width="170" />
           <ElTableColumn v-if="stockKind === 'SEMI' && (publicStock || hasCatalogRows)" label="厚度" width="82"><template #default="{ row }">{{ row.tube_thickness || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}</b><small v-if="row.measurement_kind === 'PIPE'"> · {{ compactDecimal(row.meter_quantity) }} 米 · {{ row.raw_bar_length_m || '—' }} 米/根</small></span></template></ElTableColumn>
+          <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}<template v-if="row.measurement_kind === 'PIPE'"> 根</template><template v-else-if="row.measurement_kind === 'HARDWARE_WEIGHT'">{{ ' ' + row.unit }}</template></b><small v-if="['PIPE', 'HARDWARE_WEIGHT'].includes(row.measurement_kind || '')"> · {{ stockWeightText(row) }}</small></span></template></ElTableColumn>
           <ElTableColumn prop="unit" label="单位" width="65" align="center" />
           <ElTableColumn label="材料仓" min-width="150"><template #default="{ row }">{{ row.warehouse_name || '—' }}</template></ElTableColumn>
           <ElTableColumn label="库区" min-width="175"><template #default="{ row }">{{ row.zone_name }}</template></ElTableColumn>
@@ -181,7 +175,6 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
       </section>
       <WarehouseConfigurationDialogs ref="warehouseConfiguration" warehouse-type="MATERIAL" @saved="loadOptions" />
     </template>
-    <ManualMaterialInboundDialog v-if="inboundOpen" @close="closeInbound" @saved="inboundSaved" />
   </section>
 </template>
 

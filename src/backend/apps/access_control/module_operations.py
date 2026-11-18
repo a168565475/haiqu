@@ -9,6 +9,8 @@ MODULE_OPERATIONS = (
     ('submit_samplerequest', '提交打样', 'samples', 'samples.change_samplerequest'),
     ('prepare_samplerequest', '开始准备样品', 'samples', 'samples.change_samplerequest'),
     ('financeconfirm_sample', '财务确认样品', 'samples', 'samples.decide_sample_fee'),
+    ('confirm_purchasepayable', '确认采购应付', 'finance', 'finance.confirm_purchasepayable'),
+    ('void_purchasepayable', '作废采购应付', 'finance', 'finance.void_purchasepayable'),
     ('pmcapprove_sample', 'PMC 确认样品', 'samples', 'samples.change_samplerequest'),
     ('metalwork_sample', '维护样品金工参数', 'samples', 'samples.change_samplerequest'),
     ('cutting_sample', '维护样品裁剪参数', 'samples', 'samples.change_samplerequest'),
@@ -63,6 +65,11 @@ ACTION_OVERRIDES = {
         'create': 'finance.add_receivablestatement', 'partial_update': 'finance.change_receivablestatement',
         'void': 'finance.void_receivablestatement',
     },
+    'PurchasePayableViewSet': {
+        'list': 'finance.view_purchasepayable', 'retrieve': 'finance.view_purchasepayable',
+        'pricing': 'finance.change_purchasepayable',
+        'confirm': 'finance.confirm_purchasepayable', 'void': 'finance.void_purchasepayable',
+    },
     'FinanceSourceTaskViewSet': {
         action: ['finance.view_receivablestatement', 'finance.add_receivablestatement',
                  'finance.change_receivablestatement', 'finance.add_receipt'] for action in ('list', 'products')
@@ -84,6 +91,7 @@ ACTION_OVERRIDES = {
     'PurchaseGroupViewSet': {'list': 'procurement.view_purchaseorder', 'retrieve': 'procurement.view_purchaseorder',
         'filter_options': 'procurement.view_purchaseorder',
         'create': 'procurement.add_purchaseorder', 'batches': 'procurement.add_purchaseorder',
+        'destroy': 'procurement.delete_purchaseorder',
         'complete': 'access_control.complete_purchaseorder'},
     'PurchaseReturnViewSet': {
         'confirm': 'access_control.confirm_purchasereturn',

@@ -40,6 +40,7 @@ function lineValue(line: BomLine, key: string, section: BomSection) {
   return bomPreviewCell(line, key, section, bom.value?.order_quantity || '', sections.value)
 }
 function cuttingNote(line: BomLine, section: BomSection) {
+  if (line.component_kind) return ''
   if (!/裁剪|裁片/.test(section.title)) return ''
   if (legacyPipeCuttingValues(line)) return '管材旧口径：片数和套数沿用编辑页只读展示，仍按原单位流转。'
   return cuttingCalculation(line, bom.value?.order_quantity).error

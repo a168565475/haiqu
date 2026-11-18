@@ -202,24 +202,30 @@ describe('采购行内回车下填', () => {
     return event
   }
 
-  it('普通回车跨分类覆盖当前行之后的供应商，并移到下一行同列', async () => {
+  it('每次回车只复制供应商到下一行，再按一次才继续下一行', async () => {
     await chooseCategory('__all__')
-    const event = await press(1, 0)
-    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-a'])
+    const event = await press(0, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-c', 'supplier-b'])
     expect(page.bulkSupplierId).toBeNull()
-    expect(document.activeElement).toBe(field(2, 0).get('input').element)
+    expect(document.activeElement).toBe(field(1, 0).get('input').element)
     expect(event.defaultPrevented).toBe(true)
+    await press(1, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-c', 'supplier-c'])
+    expect(document.activeElement).toBe(field(2, 0).get('input').element)
     expect(createPurchaseOrder).not.toHaveBeenCalled()
     expect(createPurchaseBatch).not.toHaveBeenCalled()
     expect(createPurchaseGroup).not.toHaveBeenCalled()
     expect(fetchPurchaseOrderSource).not.toHaveBeenCalled()
   })
 
-  it('交期回车覆盖全部后续日期并更新统一交期，不提交采购', async () => {
+  it('交期回车只同步下一行，不覆盖更后面的日期或提交采购', async () => {
     await press(0, 1)
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-10', '2099-11-12'])
+    expect(page.bulkDeliveryDate).toBe('')
+    expect(document.activeElement).toBe(field(1, 1).get('input').element)
+    await press(1, 1)
     expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-10', '2099-11-10'])
     expect(page.bulkDeliveryDate).toBe('2099-11-10')
-    expect(document.activeElement).toBe(field(1, 1).get('input').element)
     expect(createPurchaseOrder).not.toHaveBeenCalled()
     expect(createPurchaseBatch).not.toHaveBeenCalled()
     expect(createPurchaseGroup).not.toHaveBeenCalled()
@@ -284,7 +290,7 @@ describe('采购行内回车下填', () => {
 })
 
 describe('采购下填同步处理开销', () => {
-  it.each([100, 1000])('%i 行通过按键处理器正确覆盖，并记录不含页面渲染的耗时', async count => {
+  it.each([100, 1000])('%i 行通过按键处理器只同步一行，并记录不含页面渲染的耗时', async count => {
     const template = source()
     page.applySource({ ...template, lines: Array.from({ length: count }, (_, index) => ({
       ...template.lines[0]!, bom_line_id: `line-${index}`, source_bom_line_id_snapshot: `line-${index}`,
@@ -298,7 +304,8 @@ describe('采购下填同步处理开销', () => {
       const started = performance.now()
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
       durations.push(performance.now() - started)
-      expect(page.lines.every(line => line.supplier_id === 'supplier-a')).toBe(true)
+      expect(page.lines.slice(0, 2).every(line => line.supplier_id === 'supplier-a')).toBe(true)
+      expect(page.lines.slice(2).every(line => line.supplier_id === 'supplier-b')).toBe(true)
       await flushPromises()
     }
     durations.sort((left, right) => left - right)

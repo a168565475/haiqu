@@ -38,6 +38,12 @@ def positive_integer(value, field, *, allow_zero=False):
     return int(decimal_quantity(value, field, places=0, max_digits=14, allow_zero=allow_zero))
 
 
+def pipe_meters_text(value):
+    """保留毫米精度；可用两位表达时保留旧快照和库存身份文本。"""
+    text = format(value, ".3f")
+    return text[:-1] if text.endswith("0") else text
+
+
 def default_pipe_purchase_allowance_rule(base_bar_count):
     """按基础采购根数返回默认余量选项；边界归入前一档。"""
     roots = positive_integer(base_bar_count, "base_purchase_bar_count")
@@ -69,7 +75,7 @@ def pipe_purchase_allowance_roots(base_bar_count, rule):
 
 
 def packaging_quantity(*, units_per_box, order_quantity):
-    box = positive_integer(units_per_box, "units_per_box")
+    box = decimal_quantity(units_per_box, "units_per_box")
     order = decimal_quantity(order_quantity, "order_quantity", allow_zero=True)
     with localcontext() as context:
         context.prec = 64
@@ -154,10 +160,10 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         meters = decimal_quantity(meters, "raw_bar_length_m", places=2)
         source_values = {}
         if source_raw_bar_length_m not in (None, ""):
-            meters = decimal_quantity(source_raw_bar_length_m, "source_raw_bar_length_m", places=2)
+            meters = decimal_quantity(source_raw_bar_length_m, "source_raw_bar_length_m", places=3, max_digits=19)
             if meters * 1000 < length * cuts:
                 raise MaterialFlowValueError("source_raw_bar_length_m", "原表长料长度不足以切出当前每根支数，请核对切割长度和长料长度。")
-            source_values["source_raw_bar_length_m"] = format(meters, ".2f")
+            source_values["source_raw_bar_length_m"] = pipe_meters_text(meters)
         demand = positive_integer(order * consumption, "demand_pieces")
         base_bars = positive_integer(
             (Decimal(demand) / cuts).to_integral_value(rounding=ROUND_CEILING),
@@ -186,7 +192,7 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         else:
             bars = positive_integer((Decimal(demand) * factor / (cuts * 100)).to_integral_value(rounding=ROUND_CEILING), "suggested_bar_count")
         allowance = positive_integer(bars * cuts, "allowance_pieces")
-        total = decimal_quantity(bars * meters, "suggested_purchase_meters", places=2, max_digits=22)
+        total = decimal_quantity(bars * meters, "suggested_purchase_meters", places=3, max_digits=23)
     # 数量规则单独标记；结构版本不变，旧快照不新增键以保留来源版本摘要。
     return {
         "schema_version": 2,
@@ -198,9 +204,9 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         "order_quantity": order,
         "demand_pieces": demand,
         **allowance_values,
-        "raw_bar_length_m": format(meters, ".2f"),
+        "raw_bar_length_m": pipe_meters_text(meters),
         "suggested_bar_count": bars,
-        "suggested_purchase_meters": format(total, ".2f"),
+        "suggested_purchase_meters": pipe_meters_text(total),
         "allowance_pieces": allowance,
     }
 
@@ -223,14 +229,14 @@ def pipe_plan_for_line(line, *, order_quantity=None):
 def pipe_issue(*, requested_pieces, pieces_per_bar, raw_bar_length_m):
     pieces = positive_integer(requested_pieces, "requested_pieces")
     cuts = positive_integer(pieces_per_bar, "pieces_per_bar")
-    length = decimal_quantity(raw_bar_length_m, "raw_bar_length_m", places=2)
+    length = decimal_quantity(raw_bar_length_m, "raw_bar_length_m", places=3, max_digits=19)
     if pieces % cuts:
         raise MaterialFlowValueError("requested_pieces", f"申请支数必须是 {cuts} 的整数倍。", "PIPE_WHOLE_BAR_REQUIRED")
     bars = pieces // cuts
     with localcontext() as context:
         context.prec = 64
-        meters = decimal_quantity(bars * length, "issued_meters", places=2, max_digits=22)
-    return {"requested_pieces": pieces, "bar_count": bars, "meters": format(meters, ".2f")}
+        meters = decimal_quantity(bars * length, "issued_meters", places=3, max_digits=23)
+    return {"requested_pieces": pieces, "bar_count": bars, "meters": pipe_meters_text(meters)}
 
 
 def fabric_output(*, issued_meters, meters_per_set):

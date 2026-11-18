@@ -129,9 +129,9 @@ def _line_values(layout, line, index, order_number, actual_weight, sample_source
     from .pipe_purchase import pipe_print_description
     display = purchase_sheet_line_display(line, sample_source=sample_source)
     specification, attributes, color = (display[key] for key in ("specification", "attributes", "color"))
-    if line.get("measurement_kind") == "PIPE":
+    if line.get("measurement_kind") in {"PIPE", "PIPE_WEIGHT"}:
         print_line = {**line, **{
-            key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "actual_purchase_meters")
+            key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "raw_bar_weight_kg", "actual_purchase_meters", "actual_purchase_weight_kg")
         }}
         attributes = "\n".join(value for value in (attributes, pipe_print_description(print_line)) if value)
     quantity = _number(line.get("quantity"))

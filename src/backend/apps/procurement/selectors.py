@@ -84,12 +84,19 @@ def filter_purchase_return_status(queryset, status):
 
     returned = MaterialInboundLine.objects.filter(
         purchase_order_line__purchase_order_id=OuterRef("pk"),
-        inbound__status=MaterialInboundStatus.CONFIRMED, return_quantity__gt=0,
-    )
+        inbound__status=MaterialInboundStatus.CONFIRMED,
+    ).filter(Q(return_quantity__gt=0) | Q(return_weight_kg__gt=0))
     records = PurchaseReturn.objects.filter(purchase_order_id=OuterRef("pk"))
+    return_quantity_mismatch = (
+        Q(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"])
+        & ~Q(purchase_return_line__quantity=F("return_weight_kg"))
+    ) | (
+        ~Q(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"])
+        & ~Q(purchase_return_line__quantity=F("return_quantity"))
+    )
     queryset = queryset.alias(
         has_returns=Exists(returned),
-        missing_returns=Exists(returned.filter(Q(purchase_return_line__isnull=True) | ~Q(purchase_return_line__quantity=F("return_quantity")))),
+        missing_returns=Exists(returned.filter(Q(purchase_return_line__isnull=True) | return_quantity_mismatch)),
         quality_returns=Exists(records.filter(status=PurchaseReturnStatus.QUALITY_GENERATED)),
         confirmed_returns=Exists(records.filter(status=PurchaseReturnStatus.PROCUREMENT_CONFIRMED)),
     )

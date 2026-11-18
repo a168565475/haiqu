@@ -130,6 +130,57 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('委外总单历史收发表格', () => {
+  it('裁片历史批次按冻结行单位分组展示，不把件和片合为片', async () => {
+    const value = structuredClone(plan)
+    Object.assign(value, { part_flow: true, sewing_inputs: true, source_kind: 'CUTTING' })
+    const saved = batch()
+    Object.assign(saved, { part_flow: true, sewing_inputs: true, source_kind: 'CUTTING' })
+    saved.lines = [
+      { ...saved.lines[0]!, component_identity: 'piece-one', part_name: '面片', unit: '片', quantity: '20' },
+      { ...saved.lines[0]!, id: 'piece-two', component_identity: 'piece-two', part_name: '棉片', unit: '件', quantity: '3' },
+    ]
+    value.dispatch_records = [{ ...value.dispatch_records![0]!, source_kind: 'CUTTING', total_quantity: '23',
+      lines: saved.lines.map(line => ({ ...line })) }]
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(saved)
+    const wrapper = await mountRecords(value)
+    expect(wrapper.get('.plan-dispatch-records').text()).toContain('20 片 / 3 件')
+    await openDispatch(wrapper)
+    expect(wrapper.get('[role="dialog"]').text()).toContain('20 片 / 3 件')
+    expect(records(wrapper, '.dispatch-record-lines').map(row => row['单位'])).toEqual(['片', '件'])
+    expect(wrapper.get('[role="dialog"]').text()).not.toContain('23 片')
+  })
+
+  it('部位回货使用记录冻结价和属性，缺失旧价不回填总单最新单价', async () => {
+    const value = structuredClone(plan)
+    value.part_flow = true; value.sewing_inputs = true; value.source_kind = 'CUTTING'
+    value.lines[0] = { ...value.lines[0]!, part_name: '床面', unit: '个', unit_price: '9.90' }
+    const snapshot: MaterialSelectionSnapshot = { ...savedMaterial, name: '床面', processing_stage: '',
+      category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', unit_name: '个', attributes: { model: 'A版' } }
+    value.receipt_records![0]!.received_amount = '108.00'
+    Object.assign(value.receipt_records![0]!.lines[0]!, { unit: '个', part_name: '床面', specification: 'A版',
+      unit_price: '1.20', received_amount: '108.00', component_material_selection_snapshot: snapshot,
+      component_source_materials: [{ source_bom_line_id: 'saved-fabric', name: '保存面布', material: '涤纶',
+        color: '蓝', color_code: '', fabric_spec: '600D', width: '', unit: '米' }] })
+    value.lines[0]!.component_source_materials = [{ source_bom_line_id: 'other', name: '不可替代回货来源', material: '',
+      color: '', color_code: '', fabric_spec: '', width: '', unit: '米' }]
+    Object.assign(value.receipt_records![1]!.lines[0]!, { unit: '个', unit_price: null, received_amount: null })
+    const wrapper = await mountRecords(value, false)
+    await openReceipt(wrapper)
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('1.2 元/个')
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('108')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('9.9')
+    const receiptTable = wrapper.get('.receipt-record-lines')
+    expect(receiptTable.find('thead').text()).toContain('来源布料材质颜色面料规格')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('保存面布')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('涤纶')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('蓝')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('600D')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('不可替代回货来源')
+    expect(wrapper.findAllComponents(ProcessingMaterialDetails).some(item => item.props('materials').component_material_selection_snapshot?.attributes?.model === 'A版')).toBe(true)
+    await closeDialog(wrapper); await openReceipt(wrapper, 'RK-002')
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('未知')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('9.9')
+  })
   it('空记录显示两张真实表格和宿主操作槽，不预读批次', async () => {
     const wrapper = await mountRecords({ ...structuredClone(plan), dispatch_records: [], receipt_records: [] })
     expect(wrapper.get('.plan-dispatch-records').find('table').exists()).toBe(true)
@@ -407,6 +458,16 @@ describe('实际收发记录调整与整次删除', () => {
     await clickRecordButton(wrapper, '保存调整')
     expect(wrapper.emitted('correct')).toBeUndefined(); expect(wrapper.text()).toContain('正整数')
     expect(wrapper.get('.receipt-record-lines').findAll('button')).toHaveLength(0)
+  })
+  it('入库可调增超过实发和目标，发货减量不受已有实收反向限制', async () => {
+    const wrapper = await mountRecords(); await openReceipt(wrapper); await clickRecordButton(wrapper, '调整记录')
+    await wrapper.get('input[aria-label="总单横管调整数量"]').setValue('10001')
+    await clickRecordButton(wrapper, '保存调整')
+    expect(wrapper.emitted('correct')!.at(-1)![0]).toMatchObject({ record_kind: 'RECEIPT', lines: [{ component_identity: 'component-1', quantity: '10001' }] })
+    await closeDialog(wrapper); await openDispatch(wrapper); await clickRecordButton(wrapper, '调整记录')
+    await wrapper.get('input[aria-label="批次甲横管调整数量"]').setValue('10')
+    await clickRecordButton(wrapper, '保存调整')
+    expect(wrapper.emitted('correct')!.at(-1)![0]).toMatchObject({ record_kind: 'DISPATCH', lines: [{ component_identity: 'component-1', quantity: '10' }] })
   })
   it('原管按保存的每根可切数校验，不能悄悄改成零散根', async () => {
     const wrapper = await mountRecords(); await openDispatch(wrapper); await clickRecordButton(wrapper, '调整记录')

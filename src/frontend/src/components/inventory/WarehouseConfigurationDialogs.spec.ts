@@ -71,7 +71,7 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); ElMessage.closeAll(); vi.restoreAllMocks() })
 
-it('成品配置按仓库类型及父子关系过滤，保留箱位、负责人和库位唯一校验字段', async () => {
+it('成品配置按仓库类型及父子关系过滤，显示仓库名称并保留实际库位号', async () => {
   render()
   expect(api.warehouses).not.toHaveBeenCalled()
   await wrapper.vm.open('warehouse')
@@ -82,14 +82,18 @@ it('成品配置按仓库类型及父子关系过滤，保留箱位、负责人�
   expect(warehouseTable.text()).toContain('负责人联系电话')
   expect(warehouseTable.text()).toContain('总箱位')
   expect(warehouseTable.text()).toContain('已占箱位')
+  expect(warehouseTable.text()).not.toContain('仓库号')
+  expect(warehouseTable.text()).not.toContain(finishedWarehouse.warehouse_number)
   await wrapper.vm.open('location')
   await flushPromises()
   expect(tableFor(finishedZone.id).props('data')).toEqual([finishedZone])
   const locationTable = tableFor(finishedLocation.id)
   expect(locationTable.props('data')).toEqual([finishedLocation])
-  for (const label of ['仓库库容（箱位）', '已占箱位', '剩余箱位', '库位号唯一校验']) expect(locationTable.text()).toContain(label)
-  expect(locationTable.text()).toContain(finishedLocation.unique_key)
-  const search = wrapper.get('input[placeholder="搜索仓库、库区、库位或唯一校验值"]')
+  for (const label of ['仓库库容（箱位）', '已占箱位', '剩余箱位', '库位号']) expect(locationTable.text()).toContain(label)
+  expect(locationTable.text()).toContain(finishedLocation.location_number)
+  expect(locationTable.text()).not.toContain('库位号唯一校验')
+  expect(locationTable.text()).not.toContain(finishedLocation.unique_key)
+  const search = wrapper.get('input[placeholder="搜索仓库、库区或库位"]')
   await search.setValue('MATERIAL')
   expect(wrapper.findAllComponents({ name: 'ElTable' }).every(table => table.props('data').length === 0)).toBe(true)
 })
@@ -123,7 +127,7 @@ it('只读权限仍可看配置，但没有新增或编辑按钮', async () => {
 
 it.each([
   { kind: 'warehouse', resource: 'warehouses/', row: finishedWarehouse, save: api.saveWarehouse, payload: {
-    warehouse_number: finishedWarehouse.warehouse_number, warehouse_name: finishedWarehouse.warehouse_name,
+    warehouse_name: finishedWarehouse.warehouse_name,
     warehouse_type: 'FINISHED', address: '一号楼', responsible_person_name: '仓管员', contact_phone: '010-12345678', status: 'ACTIVE',
   } },
   { kind: 'zone', resource: 'warehouse-zones/', row: finishedZone, save: api.saveZone, payload: {
@@ -162,13 +166,13 @@ it('新增成品仓保留固定类型，必填未填时不请求保存', async (
   expect(typeSelect.props('modelValue')).toBe('FINISHED')
   expect(typeSelect.props('disabled')).toBe(true)
   await clickButton('保存')
-  expect(warning).toHaveBeenCalledWith('请填写仓库号和仓库名称。')
+  expect(warning).toHaveBeenCalledWith('请填写仓库名称。')
   expect(api.saveWarehouse).not.toHaveBeenCalled()
-  for (const [label, value] of [['仓库号', 'FG-NEW'], ['仓库名称', '新增成品仓']]) {
-    await wrapper.findAllComponents({ name: 'ElFormItem' }).find(item => item.props('label') === label)!.get('input').setValue(value)
-  }
+  expect(wrapper.text()).not.toContain('仓库号')
+  await wrapper.findAllComponents({ name: 'ElFormItem' }).find(item => item.props('label') === '仓库名称')!.get('input').setValue('新增成品仓')
   await clickButton('保存')
-  expect(api.saveWarehouse).toHaveBeenCalledWith(null, expect.objectContaining({ warehouse_type: 'FINISHED', warehouse_number: 'FG-NEW', warehouse_name: '新增成品仓' }), '')
+  expect(api.saveWarehouse).toHaveBeenCalledWith(null, expect.objectContaining({ warehouse_type: 'FINISHED', warehouse_name: '新增成品仓' }), '')
+  expect(api.saveWarehouse.mock.calls[0]![1]).not.toHaveProperty('warehouse_number')
   expect(wrapper.emitted('saved')).toHaveLength(1)
 })
 

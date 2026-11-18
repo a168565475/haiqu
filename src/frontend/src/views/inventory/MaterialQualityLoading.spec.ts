@@ -23,19 +23,57 @@ describe('品质确认读取', () => {
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([first, second] as never)
     vi.mocked(api.fetchMaterialQualityBatch).mockImplementation(async id => (id === second.id ? second : first) as never)
   })
-  it('管材质检显示根数，退货按整数根输入，米数只用于换算提示', async () => {
+  it('米制管材质检按采购米显示与录入，退货只能为冻结原长整数倍', async () => {
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [{ ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 10, return_bar_count: 0, received_quantity: '33.5000', source_unit_text_snapshot: '米' }] }] as never)
     const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
-    vm.rows[0]!.returnQuantity = '2'; await flushPromises()
+    vm.rows[0]!.returnQuantity = '6.7'; await flushPromises()
     const cells = wrapper.findAll('td.quantity-cell')
-    expect(cells[0]!.text()).toBe('10 根'); expect(cells[1]!.text()).toBe('8 根')
-    expect(cells[1]!.attributes('title')).toContain('26.80 米')
+    expect(cells[0]!.text()).toBe('33.5 米'); expect(cells[1]!.text()).toBe('26.8 米')
+    expect(cells[1]!.attributes('title')).toBe('26.8 米')
     expect(vm.canSubmit).toBe(true)
     vm.rows[0]!.returnQuantity = '0.5'; expect(vm.canSubmit).toBe(false)
-    vm.rows[0]!.returnQuantity = '11'; expect(vm.canSubmit).toBe(false)
-    vm.rows[0]!.returnQuantity = '10'; await flushPromises()
-    expect(cells[1]!.text()).toBe('0 根'); expect(vm.canSubmit).toBe(true)
+    vm.rows[0]!.returnQuantity = '36.85'; expect(vm.canSubmit).toBe(false)
+    vm.rows[0]!.returnQuantity = '33.5'; await flushPromises()
+    expect(cells[1]!.text()).toBe('0 米'); expect(vm.canSubmit).toBe(true)
     wrapper.unmount()
+  })
+  it('KG管材质检只显示和提交采购重量，根数由后端按剩余合格重量折算', async () => {
+    const weightLine = { ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 2, return_bar_count: 0, source_unit_text_snapshot: 'KG', bar_weight_kg: '2.5', received_weight_kg: '4.1', return_weight_kg: '0' }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [weightLine] }] as never)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    vm.rows[0]!.returnQuantity = '3'; await flushPromises(); expect(vm.canSubmit).toBe(true)
+    expect(wrapper.find('[aria-label="第 1 项实退根数"]').exists()).toBe(false)
+    const cells = wrapper.findAll('td.quantity-cell')
+    expect(cells[0]!.text()).toBe('4.1 kg'); expect(cells[1]!.text()).toBe('1.1 kg')
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    await vm.confirmInbound()
+    expect(api.confirmMaterialQuality).toHaveBeenCalledWith('batch-1', expect.objectContaining({ items: [expect.objectContaining({ return_weight_kg: '3', expected_received_quantity: '4.1' })] }))
+    const submitted = vi.mocked(api.confirmMaterialQuality).mock.calls[0]![1] as { items: Record<string, unknown>[] }
+    expect(submitted.items[0]).not.toHaveProperty('return_bar_count')
+    confirm.mockRestore(); wrapper.unmount()
+  })
+  it('旧米制质检草稿先从根换米，刷新保留米输入并按精确根数提交', async () => {
+    const pipeLine = { ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 10, return_bar_count: 0, received_quantity: '33.5000', source_unit_text_snapshot: '米' }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [pipeLine] }] as never)
+    const key = 'material-quality-draft:v2:batch-1:user:7'
+    localStorage.setItem(key, JSON.stringify({ 'line-1': { returnQuantity: '2', qualityRemark: '旧草稿' } }))
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View & { saveDraft: () => void }
+    expect(Number(vm.rows[0]!.returnQuantity)).toBe(6.7)
+    await vm.loadBatches()
+    expect(Number(vm.rows[0]!.returnQuantity)).toBe(6.7)
+    vm.rows[0]!.returnQuantity = ''
+    await vm.loadBatches()
+    expect(vm.rows[0]!.returnQuantity).toBe('')
+    expect(vm.canSubmit).toBe(false)
+    vm.rows[0]!.returnQuantity = '6.7'
+    vm.saveDraft()
+    expect(JSON.parse(localStorage.getItem(key)!)['line-1']).toMatchObject({ quantityInputUnit: '米' })
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    await vm.confirmInbound()
+    expect(api.confirmMaterialQuality).toHaveBeenCalledWith('batch-1', expect.objectContaining({ items: [expect.objectContaining({ return_bar_count: '2', expected_received_quantity: '33.5000' })] }))
+    confirm.mockRestore(); wrapper.unmount()
   })
   it('首次和刷新复用刚读取的完整批次，保留输入且不重复读取详情', async () => {
     const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View

@@ -51,7 +51,7 @@ const fastReadLoadingRoute = computed(() => [
   'sales-orders', 'sales-order-detail',
   'quotations', 'quotation-preview',
   'samples', 'sample-detail', 'sample-material-detail', 'sample-inventory', 'sample-outbound', 'sample-loans',
-  'material-inventory', 'finished-goods-inventory', 'material-inbound-details',
+  'material-inventory', 'finished-goods-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details',
   'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
 ].includes(String(route.name || '')))
 const compactBusinessRoutes = [
@@ -77,7 +77,7 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
-  'material-inventory', 'workshop-scheduling',
+  'material-inventory', 'material-transfers', 'material-inbound-records', 'workshop-scheduling',
   'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
   'sample-outbound', 'sample-loans',
   'reference-data-settings', 'master-data-center', 'production-data', 'number-rules',

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
@@ -25,6 +26,11 @@ class WarehouseType(models.TextChoices):
 class MaterialInboundStatus(models.TextChoices):
     PENDING_QUALITY = "PENDING_QUALITY", "待品质确认"
     CONFIRMED = "CONFIRMED", "已入库"
+
+
+class MaterialTransferDirection(models.TextChoices):
+    IN = "IN", "一般入库"
+    OUT = "OUT", "一般出库"
 
 
 class NoPhysicalDeleteMixin:
@@ -341,6 +347,58 @@ class MaterialInbound(TimeStampedModel):
         ]
 
 
+class MaterialTransfer(TimeStampedModel):
+    """采购之外的材料收发单；入库和出库共用同一张单据。"""
+
+    transfer_number = models.CharField(max_length=50, unique=True, validators=[uppercase_code_validator])
+    client_request_id = models.UUIDField(unique=True, editable=False)
+    request_snapshot = models.JSONField(default=dict, editable=False)
+    direction = models.CharField(max_length=10, choices=MaterialTransferDirection.choices)
+    transfer_date = models.DateField(default=timezone.localdate)
+    remark = models.TextField()
+    operated_by_employee = models.ForeignKey(
+        "organizations.Employee", on_delete=models.PROTECT, related_name="material_transfers",
+    )
+
+    class Meta:
+        db_table = "inventory_material_transfer"
+        ordering = ["-transfer_date", "-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["direction", "-transfer_date"], name="inv_transfer_dir_date_idx"),
+            models.Index(fields=["operated_by_employee", "-created_at"], name="inv_transfer_actor_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(condition=Q(direction__in=MaterialTransferDirection.values), name="inv_transfer_direction_valid"),
+            models.CheckConstraint(condition=~Q(remark=""), name="inv_transfer_remark_required"),
+        ]
+
+
+class MaterialTransferLine(TimeStampedModel):
+    transfer = models.ForeignKey(MaterialTransfer, on_delete=models.PROTECT, related_name="lines")
+    line_key = models.UUIDField(default=uuid4, editable=False)
+    material_catalog = models.ForeignKey(
+        "material_catalog.MaterialCatalog", on_delete=models.PROTECT, related_name="material_transfer_lines",
+    )
+    material_selection_snapshot = models.JSONField()
+    zone = models.ForeignKey(WarehouseZone, on_delete=models.PROTECT, related_name="material_transfer_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
+    weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+
+    class Meta:
+        db_table = "inventory_material_transfer_line"
+        ordering = ["transfer", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["transfer", "line_key"], name="inv_transfer_line_key_uniq"),
+            models.CheckConstraint(condition=Q(quantity__gt=0), name="inv_transfer_line_qty_positive"),
+            models.CheckConstraint(condition=Q(raw_bar_length_m__isnull=True) | Q(raw_bar_length_m__gt=0), name="inv_transfer_line_pipe_length_positive"),
+            models.CheckConstraint(condition=Q(weight_quantity__isnull=True) | Q(weight_quantity__gte=0), name="inv_transfer_line_weight_nonnegative"),
+        ]
+        indexes = [
+            models.Index(fields=["material_catalog", "zone"], name="inv_transfer_catalog_zone_idx"),
+        ]
+
+
 class MaterialMeasurementKind(models.TextChoices):
     PIPE = "PIPE", "管材根米"
     OTHER = "OTHER", "原有单位"
@@ -350,10 +408,15 @@ class MaterialInboundLine(TimeStampedModel):
     material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True, on_delete=models.PROTECT, related_name="inbound_lines")
     material_selection_snapshot = models.JSONField(default=dict, blank=True)
     measurement_kind = models.CharField(max_length=10, choices=MaterialMeasurementKind.choices, default=MaterialMeasurementKind.OTHER)
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
+    # 新采购重量口径保留实际称重；received_quantity 继续保存理论米数，供旧领料链路兼容。
+    bar_weight_kg = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     received_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
     accepted_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
     return_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
+    received_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    accepted_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    return_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     calculation_snapshot = models.JSONField(default=dict, blank=True)
     inbound = models.ForeignKey(MaterialInbound, on_delete=models.PROTECT, related_name="lines")
     purchase_order_line = models.ForeignKey(
@@ -385,7 +448,7 @@ class MaterialInboundLine(TimeStampedModel):
     received_quantity = models.DecimalField(
         max_digits=18,
         decimal_places=4,
-        validators=[MinValueValidator(Decimal("0.0001"))],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     return_quantity = models.DecimalField(
         max_digits=18,
@@ -429,7 +492,10 @@ class MaterialInboundLine(TimeStampedModel):
                 name="inv_mat_line_source_valid",
             ),
             models.CheckConstraint(
-                condition=Q(received_quantity__gt=0),
+                condition=Q(received_quantity__gt=0) | Q(received_quantity=0, measurement_kind="OTHER",
+                    calculation_snapshot__has_key="measurement_kind", calculation_snapshot__measurement_kind__isnull=False,
+                    calculation_snapshot__measurement_kind="HARDWARE_WEIGHT",
+                    received_weight_kg__isnull=False, received_weight_kg__gt=0),
                 name="inv_material_inbound_qty_positive",
             ),
             models.CheckConstraint(
@@ -479,8 +545,10 @@ class MaterialStockDirection(models.TextChoices):
 class MaterialStockBalance(TimeStampedModel):
     measurement_kind = models.CharField(max_length=10, choices=MaterialMeasurementKind.choices, default=MaterialMeasurementKind.OTHER)
     inbound_line = models.ForeignKey(MaterialInboundLine, on_delete=models.PROTECT, null=True, blank=True, related_name="pipe_balances")
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
-    meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
+    meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    bar_weight_kg = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     """按稳定原料、库区、单位和品质维护的净库存余额。"""
 
     raw_material = models.ForeignKey(
@@ -537,9 +605,12 @@ class MaterialStockBalance(TimeStampedModel):
 
 
 class MaterialStockMovement(TimeStampedModel):
-    meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
-    before_meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
-    after_meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    before_meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    after_meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    before_weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    after_weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     """只追加的材料库存流水；来源业务行与方向共同保证幂等。"""
 
     balance = models.ForeignKey(
@@ -551,7 +622,7 @@ class MaterialStockMovement(TimeStampedModel):
     quantity = models.DecimalField(
         max_digits=18,
         decimal_places=4,
-        validators=[MinValueValidator(Decimal("0.0001"))],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     before_quantity = models.DecimalField(max_digits=18, decimal_places=4)
     after_quantity = models.DecimalField(max_digits=18, decimal_places=4)
@@ -596,7 +667,9 @@ class MaterialStockMovement(TimeStampedModel):
                               after_meter_quantity=F("before_meter_quantity") - F("meter_quantity"))))),
                 name="inv_pipe_movement_amount_valid",
             ),
-            models.CheckConstraint(condition=Q(quantity__gt=0), name="inv_mat_movement_qty_positive"),
+            models.CheckConstraint(condition=Q(quantity__gt=0) | Q(quantity=0, direction="IN", source_type="MATERIAL_INBOUND",
+                snapshot__has_key="measurement_kind", snapshot__measurement_kind__isnull=False, snapshot__measurement_kind="HARDWARE_WEIGHT",
+                weight_quantity__isnull=False, weight_quantity__gt=0), name="inv_mat_movement_qty_positive"),
             models.CheckConstraint(
                 condition=Q(direction__in=MaterialStockDirection.values),
                 name="inv_mat_movement_direction_valid",
@@ -749,14 +822,16 @@ class PublicStockBalance(TimeStampedModel):
         "products.RawMaterialInformation", on_delete=models.PROTECT,
         null=True, blank=True, related_name="public_pipe_stock_balances",
     )
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
     unit = models.ForeignKey("reference_data.ProductionUnit", on_delete=models.PROTECT,
                              related_name="public_stock_balances")
     zone = models.ForeignKey(WarehouseZone, on_delete=models.PROTECT, related_name="public_stock_balances")
     quality = models.CharField(max_length=20, choices=MaterialStockQuality.choices,
                                default=MaterialStockQuality.AVAILABLE)
     quantity = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
-    meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    bar_weight_kg = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     version = models.PositiveIntegerField(default=1)
 
     class Meta:
@@ -803,9 +878,12 @@ class PublicStockMovement(TimeStampedModel):
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
     before_quantity = models.DecimalField(max_digits=18, decimal_places=4)
     after_quantity = models.DecimalField(max_digits=18, decimal_places=4)
-    meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
-    before_meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
-    after_meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    before_meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    after_meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    before_weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
+    after_weight_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     source_type = models.CharField(max_length=50)
     source_id = models.UUIDField()
     source_line_id = models.UUIDField()
@@ -828,7 +906,12 @@ class PublicStockMovement(TimeStampedModel):
                                     name="inv_pub_movement_source_uniq"),
             models.CheckConstraint(condition=Q(direction__in=MaterialStockDirection.values),
                                    name="inv_pub_movement_direction"),
-            models.CheckConstraint(condition=Q(quantity__gt=0) & Q(before_quantity__gte=0) & Q(after_quantity__gte=0)
+            models.CheckConstraint(condition=(Q(quantity__gt=0) | Q(quantity=0, direction="IN", source_type="MATERIAL_INBOUND",
+                                       stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"],
+                                       snapshot__has_key="measurement_kind", snapshot__measurement_kind__isnull=False,
+                                       snapshot__measurement_kind="HARDWARE_WEIGHT",
+                                       weight_quantity__isnull=False, weight_quantity__gt=0))
+                                   & Q(before_quantity__gte=0) & Q(after_quantity__gte=0)
                                    & (Q(stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"])
                                       | (Q(quantity=Floor(F("quantity"))) & Q(before_quantity=Floor(F("before_quantity")))
                                          & Q(after_quantity=Floor(F("after_quantity"))))),

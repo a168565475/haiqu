@@ -39,7 +39,7 @@ const editEtag = ref('')
 const zoneOnly = computed(() => props.warehouseType === 'MATERIAL')
 
 const warehouseForm = reactive({
-  warehouse_number: '', warehouse_name: '', warehouse_type: props.warehouseType,
+  warehouse_name: '', warehouse_type: props.warehouseType,
   address: '', status: 'ACTIVE' as RecordStatus, responsible_person_name: '', contact_phone: '',
 })
 const zoneForm = reactive({ warehouse: '', zone_name: '', status: 'ACTIVE' as RecordStatus })
@@ -107,7 +107,7 @@ async function openEditor(kind: 'warehouse' | 'zone' | 'location', item?: Wareho
   editId.value = item?.id || null
   editEtag.value = ''
   Object.assign(warehouseForm, {
-    warehouse_number: '', warehouse_name: '', warehouse_type: props.warehouseType,
+    warehouse_name: '', warehouse_type: props.warehouseType,
     address: '', status: 'ACTIVE', responsible_person_name: '', contact_phone: '',
   })
   Object.assign(zoneForm, { warehouse: scopedWarehouses.value[0]?.id || '', zone_name: '', status: 'ACTIVE' })
@@ -122,7 +122,7 @@ async function openEditor(kind: 'warehouse' | 'zone' | 'location', item?: Wareho
       if (kind === 'warehouse') {
         const value = versioned.data as Warehouse
         Object.assign(warehouseForm, {
-          warehouse_number: value.warehouse_number, warehouse_name: value.warehouse_name,
+          warehouse_name: value.warehouse_name,
           warehouse_type: value.warehouse_type, address: value.address, status: value.status,
           responsible_person_name: value.responsible_person_name, contact_phone: value.contact_phone,
         })
@@ -144,8 +144,8 @@ async function openEditor(kind: 'warehouse' | 'zone' | 'location', item?: Wareho
 }
 
 async function submitEditor() {
-  if (editKind.value === 'warehouse' && (!warehouseForm.warehouse_number.trim() || !warehouseForm.warehouse_name.trim())) {
-    return ElMessage.warning('请填写仓库号和仓库名称。')
+  if (editKind.value === 'warehouse' && !warehouseForm.warehouse_name.trim()) {
+    return ElMessage.warning('请填写仓库名称。')
   }
   if (editKind.value === 'zone' && (!zoneForm.warehouse || !zoneForm.zone_name.trim())) {
     return ElMessage.warning('请选择仓库并填写库区。')
@@ -176,11 +176,10 @@ defineExpose({ open })
   <ElDialog v-model="warehouseVisible" title="仓库信息" width="calc(100vw - 32px)" height="calc(100vh - 32px)" destroy-on-close class="warehouse-config-fullscreen">
     <section class="config-body" v-loading="loading">
       <div class="config-toolbar">
-        <ElInput v-model="keyword" clearable placeholder="搜索仓库号、仓库名称或地址" />
+        <ElInput v-model="keyword" clearable placeholder="搜索仓库名称或地址" />
         <ElButton v-if="can('inventory.add_warehouse')" type="primary" :icon="Plus" @click="openEditor('warehouse')">新增仓库</ElButton>
       </div>
       <ElTable :data="visibleWarehouses" border height="calc(100vh - 190px)">
-        <ElTableColumn prop="warehouse_number" label="仓库号" min-width="110" />
         <ElTableColumn prop="warehouse_name" label="仓库名称" min-width="150" />
         <ElTableColumn prop="warehouse_type_display" label="仓库类型" min-width="120">
           <template #default="{ row }"><ElTag effect="dark" :style="warehouseTypeTagStyle(row.warehouse_type)">{{ row.warehouse_type_display }}</ElTag></template>
@@ -207,7 +206,7 @@ defineExpose({ open })
   <ElDialog v-model="locationVisible" :title="zoneOnly ? '库区信息' : '库区与库位信息'" width="calc(100vw - 32px)" height="calc(100vh - 32px)" destroy-on-close class="warehouse-config-fullscreen">
     <section class="config-body" v-loading="loading">
       <div class="config-toolbar">
-        <ElInput v-model="keyword" clearable :placeholder="zoneOnly ? '搜索仓库或库区' : '搜索仓库、库区、库位或唯一校验值'" />
+        <ElInput v-model="keyword" clearable :placeholder="zoneOnly ? '搜索仓库或库区' : '搜索仓库、库区或库位'" />
         <div>
           <ElButton v-if="can('inventory.add_warehousezone')" @click="openEditor('zone')">新增库区</ElButton>
           <ElButton v-if="!zoneOnly && can('inventory.add_warehouselocation')" type="primary" :icon="Plus" @click="openEditor('location')">新增库位</ElButton>
@@ -216,14 +215,12 @@ defineExpose({ open })
       <ElTabs v-model="locationTab">
         <ElTabPane v-if="!zoneOnly" label="库位列表" name="locations">
           <ElTable :data="visibleLocations" border height="calc(100vh - 240px)">
-            <ElTableColumn prop="warehouse_number" label="仓库号" min-width="100" />
             <ElTableColumn prop="warehouse_name" label="仓库名称" min-width="130" />
             <ElTableColumn prop="zone_name" label="库区" min-width="100" />
             <ElTableColumn prop="location_number" label="库位号" min-width="130" />
             <ElTableColumn prop="capacity_box_slots" label="仓库库容（箱位）" min-width="150"><template #default="{ row }">{{ row.capacity_box_slots ?? '未设置' }}</template></ElTableColumn>
             <ElTableColumn prop="occupied_box_slots" label="已占箱位" min-width="100" />
             <ElTableColumn prop="remaining_box_slots" label="剩余箱位" min-width="100"><template #default="{ row }">{{ row.remaining_box_slots ?? '不限' }}</template></ElTableColumn>
-            <ElTableColumn prop="unique_key" label="库位号唯一校验" min-width="220" />
             <ElTableColumn prop="warehouse_type_display" label="仓库类型" min-width="120"><template #default="{ row }"><ElTag effect="dark" :style="warehouseTypeTagStyle(row.warehouse_type)">{{ row.warehouse_type_display }}</ElTag></template></ElTableColumn>
             <ElTableColumn prop="status_display" label="状态" min-width="90"><template #default="{ row }"><ElTag effect="dark" :style="statusTagStyle(row.status)">{{ row.status_display }}</ElTag></template></ElTableColumn>
             <ElTableColumn label="操作" width="90" fixed="right"><template #default="{ row }"><ElButton v-if="can('inventory.change_warehouselocation')" link type="primary" @click="openEditor('location', row)">编辑</ElButton></template></ElTableColumn>
@@ -231,7 +228,6 @@ defineExpose({ open })
         </ElTabPane>
         <ElTabPane label="库区列表" name="zones">
           <ElTable :data="visibleZones" border height="calc(100vh - 240px)">
-            <ElTableColumn prop="warehouse_number" label="仓库号" min-width="120" />
             <ElTableColumn prop="warehouse_name" label="仓库名称" min-width="180" />
             <ElTableColumn prop="zone_name" label="库区" min-width="160" />
             <ElTableColumn prop="status_display" label="状态" min-width="100"><template #default="{ row }"><ElTag effect="dark" :style="statusTagStyle(row.status)">{{ row.status_display }}</ElTag></template></ElTableColumn>
@@ -248,7 +244,6 @@ defineExpose({ open })
   <ElDialog v-model="editVisible" :title="`${editId ? '编辑' : '新增'}${editKind === 'warehouse' ? '仓库' : editKind === 'zone' ? '库区' : '库位'}`" width="620px" append-to-body destroy-on-close>
     <ElForm label-position="top">
       <template v-if="editKind === 'warehouse'">
-        <ElFormItem label="仓库号" required><ElInput v-model="warehouseForm.warehouse_number" /></ElFormItem>
         <ElFormItem label="仓库名称" required><ElInput v-model="warehouseForm.warehouse_name" /></ElFormItem>
         <ElFormItem label="仓库类型" required><ElSelect v-model="warehouseForm.warehouse_type" disabled><ElOption label="材料仓" value="MATERIAL" /><ElOption label="半成品仓" value="SEMI_FINISHED" /><ElOption label="成品仓" value="FINISHED" /><ElOption label="不良品仓" value="DEFECTIVE" /></ElSelect></ElFormItem>
         <ElFormItem label="仓库地址"><ElInput v-model="warehouseForm.address" /></ElFormItem>
@@ -257,12 +252,12 @@ defineExpose({ open })
         <ElFormItem label="状态"><ElRadioGroup v-model="warehouseForm.status"><ElRadio value="ACTIVE">正常</ElRadio><ElRadio value="DISABLED">停用</ElRadio></ElRadioGroup></ElFormItem>
       </template>
       <template v-else-if="editKind === 'zone'">
-        <ElFormItem label="仓库" required><ElSelect v-model="zoneForm.warehouse" filterable><ElOption v-for="item in scopedWarehouses" :key="item.id" :label="`${item.warehouse_number} · ${item.warehouse_name}`" :value="item.id" /></ElSelect></ElFormItem>
+        <ElFormItem label="仓库" required><ElSelect v-model="zoneForm.warehouse" filterable><ElOption v-for="item in scopedWarehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect></ElFormItem>
         <ElFormItem label="库区" required><ElInput v-model="zoneForm.zone_name" /></ElFormItem>
         <ElFormItem label="状态"><ElRadioGroup v-model="zoneForm.status"><ElRadio value="ACTIVE">正常</ElRadio><ElRadio value="DISABLED">停用</ElRadio></ElRadioGroup></ElFormItem>
       </template>
       <template v-else>
-        <ElFormItem label="库区" required><ElSelect v-model="locationForm.zone" filterable><ElOption v-for="item in scopedZones" :key="item.id" :label="`${item.warehouse_number} · ${item.zone_name}`" :value="item.id" /></ElSelect></ElFormItem>
+        <ElFormItem label="库区" required><ElSelect v-model="locationForm.zone" filterable><ElOption v-for="item in scopedZones" :key="item.id" :label="`${item.warehouse_name} · ${item.zone_name}`" :value="item.id" /></ElSelect></ElFormItem>
         <ElFormItem label="库位号" required><ElInput v-model="locationForm.location_number" /></ElFormItem>
         <ElFormItem label="库容（箱位）"><ElInputNumber v-model="locationForm.capacity_box_slots" :min="1" /></ElFormItem>
         <ElFormItem label="状态"><ElRadioGroup v-model="locationForm.status"><ElRadio value="ACTIVE">正常</ElRadio><ElRadio value="DISABLED">停用</ElRadio></ElRadioGroup></ElFormItem>

@@ -12,6 +12,9 @@ class TubeSourceKind(models.TextChoices):
     METAL = 'METAL', '厂内已加工件'
     PUBLIC_CUTTING = 'PUBLIC_CUTTING', '已入库裁片半成品'
     SEWING = 'SEWING', '未入库车缝完成件'
+    CUTTING = 'CUTTING', '车间裁片直发'
+    PUBLIC_PIECE = 'PUBLIC_PIECE', '裁片库存'
+    PUBLIC_PART = 'PUBLIC_PART', '部位半成品库存'
 
 
 class PriceUnit(models.TextChoices):
@@ -59,8 +62,8 @@ class TubeOutsourcingOrder(TimeStampedModel):
             models.CheckConstraint(condition=Q(status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED', 'CANCELLED']),
                                    name='tube_order_saved_status'),
             models.CheckConstraint(condition=Q(version__gt=0), name='tube_order_version_positive'),
-            models.CheckConstraint(condition=(Q(source_kind__in=['METAL', 'SEWING'], zone__isnull=True)
-                | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'], zone__isnull=False)), name='tube_order_zone_shape'),
+            models.CheckConstraint(condition=(Q(source_kind__in=['METAL', 'SEWING', 'CUTTING'], zone__isnull=True)
+                | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'], zone__isnull=False)), name='tube_order_zone_shape'),
         ]
         indexes = [models.Index(fields=['product_line', 'source_kind', 'status'], name='tube_order_quota_idx')]
 
@@ -113,6 +116,34 @@ class TubeOutsourcingLine(TimeStampedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('已保存管材外发明细须保留，不支持直接删除。')
+
+
+class TubeOutsourcingInput(TimeStampedModel):
+    """一次车缝外发实际投入的裁片；数量不换算为产出部位。"""
+    order = models.ForeignKey(TubeOutsourcingOrder, on_delete=models.PROTECT, related_name='inputs')
+    parent_line = models.ForeignKey(TubeOutsourcingLine, on_delete=models.PROTECT, related_name='dispatch_inputs')
+    bom_line = models.ForeignKey('boms.BomLine', on_delete=models.PROTECT, related_name='outsourcing_inputs')
+    component_identity = models.UUIDField()
+    quantity = models.PositiveBigIntegerField()
+    source_kind = models.CharField(max_length=16, choices=[('CUTTING', '车间裁片直发'), ('PUBLIC_PIECE', '裁片库存')])
+    factory = models.ForeignKey('outsourcing.OutsourcingFactory', on_delete=models.PROTECT, related_name='piece_inputs')
+    stock_quantity = models.PositiveBigIntegerField(null=True, blank=True)
+    input_identity = models.JSONField(default=dict)
+    snapshot = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'tube_outsourcing_input'
+        default_permissions = ()
+        ordering = ['order', 'created_at', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['order', 'component_identity'], name='tube_input_component_unique'),
+            models.CheckConstraint(condition=Q(quantity__gt=0, quantity__lte=99999999999999), name='tube_input_quantity_valid'),
+            models.CheckConstraint(condition=(Q(source_kind='CUTTING', stock_quantity__isnull=True)
+                | Q(source_kind='PUBLIC_PIECE', stock_quantity__isnull=False, stock_quantity=models.F('quantity'))), name='tube_input_source_shape'),
+        ]
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('已保存裁片投入须保留，请更正或作废原外发记录。')
 
 
 class TubeOutsourcingAction(TimeStampedModel):
@@ -222,9 +253,10 @@ class TubeOutsourcingReceiptLine(TimeStampedModel):
         constraints = [
             models.CheckConstraint(condition=Q(dispatched_quantity__gt=0,
                 dispatched_quantity__lte=99999999999999, received_quantity__gte=0,
-                received_quantity__lte=models.F('dispatched_quantity')), name='tube_receipt_quantity_valid'),
-            models.CheckConstraint(condition=Q(shortage_quantity=models.F('dispatched_quantity')
-                - models.F('received_quantity')), name='tube_receipt_shortage_valid'),
+                received_quantity__lte=99999999999999), name='tube_receipt_quantity_valid'),
+            models.CheckConstraint(condition=(Q(received_quantity__gte=models.F('dispatched_quantity'), shortage_quantity=0)
+                | Q(received_quantity__lt=models.F('dispatched_quantity'),
+                    shortage_quantity=models.F('dispatched_quantity') - models.F('received_quantity'))), name='tube_receipt_shortage_valid'),
             models.CheckConstraint(condition=Q(shortage_quantity=0) | ~Q(shortage_reason=''),
                                    name='tube_receipt_shortage_reason'),
             models.CheckConstraint(condition=(Q(received_quantity=0, zone__isnull=True, stock_movement__isnull=True)

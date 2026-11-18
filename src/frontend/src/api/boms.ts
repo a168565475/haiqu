@@ -28,11 +28,18 @@ import type {
   VersionedBom,
   TubeCalculationInput,
   TubeCalculationPreview,
+  HardwareWeightInput,
+  HardwareWeightPreview,
 } from '@/types/bom'
 import type { ProductionTaskProductInput } from '@/types/productionTask'
 
 const basePath = '/api/v1/boms/'
 const workbookRequestTimeout = 180_000
+
+export async function previewBomHardwareWeight(payload: HardwareWeightInput): Promise<HardwareWeightPreview> {
+  const { data } = await apiClient.post<DataResponse<HardwareWeightPreview>>(`${basePath}hardware-weight-preview/`, payload)
+  return data.data
+}
 
 export async function previewBomTubeCalculation(payload: TubeCalculationInput): Promise<TubeCalculationPreview> {
   const { data } = await apiClient.post<DataResponse<TubeCalculationPreview>>(`${basePath}tube-calculation-preview/`, payload)
@@ -144,7 +151,12 @@ function writableBomSections(sections: BomSectionInput[]) {
   return sections.map((section) => ({
     ...section,
     lines: section.lines.map((line) => {
-      const { images, draft_images: draftImages, draft_key: draftKey, tube_calculation_preview: tubePreview, ...writableLine } = line
+      const { images, draft_images: draftImages, draft_key: draftKey, tube_calculation_preview: tubePreview,
+        hardware_weight_snapshot: hardwareSnapshot, hardware_weight_preview: hardwarePreview,
+        hardware_weight_saved: hardwareSaved, ...writableLine } = line
+      void hardwareSnapshot
+      void hardwarePreview
+      void hardwareSaved
       void tubePreview
       void images
       void draftKey

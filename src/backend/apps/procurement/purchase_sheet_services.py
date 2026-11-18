@@ -167,6 +167,7 @@ def _sheet_context(sheet):
 
 def _default_content(order, supplier, lines, template_version, sheet_number):
     from .pipe_purchase import pipe_sheet_fields
+    from .hardware_purchase_sheet import hardware_sheet_fields
     config = deepcopy(template_version.content_config) if isinstance(template_version.content_config, dict) else {}
     settlement_mode = config.get("settlement_mode")
     if settlement_mode not in ALLOWED_SETTLEMENT_MODES:
@@ -174,12 +175,15 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
     content_lines = []
     for line in lines:
         pipe_fields = pipe_sheet_fields(line)
-        price_quantity = line.actual_purchase_meters if pipe_fields and line.material_catalog_id else line.actual_purchase_quantity
-        if pipe_fields and settlement_mode == 'ACTUAL_WEIGHT':
-            raise ValidationError({'template_version_id': '管材按米计价，请改选按米模板，不能使用按重量结算模板。'})
+        hardware_fields = hardware_sheet_fields(line)
+        if hardware_fields and settlement_mode == "ACTUAL_WEIGHT":
+            raise ValidationError({"settlement_mode": "铆钉、垫片已按采购重量计价，请选择普通结算模板。"})
+        weight_pipe = pipe_fields.get('measurement_kind') == 'PIPE_WEIGHT'
+        price_quantity = (line.actual_purchase_weight_kg if weight_pipe else line.actual_purchase_meters) if pipe_fields and line.material_catalog_id else line.actual_purchase_quantity
         content_lines.append(
             {
                 **pipe_fields,
+                **hardware_fields,
                 "source_purchase_order_line_id": str(line.pk),
                 "product_name": line.product_name_snapshot,
                 "product_specification": line.product_specification_snapshot,
@@ -191,7 +195,7 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
                 "material_attributes_snapshot": deepcopy(line.material_attributes_snapshot) if isinstance(line.material_attributes_snapshot, dict) else {},
                 **({"material_catalog_id": str(line.material_catalog_id), "material_selection_snapshot": deepcopy(line.material_selection_snapshot)} if line.material_catalog_id else {}),
                 "quantity": format(price_quantity, "f") if price_quantity is not None else "",
-                "unit": "米" if pipe_fields and line.material_catalog_id else line.source_unit_text,
+                "unit": "kg" if weight_pipe else ("米" if pipe_fields and line.material_catalog_id else line.source_unit_text),
                 "unit_price": format(line.unit_price, "f") if line.unit_price is not None else "",
                 "amount": format(line.amount, "f") if line.amount is not None else "",
                 "delivery_date": line.delivery_date.isoformat() if line.delivery_date else "",
@@ -229,7 +233,7 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
         "seal_status": "NOT_UPLOADED",
         "lines": content_lines,
         "total_amount": format(total, "f") if total is not None else None,
-        'schema_version': 2 if any(row.get('measurement_kind') == 'PIPE' for row in content_lines) else 1,
+        'schema_version': 3 if any(row.get('measurement_kind') == 'PIPE_WEIGHT' for row in content_lines) else (2 if any(row.get('measurement_kind') == 'PIPE' for row in content_lines) else 1),
     }
 
 
@@ -440,6 +444,7 @@ def _normalize_party(raw_value, field_name):
 
 def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
     from .pipe_purchase import normalize_pipe_sheet_line
+    from .hardware_purchase_sheet import hardware_sheet_sources, normalize_hardware_sheet_line
     if not isinstance(raw_content, dict):
         raise ValidationError({"content": "采购表内容必须是对象。"})
     current = sheet.content_snapshot if isinstance(sheet.content_snapshot, dict) else {}
@@ -464,15 +469,22 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
     submitted_ids = [str(item.get("source_purchase_order_line_id") or "") for item in submitted_lines if isinstance(item, dict)]
     if len(submitted_ids) != len(submitted_lines) or set(submitted_ids) != set(original_by_id) or len(submitted_ids) != len(set(submitted_ids)):
         raise ValidationError({"lines": "采购明细归属已锁定，不能新增、删除、重复或跨供应商移动。"})
+    hardware_sources = hardware_sheet_sources(sheet, original_by_id)
 
     normalized_lines = []
     amounts = []
     for index, item in enumerate(submitted_lines, start=1):
         source_id = str(item.get("source_purchase_order_line_id"))
         source_line = original_by_id[source_id]
+        hardware_source = hardware_sources.get(source_id, source_line)
+        hardware_fields = normalize_hardware_sheet_line(hardware_source, item, settlement_mode)
+        if source_id in hardware_sources:
+            normalize_hardware_sheet_line(hardware_source, source_line, settlement_mode)
         pipe_fields = normalize_pipe_sheet_line(original_by_id[source_id], item, settlement_mode)
         if pipe_fields:
             item = {**item, **{key: original_by_id[source_id][key] for key in ('quantity', 'unit', 'unit_price')}}
+        elif hardware_fields:
+            item = {**item, **{key: hardware_source[key] for key in ('quantity', 'unit', 'unit_price')}}
         quantity = _decimal(item.get("quantity"), field_name=f"lines.{index}.quantity", allow_null=not for_publish, positive=True)
         unit_price = _decimal(item.get("unit_price"), field_name=f"lines.{index}.unit_price", allow_null=not for_publish)
         amount = None
@@ -488,6 +500,7 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
         normalized_lines.append(
             {
                 **pipe_fields,
+                **hardware_fields,
                 "source_purchase_order_line_id": source_id,
                 "product_name": _string(item.get("product_name"), field_name=f"lines.{index}.product_name", max_length=200),
                 "product_specification": _string(item.get("product_specification"), field_name=f"lines.{index}.product_specification", max_length=300),
@@ -578,7 +591,7 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
         "show_image": bool(raw_content.get("show_image", current.get("show_image", True))),
         "seal_status": "UPLOADED" if hasattr(sheet, "seal_image") else "NOT_UPLOADED",
         "lines": normalized_lines,
-        'schema_version': 2 if any(row.get('measurement_kind') == 'PIPE' for row in normalized_lines) else 1,
+        'schema_version': 3 if any(row.get('measurement_kind') == 'PIPE_WEIGHT' for row in normalized_lines) else (2 if any(row.get('measurement_kind') == 'PIPE' for row in normalized_lines) else 1),
         "total_amount": format(total, "f") if total is not None else None,
     }, total
 

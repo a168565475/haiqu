@@ -8,7 +8,9 @@ from django.db import connection
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.catalog_selection import SECTION_CATEGORIES, apply_catalog_selection
+from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity
 from apps.material_catalog.models import MaterialCatalog
+from apps.material_catalog.public_configuration import can_contribute
 from apps.procurement.pipe_purchase import pipe_meters
 
 
@@ -40,16 +42,26 @@ def resolve_manual_catalog(item, *, request, versions):
     if not title or catalog.category_key == "FABRIC_SEMI":
         raise ValidationError({"material_catalog_id": "该品名不是可手工入库的基础原料。"})
     projection = SimpleNamespace(section=SimpleNamespace(title=title, section_type="PROFILE" if catalog.category_key == "TUBE" else "GENERAL"), raw_values={})
-    apply_catalog_selection(projection, item, old=None, request=request, persist=True, versions=versions)
+    apply_catalog_selection(
+        projection, item, old=None, request=request, persist=True, versions=versions,
+        allow_public_creation=can_contribute(request), selection_permission="inventory.receive_material",
+    )
     selected = projection.material_selection_snapshot
     auxiliary = {}
     bars, length = item.get("received_bar_count"), item.get("raw_bar_length_m")
-    if selected["category_key"] == "TUBE" or bars is not None or length is not None:
+    weight = item.get("received_weight_kg")
+    if selected["category_key"] == "TUBE" or bars is not None or length is not None or weight is not None:
         if selected["category_key"] != "TUBE" or selected["unit_name"] != "根":
-            raise ValidationError({"received_bar_count": "仅按根入库的管材可以填写根米辅助参数。"})
+            raise ValidationError({"received_bar_count": "仅按根入库的管材可以填写根数、原长和实际重量。"})
+        try:
+            weight = decimal_quantity(weight, "received_weight_kg")
+        except MaterialFlowValueError as error:
+            raise ValidationError({"received_weight_kg": "一般管材入库须填写实际重量 KG，且为最多 4 位小数的正数。"}) from error
         _, meters = pipe_meters(bars, length, field="received_bar_count")
         item["received_quantity"] = meters
-        auxiliary = {"received_bar_count": bars, "raw_bar_length_m": str(length), "received_meters": str(meters)}
+        item["received_weight_kg"] = weight
+        auxiliary = {"received_bar_count": bars, "raw_bar_length_m": str(length), "received_meters": str(meters),
+                     "measurement_unit": "kg", "received_weight_kg": format(weight, ".4f")}
     quantity = item.get("received_quantity")
     if quantity is None or quantity <= 0:
         raise ValidationError({"received_quantity": "请填写所选单位下的实际到货数量。"})

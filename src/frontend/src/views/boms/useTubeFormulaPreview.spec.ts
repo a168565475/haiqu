@@ -26,6 +26,7 @@ describe('管材公式预览', () => {
     expect(await state.calculate()).toBe(true)
     expect(draft.value.coating_unit_area_sqm).toBe('0.0314')
     expect(draft.value.purchase_unit_weight_kg).toBe('0.2343')
+    expect(draft.value.long_material_unit_weight_kg).toBe('2.3663')
     expect(draft.value.recalculate_tube_metrics).toBe(true)
     expect(draft.value.expected_tube_formula_version).toBe(result.formula_version)
     draft.value.unit_consumption = '20'
@@ -59,9 +60,11 @@ describe('管材公式预览', () => {
     expect(draft.value.recalculate_tube_metrics).toBe(false)
     draft.value.coating_unit_area_sqm = '0.1234'
     draft.value.purchase_unit_weight_kg = '0.5678'
+    draft.value.long_material_unit_weight_kg = '2.5'
     expect(await state.calculate()).toBe(true)
     expect(previewBomTubeCalculation).toHaveBeenCalledTimes(1)
     expect(draft.value.purchase_unit_weight_kg).toBe('0.5678')
+    expect(draft.value.long_material_unit_weight_kg).toBe('2.5')
     active.value = false
     await flushPromises()
     expect(state.loading.value).toBe(false)
@@ -74,15 +77,19 @@ describe('管材公式预览', () => {
     draft.value.manual_tube_metrics = true
     draft.value.coating_unit_area_sqm = '0.12'
     draft.value.purchase_unit_weight_kg = '0.34'
+    draft.value.long_material_unit_weight_kg = '2.5'
     active.value = true
     expect(await state.calculate()).toBe(true)
     expect(draft.value.purchase_unit_weight_kg).toBe('0.34')
+    expect(draft.value.long_material_unit_weight_kg).toBe('2.5')
     vi.mocked(previewBomTubeCalculation).mockResolvedValueOnce(result)
     draft.value.length_value = '501'
+    expect(draft.value.long_material_unit_weight_kg).toBe('')
     expect(await state.calculate()).toBe(true)
     expect(state.readonly.value).toBe(true)
     expect(draft.value.manual_tube_metrics).toBe(false)
     expect(draft.value.purchase_unit_weight_kg).toBe(result.purchase_unit_weight_kg)
+    expect(draft.value.long_material_unit_weight_kg).toBe(result.long_material_unit_weight_kg)
   })
 
   it('未配置的历史管型保留手填能力，不用其他形状的公式', async () => {
@@ -90,10 +97,83 @@ describe('管材公式预览', () => {
     draft.value.tube_shape = 'D形管'
     draft.value.coating_unit_area_sqm = '0.8'
     draft.value.purchase_unit_weight_kg = '0.9'
+    draft.value.long_material_unit_weight_kg = '6.5'
     expect(await state.calculate()).toBe(true)
     expect(state.supported.value).toBe(false)
+    expect(draft.value.long_material_unit_weight_kg).toBe('6.5')
+    expect(state.readonly.value).toBe(false)
     expect(draft.value.purchase_unit_weight_kg).toBe('0.9')
     expect(draft.value.recalculate_tube_metrics).toBe(false)
     expect(previewBomTubeCalculation).not.toHaveBeenCalled()
+  })
+
+  it('未配置管型手填长料重重开保留，参数变化时清空旧单重', async () => {
+    const { draft, active, state } = setup()
+    draft.value.tube_shape = 'D形管'
+    draft.value.long_material_unit_weight_kg = '6.5'
+    active.value = false
+    active.value = true
+    expect(draft.value.long_material_unit_weight_kg).toBe('6.5')
+    expect(state.readonly.value).toBe(false)
+    expect(await state.calculate()).toBe(true)
+    draft.value.length_value = '550'
+    expect(draft.value.long_material_unit_weight_kg).toBe('')
+    expect(previewBomTubeCalculation).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['material', '铝'], ['material_catalog_id', 'new-pipe'], ['source_raw_material_id', 'new-raw'],
+    ['source_inventory_material_id', 'new-stock'],
+  ] as const)('同规格修改%s后旧手填长料单重失效，不重试自动公式', async (field, value) => {
+    vi.mocked(previewBomTubeCalculation).mockRejectedValue(new Error('400'))
+    const { draft, state } = setup()
+    await state.calculate()
+    draft.value.long_material_unit_weight_kg = '2.5'
+    draft.value.purchase_unit_weight_kg = '0.4'
+    draft.value[field] = value
+    expect(draft.value.long_material_unit_weight_kg).toBe('')
+    expect(draft.value.purchase_unit_weight_kg).toBe('0.4')
+    expect(await state.calculate()).toBe(true)
+    expect(previewBomTubeCalculation).toHaveBeenCalledTimes(1)
+  })
+
+  it('修改原表长料长度会按新长度重新请求公式', async () => {
+    vi.mocked(previewBomTubeCalculation).mockResolvedValue(result)
+    const { draft, state } = setup()
+    await state.calculate()
+    draft.value.source_raw_bar_length_m = '6.305'
+    expect(draft.value.long_material_unit_weight_kg).toBe('')
+    await state.calculate()
+    expect(previewBomTubeCalculation).toHaveBeenCalledTimes(2)
+    expect(previewBomTubeCalculation).toHaveBeenLastCalledWith(expect.objectContaining({ source_raw_bar_length_m: '6.305' }))
+    expect(draft.value.long_material_unit_weight_kg).toBe(result.long_material_unit_weight_kg)
+  })
+
+  it('只改数量或重开保留手填长料单重，D形换料也会清空', async () => {
+    const { draft, active, state } = setup()
+    draft.value.tube_shape = 'D形管'
+    draft.value.long_material_unit_weight_kg = '2.5'
+    draft.value.unit_consumption = '9'
+    draft.value.source_order_quantity = '200'
+    expect(draft.value.long_material_unit_weight_kg).toBe('2.5')
+    active.value = false
+    active.value = true
+    expect(draft.value.long_material_unit_weight_kg).toBe('2.5')
+    draft.value.material_catalog_id = 'new-pipe'
+    expect(draft.value.long_material_unit_weight_kg).toBe('')
+    expect(await state.calculate()).toBe(true)
+    expect(previewBomTubeCalculation).not.toHaveBeenCalled()
+  })
+
+  it('自动公式模式换料不改变已取得的公式结果或请求契约', async () => {
+    vi.mocked(previewBomTubeCalculation).mockResolvedValue(result)
+    const { draft, state } = setup()
+    await state.calculate()
+    draft.value.material = '铝'
+    draft.value.material_catalog_id = 'new-pipe'
+    expect(draft.value.long_material_unit_weight_kg).toBe(result.long_material_unit_weight_kg)
+    expect(await state.calculate()).toBe(true)
+    expect(previewBomTubeCalculation).toHaveBeenCalledTimes(1)
+    expect(previewBomTubeCalculation).toHaveBeenCalledWith({ tube_shape: '圆管', tube_diameter: '20', tube_thickness: '1', length_value: '500', tube_cut_piece_count: '10' })
   })
 })

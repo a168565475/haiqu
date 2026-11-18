@@ -41,10 +41,10 @@ function makeReceipt(payload: TubeReceiptInput): TubeReceipt {
   const sent = order.lines.reduce((sum, line) => sum + Number(line.quantity), 0), received = payload.lines.reduce((sum, line) => sum + Number(line.received_quantity), 0)
   return { id: 'receipt-1', receipt_number: 'PSRK-real', order_id: 'order-1', order_number: order.order_number, status: 'COMPLETED', source_kind: order.source_kind, source_label: order.source_label,
     client_request_id: payload.client_request_id, receipt_date: payload.receipt_date, warehouse_id: payload.warehouse_id, warehouse_name: payload.warehouse_id ? '半成品管材仓' : '', confirmed_at: '2026-09-30T10:00:00+08:00',
-    actor_name: '真实收货经办人', remark: payload.remark, total_dispatched_quantity: String(sent), total_received_quantity: String(received), total_shortage_quantity: String(sent - received), etag: '"order-1:v3"', created: true,
+    actor_name: '真实收货经办人', remark: payload.remark, total_dispatched_quantity: String(sent), total_received_quantity: String(received), total_shortage_quantity: String(payload.lines.reduce((sum, line) => sum + Math.max(Number((order.lines.find(item => item.id === line.order_line_id) || order.lines[0]!).quantity) - Number(line.received_quantity), 0), 0)), etag: '"order-1:v3"', created: true,
     lines: payload.lines.map(line => { const original = order.lines.find(item => item.id === line.order_line_id) || order.lines[0]!; return { ...original,
       id: `receipt-${line.order_line_id}`, order_line_id: line.order_line_id, dispatched_quantity: original.quantity, received_quantity: line.received_quantity,
-      shortage_quantity: String(Number(original.quantity) - Number(line.received_quantity)), shortage_reason: line.shortage_reason,
+      shortage_quantity: String(Math.max(Number(original.quantity) - Number(line.received_quantity), 0)), shortage_reason: line.shortage_reason,
       zone_id: line.zone_id, zone_name: line.zone_id ? 'A区' : '', stock_movement_id: Number(line.received_quantity) > 0 ? `movement-${line.order_line_id}` : null } }) }
 }
 function savedRequest(): TubeReceiptPending { return { order_id: 'order-1', etag: order.etag, payload: { client_request_id: 'existing-uuid', receipt_date: base.today, warehouse_id: null, remark: '', lines: [{ order_line_id: 'line-1', received_quantity: '0', shortage_reason: '未收到', zone_id: null }] } } }
@@ -232,9 +232,15 @@ describe('D3整单喷塑回货', () => {
     expect(vm.rows).toHaveLength(2); expect(vm.rows.every(row => row.received === '0')).toBe(true); expect(vm.isEnded).toBe(true)
     expect(ElMessage.success).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('未增加库存') }))
   })
-  it.each(['-1', '0.5', 'abc', '21', '9007199254740992'])('无效实收%s只气泡拦截并保留填写内容', async value => {
+  it.each(['-1', '0.5', 'abc', '100000000000000', '9007199254740992'])('无效实收%s只气泡拦截并保留填写内容', async value => {
     const { vm } = await mountPage(); receive(vm, value); await vm.finishReceipt()
     expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); expect(vm.rows[0]!.received).toBe(value); expect(ElMessage.warning).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('整数') }))
+  })
+  it('旧单次回货允许实发20实收10001，少回数量为0且不要求少回原因', async () => {
+    const { vm } = await mountPage(); receive(vm, '10001'); vm.rows[0]!.reason = ''
+    await vm.finishReceipt()
+    expect(api.confirmTubeReceipt).toHaveBeenCalledWith('order-1', expect.objectContaining({ lines: [{ order_line_id: 'line-1', received_quantity: '10001', shortage_reason: '', zone_id: 'zone-1' }] }), order.etag)
+    expect(vm.isEnded).toBe(true)
   })
   it('少回原因去空白保存，正数库区必须属于所选目标仓库', async () => {
     const { vm } = await mountPage(); receive(vm, '18'); vm.rows[0]!.zone = 'zone-2'

@@ -609,6 +609,121 @@ const PopoverStub = defineComponent({
   },
 })
 
+describe('BOM 部位裁片品名与公共属性', () => {
+  const componentCatalog: MaterialCatalog = { ...catalog, id: 'part', name: '椅面', category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', values: [], units: [] }
+  beforeEach(() => {
+    api.options.mockResolvedValue({ categories: [{ key: 'FABRIC_SEMI', templates: [{ key: 'FABRIC_SEMI', fields: [
+      { key: 'material', label: '材质', kind: 'text' }, { key: 'color', label: '颜色', kind: 'text' },
+      { key: 'size', label: '加工后尺寸', kind: 'dimension' }, { key: 'specification', label: '规格描述', kind: 'text' },
+      { key: 'fabric_spec', label: '面料规格', kind: 'text' }, { key: 'width', label: '门幅', kind: 'text' },
+      { key: 'model', label: '款号', kind: 'text' }, { key: 'process', label: '做法', kind: 'text' },
+      { key: 'unit', label: '可用单位', kind: 'unit' },
+    ] }] }] })
+    api.list.mockResolvedValue({ data: [componentCatalog], meta: { total_pages: 1 } })
+    api.detail.mockResolvedValue({ data: componentCatalog, etag: 'v2' })
+    api.publicOptions.mockResolvedValue({ category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', scope: 'BASE', fields: [],
+      values: [
+        { id: 'color', scope: 'BASE', field_key: 'color', value: '公共蓝色', parent_id: null },
+        { id: 'size', scope: 'BASE', field_key: 'size', value: '50×60cm', parent_id: null },
+        { id: 'material', scope: 'BASE', field_key: 'material', value: '公共涤纶', parent_id: null },
+        { id: 'model', scope: 'BASE', field_key: 'model', value: '款号 A', parent_id: null },
+        { id: 'process', scope: 'BASE', field_key: 'process', value: '双线', parent_id: null },
+      ], units: [{ id: 'set', unit_name: '套' }] })
+  })
+  it.each(['SEWN_PART', 'CUT_PIECE'] as const)('%s 在原属性弹层选择公共值，尺寸与 BOM 单位按类型保存', async kind => {
+    const line = reactive({ ...blankLine(kind === 'SEWN_PART' ? '个' : '套'), component_kind: kind,
+      specification: '独立尺寸', parent_part_id: kind === 'CUT_PIECE' ? 'parent' : null,
+      fabric_source_line_id: kind === 'CUT_PIECE' ? 'fabric' : null, notes: '原备注' })
+    const wrapper = mount(MaterialSelectionPanel, { props: { line, sectionTitle: '裁剪明细', presentation: 'dropdown', componentReference: true, showLabel: false },
+      global: { stubs: { ElPopover: PopoverStub } } })
+    await flushPromises()
+    await wrapper.get('.material-name-trigger').trigger('click')
+    await wrapper.get('.name-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('legend').map(item => item.text())).toEqual(['规格', '加工后尺寸', '款号', '做法'])
+    expect(wrapper.find('.craft-field').exists()).toBe(false)
+    await choose(wrapper, '50×60cm')
+    expect(line.specification).toBe(kind === 'SEWN_PART' ? '50×60cm' : '独立尺寸')
+    await choose(wrapper, '款号 A')
+    line.specification = '修改后的实际尺寸'
+    await choose(wrapper, '双线')
+    const vm = wrapper.vm as unknown as { choose: (key: string, value: string) => void }
+    vm.choose('color', '公共蓝色')
+    vm.choose('material', '公共涤纶')
+    expect(line.specification).toBe('修改后的实际尺寸')
+    expect(line.material_selection).toEqual({ catalog_version: componentCatalog.updated_at, scope: 'BASE', processing_state: 'PROCESSED',
+      attributes: { size: '50×60cm', model: '款号 A', process: '双线' }, unit_name: kind === 'SEWN_PART' ? '个' : '套' })
+    expect(line.fabric_source_line_id).toBe(kind === 'CUT_PIECE' ? 'fabric' : null)
+    expect(line.parent_part_id).toBe(kind === 'CUT_PIECE' ? 'parent' : null)
+    expect(line.notes).toBe('原备注')
+    await wrapper.get('.material-name-trigger').trigger('click')
+    expect(wrapper.text()).toBe('椅面')
+    expect(wrapper.get('.material-name-trigger').attributes('title')).toContain('双线')
+    expect(wrapper.get('.material-name-trigger').attributes('title')).not.toContain('公共蓝色')
+    expect(wrapper.get('.material-name-trigger').attributes('title')).toContain('50×60cm')
+    wrapper.unmount()
+  })
+  it('重开旧引用不清洗快照，旧布料属性不冒充来源；显式改独立属性才只提交自身属性', async () => {
+    const line = reactive({ ...blankLine('个'), component_kind: 'SEWN_PART' as const, material_catalog_id: 'part', part_name: '椅面', specification: '手填尺寸' })
+    line.material_selection_snapshot = { selection_kind: 'BOM_COMPONENT_REFERENCE', catalog_id: 'part', catalog_version: 'v1', name: '椅面',
+      processing_state: 'PROCESSED', scope: 'BASE', attributes: { material: '错误自身材质', color: '错误自身颜色', fabric_spec: '错误自身布规格', width: '错误自身门幅', size: '旧尺寸' }, unit_name: '个' } as never
+    const snapshot = JSON.stringify(line.material_selection_snapshot)
+    const wrapper = mount(MaterialSelectionPanel, { props: { line, sectionTitle: '裁剪明细', presentation: 'dropdown', componentReference: true },
+      global: { stubs: { ElPopover: PopoverStub } } })
+    await flushPromises()
+    await wrapper.get('.material-name-trigger').trigger('click')
+    expect(wrapper.text()).toContain('旧尺寸（已保存值）')
+    expect(wrapper.text()).not.toContain('错误自身')
+    expect(wrapper.get('.material-name-trigger').attributes('title')).not.toContain('错误自身')
+    expect(line.material_selection).toBeUndefined()
+    expect(JSON.stringify(line.material_selection_snapshot)).toBe(snapshot)
+    await choose(wrapper, '双线')
+    expect(line.material_selection?.attributes).toEqual({ size: '旧尺寸', process: '双线' })
+    expect(line.specification).toBe('手填尺寸')
+    expect(JSON.stringify(line.material_selection_snapshot)).toBe(snapshot)
+    wrapper.unmount()
+  })
+  it('公共属性读取失败不更换品名或来源，重试成功后可选择', async () => {
+    api.publicOptions.mockRejectedValueOnce(new Error('公共属性读取失败'))
+    const line = reactive({ ...blankLine('片'), component_kind: 'CUT_PIECE' as const, part_name: '原裁片', specification: '20×30cm', fabric_source_line_id: 'fabric' })
+    const wrapper = mount(MaterialSelectionPanel, { props: { line, sectionTitle: '裁剪明细', componentReference: true } })
+    await flushPromises()
+    await wrapper.get('.name-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('公共属性读取失败')
+    expect(line.material_catalog_id).toBeFalsy()
+    expect(line).toMatchObject({ part_name: '原裁片', specification: '20×30cm', fabric_source_line_id: 'fabric' })
+    await wrapper.get('.name-option').trigger('click')
+    await flushPromises()
+    expect(line.material_catalog_id).toBe('part')
+    wrapper.unmount()
+  })
+  it('部位规格合并本品名 BASE 和公共候选去重，规格置首，空属性不占位', async () => {
+    api.detail.mockResolvedValue({ data: { ...componentCatalog, values: [
+      { id: 'local-spec', scope: 'BASE', field_key: 'specification', value: '190D', parent_id: null },
+      { id: 'local-only', scope: 'BASE', field_key: 'specification', value: '300D', parent_id: null },
+      { id: 'wrong-scope', scope: 'SPRAY', field_key: 'specification', value: '不应出现', parent_id: null },
+      { id: 'source-only', scope: 'BASE', field_key: 'material', value: '不应显示材质', parent_id: null },
+      { id: 'placeholder', scope: 'BASE', field_key: 'size', value: '/', parent_id: null },
+    ] }, etag: 'v2' })
+    api.publicOptions.mockResolvedValue({ category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', scope: 'BASE', fields: [], units: [], values: [
+      { id: 'same', scope: 'BASE', field_key: 'specification', value: '190D', parent_id: null },
+      { id: 'public', scope: 'BASE', field_key: 'specification', value: '公共规格', parent_id: null },
+    ] })
+    const line = reactive({ ...blankLine('套'), component_kind: 'SEWN_PART' as const, fabric_source_line_id: 'face-fabric', specification: '' })
+    const wrapper = mount(MaterialSelectionPanel, { props: { line, sectionTitle: '裁剪明细', componentReference: true } })
+    await flushPromises()
+    await wrapper.get('.name-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('legend').map(item => item.text())).toEqual(['规格'])
+    expect(wrapper.findAll('.attribute-value').map(item => item.text())).toEqual(['190D', '300D', '公共规格'])
+    await choose(wrapper, '300D')
+    expect(line).toMatchObject({ specification: '300D', unit: '套', fabric_source_line_id: 'face-fabric' })
+    expect(line.material_selection?.attributes).toEqual({ specification: '300D' })
+    wrapper.unmount()
+  })
+})
+
 describe('BOM下拉只选公共已有值', () => {
   it('仅BOM管材下拉隐藏基础长度，样品面板及历史长度保留', async () => {
     api.options.mockResolvedValue({ categories: [{ key: 'TUBE', templates: [{ key: 'TUBE', fields: [

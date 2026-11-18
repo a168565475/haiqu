@@ -36,7 +36,7 @@ class PlanConcurrencyTests(PlanApiFixture, TransactionTestCase):
     def test_same_request_and_competing_new_requests_never_double_receive(self):
         order = self.plan()
         order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='200'))
-        payload = self.receipt_payload(order, '100')
+        payload = self.receipt_payload(order, '1000')
         outcomes = self.concurrent_receipts(order, [payload, payload])
         self.assertEqual(sorted(status for status, _ in outcomes), [200, 200], outcomes)
         self.assertEqual(TubePlanReceipt.objects.count(), 1)
@@ -44,4 +44,4 @@ class PlanConcurrencyTests(PlanApiFixture, TransactionTestCase):
         outcomes = self.concurrent_receipts(order, [self.receipt_payload(order, '80'), self.receipt_payload(order, '80')])
         self.assertEqual(sorted(status for status, _ in outcomes), [200, 412], outcomes)
         self.assertEqual(TubePlanReceipt.objects.count(), 2)
-        self.assertEqual(TubePlanReceiptLine.objects.aggregate(total=Sum('received_quantity'))['total'], 180)
+        self.assertEqual(TubePlanReceiptLine.objects.aggregate(total=Sum('received_quantity'))['total'], 1080)

@@ -70,7 +70,8 @@ describe('管材 BOM 换算', () => {
     for (const value of ['-1', '101', 'NaN', 'Infinity', '1.00001']) {
       expect(pipePlanForBomLine({ ...input, source_purchase_allowance_percent: value }, '1000')).toBeNull()
     }
-    for (const value of ['0', '-1', 'NaN', '3.101', '2.99', '10000000000000000']) {
+    expect(pipePlanForBomLine({ ...input, source_raw_bar_length_m: '3.101' }, '1000')).toMatchObject({ tube_cut_length_m: '3.101', suggested_purchase_meters: '1035.734' })
+    for (const value of ['0', '-1', 'NaN', '3.1011', '2.99', '10000000000000000']) {
       expect(pipePlanForBomLine({ ...input, source_raw_bar_length_m: value }, '1000')).toBeNull()
     }
   })

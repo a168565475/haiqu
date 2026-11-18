@@ -18,6 +18,7 @@ from apps.reference_data.models import (
     FabricWidth,
     ProductColor,
     ProductItemType,
+    ProductionUnit,
     ReferenceStatus,
 )
 from apps.reference_data.pinyin_search import build_pinyin_search
@@ -44,6 +45,7 @@ FIXED_BOM_SECTIONS = (
 
 
 class BomLineSerializer(serializers.ModelSerializer):
+    parent_part_id = serializers.UUIDField(read_only=True, allow_null=True)
     material_catalog_id = serializers.UUIDField(read_only=True, allow_null=True)
     fabric_source_line_id = serializers.UUIDField(read_only=True, allow_null=True)
     tube_shape = serializers.SerializerMethodField()
@@ -70,6 +72,9 @@ class BomLineSerializer(serializers.ModelSerializer):
     hardware_color = serializers.SerializerMethodField()
     hardware_flow_unit = serializers.SerializerMethodField()
     unit_material_weight_kg = serializers.SerializerMethodField()
+    hardware_weight_mode = serializers.CharField(source="raw_values.hardware_weight_mode", default=None, read_only=True, allow_null=True)
+    hardware_weight_input = serializers.JSONField(source="raw_values.hardware_weight_input", default=None, read_only=True, allow_null=True)
+    hardware_weight_snapshot = serializers.JSONField(source="raw_values.hardware_weight_snapshot", default=None, read_only=True, allow_null=True)
     powder_coating_color = serializers.SerializerMethodField()
     powder_coating_unit_area_sqm = serializers.SerializerMethodField()
     plastic_material_number = serializers.SerializerMethodField()
@@ -410,6 +415,7 @@ class BomLineSerializer(serializers.ModelSerializer):
             "id",
             "material_catalog_id", "material_selection_snapshot", "material_quantity",
             "component_identity", "cutting_length_mm", "pieces_per_product", "pieces_per_bar",
+            "component_kind", "parent_part_id", "pieces_per_part", "parts_per_product",
             "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters",
             "fabric_source_line_id", "fabric_meters_per_set",
             "cutting_pieces_per_set", "fabric_meters_per_piece", "cutting_sets_per_product",
@@ -460,6 +466,9 @@ class BomLineSerializer(serializers.ModelSerializer):
             "hardware_color",
             "hardware_flow_unit",
             "unit_material_weight_kg",
+            "hardware_weight_mode",
+            "hardware_weight_input",
+            "hardware_weight_snapshot",
             "powder_coating_color",
             "powder_coating_unit_area_sqm",
             "plastic_material_number",
@@ -654,7 +663,14 @@ class BomProductColorOptionSerializer(serializers.ModelSerializer):
         fields = ["id", "color_card", "color_code", "color_name"]
 
 
+class BomComponentUnitOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductionUnit
+        fields = ["id", "unit_name", "unit_code"]
+
+
 class BomEditorReferenceOptionsDataSerializer(serializers.Serializer):
+    component_units = BomComponentUnitOptionSerializer(many=True)
     auxiliary_products = BomAuxiliaryProductOptionSerializer(many=True)
     accessory_materials = BomAccessoryMaterialOptionSerializer(many=True)
     fabric_materials = BomFabricMaterialOptionSerializer(many=True)
@@ -859,6 +875,7 @@ class BomDetailSerializer(BomListSerializer):
     sections = BomSectionSerializer(many=True, read_only=True)
     copied_from_number = serializers.CharField(source="copied_from.bom_number", read_only=True, allow_null=True)
     configured_field_labels = serializers.SerializerMethodField()
+    component_structure = serializers.SerializerMethodField()
     production_task_id = serializers.UUIDField(read_only=True)
     production_task_product_id = serializers.UUIDField(source="product_line.id", read_only=True)
     production_task_product_master_id = serializers.UUIDField(source="product_line.product_id", read_only=True, allow_null=True)
@@ -876,6 +893,7 @@ class BomDetailSerializer(BomListSerializer):
             "maintenance_unmatched_values",
             "copied_from_number",
             "configured_field_labels",
+            "component_structure",
             "sections",
             "production_task_id",
             "production_task_product_id",
@@ -890,6 +908,10 @@ class BomDetailSerializer(BomListSerializer):
 
     def get_configured_field_labels(self, _obj) -> list[str]:
         return CONFIGURED_FIELD_LABELS
+
+    def get_component_structure(self, obj) -> dict:
+        from ..component_structure import component_structure_data
+        return component_structure_data(obj)
 
     def get_product_information_confirmed(self, obj) -> bool:
         return bool(obj.product_information_confirmed_at and (is_product_entry_snapshot(obj.product_selection_snapshot) or obj.product_catalog_id or (obj.product_id and obj.product_color_id)))
@@ -1001,7 +1023,7 @@ class BomCatalogSelectionSerializer(serializers.Serializer):
     catalog_version = serializers.CharField(max_length=100)
     scope = serializers.ChoiceField(choices=("BASE", "SPRAY"))
     processing_state = serializers.ChoiceField(choices=("RAW", "PROCESSED"))
-    attributes = serializers.DictField(child=serializers.CharField(max_length=300), allow_empty=False)
+    attributes = serializers.DictField(child=serializers.CharField(max_length=300), allow_empty=True)
     product_color_id = serializers.UUIDField(required=False, allow_null=True)
     color_card = serializers.CharField(required=False, allow_blank=True, max_length=100)
     color_code = serializers.CharField(required=False, allow_blank=True, max_length=100)
@@ -1025,7 +1047,34 @@ class BomCatalogSelectionSerializer(serializers.Serializer):
         return attrs
 
 
+class BomHardwareWeightInputSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("RIVET_GB873_STEEL", "PLAIN_WASHER"))
+    material = serializers.CharField(required=False, allow_blank=True, max_length=150, default="")
+    specification = serializers.CharField(required=False, allow_blank=True, max_length=300, default="")
+    diameter_mm = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    length_mm = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    outer_diameter_mm = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    inner_diameter_mm = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    thickness_mm = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    density_g_cm3 = serializers.CharField(required=False, allow_blank=True, max_length=100)
+
+
+class BomHardwareWeightResultSerializer(serializers.Serializer):
+    unit_material_weight_kg = serializers.CharField()
+    unit_weight_g = serializers.CharField()
+    calculation_snapshot = serializers.JSONField()
+
+
+class BomHardwareWeightResponseSerializer(serializers.Serializer):
+    data = BomHardwareWeightResultSerializer()
+
+
 class BomLineWriteSerializer(serializers.Serializer):
+    component_kind = serializers.ChoiceField(choices=("", "CUT_PIECE", "SEWN_PART"), required=False, allow_blank=True)
+    parent_part_id = serializers.UUIDField(required=False, allow_null=True)
+    parent_part_client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
+    pieces_per_part = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
+    parts_per_product = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
     material_catalog_id = serializers.UUIDField(required=False, allow_null=True)
     material_selection = BomCatalogSelectionSerializer(required=False, write_only=True)
     material_quantity = serializers.DecimalField(required=False, allow_null=True, max_digits=22, decimal_places=4, min_value=Decimal("0.0001"))
@@ -1057,6 +1106,7 @@ class BomLineWriteSerializer(serializers.Serializer):
     tube_coating_color = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
     coating_unit_area_sqm = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     purchase_unit_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
+    long_material_unit_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     manual_tube_metrics = serializers.BooleanField(required=False)
     recalculate_tube_metrics = serializers.BooleanField(required=False, write_only=True)
     expected_tube_formula_version = serializers.CharField(required=False, max_length=100, write_only=True)
@@ -1080,6 +1130,8 @@ class BomLineWriteSerializer(serializers.Serializer):
     hardware_color = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
     hardware_flow_unit = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     unit_material_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
+    hardware_weight_mode = serializers.ChoiceField(choices=("AUTO", "MANUAL"), required=False, allow_null=True)
+    hardware_weight_input = BomHardwareWeightInputSerializer(required=False, allow_null=True)
     powder_coating_color = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
     powder_coating_unit_area_sqm = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     plastic_material_number = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
@@ -1116,6 +1168,10 @@ class BomLineWriteSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        # 旧行详情中的空计算元数据往返提交时等同于未提供，不改变原有重量模式。
+        for field in ("hardware_weight_mode", "hardware_weight_input"):
+            if attrs.get(field) is None:
+                attrs.pop(field, None)
         if attrs.get("purchase_allowance_mode") == "MANUAL" and not attrs.get("purchase_allowance_rule"):
             raise serializers.ValidationError({"purchase_allowance_rule": "手动采购余量必须选择有效选项。"})
         if attrs.get("purchase_allowance_rule") and not attrs.get("purchase_allowance_mode"):
@@ -1127,6 +1183,8 @@ class BomLineWriteSerializer(serializers.Serializer):
             raise serializers.ValidationError("待新增原料不能同时指定已存在的库存来源。")
         if attrs.get("fabric_source_line_id") and attrs.get("fabric_source_client_key"):
             raise serializers.ValidationError("来源面料不能同时指定已保存行和未保存行。")
+        if attrs.get("parent_part_id") and attrs.get("parent_part_client_key"):
+            raise serializers.ValidationError("所属部位不能同时指定已保存行和未保存行。")
         return attrs
 
     @staticmethod
@@ -1159,9 +1217,9 @@ class BomLineWriteSerializer(serializers.Serializer):
     def validate_source_raw_bar_length_m(self, value):
         if value == "":
             return value
-        from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity
+        from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_meters_text
         try:
-            return format(decimal_quantity(value, "source_raw_bar_length_m", places=2), ".2f")
+            return pipe_meters_text(decimal_quantity(value, "source_raw_bar_length_m", places=3, max_digits=19))
         except MaterialFlowValueError as error:
             raise serializers.ValidationError(str(error)) from error
 
@@ -1174,13 +1232,12 @@ class BomLineWriteSerializer(serializers.Serializer):
     def validate_units_per_box(self, value):
         if value == "":
             return value
+        from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity
         try:
-            parsed = Decimal(value)
-        except (InvalidOperation, ValueError) as exc:
-            raise serializers.ValidationError("用量（多少成品用一份）必须是正整数。") from exc
-        if not parsed.is_finite() or parsed <= 0 or parsed != parsed.to_integral_value():
-            raise serializers.ValidationError("用量（多少成品用一份）必须是正整数。")
-        return format(parsed.to_integral_value(), "f")
+            parsed = decimal_quantity(value, "units_per_box")
+        except MaterialFlowValueError as exc:
+            raise serializers.ValidationError("用量（多少成品用一份）必须是最多 4 位小数的正数。") from exc
+        return format(parsed, "f").rstrip("0").rstrip(".")
 
 
 class BomSectionWriteSerializer(serializers.Serializer):
@@ -1196,6 +1253,7 @@ class BomTubeCalculationPreviewInputSerializer(serializers.Serializer):
     tube_thickness = serializers.CharField(max_length=100)
     length_value = serializers.CharField(max_length=100)
     tube_cut_piece_count = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    source_raw_bar_length_m = serializers.CharField(required=False, allow_blank=True, max_length=100)
 
 
 class BomTubeCalculationPreviewResultSerializer(serializers.Serializer):
@@ -1674,7 +1732,9 @@ class BomUpdateInputSerializer(serializers.Serializer):
         # 旧来源校验只处理旧身份；新身份由保存服务校验目录、版本、权限、属性及工艺。
         # 重复行/图片和固定分区校验已对完整请求执行，行归属仍在保存服务验证。
         sections = [{**section, "lines": [line for line in section["lines"]
-                    if not uses_catalog(line, existing_lines.get(line.get("id")))]} for section in sections]
+                    if not uses_catalog(line, existing_lines.get(line.get("id")))
+                    and not line.get("component_kind", getattr(existing_lines.get(line.get("id")), "component_kind", ""))]}
+                    for section in sections]
         fabric_reference_line_ids = set()
         for section in sections:
             if section["title"].strip() != "面料类":
@@ -1947,7 +2007,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 )
             flow_unit = str(line.get("hardware_flow_unit", "")).strip().upper()
             weight = str(line.get("unit_material_weight_kg", "")).strip()
-            if flow_unit == "KG" and (not weight or Decimal(weight) <= 0):
+            if flow_unit == "KG" and line.get("hardware_weight_mode") != "AUTO" and (not weight or Decimal(weight) <= 0):
                 raise serializers.ValidationError(
                     f"“五金件”第 {line_number} 行按重量流转，请填写大于 0 的单个材料重量（kg）。"
                 )

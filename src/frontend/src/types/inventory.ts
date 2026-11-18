@@ -1,6 +1,75 @@
 export type RecordStatus = 'ACTIVE' | 'DISABLED'
 export type WarehouseType = 'MATERIAL' | 'SEMI_FINISHED' | 'FINISHED' | 'DEFECTIVE'
 
+export type ManualMaterialReceivingLine = {
+  zone_id: string
+  location_id?: string | null
+  received_quantity?: string | number
+  received_bar_count?: string | number
+  received_weight_kg?: string | number
+  raw_bar_length_m?: string | number
+  remark?: string
+} & ({
+  material_catalog_id: string
+  material_selection: import('./materialCatalog').MaterialSelectionInput
+  raw_material_id?: never
+} | {
+  // 兼容浏览器中历史待核对请求；新单使用材料目录选料。
+  raw_material_id: string
+  material_catalog_id?: never
+  material_selection?: never
+})
+
+export interface ManualMaterialReceivingPayload {
+  client_request_id: string
+  inbound_date: string
+  remark: string
+  items: ManualMaterialReceivingLine[]
+}
+
+export type MaterialTransferDirection = 'IN' | 'OUT'
+export interface MaterialTransferLinePayload {
+  material_catalog_id: string
+  material_selection: import('./materialCatalog').MaterialSelectionInput
+  zone_id: string
+  quantity?: string
+  raw_bar_count?: string
+  raw_bar_length_m?: string
+  weight_quantity?: string
+}
+export interface MaterialTransferPayload {
+  client_request_id: string
+  direction: MaterialTransferDirection
+  transfer_date: string
+  remark: string
+  items: MaterialTransferLinePayload[]
+}
+export interface MaterialTransferLineRecord {
+  line_key: string
+  material_catalog_id: string
+  material_selection_snapshot: import('./materialCatalog').MaterialSelectionSnapshot
+  quantity: string
+  raw_bar_length_m: string | null
+  weight_quantity?: string | null
+  zone_id: string
+  direction: MaterialTransferDirection
+  catalog_name: string
+  unit_name: string
+  zone_name: string
+  warehouse_name: string
+}
+export interface MaterialTransferRecord {
+  id: string
+  transfer_number: string
+  direction: MaterialTransferDirection
+  direction_display: string
+  transfer_date: string
+  remark: string
+  operated_by_name: string
+  created_at: string
+  lines: MaterialTransferLineRecord[]
+}
+
 export interface Warehouse {
   id: string; warehouse_number: string; warehouse_name: string; warehouse_type: WarehouseType
   warehouse_type_display: string; address: string; status: RecordStatus; status_display: string
@@ -70,7 +139,7 @@ export interface MaterialInventoryRow {
   balance_id?: string; identity_key?: string
   stock_mode?: 'LEGACY' | 'PUBLIC_V2'; completed_craft?: string; completed_craft_code?: string
   processing_status?: string; processing_status_label?: string; tube_thickness?: string | null; cutting_length_mm?: number | null
-  stock_kind?: 'RAW' | 'SEMI'; measurement_kind?: string; raw_bar_length_m?: string | null; meter_quantity?: string | null
+   stock_kind?: 'RAW' | 'SEMI'; measurement_kind?: string; raw_bar_length_m?: string | null; meter_quantity?: string | null; weight_quantity?: string | null; weight_quantity_kg?: string | null
   inventory_key: string; stock_item_id: string; material_number: string; color: string; section_type: string; section_title: string; category: string
   material: string; part_name: string; specification: string; raw_material: string; unit: string
   inventory_quantity: string
@@ -95,6 +164,8 @@ export interface ProcurementInboundOrder {
   product_summary: ProcurementInboundProductSummary[]
   pending_quality_count: number; confirmed_batch_count: number
   received_quantity: string; return_quantity: string
+  received_weight_quantity: string | null; return_weight_quantity: string | null; weight_unit: boolean; quantity_unit?: string
+  receipt_progress_percent?: string | null
   workflow_status: 'PENDING_RECEIPT' | 'PARTIAL_RECEIVED' | 'PENDING_QUALITY' | 'PENDING_PROCUREMENT_CONFIRMATION' | 'PENDING_RETURN' | 'COMPLETED'
   return_status: 'NONE' | 'QUALITY_GENERATED' | 'PROCUREMENT_CONFIRMED' | 'COMPLETED'
   workflow_status_display: string; updated_at: string
@@ -108,10 +179,11 @@ export interface ManualMaterialOptions {
   materials: ManualMaterialOption[]
 }
 export interface EligibleMaterialLine {
+  measurement_kind?: string; piece_unit?: string; quantity_unit?: string; unit_weight_kg?: string | null
   suggested_warehouse_id?: string | null
   material_catalog_id?: string | null; material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   material_attributes_snapshot?: import('./purchaseOrder').MaterialAttributeSnapshot
-  raw_bar_length_m?: string | null; actual_bar_count?: number | null; remaining_bar_count?: number | null
+   raw_bar_length_m?: string | null; raw_bar_weight_kg?: string | null; actual_bar_count?: number | null; remaining_bar_count?: number | null; weight_unit?: boolean; remaining_weight_kg?: string | null
   id: string; line_number: number; section_type: string; section_title: string; category: string
   material: string; part_name: string; specification: string; raw_material: string; unit: string
   supplier_name: string; purchased_quantity: string; remaining_quantity: string; pinyin_search: string
@@ -125,7 +197,7 @@ export interface SampleMaterialReceivingPayload {
   client_request_id: string
   inbound_date: string
   remark: string
-  items: Array<{ purchase_order_line_id: string; zone_id: string; remark: string }>
+  items: Array<{ purchase_order_line_id: string; zone_id: string; remark: string; received_weight_kg?: string; received_bar_count?: string }>
 }
 
 export interface MaterialFilterOptions extends MaterialReceivingOptions {
@@ -139,12 +211,13 @@ export interface MaterialInventoryOptions {
   production_orders: { id: string; task_number: string; order_number: string }[]
 }
 export interface MaterialInboundLine {
+  piece_unit?: string; quantity_unit?: string; received_piece_count?: string | null; accepted_piece_count?: string | null; return_piece_count?: string | null
   material_catalog_id?: string | null
   material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   calculation_snapshot?: Record<string, unknown>
-  measurement_kind?: string; raw_bar_length_m?: string | null; received_bar_count?: number | null; accepted_bar_count?: number | null; return_bar_count?: number | null
+  measurement_kind?: string; raw_bar_length_m?: string | null; bar_weight_kg?: string | null; received_bar_count?: number | null; accepted_bar_count?: number | null; return_bar_count?: number | null
   id: string; purchase_order_line_id: string | null; raw_material_information_id: string | null; zone_id: string; location_id: string | null
-  received_quantity: string; return_quantity: string; accepted_quantity: string; remark: string; quality_remark: string
+   received_quantity: string; received_weight_kg?: string | null; return_quantity: string; accepted_quantity: string; accepted_weight_kg?: string | null; return_weight_kg?: string | null; remark: string; quality_remark: string
   purchase_order_number_snapshot: string; production_task_number_snapshot: string; sales_order_number_snapshot: string
   supplier_number_snapshot: string; supplier_name_snapshot: string; bom_number_snapshot: string; product_name_snapshot: string
   section_type_snapshot: string; section_title_snapshot: string; category_snapshot: string; material_snapshot: string; part_name_snapshot: string
@@ -163,16 +236,17 @@ export interface MaterialInbound {
 export interface PaginatedMaterialInventory { count: number; results: MaterialInventoryRow[] }
 
 export interface MaterialInventorySummary {
-  measurement_kind?: string; meter_quantity?: string | null
+   measurement_kind?: string; meter_quantity?: string | null; weight_quantity?: string | null; weight_quantity_kg?: string | null
+  available_weight_quantity?: string | null
   stock_item_id: string; material_number: string; material_name: string; category: string; specification: string
   color: string; unit: string; current_quantity: string; available_quantity: string; defective_quantity: string
   cumulative_inbound_quantity: string; cumulative_issued_quantity: string
-  zones: { zone_id: string; warehouse_number: string; warehouse_name: string; zone_name: string; quality: string; quantity: string }[]
+  zones: { zone_id: string; warehouse_number: string; warehouse_name: string; zone_name: string; quality: string; quantity: string; bar_weight_kg?: string | null; weight_quantity?: string | null; weight_quantity_kg?: string | null }[]
 }
 export interface MaterialOrderPurchase {
-  purchase_order_id: string; purchase_order_number: string; production_task_id: string | null
-  production_task_number: string; purchase_quantity: string; actual_inbound_quantity: string
-  pending_inbound_quantity: string; unit: string; can_view_purchase_detail: boolean
+   purchase_order_id: string; purchase_order_number: string; production_task_id: string | null
+  production_task_number: string; purchase_quantity: string; actual_inbound_quantity: string | null
+  pending_inbound_quantity: string | null; weight_quantity_kg?: string | null; weight_unit?: boolean; unit: string; can_view_purchase_detail: boolean
 }
 export interface MaterialOrderIssue {
   material_issue_id: string; issue_number: string; production_task_id: string; production_task_number: string

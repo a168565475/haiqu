@@ -1,6 +1,7 @@
 from decimal import Decimal
 from uuid import uuid4
 
+from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase, APIClient
@@ -9,6 +10,7 @@ from apps.inventory.tests.test_public_stock_services import PublicStockFixture
 from apps.inventory.catalog_stock_identity import build_catalog_stock_identity
 from apps.inventory.models import PublicStockBalance, PublicStockMovement
 from apps.material_catalog.models import MaterialCatalog
+from apps.organizations.models import Employee
 from ..catalog_requirements import catalog_requirement_specs
 from ..models import MaterialIssue, OrderMaterialRequirement
 
@@ -17,6 +19,11 @@ from ..models import MaterialIssue, OrderMaterialRequirement
 class CatalogIssueApiTests(PublicStockFixture, APITestCase):
     def setUp(self):
         super().setUp()
+        reviewer_user = get_user_model().objects.create_user(username="catalog_issue_reviewer")
+        Employee.objects.create(user=reviewer_user, employee_code="CATALOG_ISSUE_REVIEWER", display_name="领料审核员")
+        reviewer_user.user_permissions.set(self.user.user_permissions.all())
+        self.reviewer_client = APIClient()
+        self.reviewer_client.force_authenticate(reviewer_user)
         self.catalog = MaterialCatalog.objects.create(category_key="TUBE", template_key="TUBE", name="领料新管材")
         self.saved = {"schema_version": 1, "catalog_id": str(self.catalog.pk), "catalog_version": self.catalog.updated_at.isoformat(),
             "category_key": "TUBE", "template_key": "TUBE", "name": self.catalog.name, "scope": "BASE", "processing_state": "RAW",
@@ -59,7 +66,7 @@ class CatalogIssueApiTests(PublicStockFixture, APITestCase):
         self.assertEqual(preview.status_code, 200, preview.data)
         self.assertTrue(preview.data["data"]["can_confirm"], preview.data)
         request_id = str(uuid4())
-        confirmed = self.client.post(f"/api/v1/material-issues/{identifier}/confirm-issue/", {"request_id": request_id},
+        confirmed = self.reviewer_client.post(f"/api/v1/material-issues/{identifier}/confirm-issue/", {"request_id": request_id},
             format="json", HTTP_IF_MATCH=submitted["ETag"])
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         return MaterialIssue.objects.get(pk=identifier), request_id

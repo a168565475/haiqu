@@ -42,7 +42,8 @@ describe('生产任务单 API', () => {
     expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/options/', { params: { scope: 'advanced_filters' } })
     mockedGet.mockResolvedValueOnce({ data: { data: { detail_template: [] } } })
     await fetchProductionTaskOptions()
-    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/options/')
+    expect(mockedGet.mock.lastCall?.[0]).toBe('/api/v1/production-tasks/options/')
+    expect(mockedGet.mock.lastCall?.[1]?.params).toBeUndefined()
   })
 
   it('工厂只通过生产权限入口查询可生产来源和产品图', async () => {

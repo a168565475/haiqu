@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({ route: {} as Record<string, any>, push: vi.fn(
 vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: state.push, replace: state.replace }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 'u', is_superuser: false }, hasPermission: (permission: string) => state.permissions.includes(permission), moduleCan: (permission: string) => state.permissions.includes(permission) }) }))
 vi.mock('@/stores/pageTabs', () => ({ usePageTabsStore: () => ({ accountId: 'u', setTabTitle: vi.fn() }) }))
-vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), completePurchaseGroup: vi.fn() }))
+vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), completePurchaseGroup: vi.fn(), deletePurchaseGroup: vi.fn() }))
 vi.mock('@/api/purchaseOrderReadDetail', () => ({ fetchPurchaseOrderReadDetail: vi.fn() }))
 vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSource: vi.fn(), fetchSamplePurchaseOrderSource: vi.fn(), createPurchaseOrder: vi.fn(), fetchPurchaseOrders: vi.fn(), fetchPurchaseOrderFilterOptions: vi.fn(), fetchVersionedPurchaseOrder: vi.fn(), deletePurchaseOrder: vi.fn(), completePurchaseOrder: vi.fn(), fetchPurchaseOrderSupplierOptions: vi.fn(), updatePurchaseOrder: vi.fn(), confirmVersionedPurchaseOrder: vi.fn() }))
 
@@ -45,6 +45,7 @@ const mountDetailWithAttributes = async () => {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(groupsApi.completePurchaseGroup).mockReset()
+  vi.mocked(groupsApi.deletePurchaseGroup).mockReset()
   state.permissions = ['procurement.view_purchaseorder', 'procurement.add_purchaseorder', 'procurement.change_purchaseorder', 'procurement.delete_purchaseorder', 'procurement.submit_purchaseorder']
   state.route = reactive({ name: 'purchase-batch-create', fullPath: '/purchase-groups/group-1/batches/new', params: { groupId: 'group-1', id: 'group-1' }, query: {} })
   vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: groupFixture(), etag: 'parent-v1' })
@@ -131,6 +132,121 @@ describe('采购跟踪来源预选', () => {
     expect(vm.selectedBomId).toBe('bom-1')
     expect(vm.preselectionError).toBe('')
     expect(groupsApi.createPurchaseGroup).not.toHaveBeenCalled()
+  })
+})
+
+describe('删除采购总单与未确认草稿', () => {
+  const deletableGroup = (): PurchaseGroup => ({ ...groupFixture(), deletion: { can_delete: true, blocked_reason: '' },
+    batches: [{ id: 'draft-1', order_number: 'CGDD-DRAFT', batch_number: 1, batch_type: 'NORMAL', status: 'DRAFT', currency_code_snapshot: 'CNY', total_amount: '0' }] })
+  const mountDeletionPage = async (group = deletableGroup()) => {
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
+    wrapper = shallowMount(PurchaseGroupDetailView, { global: { plugins: [ElementPlus], stubs: {
+      ElTooltip: { name: 'ElTooltip', template: '<div><slot /></div>' },
+    } } })
+    await flushPromises()
+    return wrapper.vm as any
+  }
+
+  it('有权限且后端允许时显示入口，缺删除条件或被拦截时不放行', async () => {
+    const vm = await mountDeletionPage(groupFixture())
+    expect(wrapper!.get('[data-testid="purchase-group-delete"]').attributes('disabled')).toBe('true')
+    await vm.removeGroup()
+    expect(groupsApi.fetchVersionedPurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(groupsApi.deletePurchaseGroup).not.toHaveBeenCalled()
+    vm.group.deletion = { can_delete: false, blocked_reason: '已有已确认批次，不能删除。' }
+    await flushPromises(); await vm.removeGroup()
+    expect(vm.deletionBlockedReason).toContain('已确认批次')
+    expect(groupsApi.deletePurchaseGroup).not.toHaveBeenCalled()
+  })
+
+  it('无删除权限不显示按钮也不能通过方法发送请求', async () => {
+    state.permissions = ['procurement.view_purchaseorder']
+    const vm = await mountDeletionPage()
+    expect(wrapper!.find('[data-testid="purchase-group-delete"]').exists()).toBe(false)
+    await vm.removeGroup()
+    expect(groupsApi.fetchVersionedPurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(groupsApi.deletePurchaseGroup).not.toHaveBeenCalled()
+  })
+
+  it('确认前重读总单，取消只保留页面，不发送删除', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
+    const vm = await mountDeletionPage()
+    await vm.removeGroup()
+    expect(groupsApi.fetchVersionedPurchaseGroup).toHaveBeenCalledTimes(2)
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('及其未确认草稿批次'), '删除采购总单', expect.objectContaining({ confirmButtonText: '确认删除', cancelButtonText: '取消' }))
+    expect(groupsApi.deletePurchaseGroup).not.toHaveBeenCalled()
+    expect(vm.group.id).toBe('group-1'); expect(vm.deletionError).toBe(''); expect(state.push).not.toHaveBeenCalled()
+  })
+
+  it('使用重读版本删除一次，成功返回总单列表', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const vm = await mountDeletionPage()
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValueOnce({ data: deletableGroup(), etag: 'parent-v2' })
+    let resolve!: () => void
+    vi.mocked(groupsApi.deletePurchaseGroup).mockReturnValueOnce(new Promise<void>(done => { resolve = done }))
+    const pending = vm.removeGroup(); await flushPromises()
+    await vm.removeGroup(); await vm.load()
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledWith('group-1', 'parent-v2')
+    resolve(); await pending
+    expect(state.push).toHaveBeenCalledWith({ name: 'purchase-orders', query: { view: 'groups' } })
+    expect(vm.group).toBeNull(); expect(vm.deleting).toBe(false)
+  })
+
+  it.each([409, 412])('删除冲突%s重读条件而不自动重试，再点击必须再次确认', async status => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const vm = await mountDeletionPage()
+    vi.mocked(groupsApi.deletePurchaseGroup).mockRejectedValueOnce({ response: { status, data: { error: { message: '总单已有变化。' } } } })
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: deletableGroup(), etag: 'parent-v2' })
+    await vm.removeGroup()
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(vm.group.id).toBe('group-1'); expect(vm.groupEtag).toBe('parent-v2'); expect(vm.deletionError).toContain('重新点击')
+    expect(state.push).not.toHaveBeenCalled(); expect(confirm).toHaveBeenCalledTimes(1)
+    vi.mocked(groupsApi.deletePurchaseGroup).mockResolvedValueOnce(undefined)
+    await vm.removeGroup()
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledTimes(2)
+  })
+
+  it('冲突后出现已确认批次则保留原因并禁止再次删除', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const vm = await mountDeletionPage()
+    vi.mocked(groupsApi.deletePurchaseGroup).mockRejectedValueOnce({ response: { status: 409 } })
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValueOnce({ data: deletableGroup(), etag: 'parent-v2' })
+      .mockResolvedValueOnce({ data: { ...deletableGroup(), deletion: { can_delete: false, blocked_reason: '已有已确认批次，不能删除。' } }, etag: 'parent-v3' })
+    await vm.removeGroup(); await vm.removeGroup()
+    expect(vm.deletionError).toBe('已有已确认批次，不能删除。')
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(state.push).not.toHaveBeenCalled()
+  })
+
+  it.each(['read', 'version', 'delete', 'refresh'])('%s失败保留页面及错误，不假成功或自动删除', async phase => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const vm = await mountDeletionPage()
+    if (phase === 'read') vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockRejectedValueOnce(new Error('读取失败'))
+    if (phase === 'version') vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValueOnce({ data: deletableGroup(), etag: '' })
+    if (phase === 'delete') vi.mocked(groupsApi.deletePurchaseGroup).mockRejectedValueOnce(new Error('删除请求失败'))
+    if (phase === 'refresh') {
+      vi.mocked(groupsApi.deletePurchaseGroup).mockRejectedValueOnce({ response: { status: 412 } })
+      vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValueOnce({ data: deletableGroup(), etag: 'parent-v2' }).mockRejectedValueOnce(new Error('offline'))
+    }
+    await vm.removeGroup()
+    expect(vm.group.id).toBe('group-1'); expect(vm.deletionError).not.toBe(''); expect(vm.groupEtag).toBe('')
+    expect(state.push).not.toHaveBeenCalled(); expect(vm.deleting).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(['read', 'version'].includes(phase) ? 0 : 1)
+    expect(groupsApi.deletePurchaseGroup).toHaveBeenCalledTimes(['read', 'version'].includes(phase) ? 0 : 1)
+  })
+
+  it('切换详情后迟到删除响应不能清空新总单或跳转', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const vm = await mountDeletionPage()
+    let resolve!: () => void
+    vi.mocked(groupsApi.deletePurchaseGroup).mockReturnValueOnce(new Promise<void>(done => { resolve = done }))
+    const pending = vm.removeGroup(); await flushPromises()
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: { ...deletableGroup(), id: 'group-2' }, etag: 'other-v1' })
+    state.route.params.id = 'group-2'; await flushPromises()
+    resolve(); await pending
+    expect(vm.group.id).toBe('group-2'); expect(vm.groupEtag).toBe('other-v1'); expect(state.push).not.toHaveBeenCalled()
   })
 })
 
@@ -319,6 +435,38 @@ describe('采购总单手动完成', () => {
 })
 
 describe('总单与批次页面契约', () => {
+  it.each([
+    ['铆钉', '个', '0.00396000', '4.7520', '1,010'],
+    ['垫片', '片', '0.00101645', '1.2197', '3,935'],
+  ])('%s批次保留重量依据并只显示采购单位kg', async (name, unit, unitWeight, requiredWeight, reference) => {
+    const group = groupFixture()
+    group.progress.lines = [group.progress.lines[0]!]
+    group.progress.line_count = 1
+    const line = group.progress.lines[0]!
+    Object.assign(line, { required_quantity: requiredWeight, source_unit_text: 'KG', purchased_quantity: '0' })
+    Object.assign(line.source_snapshot, {
+      section_title_snapshot: '五金件', category_snapshot: '五金件', material_snapshot: name,
+      part_name_snapshot: name, source_unit_text: 'KG', suggested_purchase_weight_kg: requiredWeight,
+      calculation_snapshot: { measurement_kind: 'HARDWARE_WEIGHT', hardware_quantity_unit: unit, hardware_unit_weight_kg: unitWeight },
+    })
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
+    wrapper = mount(PurchaseOrderFormView, { global: { plugins: [ElementPlus], stubs: { ElDatePicker: true } } })
+    await flushPromises()
+    const input = wrapper.get('input[aria-label="实际采购重量（kg）"]')
+    expect((input.element as HTMLInputElement).value).toBe(String(Number(requiredWeight)))
+    await input.setValue('4')
+    const vm = wrapper.vm as any
+    vm.lines[0].unit_price = '2'
+    await flushPromises()
+    expect(wrapper.text()).toContain('元/kg')
+    expect(wrapper.text()).not.toContain(`约 ${reference} ${unit}（参考）`)
+    expect(wrapper.find('.hardware-quantity-reference').exists()).toBe(false)
+    expect(vm.totalAmount).toBe('8.00')
+    await vm.createOrder('list')
+    expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines[0]).toMatchObject({
+      actual_purchase_quantity: '4', actual_purchase_weight_kg: '4', unit_price: '2',
+    })
+  })
   it('首次总单读取失败后保留输入重试仍初始化材料', async () => {
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockRejectedValueOnce({ response: { status: 503 } })
     const vm = await mountPage(PurchaseOrderFormView)
@@ -385,25 +533,25 @@ describe('总单与批次页面契约', () => {
     expect(row.get('.material-detail').text()).toBe(mode === 'saved-fields' ? '旧单600D' : mode === 'empty' ? '—' : '材料1')
     expect(row.get('.material-attribute-tooltip').text()).toContain(mode === 'saved-fields' ? '面料规格旧单600D' : mode === 'empty' ? '暂无物料属性' : '材质辅料')
   })
-  it('总单管材使用保存建议根数与后端实际累计根数，原米数不重算', async () => {
+  it('总单管材使用采购米数，原米数不重算', async () => {
     const group = groupFixture()
     const line = group.progress.lines[0]!
     Object.assign(line, { source_unit_text: '米', required_quantity: '1000.0000', purchased_quantity: '1716.0000', accepted_quantity: '686.4000', purchased_bar_count: '400', accepted_bar_count: '160', in_progress_quantity: '1029.6000', in_progress_bar_count: '240' })
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '4.29', suggested_bar_count: 234, suggested_purchase_meters: '1003.86' })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['234 根 / 1000 米', '400 根 / 1716 米', '240 根 / 1029.6 米', '160 根 / 686.4 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['1000 米', '1716 米', '1029.6 米', '686.4 米'])
   })
-  it.each([undefined, null])('总单管材根数缺失%s时待核对，不按米数除原长反推', async missing => {
+  it.each([undefined, null])('总单管材根数缺失%s不影响采购米数', async missing => {
     const group = groupFixture()
     const line = group.progress.lines[0]!
     Object.assign(line, { source_unit_text: '米', required_quantity: '60', purchased_quantity: '60', accepted_quantity: '30', purchased_bar_count: missing, accepted_bar_count: missing, in_progress_quantity: '30', in_progress_bar_count: missing })
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6', suggested_bar_count: missing })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['根数待核对 / 60 米', '根数待核对 / 60 米', '根数待核对 / 30 米', '根数待核对 / 30 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['60 米', '60 米', '30 米', '30 米'])
   })
-  it('总单根数保留零与大整数字符串，非管材维持原单位', async () => {
+  it('总单零值维持原采购单位，不显示根数参考', async () => {
     const group = groupFixture()
     const line = group.progress.lines[0]!
     Object.assign(line, { source_unit_text: '米', required_quantity: '0', purchased_quantity: '1', accepted_quantity: '0', purchased_bar_count: '9007199254740993', accepted_bar_count: '0', in_progress_quantity: '1', in_progress_bar_count: '9007199254740993' })
@@ -411,7 +559,7 @@ describe('总单与批次页面契约', () => {
     group.progress.lines[1]!.purchased_bar_count = '10'
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountDetailWithAttributes()
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['0 根 / 0 米', '9007199254740993 根 / 1 米', '9007199254740993 根 / 1 米', '0 根 / 0 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['0 米', '1 米', '1 米', '0 米'])
     expect(wrapper!.get('[data-line-id="group-line-1"] .material-attribute-tooltip').text()).toContain('采购原长待核对')
     expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['100 个', '150 个', '50.0001 个', '99.9999 个'])
   })
@@ -433,9 +581,9 @@ describe('总单与批次页面契约', () => {
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     await mountPage(PurchaseGroupDetailView)
     expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td')[6]!.text()).toBe('待核对 个')
-    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('根数待核对 / 待核对 米')
+    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('待核对 米')
   })
-  it('正在采购零值保留零，管材米数未知时仍保留实际根数', async () => {
+  it('正在采购零值保留零，采购米数未知不拿根数顶替', async () => {
     const group = groupFixture()
     group.progress.lines[0]!.in_progress_quantity = '0.0000'
     const pipe = group.progress.lines[1]!
@@ -444,9 +592,9 @@ describe('总单与批次页面契约', () => {
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     const vm = await mountPage(PurchaseGroupDetailView)
     expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td')[6]!.text()).toBe('0 个')
-    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('0 根 / 0 米')
+    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('0 米')
     Object.assign(vm.group.progress.lines[1], { in_progress_quantity: null, in_progress_bar_count: '9' }); await flushPromises()
-    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('9 根 / 待核对 米')
+    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('待核对 米')
   })
   it('材料空表仍覆盖九列', async () => {
     const group = groupFixture(); group.progress.lines = []; group.progress.line_count = 0
@@ -629,7 +777,7 @@ describe('总单与批次页面契约', () => {
     expect(vm.effectivePurchaseQuantity(vm.lines[1])).toBe('')
     expect(vm.selectedLines).toEqual([])
   })
-  it('批次管材剩余根米分别扣减，米用采购建议米且缺根不反推', async () => {
+  it('批次管材剩余只显示采购米数，根数缺失不影响已知米数', async () => {
     const group = groupFixture(); const line = group.progress.lines[0]!
     Object.assign(line, { required_quantity: '100', purchased_quantity: '18', purchased_bar_count: '3', accepted_quantity: '0', source_unit_text: '米' })
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: null, suggested_bar_count: 17, suggested_purchase_meters: '102' })
@@ -637,20 +785,20 @@ describe('总单与批次页面契约', () => {
     wrapper = mount(PurchaseOrderFormView, { global: { plugins: [ElementPlus], stubs: { ElDatePicker: true } } })
     await flushPromises()
     const vm = wrapper.vm as any
-    expect(wrapper.get('.quantity-cell').text()).toBe('14 根84 米')
+    expect(wrapper.get('.quantity-cell').text()).toBe('84 米')
     expect(vm.lines[0].actual_bar_count).toBe('')
     Object.assign(vm.group.progress.lines[0], { purchased_bar_count: '20', purchased_quantity: '90' })
     await flushPromises()
-    expect(wrapper.get('.quantity-cell').text()).toBe('0 根12 米')
+    expect(wrapper.get('.quantity-cell').text()).toBe('12 米')
     for (const value of [null, undefined, '', '-1', '3.5', 'abc']) {
       vm.group.progress.lines[0].purchased_bar_count = value
-      expect(vm.batchRemainingQuantities.get(line.id)).toEqual({ primary: '根数待核对', detail: '12 米' })
+      expect(vm.batchRemainingQuantities.get(line.id)).toEqual({ primary: '12 米', detail: '' })
     }
     Object.assign(vm.group.progress.lines[0], { purchased_bar_count: '3', purchased_quantity: null })
-    expect(vm.batchRemainingQuantities.get(line.id)).toEqual({ primary: '14 根', detail: '米数待核对' })
+    expect(vm.batchRemainingQuantities.get(line.id)).toEqual({ primary: '米数待核对', detail: '' })
     for (const value of [null, undefined, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       vm.group.progress.lines[0].source_snapshot.suggested_bar_count = value
-      expect(vm.batchRemainingQuantities.get(line.id).primary).toBe('根数待核对')
+      expect(vm.batchRemainingQuantities.get(line.id).primary).toBe('米数待核对')
     }
   })
   it('刷新缺少原材料行时剩余显示待核对，不回退旧建议或清理手填', async () => {
@@ -782,14 +930,14 @@ describe('总单与批次页面契约', () => {
     expect(vm.validateDraft()).toContain('第 2 行实际采购数量')
     await vm.createOrder('list'); expect(groupsApi.createPurchaseBatch).not.toHaveBeenCalled()
   })
-  it('管材小数根数拒绝，零根不提交；已完成总单仍可超量补批', async () => {
+  it('管材非整倍米数拒绝，零米不提交；已完成总单仍可超量补批', async () => {
     const group = groupFixture(); group.progress.status = 'COMPLETED'
     Object.assign(group.progress.lines[0]!.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6.00', suggested_bar_count: 17 })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     const vm = await mountPage(PurchaseOrderFormView)
-    vm.lines[0].actual_bar_count = '1.5'; expect(vm.validateDraft()).toContain('管材根数应为整数')
-    vm.lines[0].actual_bar_count = '0'; expect(vm.selectedLines).toEqual([])
-    vm.lines[0].actual_bar_count = '30'; await vm.createOrder('list')
+    vm.setPipePurchaseMeters(vm.lines[0], '1.5'); expect(vm.validateDraft()).toContain('每根长度的整数倍')
+    vm.setPipePurchaseMeters(vm.lines[0], '0'); expect(vm.selectedLines).toEqual([])
+    vm.setPipePurchaseMeters(vm.lines[0], '180'); await vm.createOrder('list')
     expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines[0]!.actual_bar_count).toBe('30')
   })
   it('正数量缺供应商交期单价仍计入，草稿可保存而确认继续提示', async () => {

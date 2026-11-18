@@ -194,7 +194,7 @@ def _tube_records(orders, product_ids):
         if order.is_plan:
             for line in order.detail_lines:
                 values = quantities[str(order.pk)]["lines"][str(line.pk)]
-                unit = output_unit(order.source_kind)
+                unit = line.snapshot.get("unit") if order.source_snapshot.get("part_flow") else output_unit(order.source_kind)
                 record = _record(order, "TUBE", identity=line.pk, part_name=line.snapshot.get("part_name", ""),
                     factory_name=line.snapshot.get("factory_name", ""), unit=unit, quantity=line.quantity,
                     price=line.unit_price, access="TUBE")

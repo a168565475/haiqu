@@ -15,6 +15,7 @@ import {
   fetchBoms,
   previewBomWorkbook,
   previewBomMaterialSave,
+  previewBomHardwareWeight,
   saveBomDraft,
   syncBomOrderQuantity,
   uploadBomLineImages,
@@ -23,7 +24,7 @@ import {
 } from '@/api/boms'
 import { apiClient } from '@/api/request'
 import { emptyProductEntry } from '@/utils/productEntryDraft'
-import { editableSection } from '@/views/boms/bomEditorHelpers'
+import { blankLine, editableSection } from '@/views/boms/bomEditorHelpers'
 
 vi.mock('@/api/request', () => ({
   apiClient: {
@@ -45,6 +46,25 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('五金预览只请求单重，保存剔除只读快照和本地状态', async () => {
+    const input = { kind: 'PLAIN_WASHER' as const, material: '钢', specification: 'GB/T 97.1-2002 M6' }
+    const result = { unit_material_weight_kg: '0.00102', unit_weight_g: '1.02', calculation_snapshot: { version: '1' } }
+    mockedPost.mockResolvedValueOnce({ data: { data: result } })
+    expect(await previewBomHardwareWeight(input)).toEqual(result)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/hardware-weight-preview/', input)
+    const line = { ...blankLine('个'), part_name: '平垫片', hardware_weight_mode: 'AUTO' as const,
+      hardware_weight_input: input, unit_material_weight_kg: result.unit_material_weight_kg,
+      hardware_weight_snapshot: { secret: '只读快照' }, hardware_weight_preview: { ...result, input_key: 'local' },
+      hardware_weight_saved: { input_key: 'saved', unit_material_weight_kg: result.unit_material_weight_kg } }
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'b1' } }, headers: { etag: 'v2' } })
+    await saveBomDraft('b1', [{ title: '五金件', section_type: 'ACCESSORY', lines: [line] }], 'v1')
+    const payload = mockedPatch.mock.calls[0]![1] as { sections: { lines: Record<string, unknown>[] }[] }
+    expect(payload.sections[0]!.lines[0]).toMatchObject({ hardware_weight_mode: 'AUTO', hardware_weight_input: input })
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_snapshot')
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_preview')
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_saved')
   })
 
   it('读取后转为编辑行，再预检和保存时保留原表余量与长料长度', async () => {
@@ -77,6 +97,20 @@ describe('BOM API', () => {
     await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
     for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
       expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+    }
+  })
+
+  it('手工长料单重重开后随预检和保存请求提交，与切割单支重量分开', async () => {
+    const fields = { manual_tube_metrics: true, purchase_unit_weight_kg: '0.4', long_material_unit_weight_kg: '2.5' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{ ...blankLine('根'), id: 'pipe-1', ...fields }] }] }
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const sections = detail.sections.map(section => editableSection(section as never))
+    await previewBomMaterialSave('bom-1', sections, 'v1', { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
     }
   })
 

@@ -15,7 +15,7 @@ from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.inventory.models import (MaterialInbound, MaterialInboundLine, MaterialInboundStatus,
                                    MaterialStockBalance, MaterialStockQuality, Warehouse, WarehouseZone)
-from apps.inventory.stock_services import credit_material_stock, inbound_line_material
+from apps.inventory.stock_services import credit_material_stock, inbound_line_material, returned_material_weight
 from apps.material_issues.models import OrderMaterialRequirement
 from apps.production_scheduling.models import ProductionSchedule
 from apps.production_tasks.models import ProductionTask
@@ -277,7 +277,8 @@ def confirm_raw_return(*, order_id, request_id, factory_id, lines, reason, actor
         else:
             credit_material_stock(raw_material=source.raw_material, unit=source.unit, zone=source.zone, quantity=amount,
                 source_type="OUTSOURCING_RAW_RETURN", source_id=record.pk, source_line_id=returned.pk,
-                production_task=task, actor_employee=actor_employee, snapshot=snapshot)
+                production_task=task, actor_employee=actor_employee, snapshot=snapshot,
+                weight_quantity=returned_material_weight(source=source, quantity=amount))
         requirement = requirement_map[source.requirement_id]
         delta = Decimal(equivalent) if is_pipe else amount
         if delta > requirement.outsourcing_issued_quantity:
@@ -513,7 +514,7 @@ def revoke_dispatched_order(*, order_id, request_id, reason, actor_employee, req
                 credit_material_stock(raw_material=source.raw_material, unit=source.unit, zone=zone,
                     quantity=amount, source_type="OUTSOURCING_RAW_RETURN", source_id=record.pk,
                     source_line_id=return_line.pk, production_task=task, actor_employee=actor_employee,
-                    snapshot=snapshot)
+                    snapshot=snapshot, weight_quantity=returned_material_weight(source=source, quantity=amount))
             requirement = requirements[source.requirement_id]
             delta = Decimal(equivalent) if is_pipe else amount
             if delta > requirement.outsourcing_issued_quantity:

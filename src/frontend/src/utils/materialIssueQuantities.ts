@@ -29,15 +29,15 @@ export function issueQuantityError(value: string, row: MaterialRequirement) {
   const amount = decimalUnits(value)
   if (amount === null || amount <= 0n) return '请输入大于零的数量，最多四位小数。'
   const integerSemi = row.line_type === 'SEMI' && (
-    ['支', '套'].includes(row.unit) || ['SEMI_PIPE', 'SEMI_PIPE_PIECES'].includes(row.conversion_snapshot?.kind || '')
+    ['支', '套', '片'].includes(row.unit) || Boolean(row.component_kind) || ['SEMI_PIPE', 'SEMI_PIPE_PIECES'].includes(row.conversion_snapshot?.kind || '')
     || row.conversion_snapshot?.integer_required === true
   )
-  if (integerSemi && amount % 10000n) return '半成品支数和套数必须为正整数。'
+  if (integerSemi && amount % 10000n) return row.component_kind ? '裁片和部位数量必须为正整数。' : '半成品支数和套数必须为正整数。'
   if (row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE') {
     const pipeError = issuePipePlan(value, row).error
     if (pipeError) return pipeError
   }
-  const maximum = decimalUnits(row.max_issue_quantity)
+  const maximum = decimalUnits(row.source_kind === 'CUTTING_DIRECT' ? row.direct_available_quantity : row.max_issue_quantity)
   if (maximum === null || amount > maximum) return '申请数量超过当前可领上限。'
   return ''
 }
@@ -46,13 +46,14 @@ export function issueSelectedQuantityError(value: string, row: MaterialRequireme
   requirements: MaterialRequirement[], selected: Record<string, string>) {
   const error = issueQuantityError(value, row)
   if (error) return error
+  if (row.source_kind === 'CUTTING_DIRECT') return ''
   if (!row.stock_item_id) return ''
   const isPipe = row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE'
   const cuts = isPipe ? BigInt(row.conversion_snapshot?.pieces_per_bar || 0) : 1n
   const maximum = decimalUnits(row.max_issue_quantity)
   if (maximum === null || cuts <= 0n) return '可用库存或换算规则缺失，请刷新后重试。'
   const identity = row.stock_mode === 'PUBLIC_V2' ? row.conversion_snapshot?.public_identity?.identity_key : undefined
-  const requested = requirements.filter(item => item.line_type === row.line_type
+  const requested = requirements.filter(item => item.source_kind !== 'CUTTING_DIRECT' && item.line_type === row.line_type
     // 公共物料档案可有多种规格，合计必须使用服务端返回的实物库存身份。
     && (identity && item.conversion_snapshot?.public_identity?.identity_key
       ? item.conversion_snapshot.public_identity.identity_key === identity

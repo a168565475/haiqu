@@ -137,7 +137,8 @@ def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_i
         sample.save(update_fields=['status', 'updated_at'])
     else:
         sample.save(update_fields=['updated_at'])
+    receipt_quantity = line.accepted_weight_kg if line.measurement_kind == 'PIPE' and line.source_unit_text_snapshot == 'KG' else line.accepted_quantity
     _write_sample_records(sample_request=sample, action='MATERIALS_ARRIVED', actor_employee=request.employee,
                           request=request, before_data=before,
-                          note=f'材料验收入库 {line.accepted_quantity} {line.source_unit_text_snapshot}；回写需求 {accepted_quantity} {demand["unitLabel"]}；来源 {inbound.pk} / {line.pk}。')
+                          note=f'材料验收入库 {receipt_quantity} {line.source_unit_text_snapshot}；回写需求 {accepted_quantity} {demand["unitLabel"]}；来源 {inbound.pk} / {line.pk}。')
     return sample

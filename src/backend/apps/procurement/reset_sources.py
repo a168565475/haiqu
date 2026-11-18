@@ -41,8 +41,11 @@ def reset_source_snapshot(line):
     from rest_framework.exceptions import APIException
     try:
         if line.purchase_order.source_type == 'SAMPLE':
-            from apps.procurement.pipe_purchase import validate_sample_purchase_identity
-            validate_sample_purchase_identity(line)
+            from apps.procurement.pipe_purchase import is_sample_weight_snapshot, validate_pipe_purchase_source, validate_sample_purchase_identity
+            if is_sample_weight_snapshot(line.calculation_snapshot):
+                validate_pipe_purchase_source(line)
+            else:
+                validate_sample_purchase_identity(line)
             return {'sample':True}, ''
         return current_bom_source(line), ''
     except (APIException, ObjectDoesNotExist) as error:
@@ -82,7 +85,8 @@ def refresh_reset_purchase_source(line):
         return []
     if line.purchase_order.status != 'DRAFT':
         raise Conflict('重置管材来源只允许在待确认采购中刷新。')
-    from apps.procurement.pipe_purchase import pipe_source_snapshot, validate_pipe_purchase_source
+    from apps.procurement.pipe_purchase import (pipe_source_snapshot, validate_pipe_purchase_source,
+        is_sample_weight_snapshot, sample_weight_source_snapshot, sample_weight_purchase_values)
     if line.purchase_order.source_type == 'SAMPLE':
         from django.core.exceptions import ObjectDoesNotExist
         from apps.samples.pipe_materials import sample_pipe_snapshot
@@ -92,15 +96,42 @@ def refresh_reset_purchase_source(line):
             snapshot = sample_pipe_snapshot(binding.procurement_request,row)
         except (ObjectDoesNotExist,StopIteration) as error:
             raise Conflict('打样采购原需求关联缺失，请先核对来源。') from error
+        if is_sample_weight_snapshot(line.calculation_snapshot):
+            values = sample_weight_purchase_values(sample_weight_source_snapshot(snapshot, row['unitLabel']), {
+                'raw_bar_length_m': line.raw_bar_length_m or line.calculation_snapshot.get('raw_bar_length_m'),
+                'raw_bar_weight_kg': line.raw_bar_weight_kg or line.calculation_snapshot.get('raw_bar_weight_kg'),
+                'actual_purchase_quantity': line.actual_purchase_quantity,
+                'quantity_difference_reason': line.quantity_difference_reason,
+            })
+            for key, value in values.items():
+                setattr(line, key, value)
+            line.source_unit_text = 'KG'
+            line.source_quantity_field = 'suggested_purchase_weight_kg'
+            line.required_quantity = line.suggested_purchase_weight_kg
+            line.source_quantity_text = str(line.required_quantity) if line.required_quantity is not None else ''
+            line.quantity_parse_status = 'READY' if line.required_quantity is not None else 'MISSING'
+            validate_pipe_purchase_source(line)
+            return [*values, 'required_quantity', 'source_unit_text', 'source_quantity_field',
+                    'source_quantity_text', 'quantity_parse_status']
     else:
         if line.bom_line_id:
             validate_purchase_description(line,line.bom_line)
         snapshot = pipe_source_snapshot(line.bom_line)
+        if line.source_unit_text == 'KG' and snapshot.get('measurement_unit') != 'kg':
+            raise Conflict('原重量采购缺少当前标准单重，请补齐来源，不能退回米制。')
     line.calculation_snapshot = snapshot
-    for key in ('raw_bar_length_m','suggested_bar_count','suggested_purchase_meters'):
-        setattr(line,key,snapshot[key])
-    line.required_quantity = Decimal(snapshot['suggested_purchase_meters'])
+    for key in ('raw_bar_length_m','raw_bar_weight_kg','suggested_bar_count','suggested_purchase_meters','suggested_purchase_weight_kg'):
+        if key in snapshot:
+            setattr(line,key,snapshot[key])
+    if snapshot.get('measurement_unit') == 'kg':
+        line.source_unit_text = 'KG'
+        line.source_quantity_field = 'suggested_purchase_weight_kg'
+        line.required_quantity = Decimal(snapshot['suggested_purchase_weight_kg'])
+    else:
+        line.required_quantity = Decimal(snapshot['suggested_purchase_meters'])
     line.source_quantity_text = str(line.required_quantity)
     line.quantity_parse_status = 'READY'
     validate_pipe_purchase_source(line)
-    return ['required_quantity','source_quantity_text','quantity_parse_status']
+    return ['raw_bar_length_m', 'raw_bar_weight_kg', 'suggested_bar_count', 'suggested_purchase_meters',
+            'suggested_purchase_weight_kg', 'required_quantity', 'source_unit_text', 'source_quantity_field',
+            'source_quantity_text', 'quantity_parse_status']

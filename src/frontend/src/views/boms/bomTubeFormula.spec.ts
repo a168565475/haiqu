@@ -7,8 +7,8 @@ function line(): BomLineInput {
 }
 
 describe('管材重量显示', () => {
-  it('新建管材默认自动余量，历史行及已保存手动项不被重置', () => {
-    expect(defaultTubeSection().lines[0]?.purchase_allowance_mode).toBe('AUTO')
+  it('空分区不生成管材，历史行及已保存手动项不被重置', () => {
+    expect(defaultTubeSection().lines).toEqual([])
     expect(editableLine({ ...line(), id: 'old' } as never).purchase_allowance_mode).toBeUndefined()
     expect(editableLine({ ...line(), id: 'saved', purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5' } as never)).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5' })
   })
@@ -52,6 +52,35 @@ describe('管材重量显示', () => {
     expect(tubeCalculations(draft, bom)).toMatchObject({ tube_unit_weight_kg: '0.5678', long_material_unit_weight_kg: '—', long_material_total_weight_kg: '—' })
     draft.unit_consumption = '9'
     expect(tubeCalculations(draft, bom).tube_unit_weight_kg).toBe('0.5678')
+  })
+
+  it('手填长料单重随编辑行恢复，独立于单支重量并包含采购余量', () => {
+    const draft = editableLine({ ...line(), id: 'manual', manual_tube_metrics: true, purchase_allowance_mode: 'AUTO',
+      coating_unit_area_sqm: '0.1234', purchase_unit_weight_kg: '0.5678', long_material_unit_weight_kg: '2.5',
+    } as never)
+    expect(draft.long_material_unit_weight_kg).toBe('2.5')
+    const bom = { order_quantity: '100', sections: [] } as unknown as BomDetail
+    expect(tubeCalculations(draft, bom)).toMatchObject({ tube_unit_weight_kg: '0.5678', long_material_unit_weight_kg: '2.5',
+      base_purchase_bar_count: '40', purchase_allowance_bar_count: '5', suggested_purchase_weight_kg: '112.5' })
+    draft.unit_consumption = '9'
+    expect(tubeCalculations(draft, bom).suggested_purchase_weight_kg).toBe('237.5')
+    expect(draft.long_material_unit_weight_kg).toBe('2.5')
+  })
+
+  it('手填长料单重可暂缺，但填写时拒绝零、负数、非数、超精度及超范围', () => {
+    const draft = { ...line(), manual_tube_metrics: true, coating_unit_area_sqm: '0', purchase_unit_weight_kg: '0' }
+    expect(manualTubeMetricError(draft)).toBe('')
+    expect(manualTubeMetricError({ ...draft, long_material_unit_weight_kg: '2.5000' })).toBe('')
+    for (const invalid of ['0', '-1', 'NaN', 'Infinity', '0.00001', '1000000000000']) {
+      expect(manualTubeMetricError({ ...draft, long_material_unit_weight_kg: invalid })).toContain('长料单重')
+    }
+  })
+
+  it('未配置公式的管型可单独填长料单重，保持旧草稿其他手填项可缺省', () => {
+    const draft = { ...line(), tube_shape: 'D形管', purchase_allowance_mode: 'AUTO' as const, long_material_unit_weight_kg: '2.5' }
+    expect(manualTubeMetricError(draft)).toBe('')
+    expect(tubeCalculations(draft, { order_quantity: '100', sections: [] } as unknown as BomDetail).suggested_purchase_weight_kg).toBe('112.5')
+    expect(manualTubeMetricError({ ...draft, long_material_unit_weight_kg: '0' })).toContain('长料单重')
   })
 
   it('手填两项必填，允许零，拒绝负数、非数和超出精度或范围的值', () => {

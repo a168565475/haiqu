@@ -54,13 +54,14 @@ class CatalogPipeBridgeTests(PublicStockFixture, TestCase):
         self.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="material_catalog"))
         payload = {"client_request_id": str(uuid4()), "inbound_date": str(timezone.localdate()), "remark": "根米桥接",
             "items": [{"material_catalog_id": str(self.catalog.pk), "zone_id": str(self.zone.pk),
-                "received_bar_count": 3, "raw_bar_length_m": "6.00", "material_selection": {
+                "received_bar_count": 3, "raw_bar_length_m": "6.00", "received_weight_kg": "7.1000", "material_selection": {
                     "catalog_version": self.catalog.updated_at.isoformat(), "scope": "BASE", "processing_state": "RAW",
                     "unit_id": str(self.root_unit.pk), "attributes": self.saved["attributes"]}}]}
         response = self.client.post("/api/v1/material-inventory/manual-receipts/", payload, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         line = MaterialInbound.objects.get().lines.get()
-        self.assertEqual((line.measurement_kind, line.source_unit_text_snapshot), ("PIPE", "米"))
+        self.assertEqual((line.measurement_kind, line.source_unit_text_snapshot), ("PIPE", "KG"))
+        self.assertEqual(line.received_weight_kg, Decimal("7.1"))
         self.assertEqual((line.received_bar_count, line.received_quantity), (3, 18))
         self.assertIsNone(line.raw_material_information_id)
         balance = PublicStockBalance.objects.get()

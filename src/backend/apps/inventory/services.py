@@ -8,7 +8,7 @@ from apps.procurement.pipe_purchase import pipe_meters
 from collections import defaultdict
 from decimal import Decimal, ROUND_FLOOR
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -123,6 +123,9 @@ def _active_stock_for_location(location):
 
 @stock_write_transaction
 def save_warehouse(*, instance, validated_data, actor_employee, request):
+    # 新建自动编号与历史手工编号共用事务锁，避免同时读取最大编号后重复分配。
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ["inventory-warehouse-number"])
     current = Warehouse.objects.select_for_update().filter(pk=getattr(instance, "pk", None)).first()
     target = current or Warehouse()
     before = _warehouse_snapshot(target) if current else None
@@ -133,6 +136,10 @@ def save_warehouse(*, instance, validated_data, actor_employee, request):
     if current:
         target.updated_by_employee = actor_employee
     else:
+        if not target.warehouse_number:
+            numbers = Warehouse.objects.filter(warehouse_number__regex=r"^CK[0-9]+$").values_list("warehouse_number", flat=True)
+            next_number = max((int(number[2:]) for number in numbers), default=0) + 1
+            target.warehouse_number = f"CK{next_number:03d}"
         target.created_by_employee = actor_employee
         target.updated_by_employee = actor_employee
     target.full_clean()
@@ -661,7 +668,12 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
         if item.get('received_quantity') is None:
             raise ValidationError({'received_quantity': '请填写到货数量。'})
-        submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + item["received_quantity"]
+        submitted_quantity = (
+            item.get("received_weight_kg")
+            if line.source_unit_text in {"KG", "kg", "千克"} and item.get("received_weight_kg") is not None
+            else item["received_quantity"]
+        )
+        submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + submitted_quantity
 
         zone = zone_map[item["zone_id"]]
         if (
@@ -917,15 +929,17 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
                 material_selection_snapshot=selected, calculation_snapshot=item["calculation_snapshot"],
                 **({"measurement_kind": "PIPE", "raw_bar_length_m": item["raw_bar_length_m"],
                     "received_bar_count": item["received_bar_count"], "accepted_bar_count": item["received_bar_count"],
-                    "return_bar_count": 0} if selected["category_key"] == "TUBE" else {}),
+                    "return_bar_count": 0, "received_weight_kg": item["received_weight_kg"],
+                    "accepted_weight_kg": item["received_weight_kg"], "return_weight_kg": Decimal("0")}
+                   if selected["category_key"] == "TUBE" else {}),
                 zone=zone_map[item["zone_id"]], location=location_map.get(item.get("location_id")),
                 received_quantity=item["received_quantity"], accepted_quantity=item["received_quantity"],
                 return_quantity=Decimal("0"), remark=item.get("remark", ""),
                 section_type_snapshot="PROFILE" if selected["category_key"] == "TUBE" else "GENERAL",
                 section_title_snapshot=item["section_title"], category_snapshot=item["section_title"],
                 material_snapshot=attrs.get("material", ""), part_name_snapshot=selected["name"],
-                specification_snapshot=item["specification"][:500], source_unit_text_snapshot="米" if selected["category_key"] == "TUBE" else selected["unit_name"],
-                purchased_quantity_snapshot=item["received_quantity"],
+                specification_snapshot=item["specification"][:500], source_unit_text_snapshot="KG" if selected["category_key"] == "TUBE" else selected["unit_name"],
+                purchased_quantity_snapshot=item["received_weight_kg"] if selected["category_key"] == "TUBE" else item["received_quantity"],
                 material_pinyin_search=build_pinyin_search(selected["display_name"]),
             ))
             continue
@@ -965,8 +979,8 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
             part_name_snapshot=material.material_name,
             specification_snapshot=material.specification,
             raw_material_snapshot=material.material,
-            source_unit_text_snapshot='米' if pipe_values else material.unit.unit_name,
-            purchased_quantity_snapshot=quantity,
+            source_unit_text_snapshot='KG' if pipe_values.get('received_weight_kg') is not None else ('米' if pipe_values else material.unit.unit_name),
+            purchased_quantity_snapshot=pipe_values.get('received_weight_kg') if pipe_values.get('received_weight_kg') is not None else quantity,
             material_pinyin_search=build_pinyin_search(search_text),
         ))
 
@@ -1100,7 +1114,12 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     prepared = []
     for item in items:
         line = line_map[item["line_id"]]
-        if item["expected_received_quantity"] != line.received_quantity:
+        expected_received = (
+            line.received_weight_kg
+            if line.source_unit_text_snapshot in {"KG", "kg", "千克"} and line.received_weight_kg is not None
+            else line.received_quantity
+        )
+        if item["expected_received_quantity"] != expected_received:
             raise Conflict(f"第 {line.purchase_order_line.line_number} 行到货数量已变化，请刷新后重试。")
         return_quantity = quality_pipe_quantities(line, item)
         if return_quantity < 0 or return_quantity > line.received_quantity:
@@ -1115,7 +1134,8 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
         line.quality_remark = item.get("quality_remark", "")
         if line.material_catalog_id:
             validate_catalog_inbound(line)
-        elif accepted_quantity > 0 and line.measurement_kind != 'PIPE':
+        elif (accepted_quantity > 0 or ((line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+                and line.accepted_weight_kg is not None and line.accepted_weight_kg > 0)) and line.measurement_kind != 'PIPE':
             validate_inbound_stock_identity(line)
         prepared.append(line)
 
@@ -1128,6 +1148,7 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
                 "return_bar_count", "accepted_bar_count",
                 "return_quantity",
                 "accepted_quantity",
+                "return_weight_kg", "accepted_weight_kg",
                 "quality_remark",
                 "updated_at",
             ]
@@ -1140,12 +1161,16 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     inbound.quality_confirmed_at = timezone.now()
     inbound.save(update_fields=["status", "quality_confirmed_by_employee", "quality_confirmed_at", "updated_at"])
     generate_quality_returns(inbound=inbound, lines=locked_lines, actor_employee=actor_employee, request=request)
+    if inbound.purchase_order_id:
+        from apps.finance.purchase_payable_services import create_payables_for_inbound
+        create_payables_for_inbound(inbound_id=inbound.pk, actor_employee=actor_employee, request=request)
     binding_by_line = {binding.purchase_order_line_id: binding for binding in bindings}
     for line in sorted(
         locked_lines,
         key=lambda item: (str(item.raw_material_information_id), str(item.zone_id), str(item.pk)),
     ):
-        if line.accepted_quantity > 0:
+        if line.accepted_quantity > 0 or ((line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+                and line.accepted_weight_kg is not None and line.accepted_weight_kg > 0):
             credit_confirmed_inbound_line(line=line, actor_employee=actor_employee)
         binding = binding_by_line.get(line.purchase_order_line_id)
         if binding and line.accepted_quantity > 0:
@@ -1186,7 +1211,16 @@ def _inspection_quantities(lines):
     # 不混加根、米、件等不同单位；历史缺失根数仍按保存的米数说明。
     quantities = {}
     for line in lines:
-        if line.measurement_kind == "PIPE" and line.accepted_bar_count is not None and line.return_bar_count is not None:
+        if (line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT":
+            unit = line.calculation_snapshot.get("piece_unit") or "（个数单位未记录）"
+            accepted, returned = line.accepted_quantity, line.return_quantity
+            if unit.upper() in {"KG", "千克", "公斤"}:
+                unit = "KG"
+            else:
+                weights = quantities.setdefault("KG", [Decimal("0"), Decimal("0")])
+                weights[0] += line.accepted_weight_kg or Decimal("0")
+                weights[1] += line.return_weight_kg or Decimal("0")
+        elif line.measurement_kind == "PIPE" and line.accepted_bar_count is not None and line.return_bar_count is not None:
             unit, accepted, returned = "根", line.accepted_bar_count, line.return_bar_count
         else:
             unit = ("米（历史根数未记录）" if line.measurement_kind == "PIPE"

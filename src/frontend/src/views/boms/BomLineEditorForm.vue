@@ -2,12 +2,14 @@
 import { computed, ref, toRefs } from 'vue'
 import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
+import { selectHardwareWeight, setManualHardwareWeight } from './useHardwareWeightPreview'
 import type { MaterialCatalog, PublicMaterialOptions } from '@/types/materialCatalog'
 import PinyinFilterSelect from '@/components/production/PinyinFilterSelect.vue'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { packagingQuantity } from '@/utils/bomPackagingQuantity'
+import { componentDemand, componentKey, componentMaterialValue, setComponentParent, setComponentUnit } from '@/utils/bomComposition'
 import { defaultPurchaseAllowanceRule, purchaseAllowanceOptions } from '@/utils/materialFlow'
-import type { BomDetail, BomLineInput, BomSectionInput, PurchaseAllowanceRule } from '@/types/bom'
+import type { BomDetail, BomLineInput, BomSectionInput, HardwareWeightKind, PurchaseAllowanceRule } from '@/types/bom'
 
 type AnyRecord = Record<string, any>
 type AnyFunction = (...args: any[]) => any
@@ -16,6 +18,8 @@ type DisplayImage = AnyRecord
 const props = withDefaults(defineProps<{
   catalogMode?: boolean
   catalogRefreshKey?: number
+  componentUnits?: Array<{ id: string; unit_name: string }>
+  changeComponentType?: (line: BomLineInput, kind: 'SEWN_PART' | 'CUT_PIECE') => void
   editingSection: BomSectionInput | null
   editingLineDraft: BomLineInput | null
   editorReferenceOptionsError: string
@@ -30,6 +34,9 @@ const props = withDefaults(defineProps<{
   editingLineCalculations: AnyRecord | null
   tubeCalculationLoading?: boolean
   tubeCalculationReadonly?: boolean
+  hardwareWeightLoading?: boolean
+  hardwareWeightError?: string
+  hardwareWeightNotice?: string
   normalizeTubeCutPieceCount: AnyFunction
   displayLineImages: (line: BomLineInput) => DisplayImage[]
   openLineImageManager: AnyFunction
@@ -64,6 +71,7 @@ const props = withDefaults(defineProps<{
   tubeDiameters: () => [],
   tubeThicknesses: () => [],
   tubeCoatingColors: () => [],
+  componentUnits: () => [],
 })
 
 const emit = defineEmits<{
@@ -72,6 +80,15 @@ const emit = defineEmits<{
   'update:editingFabricSourceKey': [value: string]
 }>()
 const currentCatalog = ref<MaterialCatalog>()
+const componentParts = computed(() => props.editingSection?.lines.filter(line => line.component_kind === 'SEWN_PART'
+  && componentKey(line) !== componentKey(props.editingLineDraft!)) || [])
+const hardwareWeightMethod = computed({
+  get: () => props.editingLineDraft?.hardware_weight_mode === 'AUTO'
+    ? props.editingLineDraft.hardware_weight_input?.kind || 'MANUAL' : 'MANUAL',
+  set: (value: HardwareWeightKind | 'MANUAL') => {
+    if (props.editingLineDraft) selectHardwareWeight(props.editingLineDraft, value)
+  },
+})
 const currentPublicSpray = ref<PublicMaterialOptions>()
 const selectedPurchaseAllowance = computed(() => props.editingLineDraft?.purchase_allowance_mode === 'MANUAL'
   ? props.editingLineDraft.purchase_allowance_rule : props.editingLineDraft?.purchase_allowance_mode === 'AUTO' ? 'AUTO' : '')
@@ -113,6 +130,10 @@ const editingFabricSourceKeyModel = computed({
   get: () => props.editingFabricSourceKey,
   set: value => emit('update:editingFabricSourceKey', value),
 })
+const partFabricTitle = computed(() => props.editingLineDraft?.component_kind === 'SEWN_PART'
+  ? ([['原料规格', 'specification'], ['材质', 'material'], ['颜色', 'color'], ['色号', 'color_code'], ['门幅', 'width']] as const)
+    .map(([label, field]) => `${label}：${componentMaterialValue(props.editingLineDraft!, props.fabricSourceLines, field)}`).join('；')
+  : undefined)
 
 const {
   editingSection, editingLineDraft, editorReferenceOptionsError, ensureEditorReferenceOptions,
@@ -129,13 +150,15 @@ const {
 
 <template>
         <div v-if="editingLineDraft">
-          <ElButton v-if="!catalogMode" size="small" @click="emit('use-catalog')">从新原料选择</ElButton>
+          <ElButton v-if="!catalogMode && !editingLineDraft.component_kind" size="small" @click="emit('use-catalog')">从新原料选择</ElButton>
           <div class="line-drawer-form" :style="{ marginTop: catalogMode ? '0' : '16px' }">
-          <label v-if="editingSection?.title === '裁剪明细'" class="drawer-field"><span>来源面料</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKeyModel" filterable placeholder="选择本 BOM 的面料" aria-label="来源面料" no-data-text="请先在面料分类添加并选择面料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name || '面料'} · ${line.fabric_color_name || line.material} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small v-if="!catalogMode">材质和颜色自动使用来源面料，保存 BOM 时一并保存关联。</small></template></label>
-          <label v-if="catalogMode && editingSection?.title === '裁剪明细'" class="drawer-field"><span>品名</span><BomCuttingCatalogSelect :key="editingLineDraft.client_key || editingLineDraft.id" :line="editingLineDraft" :refresh-key="catalogRefreshKey" /></label>
+          <label v-if="editingSection?.title === '裁剪明细'" class="drawer-field"><span>类型</span><ElSelect :model-value="editingLineDraft.component_kind || ''" placeholder="选择部位或裁片" aria-label="类型" @change="changeComponentType?.(editingLineDraft, $event)"><ElOption label="部位" value="SEWN_PART" /><ElOption label="裁片" value="CUT_PIECE" /></ElSelect></label>
+          <label v-if="editingLineDraft.component_kind === 'CUT_PIECE'" class="drawer-field"><span>所属部位</span><ElSelect :model-value="editingLineDraft.parent_part_id || editingLineDraft.parent_part_client_key || ''" placeholder="选择部位" aria-label="所属部位" @change="setComponentParent(editingLineDraft, $event, componentParts)"><ElOption v-for="part in componentParts" :key="componentKey(part)" :value="componentKey(part)" :label="part.part_name || '未选择品名的部位'" /></ElSelect></label>
+          <label v-if="editingSection?.title === '裁剪明细'" class="drawer-field" :title="partFabricTitle"><span>{{ editingLineDraft.component_kind === 'SEWN_PART' ? '归属面布' : editingLineDraft.component_kind ? '来源原料' : '来源面料' }}</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKeyModel" filterable :clearable="editingLineDraft.component_kind === 'SEWN_PART'" value-on-clear="" :placeholder="editingLineDraft.component_kind === 'SEWN_PART' ? '选择归属面布' : '选择本 BOM 的布料或棉'" :aria-label="editingLineDraft.component_kind === 'SEWN_PART' ? '归属面布' : editingLineDraft.component_kind ? '来源原料' : '来源面料'" no-data-text="请先添加面料或棉原料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small v-if="!catalogMode && !editingLineDraft.component_kind">材质和颜色自动使用来源面料，保存 BOM 时一并保存关联。</small></template></label>
+          <label v-if="(catalogMode || editingLineDraft.component_kind) && editingSection?.title === '裁剪明细'" class="drawer-field"><span>品名</span><BomCuttingCatalogSelect :key="editingLineDraft.client_key || editingLineDraft.id" :line="editingLineDraft" :refresh-key="catalogRefreshKey" /></label>
           <MaterialSelectionPanel v-else-if="catalogMode && editingSection" :key="editingLineDraft.client_key || editingLineDraft.id" presentation="dropdown" :line="editingLineDraft" :section-title="editingSection.title" :refresh-key="catalogRefreshKey" :fixed-unit="editingSection.section_type === 'PROFILE' ? '根' : editingSection.title === '面料类' ? '米' : undefined" @maintain="emit('maintain')" @loaded="currentCatalog = $event" @public-options="currentPublicSpray = $event" />
           <ElAlert
-            v-if="!catalogMode && (editingSection?.title === '辅料类' || editingSection?.title === '面料类') && editorReferenceOptionsError"
+            v-if="(editingSection?.title === '裁剪明细' || (!catalogMode && (editingSection?.title === '辅料类' || editingSection?.title === '面料类'))) && editorReferenceOptionsError"
             class="reference-options-error drawer-field--wide"
             type="error"
             :title="editorReferenceOptionsError"
@@ -201,6 +224,7 @@ const {
             <label class="drawer-field"><span>原材料长度（m）</span><strong class="drawer-readonly-value">{{ editingLineCalculations?.tube_cut_length_m }}</strong></label>
             <label class="drawer-field"><span>喷塑单支面积（㎡）</span><ElInput v-model="editingLineDraft.coating_unit_area_sqm" inputmode="decimal" :readonly="tubeCalculationReadonly" :placeholder="tubeCalculationReadonly ? (tubeCalculationLoading ? '计算中…' : '按生产维护公式计算') : '填写'" aria-label="喷塑单支面积" /></label>
             <label class="drawer-field drawer-purchase-weight-field"><span>单支重量（kg）</span><ElInput v-model="editingLineDraft.purchase_unit_weight_kg" inputmode="decimal" :readonly="tubeCalculationReadonly" :placeholder="tubeCalculationReadonly ? (tubeCalculationLoading ? '计算中…' : '按生产维护公式计算') : '填写'" aria-label="单支重量" /></label>
+            <label v-if="!tubeCalculationReadonly" class="drawer-field"><span>长料单重（kg/根）</span><ElInput v-model="editingLineDraft.long_material_unit_weight_kg" inputmode="decimal" placeholder="填写每根长料重量" aria-label="长料单重" /></label>
             <div class="drawer-field drawer-image-field">
               <span>图片</span>
               <div class="drawer-image-field-value">
@@ -220,7 +244,7 @@ const {
                 <label><span>采购根数</span><strong>{{ editingLineCalculations.base_purchase_bar_count }}</strong></label>
                 <label><span>采购余量（根）</span><strong>{{ editingLineCalculations.purchase_allowance_bar_count }}</strong></label>
                 <label><span>建议采购根数</span><strong>{{ editingLineCalculations.branch_count }}</strong></label>
-                <label><span>建议采购米数</span><strong>{{ compactDecimal(editingLineCalculations.suggested_purchase_meters) }}</strong></label>
+                 <label><span>建议采购重量（kg）</span><strong>{{ compactDecimal(editingLineCalculations.suggested_purchase_weight_kg || editingLineCalculations.long_material_total_weight_kg) }}</strong></label>
                 <label><span>长料单重（kg）</span><strong>{{ editingLineCalculations.long_material_unit_weight_kg }}</strong></label>
                 <label><span>单支重量（kg）</span><strong>{{ editingLineCalculations.tube_unit_weight_kg }}</strong></label>
                 <label><span>长料总重量（kg）</span><strong>{{ editingLineCalculations.long_material_total_weight_kg }}</strong></label>
@@ -234,8 +258,24 @@ const {
             <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ catalogMode ? selectedAttribute('color', editingLineDraft.hardware_color) : formatHardwareColor(editingLineDraft.hardware_color) }}</strong></label>
             <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedSpecification }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
+            <label class="drawer-field"><span>重量计算方式</span><ElSelect v-model="hardwareWeightMethod" aria-label="重量计算方式"><ElOption label="手填重量" value="MANUAL" /><ElOption label="钢制 GB/T 873 铆钉" value="RIVET_GB873_STEEL" /><ElOption label="普通平垫片" value="PLAIN_WASHER" /></ElSelect></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field"><span>单个材料重量（kg）</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" placeholder="填写" aria-label="单个材料重量" /></label>
+            <label class="drawer-field"><span>单个材料重量（kg）</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" :placeholder="hardwareWeightLoading ? '计算中…' : '填写'" aria-label="单个材料重量" @input="setManualHardwareWeight(editingLineDraft)" /></label>
+            <template v-if="editingLineDraft.hardware_weight_mode === 'AUTO' && editingLineDraft.hardware_weight_input">
+              <template v-if="hardwareWeightMethod === 'RIVET_GB873_STEEL'">
+                <label class="drawer-field"><span>杆身直径（mm）</span><ElInput v-model="editingLineDraft.hardware_weight_input.diameter_mm" inputmode="decimal" placeholder="可从杆径×杆长规格识别" aria-label="铆钉杆身直径" /></label>
+                <label class="drawer-field"><span>杆长（mm，不含头部）</span><ElInput v-model="editingLineDraft.hardware_weight_input.length_mm" inputmode="decimal" placeholder="可从杆径×杆长规格识别" aria-label="铆钉杆长" /></label>
+              </template>
+              <template v-else>
+                <label class="drawer-field"><span>外径（mm）</span><ElInput v-model="editingLineDraft.hardware_weight_input.outer_diameter_mm" inputmode="decimal" placeholder="填写实际外径" aria-label="垫片外径" /></label>
+                <label class="drawer-field"><span>内径（mm）</span><ElInput v-model="editingLineDraft.hardware_weight_input.inner_diameter_mm" inputmode="decimal" placeholder="填写实际内径" aria-label="垫片内径" /></label>
+                <label class="drawer-field"><span>厚度（mm）</span><ElInput v-model="editingLineDraft.hardware_weight_input.thickness_mm" inputmode="decimal" placeholder="填写实际厚度" aria-label="垫片厚度" /></label>
+                <label class="drawer-field"><span>材料密度（g/cm³，可选）</span><ElInput v-model="editingLineDraft.hardware_weight_input.density_g_cm3" inputmode="decimal" placeholder="材质无法识别时填写" aria-label="垫片材料密度" /></label>
+              </template>
+              <p v-if="hardwareWeightLoading" class="hardware-weight-hint drawer-field--wide">正在核算…</p>
+            </template>
+            <p v-if="hardwareWeightError" class="hardware-weight-error drawer-field--wide" role="alert">{{ hardwareWeightError }}</p>
+            <p v-else-if="hardwareWeightNotice" class="hardware-weight-hint drawer-field--wide" role="status">{{ hardwareWeightNotice }}</p>
             <label v-if="!catalogMode || catalogCoatingEnabled" class="drawer-field">
               <span>喷塑颜色</span>
               <ElSelect v-model="editingLineDraft.powder_coating_color" :disabled="catalogMode && !catalogCoatingEnabled" clearable :value-on-clear="''" :loading="tubeOptionsLoading" :placeholder="coatingPlaceholder" no-data-text="暂无喷塑颜色，请到分区的维护配置新增" aria-label="喷塑颜色">
@@ -298,8 +338,29 @@ const {
             <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ catalogMode ? selectedAttribute('color', editingLineDraft.packaging_color) : formatHardwareColor(editingLineDraft.packaging_color) }}</strong></label>
             <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedSpecification }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
-            <label class="drawer-field"><span>*用量（多少成品用一份）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="numeric" placeholder="填写正整数" aria-label="用量（多少成品用一份）" /></label>
+            <label class="drawer-field"><span>*用量（多少成品用一份）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="decimal" placeholder="正数，最多 4 位小数" aria-label="用量（多少成品用一份）" /></label>
             <label class="drawer-field"><span>需求数量</span><strong class="drawer-readonly-value">{{ packagingQuantity(editingLineDraft.units_per_box, bom?.order_quantity) || '待填写' }}</strong></label>
+          </template>
+
+          <template v-else-if="editingSection?.title === '裁剪明细' && editingLineDraft.component_kind">
+            <label class="drawer-field"><span>单位</span><ElSelect :model-value="editingLineDraft.unit" placeholder="选择单位" :aria-label="editingLineDraft.component_kind === 'SEWN_PART' ? '部位单位' : '裁片单位'" @change="setComponentUnit(editingLineDraft, $event)"><ElOption v-for="unit in componentUnits" :key="unit.id" :value="unit.unit_name" :label="unit.unit_name" /></ElSelect></label>
+            <template v-if="editingLineDraft.component_kind === 'SEWN_PART'">
+              <label class="drawer-field"><span>每产品部位数量</span><ElInput v-model="editingLineDraft.parts_per_product" inputmode="numeric" aria-label="每产品部位数量" /></label>
+              <label class="drawer-field"><span>部位规格</span><ElInput v-model="editingLineDraft.specification" maxlength="500" placeholder="填写实际规格或选择尺寸属性" aria-label="部位规格" /></label>
+            </template>
+            <template v-else>
+              <label class="drawer-field"><span>每部位用量</span><ElInput v-model="editingLineDraft.pieces_per_part" inputmode="numeric" aria-label="每部位用量" /></label>
+              <label class="drawer-field"><span>裁片尺寸 / 规格</span><ElInput v-model="editingLineDraft.specification" maxlength="500" placeholder="填写实际尺寸或规格" aria-label="裁片尺寸或规格" /></label>
+            </template>
+            <template v-if="editingLineDraft.component_kind === 'CUT_PIECE'">
+            <label class="drawer-field"><span>原料规格</span><strong class="drawer-readonly-value">{{ componentMaterialValue(editingLineDraft, fabricSourceLines, 'specification') }}</strong></label>
+            <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ componentMaterialValue(editingLineDraft, fabricSourceLines, 'material') }}</strong></label>
+            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ componentMaterialValue(editingLineDraft, fabricSourceLines, 'color') }}</strong></label>
+            <label class="drawer-field"><span>色号</span><strong class="drawer-readonly-value">{{ componentMaterialValue(editingLineDraft, fabricSourceLines, 'color_code') }}</strong></label>
+            <label class="drawer-field"><span>门幅</span><strong class="drawer-readonly-value">{{ componentMaterialValue(editingLineDraft, fabricSourceLines, 'width') }}</strong></label>
+            </template>
+            <label class="drawer-field"><span>订单需求</span><strong class="drawer-readonly-value">{{ componentDemand(editingLineDraft, editingSection.lines, bom?.order_quantity || '0') }} {{ editingLineDraft.unit }}</strong></label>
+            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="3" maxlength="500" show-word-limit aria-label="备注" /></label>
           </template>
 
           <template v-else-if="editingSection?.title === '裁剪明细'">
@@ -342,6 +403,9 @@ const {
 .drawer-field > span { display: block; margin-bottom: 7px; color: var(--erp-color-text-secondary); font-size: 13px; }
 .drawer-readonly-value { display: flex; min-height: 32px; align-items: center; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--erp-input-border); border-radius: 6px; background: var(--erp-input-readonly-background); color: var(--erp-input-readonly-text); font-size: 13px; font-weight: 500; }
 .drawer-field--wide, .drawer-calculations { grid-column: 1 / -1; }
+.hardware-weight-hint, .hardware-weight-error { margin: 0; font-size: 12px; line-height: 1.5; }
+.hardware-weight-hint { color: var(--erp-color-text-secondary); }
+.hardware-weight-error { color: var(--el-color-danger); }
 .pipe-quantity-row { display: contents; }
 .pipe-quantity-row > .drawer-field:first-child { grid-column-start: 1; }
 .drawer-calculations { padding-top: 2px; }

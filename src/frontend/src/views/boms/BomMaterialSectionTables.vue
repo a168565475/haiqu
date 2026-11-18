@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { setManualHardwareWeight } from './useHardwareWeightPreview'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { packagingQuantity } from '@/utils/bomPackagingQuantity'
 import { computed, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 import { fetchMaterialCatalog, materialCatalogError } from '@/api/materialCatalog'
 import { Delete, Edit, FullScreen } from '@element-plus/icons-vue'
 import BomLineImageSummary from '@/components/BomLineImageSummary.vue'
+import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
+import { componentDemand, componentKey, componentMaterialValue, setComponentParent, setComponentUnit } from '@/utils/bomComposition'
 import type { BomLineInput, BomSectionInput } from '@/types/bom'
 import type { TubeCoatingColor } from '@/types/productionData'
 
@@ -15,6 +18,7 @@ type TubeCalculation = {
   base_purchase_bar_count: string
   purchase_allowance_bar_count: string
   suggested_purchase_meters: string
+  suggested_purchase_weight_kg: string
 }
 
 type CuttingQuantity = {
@@ -39,6 +43,9 @@ const props = withDefaults(defineProps<{
   isCuttingSection: boolean
   orderQuantity: string | number
   catalogRefreshKey?: number
+  componentUnits?: Array<{ id: string; unit_name: string }>
+  componentSources?: BomLineInput[]
+  changeComponentType?: (line: BomLineInput, kind: 'SEWN_PART' | 'CUT_PIECE') => void
   canEdit: boolean
   tableFullscreen: boolean
   tubeOptionsLoading: boolean
@@ -71,7 +78,21 @@ const props = withDefaults(defineProps<{
 }>(), {
   tubeCoatingColors: () => [],
   catalogRefreshKey: 0,
+  componentUnits: () => [],
+  componentSources: () => [],
 })
+
+const componentParts = computed(() => props.activeSection.lines.filter(line => line.component_kind === 'SEWN_PART'))
+const hasLegacyCutting = computed(() => props.activeSection.lines.some(line => !line.component_kind))
+function selectComponentSource(line: BomLineInput, key: string) {
+  const source = props.componentSources.find(item => componentKey(item) === key)
+  line.fabric_source_line_id = source?.id || null
+  line.fabric_source_client_key = source && !source.id ? source.client_key || null : null
+}
+function componentSourceDetails(line: BomLineInput) {
+  return ([['原料规格', 'specification'], ['材质', 'material'], ['颜色', 'color'], ['色号', 'color_code'], ['门幅', 'width']] as const)
+    .map(([label, field]) => `${label}：${componentMaterialValue(line, props.componentSources, field)}`).join('；')
+}
 
 const hardwareCatalogIds = computed(() => props.isHardwareSection
   ? [...new Set(props.activeSection.lines.map(line => line.material_catalog_id).filter((id): id is string => !!id))].sort()
@@ -162,8 +183,9 @@ const {
                <ElTableColumn label="原材料长度（m）" width="105"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).tube_cut_length_m) }}</template></ElTableColumn>
                <ElTableColumn label="采购根数" width="90"><template #default="scope"><b>{{ tubeCalculations(scope.row).base_purchase_bar_count }}</b></template></ElTableColumn>
                <ElTableColumn label="采购余量（根）" width="115"><template #default="scope">{{ tubeCalculations(scope.row).purchase_allowance_bar_count }}</template></ElTableColumn>
-               <ElTableColumn label="建议采购米数" width="115"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_meters) }}</template></ElTableColumn>
+               <ElTableColumn label="建议采购重量（kg）" width="145"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_weight_kg) }}</template></ElTableColumn>
                <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
+               <slot name="trailing-columns" />
              </ElTable>
             <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -193,7 +215,7 @@ const {
               <ElTableColumn label="规格" min-width="140" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="单位" width="80"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="单个用量" width="110"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="单个材料重量（kg）" width="170"><template #default="scope"><ElInput v-model="scope.row.unit_material_weight_kg" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
+              <ElTableColumn label="单个材料重量（kg）" width="170"><template #default="scope"><ElInput v-model="scope.row.unit_material_weight_kg" inputmode="decimal" :disabled="!canEdit" placeholder="填写" @input="setManualHardwareWeight(scope.row)" /></template></ElTableColumn>
               <ElTableColumn label="喷塑颜色" min-width="165">
                 <template #default="scope">
                   <ElSelect v-if="!scope.row.material_catalog_id || hardwareSprayEnabled[scope.row.material_catalog_id] === true" v-model="scope.row.powder_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
@@ -207,6 +229,7 @@ const {
               <ElTableColumn label="喷塑单个面积（㎡）" width="175"><template #default="scope"><ElInput v-model="scope.row.powder_coating_unit_area_sqm" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <ElTable v-else-if="isPlasticSection" class="erp-table-editor plastic-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前塑料件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -238,6 +261,7 @@ const {
               <ElTableColumn label="单个用量" width="130"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="220"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <ElTable v-else-if="isAuxiliarySection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor auxiliary-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前辅料暂无数据，点击“选择辅料”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -280,6 +304,7 @@ const {
               <ElTableColumn label="单个用量" width="125"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="190"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <ElTable v-else-if="isFabricSection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor fabric-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前面料暂无数据，点击“添加面料”开始录入">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -301,6 +326,7 @@ const {
               <ElTableColumn label="单位" width="70"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '米' }}</span></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <ElTable v-else-if="isPackagingSection" class="erp-table-editor packaging-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前包材暂无数据，点击“选择包材”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -312,24 +338,30 @@ const {
               <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.packaging_color) }}</span></template></ElTableColumn>
               <ElTableColumn label="规格" min-width="155" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="单位" width="76"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*用量（多少成品用一份）" width="190"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="numeric" :disabled="!canEdit" placeholder="填写正整数" /></template></ElTableColumn>
+              <ElTableColumn label="*用量（多少成品用一份）" width="190"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="decimal" :disabled="!canEdit" placeholder="正数，最多 4 位小数" /></template></ElTableColumn>
               <ElTableColumn label="需求数量" width="125"><template #default="scope">{{ packagingQuantity(scope.row.units_per_box, props.orderQuantity) || '—' }}</template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前裁剪明细暂无数据，点击“选择裁剪”批量添加">
+            <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前暂无部位或裁片，点击“添加材料”选择已有品名">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
                 <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
               </ElTableColumn>
-              <ElTableColumn label="裁剪名称" min-width="125"><template #default="scope"><template v-if="cuttingQuantities(scope.row).mode !== 'legacy' && cuttingQuantities(scope.row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(scope.row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ scope.row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*规格" min-width="140"><template #default="scope"><ElInput v-model="scope.row.specification" :disabled="!canEdit" maxlength="500" placeholder="必填，不能填 /" aria-label="裁剪规格" aria-required="true" /></template></ElTableColumn>
-              <ElTableColumn label="裁片量（片/套）" width="125"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径，按根/支流转；此处为开发试算展示'">{{ legacyPipeCuttingValues(scope.row)?.pieces }}</span><ElInput v-else v-model="scope.row.cutting_pieces_per_set" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="裁片量（片/套）" /></template></ElTableColumn>
-              <ElTableColumn label="每成品套数（套/成品）" width="155"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径没有该布料字段，开发试算按 1 套展示'">{{ legacyPipeCuttingValues(scope.row)?.sets }}</span><ElInput v-else v-model="scope.row.cutting_sets_per_product" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="每成品套数（套/成品）" /></template></ElTableColumn>
-              <ElTableColumn label="订单裁剪套数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderSets || '—' }}</template></ElTableColumn>
-              <ElTableColumn label="订单裁剪片数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderPieces || '—' }}</template></ElTableColumn>
-              <ElTableColumn label="流转单位" width="100"><template #default="scope"><ElInput v-if="cuttingQuantities(scope.row).mode === 'legacy'" v-model="scope.row.unit" :disabled="!canEdit" maxlength="50" placeholder="填写单位" /><span v-else>套</span></template></ElTableColumn>
+              <ElTableColumn label="类型" width="110"><template #default="{ row }"><ElSelect :model-value="row.component_kind || ''" :disabled="!canEdit" placeholder="待设置" aria-label="类型" @change="changeComponentType?.(row, $event)"><ElOption label="部位" value="SEWN_PART" /><ElOption label="裁片" value="CUT_PIECE" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="品名" min-width="160"><template #default="{ row }"><BomCuttingCatalogSelect v-if="row.component_kind" :line="row" :refresh-key="catalogRefreshKey" :disabled="!canEdit" lazy /><template v-else-if="cuttingQuantities(row).mode !== 'legacy' && cuttingQuantities(row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ row.part_name || '—' }}</span></template></ElTableColumn>
+              <ElTableColumn label="所属部位" min-width="150"><template #default="{ row }"><ElSelect v-if="row.component_kind === 'CUT_PIECE'" :model-value="row.parent_part_id || row.parent_part_client_key || ''" :disabled="!canEdit" placeholder="选择部位" aria-label="所属部位" @change="setComponentParent(row, $event, activeSection.lines)"><ElOption v-for="part in componentParts" :key="componentKey(part)" :value="componentKey(part)" :label="part.part_name || '未选择品名的部位'" /></ElSelect><span v-else>—</span></template></ElTableColumn>
+              <ElTableColumn label="原料资料" min-width="260"><template #default="{ row }"><div class="component-source-cell" :title="row.component_kind ? componentSourceDetails(row) : undefined"><ElSelect v-if="row.component_kind" :model-value="row.fabric_source_line_id || row.fabric_source_client_key || ''" :disabled="!canEdit" filterable :clearable="row.component_kind === 'SEWN_PART'" value-on-clear="" :placeholder="row.component_kind === 'SEWN_PART' ? '选择归属面布' : '选择布料或棉'" :aria-label="row.component_kind === 'SEWN_PART' ? '归属面布' : '来源原料'" @change="selectComponentSource(row, $event)"><ElOption v-for="source in componentSources" :key="componentKey(source)" :value="componentKey(source)" :label="`${source.part_name} · ${source.specification}`" /></ElSelect><ElTooltip v-else :content="componentSourceDetails(row)" placement="top" effect="light"><span class="component-source-summary" tabindex="0">{{ componentMaterialValue(row, componentSources, 'material') }} / {{ componentMaterialValue(row, componentSources, 'color') }} / 门幅 {{ componentMaterialValue(row, componentSources, 'width') }}</span></ElTooltip></div></template></ElTableColumn>
+              <ElTableColumn label="尺寸 / 规格" min-width="160"><template #default="{ row }"><ElInput v-model="row.specification" :disabled="!canEdit" maxlength="500" :placeholder="row.component_kind === 'SEWN_PART' ? '填写部位规格' : '必填，不能填 /'" :aria-label="row.component_kind === 'SEWN_PART' ? '部位规格' : row.component_kind ? '裁片尺寸或规格' : '裁剪规格'" :aria-required="row.component_kind !== 'SEWN_PART'" /></template></ElTableColumn>
+              <ElTableColumn label="单件用量" width="120"><template #default="{ row }"><ElInput v-if="row.component_kind === 'SEWN_PART'" v-model="row.parts_per_product" :disabled="!canEdit" inputmode="numeric" aria-label="每产品部位数量" title="每件成品所需的部位数量" /><ElInput v-else-if="row.component_kind === 'CUT_PIECE'" v-model="row.pieces_per_part" :disabled="!canEdit" inputmode="numeric" aria-label="每部位用量" title="每个所属部位所需的裁片用量，按所选单位计数" /><span v-else>—</span></template></ElTableColumn>
+              <ElTableColumn v-if="hasLegacyCutting" label="裁片量（片/套）" width="125"><template #default="scope"><span v-if="scope.row.component_kind">—</span><span v-else-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value">{{ legacyPipeCuttingValues(scope.row)?.pieces }}</span><ElInput v-else v-model="scope.row.cutting_pieces_per_set" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="裁片量（片/套）" /></template></ElTableColumn>
+              <ElTableColumn v-if="hasLegacyCutting" label="每成品套数（套/成品）" width="155"><template #default="scope"><span v-if="scope.row.component_kind">—</span><span v-else-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value">{{ legacyPipeCuttingValues(scope.row)?.sets }}</span><ElInput v-else v-model="scope.row.cutting_sets_per_product" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="每成品套数（套/成品）" /></template></ElTableColumn>
+              <ElTableColumn v-if="hasLegacyCutting" label="订单裁剪套数" width="125"><template #default="{ row }">{{ row.component_kind ? '—' : cuttingQuantities(row).orderSets || '—' }}</template></ElTableColumn>
+              <ElTableColumn label="订单需求" width="125"><template #default="{ row }">{{ row.component_kind ? componentDemand(row, activeSection.lines, String(orderQuantity)) : cuttingQuantities(row).orderPieces || '—' }}</template></ElTableColumn>
+              <ElTableColumn label="单位" width="110"><template #default="{ row }"><ElSelect v-if="row.component_kind" :model-value="row.unit" :disabled="!canEdit" :loading="editorReferenceOptionsLoading" placeholder="选择单位" :aria-label="row.component_kind === 'SEWN_PART' ? '部位单位' : '裁片单位'" @change="setComponentUnit(row, $event)"><ElOption v-for="unit in componentUnits" :key="unit.id" :label="unit.unit_name" :value="unit.unit_name" /></ElSelect><ElInput v-else-if="cuttingQuantities(row).mode === 'legacy'" v-model="row.unit" :disabled="!canEdit" maxlength="50" placeholder="填写单位" /><span v-else>套</span></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="260"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <ElTable class="erp-table-editor" v-else-if="activeSection.lines.length" :data="activeSection.lines" border scrollbar-always-on>
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -363,6 +395,7 @@ const {
               <ElTableColumn label="单位" width="90"><template #default="scope"><ElInput v-model="scope.row.unit" :disabled="!canEdit" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="160"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
+              <slot name="trailing-columns" />
             </ElTable>
             <div v-else class="pending-section-fields">
               <strong>{{ activeSection.title }}</strong>
@@ -376,6 +409,8 @@ const {
 
 <style scoped lang="scss">
 .table-index-cell { position: relative; display: flex; min-height: 32px; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.component-source-cell { min-width: 0; }
+.component-source-summary { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
 .table-row-actions { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 2px; }
 :deep(.el-table__row:hover) .table-row-number { display: none; }
 :deep(.el-table__row:hover) .table-row-actions { display: flex; }

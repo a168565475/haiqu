@@ -40,7 +40,7 @@ def tube_public_reserved_quantities(identities, *, zone_id=None, exclude_order_i
         scope |= Q(input_identity__stock_kind=kind, input_identity__identity_key=key,
                    input_identity__unit_id=unit)
     rows = TubeOutsourcingLine.objects.filter(
-        scope, order__status="PENDING_DISPATCH", order__source_kind__in=["RAW_PIPE", "PUBLIC_SEMI", "PUBLIC_CUTTING"], order__is_plan=False,
+        scope, order__status="PENDING_DISPATCH", order__source_kind__in=["RAW_PIPE", "PUBLIC_SEMI", "PUBLIC_CUTTING", "PUBLIC_PART"], order__is_plan=False,
     )
     if exclude_order_id:
         rows = rows.exclude(order_id=exclude_order_id)
@@ -53,6 +53,19 @@ def tube_public_reserved_quantities(identities, *, zone_id=None, exclude_order_i
         pool = (row["input_identity__stock_kind"], str(row["input_identity__identity_key"]),
                 str(row["input_identity__unit_id"]))
         reserved[(pool, str(row["order__zone_id"]))] += Decimal(row["total"] or 0)
+    # 车缝总单目标是部位；实际发出的裁片保存在独立投入明细中。
+    from apps.outsourcing.models import TubeOutsourcingInput
+    piece_inputs = TubeOutsourcingInput.objects.filter(scope, source_kind='PUBLIC_PIECE',
+        order__status='PENDING_DISPATCH', order__is_plan=False)
+    if exclude_order_id:
+        piece_inputs = piece_inputs.exclude(order_id=exclude_order_id)
+    if zone_id is not None:
+        piece_inputs = piece_inputs.filter(order__zone_id=zone_id)
+    for row in piece_inputs.values('input_identity__stock_kind', 'input_identity__identity_key',
+            'input_identity__unit_id', 'order__zone_id').annotate(total=Sum('stock_quantity')):
+        pool = (row['input_identity__stock_kind'], str(row['input_identity__identity_key']),
+                str(row['input_identity__unit_id']))
+        reserved[(pool, str(row['order__zone_id']))] += Decimal(row['total'] or 0)
     # 新目录附带料使用同一个公共余额，所有领料和外发扣库都须看到其待发占用。
     from apps.outsourcing.models import TubeOutsourcingMaterial
     material_scope = Q(pk__in=[])

@@ -58,12 +58,23 @@ def _production_cny_rate_snapshot():
     }
 
 
+def _production_rate_snapshot(currency, exchange_rate):
+    if currency.code == "CNY" and exchange_rate == Decimal("1"):
+        return _production_cny_rate_snapshot()
+    return {
+        "record_id": None, "base_currency_code": currency.code, "quote_currency_code": "CNY",
+        "rate": str(exchange_rate), "effective_date": None,
+        "source_name": "生产任务确认汇率", "source_version": "",
+    }
+
+
 def _prepare_catalog_products(products, task=None):
     from apps.product_catalog.selection import resolve_product_selection
 
     existing = {str(line.pk): line for line in task.products.all()} if task else {}
     for data in products:
-        line = existing.get(str(data["client_key"]))
+        client_key = data.get("client_key")
+        line = existing.get(str(client_key)) if client_key is not None else None
         catalog_id = data.pop("product_catalog_id", getattr(line, "product_catalog_id", None))
         selection = data.pop("product_selection", None)
         if not catalog_id and selection is None and not is_product_entry_snapshot(getattr(line, "product_selection_snapshot", None)):
@@ -510,7 +521,7 @@ def _create_children(
                 **snapshot_values,
                 image_file=product_images[0] if product_images else None,
                 total_amount=(data["quantity"] * data["unit_price"]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP),
-                exchange_rate_snapshot=_production_cny_rate_snapshot(),
+                exchange_rate_snapshot=_production_rate_snapshot(data.get("currency"), data.get("exchange_rate")),
                 **data,
             )
             ProductionTaskProductImage.objects.bulk_create(
@@ -770,10 +781,14 @@ def _sync_children(
                     {f"product_image_{client_key}": f"每条颜色明细最多保留 {MAX_IMAGES_PER_PRODUCT_LINE} 张图片。"}
                 )
 
+            refresh_rate_snapshot = line is None or (
+                line.currency_id != getattr(data.get("currency"), "pk", None)
+                or line.exchange_rate != data.get("exchange_rate")
+            )
             if line is None:
                 line = ProductionTaskProduct(production_task=task)
-                if data["currency"].code == "CNY":
-                    line.exchange_rate_snapshot = _production_cny_rate_snapshot()
+            if refresh_rate_snapshot and not task.sales_order_id and not line.sales_order_delivery_batch_line_id:
+                line.exchange_rate_snapshot = _production_rate_snapshot(data.get("currency"), data.get("exchange_rate"))
             line.line_number = product_index
             line.product = product
             if not task.sales_order_id and not line.sales_order_delivery_batch_line_id:
@@ -901,9 +916,11 @@ def replace_unbound_product_line(*, task, product_line, product_data, files, act
         setattr(product_line, field_name, value)
     product_line.image_file = uploaded_images[0] if uploaded_images else None
     product_line.total_amount = (data["quantity"] * data["unit_price"]).quantize(
-        Decimal("0.0001"),
-        rounding=ROUND_HALF_UP,
+        Decimal("0.0001"), rounding=ROUND_HALF_UP,
     )
+    if (product_line.currency_id != getattr(data.get("currency"), "pk", None)
+            or product_line.exchange_rate != data.get("exchange_rate")):
+        product_line.exchange_rate_snapshot = _production_rate_snapshot(data.get("currency"), data.get("exchange_rate"))
     for field_name, value in data.items():
         setattr(product_line, field_name, value)
     product_line.full_clean()

@@ -71,7 +71,7 @@ describe('生产计划清单与摘要', () => {
     await view.setProps({ plans: [{ ...item, plan_category: 'METAL' }] })
     expect(view.findAll('button').some(button => button.text() === '成品入库')).toBe(false)
   })
-  it.each(['list', 'summary'] as const)('%s 金工和车缝显示半成品入口，裁剪和装配不显示', async mode => {
+  it.each(['list', 'summary'] as const)('%s 金工、裁剪和车缝显示半成品入口，装配不显示', async mode => {
     const item = { ...plan('semi'), can_receive_semi: true }
     const view = await openList([item], mode, 'receipt')
     await action(view, '半成品入库').trigger('click')
@@ -85,7 +85,11 @@ describe('生产计划清单与摘要', () => {
     expect(view.text()).toContain('没有该车间入库权限')
     await action(view, '半成品入库').trigger('click')
     expect(view.emitted('receiveSemi')).toHaveLength(2)
-    for (const category of ['CUTTING', 'ASSEMBLY']) {
+    const cutting = { ...item, plan_category: 'CUTTING' }
+    await view.setProps({ plans: [cutting] })
+    await action(view, '半成品入库').trigger('click')
+    expect(view.emitted('receiveSemi')![2]).toEqual([cutting])
+    for (const category of ['ASSEMBLY']) {
       await view.setProps({ plans: [{ ...item, plan_category: category }] })
       expect(view.findAll('button').some(button => button.text() === '半成品入库')).toBe(false)
     }

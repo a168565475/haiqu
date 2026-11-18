@@ -11,6 +11,33 @@ vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 
 describe('BOM管材沿原根米支输入流程', () => {
+  it('手工模式独立填写每根长料重量，自动模式仅保留公式结果', async () => {
+    const line = reactive({ ...blankLine('根'), manual_tube_metrics: true, purchase_unit_weight_kg: '0.4' })
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: { long_material_unit_weight_kg: '2.5' }, tubeCalculationReadonly: false,
+      editorReferenceOptionsError: '', ensureEditorReferenceOptions: vi.fn(),
+      tubeShapes: [], tubeProductNames: [], tubeMaterials: [], tubeDiameters: [], tubeThicknesses: [], tubeCoatingColors: [],
+      tubeOptionsLoading: false, normalizeTubeCutPieceCount: vi.fn(), openLineImageManager: vi.fn(),
+      auxiliaryLineHasActiveProduct: () => false, auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: vi.fn(),
+      auxiliaryColorOptions: () => [], setAuxiliaryColor: vi.fn(), auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: vi.fn(),
+      fabricSpecificationOptions: () => [], setFabricSpecification: vi.fn(), fabricColorSnapshot: () => '',
+      fabricColorOptions: () => [], setFabricColor: vi.fn(), fabricMaterialOptions: () => [], setFabricMaterial: vi.fn(),
+      fabricWidthOptions: () => [], setFabricWidth: vi.fn(), isPipeCuttingLine: () => false,
+      editingFabricSourceKey: '', fabricSourceLines: [], legacyPipeCuttingValues: () => null,
+      editingCuttingCalculation: null, bom: null, number: String,
+    } as never, global: { plugins: [ElementPlus] } })
+    const input = wrapper.findAllComponents({ name: 'ElInput' }).find(item => item.props('ariaLabel') === '长料单重')!
+    input.vm.$emit('update:modelValue', '2.5')
+    await wrapper.vm.$nextTick()
+    expect(line.long_material_unit_weight_kg).toBe('2.5')
+    expect(line.purchase_unit_weight_kg).toBe('0.4')
+    await wrapper.setProps({ tubeCalculationReadonly: true })
+    expect(wrapper.find('[aria-label="长料单重"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('长料单重（kg）2.5')
+    wrapper.unmount()
+  })
   it('采购余量回显自动档，任何数量均能手动换档，数量变化不覆盖手动选择', async () => {
     const line = reactive({ ...blankLine('根'), purchase_allowance_mode: 'AUTO' as 'AUTO' | 'MANUAL', purchase_allowance_rule: '' as '' | 'PERCENT_0_5' })
     const calculations = { base_purchase_bar_count: '500', purchase_allowance_bar_count: '5', branch_count: '505', purchase_allowance_rule: 'PLUS_5' }
@@ -194,17 +221,18 @@ describe('BOM管材沿原根米支输入流程', () => {
       global: { plugins: [ElementPlus], renderStubDefaultSlot: true },
     })
     const selector = wrapper.findComponent({ name: 'MaterialSelectionPanel' })
-    expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(false)
+    const coatingSelector = () => wrapper.findAllComponents({ name: 'ElSelect' }).find(input => input.props('ariaLabel') === '喷塑颜色')
+    expect(coatingSelector()).toBeUndefined()
     await wrapper.setProps({ editingLineDraft: { ...line, material_catalog_id: 'A' } })
     selector.vm.$emit('loaded', { id: 'A', spray_enabled: false })
     selector.vm.$emit('public-options', { values: [{ id: 'C', field_key: 'color', value: '黑色' }] })
     await wrapper.vm.$nextTick()
-    expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(false)
+    expect(coatingSelector()).toBeUndefined()
     selector.vm.$emit('loaded', { id: 'A', spray_enabled: true })
     await wrapper.vm.$nextTick()
-    const coating = wrapper.findComponent({ name: 'ElSelect' })
+    const coating = coatingSelector()!
     expect(coating.props()).toMatchObject({ disabled: false, filterable: false, allowCreate: false, placeholder: '选择喷塑颜色' })
-    expect(wrapper.findComponent({ name: 'ElOption' }).props()).toMatchObject({ label: '黑色', value: '黑色' })
+    expect(coating.findComponent({ name: 'ElOption' }).props()).toMatchObject({ label: '黑色', value: '黑色' })
     selector.vm.$emit('public-options', { values: [] })
     await wrapper.vm.$nextTick()
     expect(coating.props('placeholder')).toBe('暂无喷塑颜色，请到维护配置新增')

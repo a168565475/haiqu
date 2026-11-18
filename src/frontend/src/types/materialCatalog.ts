@@ -18,6 +18,7 @@ export interface MaterialSelectionInput extends MaterialColorSelection {
   semi_kind?: 'PIPE' | 'CUTTING' | 'HARDWARE' | null
 }
 export interface MaterialSelectionSnapshot extends MaterialSelectionInput {
+  selection_kind?: 'BOM_COMPONENT_REFERENCE'
   schema_version: 1
   catalog_id: string
   category_key: string

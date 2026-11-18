@@ -9,10 +9,12 @@ from uuid import UUID
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.db.models import Max
+from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.boms.models import Bom, BomLine
+from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
@@ -22,13 +24,13 @@ from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import Currency, ReferenceStatus
 
 from .material_receipt_identity import build_purchase_material_snapshot, resolve_purchase_material
-from .group_selectors import purchase_group_completion_summary, purchase_groups_with_context
+from .group_selectors import purchase_group_completion_summary, purchase_group_deletion_summary, purchase_groups_with_context
 from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
 from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
 from .services import (
     PURCHASABLE_TASK_STATUSES, PurchaseSourceChanged, PurchaseSourceUnavailable, _money, evaluate_purchase_source,
-    next_purchase_order_number, purchase_order_snapshot,
+    _validate_hardware_actual_weight, is_hardware_weight_snapshot, next_purchase_order_number, purchase_order_snapshot,
 )
 
 
@@ -40,7 +42,8 @@ SOURCE_FIELDS = (
     "category_snapshot", "material_snapshot", "part_name_snapshot", "specification_snapshot",
     "raw_material_snapshot", "material_attributes_snapshot", "required_quantity",
     "source_quantity_field", "source_quantity_text", "source_unit_text", "quantity_parse_status",
-    "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters", "calculation_snapshot",
+    "raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters",
+    "suggested_purchase_weight_kg", "calculation_snapshot",
 )
 
 
@@ -52,9 +55,9 @@ def complete_purchase_group(*, group_id, remark, allowed_task_ids, actor_employe
     if task_id is None:
         raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
-    group = PurchaseGroup.objects.select_for_update().get(pk=group_id)
-    if task.archived_at or group.archived_at:
-        raise NotFound("采购总单或生产订单已归档。")
+    group = PurchaseGroup.objects.select_for_update().filter(pk=group_id, archived_at__isnull=True).first()
+    if task.archived_at or group is None:
+        raise NotFound("采购总单不存在、已删除或生产订单已归档。")
     require_matching_etag(request, group)
     # 入库先锁采购单；锁完当前所有批次后重新读取流程，不能依赖页面预取或总单版本代替重核。
     list(PurchaseOrder.objects.select_for_update().filter(
@@ -82,6 +85,45 @@ def complete_purchase_group(*, group_id, remark, allowed_task_ids, actor_employe
     return purchase_groups_with_context().get(pk=group.pk)
 
 
+@transaction.atomic
+def delete_purchase_group(*, group_id, allowed_task_ids, actor_employee, request):
+    task_id = PurchaseGroup.objects.filter(
+        pk=group_id, production_task_id__in=allowed_task_ids, archived_at__isnull=True,
+    ).values_list("production_task_id", flat=True).first()
+    if task_id is None:
+        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+    # 与新建总单、批次及确认采购统一锁顺序；等待期间对象可能已被删除。
+    task = ProductionTask.objects.select_for_update().get(pk=task_id)
+    group = PurchaseGroup.objects.select_for_update().filter(
+        pk=group_id, production_task_id__in=allowed_task_ids, archived_at__isnull=True,
+    ).first()
+    if group is None or task.archived_at:
+        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+    require_matching_etag(request, group)
+    batches = list(PurchaseOrder.objects.select_for_update().filter(purchase_group=group).order_by("id"))
+    batch_ids = [batch.pk for batch in batches]
+    list(PurchaseOrderLine.objects.select_for_update().filter(purchase_order_id__in=batch_ids).order_by("id"))
+    list(PurchaseGroupLine.objects.select_for_update().filter(purchase_group=group).order_by("id"))
+    summary = purchase_group_deletion_summary(purchase_groups_with_context().get(pk=group.pk))
+    if not summary["can_delete"]:
+        raise Conflict(summary["blocked_reason"])
+    before = {
+        "group_number": group.group_number, "source_revision": group.source_revision,
+        "deleted_draft_batches": [{"id": batch.pk, "order_number": batch.order_number} for batch in batches],
+    }
+    try:
+        PurchaseOrder.objects.filter(pk__in=batch_ids).delete()
+        PurchaseGroupLine.objects.filter(purchase_group=group).delete()
+        group.delete()
+    except ProtectedError as error:
+        raise Conflict("采购总单已有其他业务记录引用，不能删除；请刷新后核对。") from error
+    write_audit_log(
+        object_type="PURCHASE_GROUP", object_id=group_id, action="DELETED",
+        context_type="PRODUCTION_TASK", context_id=task_id, actor_employee=actor_employee,
+        before_data=before, request=request,
+    )
+
+
 def _json_value(value):
     return json.loads(json.dumps(value, cls=DjangoJSONEncoder))
 
@@ -100,7 +142,9 @@ def source_issues(snapshot):
         try:
             selected = validate_saved_material(snapshot.get("material_selection_snapshot"), material_catalog_id=snapshot["material_catalog_id"])
             pipe = snapshot.get("section_type_snapshot") == "PROFILE"
-            if ("米" if pipe else selected["unit_name"]) != snapshot.get("source_unit_text") or (pipe and selected["unit_name"] != "根"):
+            hardware = is_hardware_weight_snapshot(snapshot.get("calculation_snapshot"))
+            expected_unit = "KG" if (pipe and (snapshot.get("calculation_snapshot") or {}).get("measurement_unit") == "kg") or hardware else ("米" if pipe else selected["unit_name"])
+            if expected_unit != snapshot.get("source_unit_text") or (pipe and selected["unit_name"] != "根"):
                 issues.append("UNIT_MISMATCH")
             if pipe and not snapshot.get("raw_bar_length_m"):
                 issues.append("PIPE_PARAMETERS_MISSING")
@@ -122,12 +166,16 @@ def source_issues(snapshot):
         if material is None:
             issues.append("MATERIAL_IDENTITY_MISSING")
         elif snapshot.get("section_type_snapshot") != "PROFILE" and (
-            snapshot.get("source_unit_text") not in {material.unit.unit_name, material.unit.unit_code}
+            (not is_hardware_weight_snapshot(identity)
+             and snapshot.get("source_unit_text") not in {material.unit.unit_name, material.unit.unit_code})
             or str(identity.get("unit_id") or material.unit_id) != str(material.unit_id)
         ):
             issues.append("UNIT_MISMATCH")
-    if snapshot.get("section_type_snapshot") == "PROFILE" and not snapshot.get("raw_bar_length_m"):
-        issues.append("PIPE_PARAMETERS_MISSING")
+    if snapshot.get("section_type_snapshot") == "PROFILE":
+        if not snapshot.get("raw_bar_length_m"):
+            issues.append("PIPE_PARAMETERS_MISSING")
+        if snapshot.get("source_unit_text") == "KG" and not snapshot.get("raw_bar_weight_kg"):
+            issues.append("PIPE_WEIGHT_MISSING")
     return issues
 
 
@@ -255,9 +303,14 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
         snapshot.update(bom_id=item["bom_id"], bom_line_id=item["bom_line_id"], product_line_id_snapshot=item["product_line_id"])
         if item["section_type"] == "PROFILE":
             calculation = pipe_source_snapshot(item["_bom_line"])
-            snapshot.update({key: calculation[key] for key in ("raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters")})
+            snapshot.update({key: calculation[key] for key in ("raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters", "suggested_purchase_weight_kg") if key in calculation})
         else:
             calculation = build_purchase_material_snapshot(item["_bom_line"])
+            if item["section_type"] == "ACCESSORY" and str((item["_bom_line"].raw_values or {}).get("hardware_weight_mode") or "").upper() in {"AUTO", "MANUAL"}:
+                from .services import _hardware_calculation_snapshot, _hardware_weight_data
+                weight_data = _hardware_weight_data(item["_bom_line"], item["_bom"])
+                if weight_data is not None:
+                    calculation = _hardware_calculation_snapshot(item["_bom_line"], item["_bom"], weight_data)
         snapshot["calculation_snapshot"] = calculation
         line = _save_group_line(group, number, _json_value(snapshot))
         if line.compatibility_issues:
@@ -302,7 +355,9 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
     if task.archived_at:
         raise NotFound("生产订单已归档。")
-    group = PurchaseGroup.objects.select_for_update().get(pk=group_id)
+    group = PurchaseGroup.objects.select_for_update().filter(pk=group_id, archived_at__isnull=True).first()
+    if group is None:
+        raise NotFound("采购总单不存在或已删除，请重新选择。")
     fingerprint = hashlib.sha256(json.dumps(validated_data, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
     existing = group.batches.filter(batch_request_id=validated_data["request_id"]).first()
     if existing:
@@ -323,6 +378,21 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         raise ValidationError({"lines": "批次材料必须属于当前总单，且不能重复。"})
     if not inputs:
         raise ValidationError({"lines": "采购批次至少选择一项材料。"})
+    for identifier in ids:
+        source = source_lines[identifier]
+        snapshot = source.source_snapshot
+        if snapshot.get("section_type_snapshot") != "PROFILE":
+            continue
+        calculation = snapshot.get("calculation_snapshot") or {}
+        if source.source_unit_text != "KG" or not isinstance(calculation, dict) or calculation.get("measurement_unit") != "kg":
+            raise Conflict("旧米制管材总单不能新建采购批次，请先补齐 BOM 长料单重并建立重量采购来源。")
+        try:
+            weight = decimal_quantity(snapshot.get("raw_bar_weight_kg"), "raw_bar_weight_kg")
+            saved_weight = decimal_quantity(calculation.get("raw_bar_weight_kg"), "raw_bar_weight_kg")
+        except MaterialFlowValueError as error:
+            raise Conflict("管材总单缺少有效长料单重，不能新建采购批次。") from error
+        if weight != saved_weight:
+            raise Conflict("管材总单长料单重与保存的计算依据不一致，请先核对来源。")
     lock_bom_line_material_identities([], extra_raw_material_ids=[
         source_lines[key].source_snapshot.get("calculation_snapshot", {}).get("raw_material_id") for key in ids
     ])
@@ -358,6 +428,7 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         if values.get("raw_bar_length_m"):
             values.update(purchase_pipe_values(values["calculation_snapshot"], item))
             quantity = physical_pipe_quantity(values["calculation_snapshot"], item, values)
+        _validate_hardware_actual_weight(values.get("calculation_snapshot"), item, quantity)
         if quantity is None or quantity <= 0:
             raise ValidationError({"lines": "所选材料必须填写正数采购数量；管材填写根数。"})
         supplier = suppliers.get(str(item.get("supplier_id")))

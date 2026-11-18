@@ -46,14 +46,15 @@ describe('ProductInformationDrawer', () => {
     apiMocks.updateProduct.mockResolvedValue({ data: fixture, etag: '"etag-2"' })
   })
 
-  it('编辑态展示 12 个字段并使用 748px 窗口', async () => {
+  it('编辑态只显示仓库名称并使用 748px 窗口', async () => {
     const wrapper = mountDrawer()
     await flushPromises()
 
     expect(wrapper.findComponent({ name: 'AppWindowDialog' }).props('width')).toBe('748px')
-    for (const label of ['品号', '类型', '产品编码', '品名', '类别', '货号', '规格', '单位', '仓库号', '仓库名称', '规模', '状态']) {
+    for (const label of ['品号', '类型', '产品编码', '品名', '类别', '货号', '规格', '单位', '仓库名称', '规模', '状态']) {
       expect(wrapper.text()).toContain(label)
     }
+    expect(wrapper.text()).not.toContain('仓库号')
     expect(apiMocks.fetchProduct).toHaveBeenCalledWith('product-1')
   })
 
@@ -68,7 +69,7 @@ describe('ProductInformationDrawer', () => {
     await flushPromises()
     expect(apiMocks.updateProduct).toHaveBeenCalledTimes(1)
     expect(apiMocks.updateProduct).toHaveBeenCalledWith(
-      'product-1', expect.objectContaining({ product_number: 'CP00001' }), '"etag-1"',
+      'product-1', expect.objectContaining({ product_number: 'CP00001', warehouse_number: 'CK01' }), '"etag-1"',
     )
     await expect((wrapper.vm as unknown as { canLeave: () => Promise<boolean> }).canLeave()).resolves.toBe(false)
     resolveUpdate({ data: fixture, etag: '"etag-2"' })

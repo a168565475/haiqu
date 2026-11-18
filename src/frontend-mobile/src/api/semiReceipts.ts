@@ -12,7 +12,12 @@ export async function fetchSemiReceiptPreview(planId: string, category: SemiRece
     || !Array.isArray(preview.excluded) || !preview.excluded.every(item => typeof item === 'string')
     || !Array.isArray(preview.zones) || !preview.zones.every(zone => zone && semiReceiptUuid.test(zone.id) && typeof zone.warehouse === 'string' && typeof zone.name === 'string')
     || !Array.isArray(preview.lines) || !preview.lines.every(line => line && semiReceiptUuid.test(line.bom_line_id) && line.attributes
-      && line.attributes.unit_name === (category === 'METAL' ? '支' : '套') && semiPreviewWhole(line.can_receive) !== null && typeof line.received === 'string')
+      && typeof line.attributes.unit_name === 'string' && Boolean(line.attributes.unit_name.trim())
+      && (line.unit === undefined || line.unit === line.attributes.unit_name)
+      && (category === 'METAL' ? line.attributes.unit_name === '支'
+        : category === 'CUTTING' ? line.component_kind === 'CUT_PIECE'
+          : line.component_kind === 'SEWN_PART' || !line.component_kind && line.attributes.unit_name === '套')
+      && semiPreviewWhole(line.can_receive) !== null && typeof line.received === 'string')
     || new Set(preview.lines.map(line => line.bom_line_id)).size !== preview.lines.length) throw new Error('半成品入库预览不完整或来源已变化，请刷新核对。')
   if (category === 'METAL' && (!preview.metal_processing || !Array.isArray(preview.metal_processing.blockers) || !Array.isArray(preview.metal_processing.future_blockers)
     || preview.lines.some(line => !line.metal_processing || typeof line.metal_processing.basis_ready !== 'boolean' || !Array.isArray(line.metal_processing.blockers)

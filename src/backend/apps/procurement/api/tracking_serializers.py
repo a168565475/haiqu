@@ -73,6 +73,13 @@ class ArrivalTrackingRowSerializer(TrackingRowSerializer):
     pending_quality_quantity = serializers.CharField(allow_null=True)
     unreceived_quantity = serializers.CharField(allow_null=True)
     return_quantity = serializers.CharField(allow_null=True)
+    # 旧米制采购历史行没有重量字段，兼容旧投影时允许缺省。
+    ordered_weight_kg = serializers.CharField(required=False, allow_null=True)
+    received_weight_kg = serializers.CharField(required=False, allow_null=True)
+    accepted_weight_kg = serializers.CharField(required=False, allow_null=True)
+    pending_quality_weight_kg = serializers.CharField(required=False, allow_null=True)
+    unreceived_weight_kg = serializers.CharField(required=False, allow_null=True)
+    return_weight_kg = serializers.CharField(required=False, allow_null=True)
     return_pending = serializers.BooleanField()
     delivery_date = serializers.DateField(allow_null=True)
     days_remaining = serializers.IntegerField(allow_null=True)

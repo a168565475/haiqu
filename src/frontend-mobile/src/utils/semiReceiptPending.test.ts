@@ -30,7 +30,7 @@ beforeEach(cleanup)
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); cleanup() })
 
 describe('半成品原请求的Session隔离与保护', () => {
-  it('按计划、金工/车缝、账号分别保存，重新打开仍使用原payload与ETag', () => {
+  it('按计划、金工/裁剪/车缝、账号分别保存，重新打开仍使用原payload与ETag', () => {
     const identity = { userId: 1, generation: 7 }
     const store = createSemiReceiptPending(plan, 'METAL', identity, () => identity)
     const raw = JSON.stringify(pending())
@@ -39,6 +39,7 @@ describe('半成品原请求的Session隔离与保护', () => {
     expect(createSemiReceiptPending(plan, 'METAL', identity, () => identity).read()).toBe(raw)
     expect(createSemiReceiptPending(otherPlan, 'METAL', identity, () => identity).read()).toBeNull()
     expect(createSemiReceiptPending(plan, 'SEWING', identity, () => identity).read()).toBeNull()
+    expect(createSemiReceiptPending(plan, 'CUTTING', identity, () => identity).read()).toBeNull()
     const other = { userId: 2, generation: 7 }
     expect(createSemiReceiptPending(plan, 'METAL', other, () => other).read()).toBeNull()
   })
@@ -152,11 +153,11 @@ describe('半成品待核对记录与数量边界', () => {
     }
   })
 
-  it.each(['METAL', 'SEWING'] as const)('%s路由只接受单个真实计划UUID与支持类别', category => {
+  it.each(['METAL', 'CUTTING', 'SEWING'] as const)('%s路由只接受单个真实计划UUID与支持类别', category => {
     expect(semiReceiptScope({ schedule_product_id: plan, plan_category: category })).toEqual({ schedule_product_id: plan, plan_category: category })
     expect(semiReceiptScope({ schedule_product_id: [plan], plan_category: category })).toBeNull()
   })
-  it.each([{}, { schedule_product_id: 'invalid', plan_category: 'METAL' }, { schedule_product_id: plan, plan_category: 'CUTTING' },
+  it.each([{}, { schedule_product_id: 'invalid', plan_category: 'METAL' },
     { schedule_product_id: plan, plan_category: 'ASSEMBLY' }, { schedule_product_id: plan, plan_category: ['SEWING'] },
   ])('拒绝无效或不支持的入库来源', query => { expect(semiReceiptScope(query)).toBeNull() })
 

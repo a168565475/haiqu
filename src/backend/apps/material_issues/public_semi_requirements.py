@@ -113,6 +113,8 @@ def legacy_pending_semi_quantities(requirements, exclude_issue_id=None):
 
 
 def _semi_kind(line):
+    if getattr(line, 'component_kind', '') in {'CUT_PIECE', 'SEWN_PART'}:
+        return line.component_kind
     if line.section.section_type == "PROFILE":
         return "PIPE"
     if line.section.section_type == "FABRIC" and line.section.title.strip() == "裁剪明细":
@@ -124,7 +126,12 @@ def _semi_kind(line):
 
 def _net_quantity(line, order_quantity):
     kind = _semi_kind(line)
-    if kind == "PIPE":
+    if kind in {'CUT_PIECE', 'SEWN_PART'}:
+        from apps.inventory.part_flow_quantities import component_required_quantity
+        quantity = component_required_quantity(line, order_quantity)
+        basis = {'field': 'parts_per_product' if kind == 'SEWN_PART' else 'pieces_per_part',
+                 'value': str(line.parts_per_product if kind == 'SEWN_PART' else line.pieces_per_part)}
+    elif kind == "PIPE":
         usage = positive_integer(line.pieces_per_product, "pieces_per_product")
         quantity = positive_integer(order_quantity, "order_quantity") * usage
         basis = {"field": "pieces_per_product", "value": str(usage)}
@@ -167,7 +174,7 @@ def _effective_issued(current, legacy):
     return current.internal_issued_quantity + legacy["issued"] - inherited
 
 
-def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow_excess_issue=False):
+def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow_excess_issue=False, plan_category=None):
     """只读构造当前接收产品的半成品需求，不因打开页面写入额度。"""
     try:
         task_id, product_id = UUID(str(task_id)), UUID(str(product_id))
@@ -184,7 +191,8 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
     if Decimal(product.quantity) != bom.order_quantity:
         return [], [_blocker("BOM_QUANTITY_STALE", "订单数量与已确认 BOM 不一致。")]
     lines = list(BomLine.objects.filter(section__bom=bom).select_related(
-        "section", "fabric_source_line__section").order_by("section__line_number", "line_number", "id"))
+        "section", "parent_part", "fabric_source_line__section").prefetch_related(
+            'cut_pieces__section', 'cut_pieces__fabric_source_line__section').order_by("section__line_number", "line_number", "id"))
     existing = list(OrderSemiFinishedRequirement.objects.filter(production_task_id=task_id, product_line_id=product_id)
                     .select_related("completed_craft", "unit"))
     current_by_id = {item.pk: item for item in existing}
@@ -194,6 +202,16 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
     # 只读公共库存的工艺/单位维度；不查来源订单，不为每一条 BOM 查询库存。
     raw_dimensions = list(_public_balances().order_by().values_list(
         "identity_snapshot__semi_kind", "identity_snapshot__completed_craft__id", "unit_id").distinct())
+    # 裁剪车间直交不要求先有仓库余额，仍用同一裁片实物身份建立领料需求。
+    if plan_category == 'SEWING' and any(line.component_kind == 'CUT_PIECE' for line in lines):
+        cutting = Craft.objects.filter(craft_type='INTERNAL', plan_category='CUTTING', status='ACTIVE').first()
+        piece_unit_names = {line.unit for line in lines if line.component_kind == 'CUT_PIECE'}
+        piece_units = list(ProductionUnit.objects.filter(unit_name__in=piece_unit_names,
+            status='ACTIVE', archived_at__isnull=True))
+        if cutting:
+            raw_dimensions.extend(('CUT_PIECE', str(cutting.pk), unit.pk) for unit in piece_units)
+        if not cutting or len(piece_units) != len(piece_unit_names):
+            blockers.append(_blocker('CUTTING_CONTEXT_UNAVAILABLE', '裁片交接需要有效的裁剪工艺和各裁片单位。'))
     # 旧领料历史即使所属工艺当前没有公共库存，也必须参与同部位额度。
     kinds_by_component = {line.component_identity: _semi_kind(line) for line in lines}
     for (component, craft_id), item in history.items():
@@ -241,7 +259,18 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
         kind = _semi_kind(line)
         if kind is None:
             continue
+        if kind in {'CUT_PIECE', 'SEWN_PART'} and plan_category is not None:
+            required_kind = {'SEWING': 'CUT_PIECE', 'ASSEMBLY': 'SEWN_PART'}.get(plan_category)
+            if kind != required_kind:
+                continue
         for craft, unit in grouped_dimensions[kind]:
+            if kind in {'CUT_PIECE', 'SEWN_PART'} and unit.unit_name != line.unit:
+                continue
+            code = craft.outsourcing_code if craft.craft_type == 'EXTERNAL' else craft.plan_category
+            if kind == 'CUT_PIECE' and code != 'CUTTING':
+                continue
+            if kind == 'SEWN_PART' and code not in {'SEWING', 'SCREEN_PRINTING', 'EMBROIDERY'}:
+                continue
             requirement_id = _identifier(task_id, product_id, line.component_identity, craft.pk)
             try:
                 if counts[line.component_identity] != 1:
@@ -286,8 +315,9 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
     return specs, blockers
 
 
-def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
-    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=exclude_issue_id, allow_excess_issue=True)
+def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None, plan_category=None):
+    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=exclude_issue_id,
+        allow_excess_issue=True, plan_category=plan_category)
     ids = [item["id"] for item in specs]
     pending_query = MaterialIssueLine.objects.filter(issue__status="PENDING_REVIEW", semi_requirement_id__in=ids)
     if exclude_issue_id:
@@ -307,7 +337,7 @@ def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
             group["zones"].append(name)
     # 公共库存占用必须统计所有接收订单，不能只扣当前订单的待审核数量。
     public_pending_query = MaterialIssueLine.objects.filter(issue__status="PENDING_REVIEW",
-        semi_requirement__identity_key__in=list(expected))
+        semi_requirement__identity_key__in=list(expected)).exclude(conversion_snapshot__contains={'source_kind': 'CUTTING_DIRECT'})
     if exclude_issue_id:
         public_pending_query = public_pending_query.exclude(issue_id=exclude_issue_id)
     public_pending = {item["semi_requirement__identity_key"]: item["total"] for item in public_pending_query.values("semi_requirement__identity_key").annotate(total=Sum("requested_quantity"))}
@@ -351,6 +381,10 @@ def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
             spray_color_override=snapshot.get("color") if craft_code == "POWDER_COATING" else None,
         )
         rows.append({"requirement_id": str(spec["id"]), "stock_item_id": identity["identity_key"],
+            "source_kind": "STOCK",
+            "component_kind": line.component_kind,
+            "parent_part_id": str(line.parent_part_id) if line.parent_part_id else None,
+            "parent_part_name": line.parent_part.part_name if line.parent_part_id else '',
             "line_type": "SEMI", "section_code": "SEMI", "stock_mode": "PUBLIC_V2",
             "material_number": "", "material_name": snapshot["part_name"], "part_names": [snapshot["part_name"]],
             "material": snapshot.get("material", ""), "specification": specification, "color": snapshot["color"], "unit": spec["unit"].unit_name,
@@ -371,6 +405,10 @@ def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
                 "component_identity": str(line.component_identity), "source_revision_hash": spec["source_revision_hash"],
                 "completed_craft": spec["completed_craft"].name, "integer_required": True,
                 "whole_bar_required": False, "raw_deducted_bar_count": "0", "raw_deducted_meters": "0.00"}})
+        if plan_category == 'SEWING' and line.component_kind == 'CUT_PIECE':
+            from apps.inventory.part_flow_quantities import first_output_available
+            rows[-1]['direct_available_quantity'] = str(first_output_available(product_id, line,
+                spec['bom'].order_quantity, exclude_issue_id=exclude_issue_id))
     return rows, blockers
 
 
@@ -394,7 +432,9 @@ def sync_public_semi_requirements(issue, requested_ids):
         requested_ids = {UUID(str(value)) for value in requested_ids}
     except (ValueError, TypeError, AttributeError):
         _error("SEMI_REQUIREMENT_INVALID", "半成品需求编号格式不正确。")
-    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=issue.pk, allow_excess_issue=True)
+    from .scopes import issue_plan_category, semi_plan_category
+    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=issue.pk,
+        allow_excess_issue=True, plan_category=semi_plan_category(issue.workshop.name, issue_plan_category(issue)))
     selected = [item for item in specs if item["id"] in requested_ids]
     selected_components = {(item["component_identity"], item["unit"].pk) for item in selected}
     component_specs = [item for item in specs

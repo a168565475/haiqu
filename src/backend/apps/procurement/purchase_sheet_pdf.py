@@ -200,9 +200,9 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
             line, sample_source=order.get("source_type") == "SAMPLE",
         )
         attributes = display["attributes"]
-        if line.get('measurement_kind') == 'PIPE':
+        if line.get('measurement_kind') in {'PIPE', 'PIPE_WEIGHT'}:
             print_line = {**line, **{
-                key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "actual_purchase_meters")
+                key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "raw_bar_weight_kg", "actual_purchase_meters", "actual_purchase_weight_kg")
             }}
             attributes = "\n".join(value for value in (attributes, pipe_print_description(print_line)) if value)
         price = _number(line.get("unit_price"))

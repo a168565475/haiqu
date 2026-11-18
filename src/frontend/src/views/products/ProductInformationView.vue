@@ -126,8 +126,7 @@ async function handleSaved(): Promise<void> {
 }
 function restoreFocus(): void { void nextTick(() => returnFocusElement.value?.focus()) }
 function formatWarehouse(row: ProductInformation): string {
-  if (row.warehouse_number && row.warehouse_name) return `${row.warehouse_number} ${row.warehouse_name}`
-  return row.warehouse_number || row.warehouse_name || '—'
+  return row.warehouse_name || '—'
 }
 function handlePageSizeChange(): void { page.value = 1; void loadProducts() }
 

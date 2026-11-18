@@ -65,6 +65,7 @@ from .serializers import (
     BomAccessoryMaterialOptionSerializer,
     BomAuxiliaryProductOptionSerializer,
     BomEditorReferenceOptionsResponseSerializer,
+    BomComponentUnitOptionSerializer,
     BomFabricMaterialOptionSerializer,
     BomFabricSpecificationOptionSerializer,
     BomFabricWidthOptionSerializer,
@@ -83,6 +84,8 @@ from .serializers import (
     BomVerifyInputSerializer,
     BomTubeCalculationPreviewInputSerializer,
     BomTubeCalculationPreviewResponseSerializer,
+    BomHardwareWeightInputSerializer,
+    BomHardwareWeightResponseSerializer,
 )
 
 
@@ -129,6 +132,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "pipe_material_matches": "boms.change_bom",
         "material_flow_preview": "boms.change_bom",
         "tube_calculation_preview": ("boms.add_bom", "boms.change_bom"),
+        "hardware_weight_preview": ("boms.add_bom", "boms.change_bom"),
         "fabric_materials": "boms.change_bom",
         "hardware_material_groups": "boms.change_bom",
         "plastic_materials": "boms.change_bom",
@@ -566,6 +570,15 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         ]
         return Response({"data": BomRawMaterialGroupSerializer(data, many=True).data})
 
+    @extend_schema(request=BomHardwareWeightInputSerializer, responses=BomHardwareWeightResponseSerializer)
+    @action(detail=False, methods=["post"], url_path="hardware-weight-preview")
+    def hardware_weight_preview(self, request):
+        from ..hardware_weight import calculate_hardware_weight
+
+        serializer = BomHardwareWeightInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response({"data": calculate_hardware_weight(serializer.validated_data)})
+
     @extend_schema(request=BomTubeCalculationPreviewInputSerializer, responses=BomTubeCalculationPreviewResponseSerializer)
     @action(detail=False, methods=["post"], url_path="tube-calculation-preview")
     def tube_calculation_preview(self, request):
@@ -707,6 +720,9 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             ),
         )
         data = {
+            "component_units": BomComponentUnitOptionSerializer(
+                ProductionUnit.objects.filter(**active_filter).order_by("sort_order", "unit_code", "id"), many=True
+            ).data,
             "auxiliary_products": BomAuxiliaryProductOptionSerializer(auxiliary_products, many=True).data,
             "accessory_materials": BomAccessoryMaterialOptionSerializer(
                 AccessoryMaterial.objects.filter(**active_filter), many=True
@@ -784,7 +800,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             batch_quantity = sum((Decimal(batch.quantity) for batch in batches), Decimal("0"))
             existing_counts = {
                 item["product_line_id"]: item["count"]
-                for item in Bom.objects.filter(product_line__production_task=task)
+                for item in Bom.objects.filter(product_line__production_task=task, archived_at__isnull=True)
                 .values("product_line_id")
                 .annotate(count=Count("id"))
             }

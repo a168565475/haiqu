@@ -1,4 +1,5 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import * as api from '@/api/productionTasks'
@@ -13,7 +14,7 @@ describe('B布局创建行为', () => {
   it('从销售订单进入只读取当前订单，未选择订单仍显示真实名称', async () => {
     route.query = { sales_order_id: 'source-order', delivery_batch_id: 'batch' }
     vi.mocked(api.fetchProductionSalesOrderSource).mockResolvedValue({ data: { id: 'source-order', status: 'CONFIRMED', product_names: ['真实产品'], total_amount_cny: '7.0000', lines: [], delivery_batches: [{ id: 'batch', status: 'ACTIVE', lines: [] }] } } as never)
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     expect(api.fetchProductionSalesOrderSources).not.toHaveBeenCalled()
@@ -27,7 +28,7 @@ describe('B布局创建行为', () => {
   it('当前来源已分配完成时明确报错，不回退其他订单', async () => {
     route.query = { sales_order_id: 'completed-order' }
     vi.mocked(api.fetchProductionSalesOrderSource).mockResolvedValue({ data: { id: 'completed-order', status: 'CONFIRMED', has_remaining_production_capacity: false } } as never)
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     expect(page.orderChoices).toEqual([])
@@ -38,7 +39,7 @@ describe('B布局创建行为', () => {
   it('切换手动创建再返回时保留当前销售订单上下文', async () => {
     route.name = 'production-task-manual-create'
     route.query = { sales_order_id: 'current-order', delivery_batch_id: 'current-batch' }
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     await wrapper.findAll('.creation-modes button')[0]!.trigger('click')
     expect(router.push).toHaveBeenCalledWith({ name: 'production-task-create', query: { sales_order_id: 'current-order', delivery_batch_id: 'current-batch' } })
@@ -47,7 +48,7 @@ describe('B布局创建行为', () => {
     wrapper.unmount()
   })
   it('生产金额使用已保存人民币单价，不能再次乘外币汇率', async () => {
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.order = { currency_code: 'USD', total_amount_cny: '14', production_exchange_rate: { rate: '7' }, lines: [{ id: 'line', unit_price: '1', unit_price_cny: '7' }], delivery_batches: [{ id: 'batch', status: 'ACTIVE', lines: [{ id: 'source', sales_order_line_id: 'line' }] }] }
@@ -58,7 +59,7 @@ describe('B布局创建行为', () => {
     wrapper.unmount()
   })
   it('来源第一步不要求提前填写HT', async () => {
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.order = { id: 'order', total_amount_cny: '10', lines: [{ id: 'line', unit_price_cny: '1' }], delivery_batches: [{ id: 'batch', status: 'ACTIVE', lines: [{ id: 'source', sales_order_line_id: 'line', quantity: '10', remaining_quantity: '10' }] }] }
@@ -69,11 +70,11 @@ describe('B布局创建行为', () => {
     expect(wrapper.findAll('.steps li')).toHaveLength(3)
     expect(wrapper.find('.steps').text()).not.toContain('产品与价格')
     expect(page.money(undefined)).toBe('—')
-    expect(page.money('0')).toBe('0.00')
+    expect(page.money('0')).toBe('0')
     wrapper.unmount()
   })
   it('来源客户颜色为空时只读显示真实主档颜色，客户快照优先且不被改写', async () => {
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.options = { colors: [{ id: 'color-real', color_name: '正式红' }], employees: [] }
@@ -92,7 +93,7 @@ describe('B布局创建行为', () => {
     wrapper.unmount()
   })
   it('来源未保存人民币金额时不进入生产安排', async () => {
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.order = { currency_code: 'USD', production_exchange_rate: null, lines: [], delivery_batches: [{ id: 'b', status: 'ACTIVE', lines: [{ id: 'l', remaining_quantity: 10 }] }] }
@@ -107,7 +108,7 @@ describe('B布局创建行为', () => {
 describe('内嵌销售产品录入保存', () => {
   it('未关联产品可保存真实单位、人民币价格、图片及计划安排', async () => {
     route.name = 'production-task-manual-create'
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.catalogUnits = [{ id: 'unit-1', unit_code: '03', unit_name: '张' }]
@@ -131,7 +132,7 @@ describe('内嵌销售产品录入保存', () => {
     expect(wrapper.text()).toContain('生产要求')
     expect(wrapper.text()).toContain('包装要求')
     await page.saveManual()
-    expect(api.createProductionTask).toHaveBeenCalledWith(expect.objectContaining({ task_number: 'HT26201', follower_ids: ['follower'], tax_rate: 5, planned_start_date: '2026-10-16', products: [expect.objectContaining({ product_id: null, product_category_id: 'category-real', customer_product_name: '定制面板', material: '铝合金', unit_id: 'unit-1', unit_price: '12.3456', exchange_rate: '1.00000000', details: [expect.objectContaining({ template_key: 'material', detail_type: '材料', category_label: '面料', is_selected: false, description: '' })] })] }), expect.any(Object), {})
+    expect(vi.mocked(api.createProductionTask).mock.lastCall?.slice(0, 3)).toEqual([expect.objectContaining({ task_number: 'HT26201', follower_ids: ['follower'], tax_rate: 5, planned_start_date: '2026-10-16', products: [expect.objectContaining({ product_id: null, product_category_id: 'category-real', customer_product_name: '定制面板', material: '铝合金', unit_id: 'unit-1', unit_price: '12.3456', exchange_rate: '1.00000000', details: [expect.objectContaining({ template_key: 'material', detail_type: '材料', category_label: '面料', is_selected: false, description: '' })] })] }), expect.any(Object), {}])
     const imagePayload = vi.mocked(api.createProductionTask).mock.calls.at(-1)![1]!
     expect(vi.mocked(api.createProductionTask).mock.calls.at(-1)![0]).not.toHaveProperty('planner_id')
     expect(Object.values(imagePayload)[0]).toEqual([file])
@@ -139,7 +140,7 @@ describe('内嵌销售产品录入保存', () => {
   })
   it('不把自由文本单位或小数生产数量伪装为已确认产品', async () => {
     route.name = 'production-task-manual-create'
-    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
     const page = wrapper.vm as any
     page.catalogUnits = [{ id: 'unit-1', unit_code: '03', unit_name: '张' }]
@@ -151,15 +152,15 @@ describe('内嵌销售产品录入保存', () => {
   })
 })
 
-it('生产候选只使用有权限的生产options真实产品，不依赖产品管理接口', async () => {
+it('手工建单从生产选项读取分类、单位和颜色并传给录入弹窗', async () => {
   route.name = 'production-task-manual-create'
-  const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
+  const categories = [{ id: 'category', category_name: '成品' }]
+  const units = [{ id: 'unit', unit_code: '03', unit_name: '张' }]
+  const colors = [{ id: 'color', color_name: '蓝' }]
+  vi.mocked(api.fetchProductionTaskOptions).mockResolvedValueOnce({ categories, units, colors, employees: [], currencies: [] } as never)
+  const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
   await flushPromises()
-  const page = wrapper.vm as any
-  page.options = { categories: [{ id: 'category', category_name: '成品' }], units: [{ id: 'unit', unit_code: '03', unit_name: '张' }], colors: [], products: [{ id: 'real-product', category_id: 'category', product_number: 'P1', product_code: 'CODE', item_number: 'ITEM', product_name: '面板', specification: '20×30', default_unit_id: 'unit', unit_code: '03', unit_name: '张' }] }
-  await page.loadCatalog()
-  const result = await page.loadProductionCandidates('category')
-  expect(result.groups[0].specifications[0].products[0]).toMatchObject({ id: 'real-product', category_id: 'category', unit_id: 'unit', unit_name: '张', item_number: 'ITEM' })
-  expect(page.catalogError).toBe('')
+  const dialog = wrapper.getComponent({ name: 'InquiryProductDialog' })
+  expect(dialog.props()).toMatchObject({ categories, units, colors, catalogError: '' })
   wrapper.unmount()
 })

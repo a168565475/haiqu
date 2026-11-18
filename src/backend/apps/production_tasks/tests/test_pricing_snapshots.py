@@ -242,7 +242,8 @@ class ProductionOptionsShapeTests(SimpleTestCase):
         from ..api.views import ProductionTaskViewSet
         request = APIRequestFactory().get('/api/v1/production-tasks/options/')
         request.query_params = {}
-        names = ['Employee', 'ProductInformation', 'Currency', 'ProductionUnit', 'ProductColor', 'ProductCategory']
+        names = ['active_role_employees', 'active_department_employees', 'ProductInformation',
+                 'Currency', 'ProductionUnit', 'ProductColor', 'ProductCategory']
         replacements = {name: MagicMock() for name in names}
         with patch.multiple('apps.production_tasks.api.views', **replacements), patch.object(ProductionTaskViewSet, '_customer_references', return_value=MagicMock()), patch('apps.production_tasks.api.views.accessible_production_tasks', return_value=MagicMock()), patch('apps.production_tasks.api.views.load_sampling_detail_template', return_value=[]):
             response = ProductionTaskViewSet().options(request)

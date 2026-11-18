@@ -1,5 +1,6 @@
 export type MaterialIssueStatus = 'DRAFT' | 'PENDING_REVIEW' | 'RETURNED' | 'ISSUED'
 export type MaterialIssueStockMode = 'LEGACY' | 'PUBLIC_V2'
+export type MaterialIssueSourceKind = 'STOCK' | 'CUTTING_DIRECT'
 export interface NamedOption { id: string; name: string }
 export interface MaterialIssueProduct {
   id: string; product_number: string; product_name: string; specification: string
@@ -15,6 +16,8 @@ export interface MaterialRequirement {
   requirement_id: string; stock_item_id: string; stock_mode?: MaterialIssueStockMode
   line_type: 'RAW' | 'SEMI'; section_code: string; material_number: string; material_name: string
   specification: string; color: string; material?: string; unit: string; part_names?: string[]
+  component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'; parent_part_id?: string | null; parent_part_name?: string
+  direct_available_quantity?: string; source_kind?: MaterialIssueSourceKind
   required_quantity: string; internal_issued_quantity: string; outsourcing_issued_quantity: string
   pending_issue_quantity?: string; order_remaining: string; available_stock: string; max_issue_quantity: string
   validation_errors: string[]; warehouse_zones?: string[]; warehouse_zone?: string; completed_craft?: string
@@ -50,7 +53,7 @@ export interface MaterialRequirementResponse {
   source_revision_hash: string; items: MaterialRequirement[]
   blockers: { code: string; detail?: string; section_code?: string | null }[]
 }
-export interface IssueWriteLine { requirement_id: string; requested_quantity: string }
+export interface IssueWriteLine { requirement_id: string; requested_quantity: string; source_kind?: MaterialIssueSourceKind }
 export interface IssueWritePayload {
   production_task_id: string; product_line_id: string; workshop_id: string
   recipient_workshop_employee_id: string; issue_at: string; remark: string; lines: IssueWriteLine[]

@@ -28,7 +28,7 @@ class ReceiptLineInput(serializers.Serializer):
 class ReceiptInput(serializers.Serializer):
     request_id = serializers.UUIDField()
     schedule_product_id = serializers.UUIDField()
-    plan_category = serializers.ChoiceField(choices=['METAL','SEWING'])
+    plan_category = serializers.ChoiceField(choices=['METAL','CUTTING','SEWING'])
     zone_id = serializers.UUIDField()
     receipt_date = serializers.DateField()
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000)
@@ -68,7 +68,7 @@ class MetalReceiptInput(ReceiptInput):
 
 class PreviewInput(serializers.Serializer):
     schedule_product_id = serializers.UUIDField()
-    plan_category = serializers.ChoiceField(choices=['METAL','SEWING'])
+    plan_category = serializers.ChoiceField(choices=['METAL','CUTTING','SEWING'])
 
 
 class RecordFilter(serializers.Serializer):
@@ -92,7 +92,8 @@ class ReceiptResponse(serializers.Serializer):
 
 
 STAGES = {'METAL':'金工完成','SEWING':'车缝完成','CUTTING':'裁剪完成','POWDER_COATING':'喷塑完成','SCREEN_PRINTING':'丝印完成','EMBROIDERY':'刺绣完成'}
-TUBE_SOURCE_LABELS = {'RAW_PIPE':'原材料','PUBLIC_SEMI':'未喷塑半成品','METAL':'未入库半成品'}
+TUBE_SOURCE_LABELS = {'RAW_PIPE':'原材料','PUBLIC_SEMI':'未喷塑半成品','METAL':'未入库半成品',
+    'CUTTING':'车间裁片直发','PUBLIC_PIECE':'裁片库存','PUBLIC_PART':'部位半成品库存','SEWING':'车间部位直发'}
 
 
 def record_data(row):
@@ -103,6 +104,8 @@ def record_data(row):
     internal = row.source_type == 'INTERNAL_SEMI_RECEIPT' or (outgoing and row.source_type == 'MATERIAL_ISSUE')
     source_label = {'MATERIAL_ISSUE':'生产领用出库', 'OUTSOURCING_DISPATCH':'外发出库',
         'TUBE_OUTSOURCING_DISPATCH':'管材外发出库'}.get(row.source_type, '半成品出库') if outgoing else ('厂内入库' if internal else '外发入库')
+    if outgoing and row.source_type == 'TUBE_OUTSOURCING_DISPATCH' and attributes.get('schema_version') == 3:
+        source_label = '裁片外发出库' if attributes.get('semi_kind') == 'CUT_PIECE' else '部位外发出库'
     if row.source_type in CORRECTION_SOURCES:
         source_label = ('外发' if snapshot.get('record_kind') == 'DISPATCH' else '入库') + (
             '删除冲销' if snapshot.get('operation') == 'DELETE' else '调整差额')
@@ -123,7 +126,11 @@ def record_data(row):
 def pending_record_data(receipt, request=None):
     line = receipt.lines.select_related('unit').order_by('id').first()
     attributes = (line.attribute_snapshot if line else {}) or {}
-    quantity = sum((item.quantity for item in receipt.lines.all()), 0)
+    quantities = {}
+    for item in receipt.lines.select_related('unit').all():
+        quantities[item.unit.unit_name] = quantities.get(item.unit.unit_name, 0) + item.quantity
+    quantity_totals = [{'unit': unit, 'quantity': str(value)} for unit, value in quantities.items()]
+    quantity = quantity_totals[0]['quantity'] if len(quantity_totals) == 1 else ''
     return dict(
         id=str(receipt.pk), receipt_number=receipt.receipt_number, direction='IN', source='INTERNAL',
         source_display='厂内入库（待确认）', production_order=receipt.source_snapshot.get('production_order', ''),
@@ -131,7 +138,12 @@ def pending_record_data(receipt, request=None):
         input_material_selection_snapshot=(line.input_snapshot or {}).get('input_material_selection_snapshot', {}) if line else {},
         output_material_selection_snapshot=attributes.get('material_selection_snapshot', {}),
         stage=STAGES.get(attributes.get('completed_craft', {}).get('code'), '厂内半成品'),
-        quantity=str(quantity), unit=line.unit.unit_name if line else attributes.get('unit_name', ''),
+        quantity=str(quantity), unit=quantity_totals[0]['unit'] if len(quantity_totals) == 1 else '',
+        quantity_totals=quantity_totals,
+        lines=[{'id': str(item.pk), 'bom_line_id': str(item.bom_line_id),
+                'attributes': item.attribute_snapshot, 'quantity': str(item.quantity), 'unit': item.unit.unit_name,
+                'stage': STAGES.get(item.attribute_snapshot.get('completed_craft', {}).get('code'), '厂内半成品')}
+               for item in receipt.lines.select_related('unit').all()],
         receipt_date=str(receipt.receipt_date), status=receipt.status,
         warehouse=receipt.zone.warehouse.warehouse_name, zone=receipt.zone.zone_name,
         actor=receipt.actor_employee.display_name if receipt.actor_employee_id else '', remark=receipt.remark,
@@ -172,7 +184,8 @@ def pending_data(receipt, request=None):
             receipt.actor_employee.display_name,
         'lines': [
             {'id': str(line.pk), 'bom_line_id': str(line.bom_line_id), 'component_identity': str(line.component_identity),
-             'quantity': str(line.quantity), 'input_quantity': str(line.input_quantity) if line.input_quantity is not None else None}
+             'quantity': str(line.quantity), 'unit': line.unit.unit_name, 'attributes': line.attribute_snapshot,
+             'input_quantity': str(line.input_quantity) if line.input_quantity is not None else None}
             for line in receipt.lines.all()
         ],
     }

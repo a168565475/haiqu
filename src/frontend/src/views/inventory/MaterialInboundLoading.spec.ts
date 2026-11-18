@@ -39,23 +39,66 @@ describe('采购入库读取', () => {
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [line], etag: '"receiving-v1"' } as never)
     vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([])
   })
-  it('管材采购和累计到货显示根，输入整数根数且提交根数字段', async () => {
+  it('米制管材按采购米显示和录入，只将原长整数倍精确转换为原接口根数', async () => {
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: '米', purchased_quantity: '33.5', remaining_quantity: '20.1', raw_bar_length_m: '3.35', actual_bar_count: 10, remaining_bar_count: 6 }], etag: '"receiving-v1"' } as never)
     const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
     const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string; warehouseId: string; zoneId: string }>; readyToSubmit: boolean; submitReceiving: () => Promise<void> }
     const purchaseCell = wrapper.get('.purchase-quantity-cell')
-    expect(purchaseCell.text()).toBe('10 根'); expect(purchaseCell.element.nextElementSibling?.textContent).toBe('4 根')
+    expect(purchaseCell.text()).toBe('33.5 米'); expect(purchaseCell.element.nextElementSibling?.textContent).toBe('13.4 米')
     expect(purchaseCell.attributes('title')).toContain('33.5 米')
-    expect(vm.rows[0]!.receivedQuantity).toBe('6')
+    expect(vm.rows[0]!.receivedQuantity).toBe('20.1')
     vm.rows[0]!.warehouseId = 'wh'; vm.rows[0]!.zoneId = 'zone'
     vm.rows[0]!.receivedQuantity = '1.5'; expect(vm.readyToSubmit).toBe(false)
-    vm.rows[0]!.receivedQuantity = '7'; expect(vm.readyToSubmit).toBe(false)
-    vm.rows[0]!.receivedQuantity = '2'; expect(vm.readyToSubmit).toBe(true)
+    vm.rows[0]!.receivedQuantity = '23.45'; expect(vm.readyToSubmit).toBe(false)
+    vm.rows[0]!.receivedQuantity = '6.7'; expect(vm.readyToSubmit).toBe(true)
     await vm.submitReceiving()
     expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_bar_count: '2', raw_bar_length_m: '3.35', expected_remaining_quantity: '20.1' })] }))
     const payload = vi.mocked(api.createMaterialReceiving).mock.calls[0]![0] as { items: Record<string, unknown>[] }
     expect(payload.items[0]).not.toHaveProperty('received_quantity')
     wrapper.unmount()
+  })
+  it('重量口径管材显示kg，输入重量并提交received_weight_kg', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: 'KG', weight_unit: true, purchased_quantity: '33.5', remaining_quantity: '20.1', remaining_weight_kg: '20.1', raw_bar_length_m: '3.35', raw_bar_weight_kg: '2.5', actual_bar_count: 14, remaining_bar_count: 9 }], etag: '"receiving-weight-v1"' } as never)
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string; warehouseId: string; zoneId: string }>; readyToSubmit: boolean; submitReceiving: () => Promise<void> }
+    const purchaseCell = wrapper.get('.purchase-quantity-cell')
+    expect(purchaseCell.text()).toBe('33.5 kg'); expect(purchaseCell.element.nextElementSibling?.textContent).toBe('13.4 kg')
+    expect(purchaseCell.attributes('title')).toBe('33.5 kg')
+    expect(vm.rows[0]!.receivedQuantity).toBe('20.1')
+    vm.rows[0]!.warehouseId = 'wh'; vm.rows[0]!.zoneId = 'zone'; vm.rows[0]!.receivedQuantity = '2.5'
+    expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_weight_kg: '2.5', expected_remaining_quantity: '20.1' })] }))
+    const payload = vi.mocked(api.createMaterialReceiving).mock.calls[0]![0] as { items: Record<string, unknown>[] }
+    expect(payload.items[0]).toHaveProperty('received_bar_count', '1')
+    wrapper.unmount()
+  })
+  it('KG管材只显示采购重量，根数沿标准重量自动换算且不沿用旧手填根数', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: 'KG', weight_unit: true, raw_bar_length_m: '3.35', raw_bar_weight_kg: '2.5', remaining_weight_kg: '6' }], etag: '"weight-v1"' } as never)
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string; warehouseId: string; zoneId: string }>; readyToSubmit: boolean; submitReceiving: () => Promise<void> }
+    Object.assign(vm.rows[0]!, { receivedQuantity: '4.1', warehouseId: 'wh', zoneId: 'zone' })
+    await flushPromises()
+    expect(wrapper.find('[aria-label="第 1 项实收根数"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('自动估算，请按实收核对')
+    expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_weight_kg: '4.1', received_bar_count: '2' })] }))
+    wrapper.unmount()
+  })
+  it('旧米制owned草稿按原根数转米，保存后带单位标记且重开不重复换算', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: '米', purchased_quantity: '33.5', remaining_quantity: '20.1', raw_bar_length_m: '3.35', actual_bar_count: 10, remaining_bar_count: 6 }], etag: 'v1' } as never)
+    const key = 'material-receiving-draft:v2:order-1:user:7'
+    localStorage.setItem(key, JSON.stringify({ purchaseOrderId: 'order-1', rows: { 'line-1': { receivedQuantity: '2', warehouseId: 'wh', zoneId: 'zone' } } }))
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string }>; saveDraft: () => void }
+    expect(Number(vm.rows[0]!.receivedQuantity)).toBe(6.7)
+    vm.saveDraft()
+    expect(JSON.parse(localStorage.getItem(key)!).rows['line-1']).toMatchObject({ quantityInputUnit: '米' })
+    wrapper.unmount()
+    const reopened = mount(MaterialPurchaseInboundView); await flushPromises()
+    expect(Number((reopened.vm as unknown as typeof vm).rows[0]!.receivedQuantity)).toBe(6.7)
+    reopened.unmount()
   })
   it.each([
     ['6.0000', '6', '套'],

@@ -237,7 +237,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
       <VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton>
     </template>
     <VanPopup v-model:show="showDate" class="receipt-popup" position="bottom" round teleport="body" safe-area-inset-bottom><VanDatePicker v-model="pickerDate" title="选择收货日期" :columns-type="['year', 'month', 'day']" :min-date="minDate" :max-date="maxDate" :formatter="formatDate" @confirm="confirmDate" @cancel="showDate = false" /></VanPopup>
-    <VanPopup v-model:show="showWarehouse" class="receipt-popup receipt-picker" position="bottom" round closeable teleport="body" safe-area-inset-bottom><h2>选择成品仓</h2><VanCell v-for="warehouse in warehouses" :key="warehouse.id" :title="warehouse.warehouse_name" :label="warehouse.warehouse_number" clickable is-link @click="selectWarehouse(warehouse.id)" /></VanPopup>
+    <VanPopup v-model:show="showWarehouse" class="receipt-popup receipt-picker" position="bottom" round closeable teleport="body" safe-area-inset-bottom><h2>选择成品仓</h2><VanCell v-for="warehouse in warehouses" :key="warehouse.id" :title="warehouse.warehouse_name" clickable is-link @click="selectWarehouse(warehouse.id)" /></VanPopup>
     <VanPopup v-model:show="showLocation" class="receipt-popup receipt-picker" position="bottom" round closeable teleport="body" safe-area-inset-bottom>
       <h2>{{ draftZone ? '选择库位' : '选择库区' }}</h2>
       <template v-if="draftZone"><button class="action-link" type="button" @click="draftZone = ''; locationSearch = ''">重新选择库区</button><VanSearch v-model="locationSearch" placeholder="搜索库位编号" /></template>

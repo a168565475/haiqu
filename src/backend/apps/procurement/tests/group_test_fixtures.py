@@ -1,9 +1,16 @@
-"""事务测试每次显式补齐业务种子，让标准 flush/post_migrate 恢复权限。"""
+"""事务测试在前一个用例清库后补齐采购夹具使用的权限和业务种子。"""
+from django.apps import apps
+from django.contrib.auth.management import create_permissions
+from django.contrib.auth.models import Permission
+
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.reference_data.models import Currency, ProductCategory, ProductItem, ProductionUnit
 
 
 def ensure_group_test_reference_data():
+    if not Permission.objects.filter(content_type__app_label="procurement", codename="view_purchaseorder").exists():
+        for label in ("procurement", "inventory", "production_tasks", "access_control"):
+            create_permissions(apps.get_app_config(label), verbosity=0)
     Currency.objects.get_or_create(code="CNY", defaults={"numeric_code": "156", "chinese_name": "人民币"})
     unit, _ = ProductionUnit.objects.get_or_create(unit_name="PCS", defaults={"unit_code": "U1-PCS"})
     if not ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(product_code="").exists():

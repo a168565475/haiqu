@@ -105,6 +105,29 @@ class ReceivingWarehouseSuggestionContractTests(SimpleTestCase):
         self.assertEqual(response.data["data"][0]["remaining_quantity"], "8.0000")
         self.assertEqual(response["ETag"], '"version"')
 
+    def test_weight_pipe_remaining_quantity_uses_kg_and_ceiling_root_conversion(self):
+        line = PurchaseOrderLine(
+            line_number=1,
+            actual_purchase_quantity=Decimal("10"),
+            source_unit_text="KG",
+            raw_bar_length_m=Decimal("6"),
+            raw_bar_weight_kg=Decimal("2.5"),
+        )
+        request = SimpleNamespace(query_params={"purchase_order_id": str(uuid4())})
+        with patch.object(MaterialInventoryViewSet, "_accessible_task_ids", return_value=[]), \
+                patch("apps.inventory.api.views.purchase_order_access", return_value=Q()), \
+                patch("apps.inventory.api.views.PurchaseOrder.objects.filter") as orders, \
+                patch("apps.inventory.api.views.eligible_material_lines", return_value=[(line, Decimal("4.1"))]), \
+                patch("apps.inventory.api.views.material_receiving_warehouse_suggestions", return_value={}), \
+                patch("apps.inventory.api.views.etag_for_instance", return_value='"version"'):
+            orders.return_value.first.return_value = SimpleNamespace()
+            response = MaterialInventoryViewSet().eligible_lines(request)
+        row = response.data["data"][0]
+        self.assertTrue(row["weight_unit"])
+        self.assertEqual(row["remaining_quantity"], "4.1000")
+        self.assertEqual(row["remaining_weight_kg"], "4.1000")
+        self.assertEqual(row["remaining_bar_count"], 2)
+
     def test_missing_or_invalid_order_id_rejects_before_reading_suggestions(self):
         with patch("apps.inventory.api.views.material_receiving_warehouse_suggestions") as suggestions:
             for value in ("", "not-a-uuid"):

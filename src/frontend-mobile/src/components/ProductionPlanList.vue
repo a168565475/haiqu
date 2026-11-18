@@ -66,12 +66,12 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
         <van-button v-if="section === 'issue'" type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
         <van-button v-if="section === 'report' && !records" type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button><van-button v-if="records" type="primary" plain :disabled="!plan.can_view_reports" @click="emit('open', plan)">查看报工记录</van-button>
         <van-button v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
-        <van-button v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
+        <van-button v-if="section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
       </div>
       <p v-if="section === 'issue' && !plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
       <p v-if="section === 'report' && !records && !plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
       <p v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
-      <p v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+      <p v-if="section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
       <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="plan-unavailable">裁剪计划暂无手机入库入口</p>
     </article>
   </div>
@@ -111,12 +111,12 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
           <van-button v-if="section === 'issue'" type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
           <van-button v-if="section === 'report' && !records" type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button><van-button v-if="records" type="primary" plain :disabled="!plan.can_view_reports" @click="emit('open', plan)">查看报工记录</van-button>
           <van-button v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
-          <van-button v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
+          <van-button v-if="section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
         </div>
         <p v-if="section === 'issue' && !plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
         <p v-if="section === 'report' && !records && !plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
         <p v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
-        <p v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+        <p v-if="section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
         <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="plan-unavailable">裁剪计划暂无手机入库入口</p>
       </div>
     </van-collapse-item>

@@ -194,10 +194,11 @@ def _calculate(scope_key, demands, inputs, history, requested, check_inputs):
         if check_inputs and (input_unit, output_unit) not in {('支', '支'), ('米', '套')}:
             _error('UNIT_MISMATCH', '本期仅支持金工支→支、车缝米→套。', key)
         required = _number(demand.required, '部位需求', positive=True, whole=True)
-        if not check_inputs and (output_unit != '套' or demand.input_per_output is not None):
-            _error('UNIT_MISMATCH', '只有车缝套数入库可以不核算材料投入。', key)
+        if not check_inputs and (demand.input_per_output is not None or
+                                 (input_unit != '片' and output_unit != '套')):
+            _error('UNIT_MISMATCH', '未核算材料投入的产出必须使用既有车缝套数或部位裁片单位。', key)
         usage = _number(demand.input_per_output, '每单位产出耗用', positive=True) if check_inputs else None
-        if demand.output_unit == '支' and usage != 1:
+        if check_inputs and demand.output_unit == '支' and usage != 1:
             _error('UNIT_MISMATCH', '金工投入按已领切割支数核算，每支产出占用一支。', key)
         direct = _number(demand.directly_committed, '已直发及待发预留', whole=True)
         if check_inputs and direct:

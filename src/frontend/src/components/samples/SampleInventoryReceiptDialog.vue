@@ -309,7 +309,7 @@ onBeforeUnmount(() => { eligibleRequest++ })
           <strong>成品仓入库位置</strong>
         </div>
         <ElSelect v-model="finishedWarehouseId" aria-label="成品仓" :disabled="controlsDisabled" placeholder="选择成品仓" @change="finishedWarehouseChanged">
-          <ElOption v-for="item in finishedOptions.warehouses" :key="item.id" :value="item.id" :label="`${item.warehouse_number} · ${item.warehouse_name}`" />
+          <ElOption v-for="item in finishedOptions.warehouses" :key="item.id" :value="item.id" :label="item.warehouse_name" />
         </ElSelect>
         <ElSelect v-model="finishedZoneId" aria-label="成品库区" :disabled="controlsDisabled || !finishedWarehouseId" placeholder="选择库区" @change="finishedZoneChanged">
           <ElOption v-for="item in finishedZones" :key="item.id" :value="item.id" :label="item.zone_name" />

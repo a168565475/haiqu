@@ -41,6 +41,20 @@ class MaterialFlowCalculationTests(SimpleTestCase):
     def test_length_always_rounds_up(self):
         self.assertEqual(self.plan(cutting_length_mm=501)["raw_bar_length_m"], "3.06")
 
+    def test_source_length_and_issued_meters_keep_third_decimal(self):
+        result = self.plan(source_raw_bar_length_m="6.305", order_quantity=1)
+        self.assertEqual(result["raw_bar_length_m"], "6.305")
+        self.assertEqual(result["suggested_purchase_meters"], "6.305")
+        self.assertEqual(pipe_issue(requested_pieces=18, pieces_per_bar=6, raw_bar_length_m="6.305")["meters"], "18.915")
+
+    def test_source_length_rejects_rounding_and_insufficient_length(self):
+        for value in ("6.3051", "2.999", "0", "NaN"):
+            with self.subTest(value=value), self.assertRaises(MaterialFlowValueError):
+                self.plan(source_raw_bar_length_m=value)
+
+    def test_source_trailing_zero_keeps_existing_snapshot_text(self):
+        self.assertEqual(self.plan(source_raw_bar_length_m="3.050")["source_raw_bar_length_m"], "3.05")
+
     def test_issue_requires_whole_roots_and_exact_meters(self):
         with self.assertRaises(MaterialFlowValueError) as error:
             pipe_issue(requested_pieces=2000, pieces_per_bar=6, raw_bar_length_m="3.05")

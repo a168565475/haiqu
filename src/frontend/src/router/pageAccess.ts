@@ -12,7 +12,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'employee-list') return auth.canReadAccessDirectory
   if (auth.user?.is_superuser) return true
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'finished-goods-inventory', 'material-issues', 'workshop-outsourcing'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'finished-goods-inventory', 'material-issues', 'workshop-outsourcing'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly) {
@@ -39,6 +39,9 @@ const pagePermissions: Record<string, string[]> = {
   'purchase-alerts': ['procurement.view_purchaseorder'],
   'purchase-inbound-detail': ['inventory.receive_material', 'inventory.quality_confirm_material'],
   'material-purchase-inbound': ['inventory.receive_material'],
+  'manual-material-inbound': ['inventory.receive_material'],
+  'material-inbound-details': ['inventory.view_material_receipt'],
+  'material-inbound-records': ['inventory.view_material_receipt'],
   'material-quality-confirmation': ['inventory.quality_confirm_material'],
   'production-task-create': ['production_tasks.add_productiontask'],
   'production-task-manual-create': ['production_tasks.add_productiontask'],

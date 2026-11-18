@@ -52,7 +52,7 @@ describe('BOM 预览渲染', () => {
     const view = await open()
     expect(view.findAll('[data-field="branch_count"]').map(cell => cell.text())).toEqual(['127', '337', '169', '169', '127', '138'])
     expect(view.findAll('[data-field="tube_cut_length_m"]').map(cell => cell.text())).toEqual(['5.89', '5.51', '6.17', '5.81', '5.72', '5.93'])
-    expect(view.findAll('[data-field="suggested_purchase_meters"]').map(cell => cell.text())).toEqual(['748.03', '1856.87', '1042.73', '981.89', '726.44', '818.34'])
+    expect(view.findAll('[data-field="suggested_purchase_weight_kg"]').map(cell => cell.text())).toEqual(['—', '—', '—', '—', '—', '—'])
     expect(view.get('.preview-status-tag').text()).toBe('待确认')
     expect(view.text()).toContain('销售订单未关联')
     expect(view.text()).not.toContain('销售订单HT26130')

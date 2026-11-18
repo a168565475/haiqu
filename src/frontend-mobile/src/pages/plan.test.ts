@@ -65,7 +65,7 @@ describe('计划详情范围刷新', () => {
     expect(router.currentRoute.value.path).toBe(path)
     expect(router.currentRoute.value.query).toEqual({ ...query('one'), production_task_id: 'task', product_line_id: 'product', section })
   })
-  it('金工与车缝详情保留半成品入库权限和仓库确认说明', async () => {
+  it('金工、车缝和裁剪详情保留半成品入库权限和仓库确认说明', async () => {
     api.fetch.mockResolvedValue({ ...plan('one'), can_receive_semi: true })
     const router = await openPage({ ...query('one'), section: 'receipt' })
     expect(wrapper!.text()).toContain('提交后由仓库确认入库。')
@@ -74,9 +74,9 @@ describe('计划详情范围刷新', () => {
     await router.push({ path: '/plan', query: { ...query('two'), plan_category: 'SEWING', section: 'receipt' } }); await flushPromises()
     expect(wrapper!.text()).toContain('没有半成品入库权限')
     expect(wrapper!.findAll('button').find(button => button.text() === '半成品入库')!.attributes('disabled')).toBeDefined()
-    api.fetch.mockResolvedValue({ ...plan('three'), plan_category: 'CUTTING' })
+    api.fetch.mockResolvedValue({ ...plan('three'), plan_category: 'CUTTING', can_receive_semi: true })
     await router.push({ path: '/plan', query: { ...query('three'), plan_category: 'CUTTING', section: 'receipt' } }); await flushPromises()
-    expect(wrapper!.findAll('button').some(button => button.text() === '半成品入库')).toBe(false)
+    expect(wrapper!.findAll('button').find(button => button.text() === '半成品入库')!.attributes('disabled')).toBeUndefined()
   })
   it('装配详情保留成品入库入口与仓库确认说明，权限禁用来自服务端', async () => {
     api.fetch.mockResolvedValue({ ...plan('one'), plan_category: 'ASSEMBLY', can_receive_finished: true })

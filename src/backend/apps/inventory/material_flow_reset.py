@@ -95,7 +95,8 @@ def database_identity():
 
 def pipe_reset_values(line):
     from apps.boms.material_flow_calculations import pipe_plan
-    from apps.procurement.pipe_purchase import pipe_source_snapshot
+    from apps.procurement.pipe_purchase import (pipe_source_snapshot, is_sample_weight_snapshot,
+        sample_weight_source_snapshot, sample_weight_purchase_values)
     from apps.samples.pipe_materials import sample_pipe_snapshot
     warning = ''
     values = dict(unit_price=None, amount=None, actual_purchase_quantity=None,
@@ -104,11 +105,26 @@ def pipe_reset_values(line):
                   calculation_snapshot={'requires_source_confirmation':True}, required_quantity=None, source_unit_text='米',
                   source_quantity_field='suggested_purchase_meters', source_quantity_text='',
                   quantity_parse_status='MISSING')
+    values.update(raw_bar_weight_kg=None, suggested_purchase_weight_kg=None, actual_purchase_weight_kg=None)
+    if line.source_unit_text == 'KG':
+        values.update(source_unit_text='KG', source_quantity_field='suggested_purchase_weight_kg',
+            calculation_snapshot={**line.calculation_snapshot, 'actual_purchase_weight_kg': None, 'requires_source_confirmation': True})
     try:
         if line.purchase_order.source_type == 'SAMPLE':
             binding = line.sample_material_source
             row = next(r for r in binding.procurement_request.lines if r['key'] == str(binding.line_key))
             plan = sample_pipe_snapshot(binding.procurement_request, row)
+            if is_sample_weight_snapshot(line.calculation_snapshot):
+                computed = sample_weight_purchase_values(sample_weight_source_snapshot(plan, row['unitLabel']), {
+                    'raw_bar_length_m': line.raw_bar_length_m or line.calculation_snapshot.get('raw_bar_length_m'),
+                    'raw_bar_weight_kg': line.raw_bar_weight_kg or line.calculation_snapshot.get('raw_bar_weight_kg'),
+                    'actual_purchase_quantity': None,
+                })
+                values.update(computed)
+                required = computed['suggested_purchase_weight_kg']
+                values.update(required_quantity=required, source_quantity_text=str(required) if required is not None else '',
+                              quantity_parse_status='READY' if required is not None else 'MISSING')
+                return values, warning
         elif line.bom_line_id:
             bom_line = line.bom_line
             if bom_line.section.section_type != 'PROFILE':
@@ -134,9 +150,15 @@ def pipe_reset_values(line):
                 warning = f'已按明确旧参数计算建议，须补齐并重新确认 BOM 后刷新采购来源：{error}'
         else:
             raise ValueError('缺少明确的管材来源')
+        if line.source_unit_text == 'KG' and plan.get('measurement_unit') != 'kg':
+            raise ValueError('原重量采购缺少当前标准单重，须补齐来源，不能退回米制')
         values.update({key: plan[key] for key in ('raw_bar_length_m','suggested_bar_count','suggested_purchase_meters')})
         values.update(calculation_snapshot=plan, required_quantity=plan['suggested_purchase_meters'],
                       source_quantity_text=str(plan['suggested_purchase_meters']), quantity_parse_status='READY')
+        if plan.get('measurement_unit') == 'kg':
+            values.update(raw_bar_weight_kg=plan['raw_bar_weight_kg'], suggested_purchase_weight_kg=plan['suggested_purchase_weight_kg'],
+                          required_quantity=plan['suggested_purchase_weight_kg'], source_unit_text='KG',
+                          source_quantity_field='suggested_purchase_weight_kg', source_quantity_text=str(plan['suggested_purchase_weight_kg']))
     except (ValueError, TypeError, KeyError, StopIteration, AttributeError) as error:
         warning = f'缺少合法管材参数，数量留空，确认采购前必须补齐：{error}'
     except Exception as error:

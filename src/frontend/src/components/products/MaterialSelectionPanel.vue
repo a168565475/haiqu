@@ -6,10 +6,12 @@ import type { Modifier } from '@popperjs/core'
 import { fetchMaterialCatalog, fetchMaterialCatalogOptions, fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError } from '@/api/materialCatalog'
 import { fetchBomCatalogSelectionOptions } from '@/api/boms'
 import { fetchSampleMaterial, fetchSampleMaterialCrafts, fetchSampleMaterialOptions, fetchSampleMaterials, fetchSamplePublicOptions } from '@/api/sampleMaterialSources'
+import { fetchInboundMaterial, fetchInboundMaterialOptions, fetchInboundMaterials, fetchInboundPublicOptions } from '@/api/inventoryMaterialSources'
 import type { BomLineInput } from '@/types/bom'
 import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogOptions, MaterialCatalogSummary, MaterialSelectionInput, PublicMaterialOptions } from '@/types/materialCatalog'
 import { matchesPinyinSearch } from '@/utils/pinyinSearch'
 import { applyMaterialSelection, bomCatalogCategories } from './materialSelection'
+import { applyComponentReferenceSelection, COMPONENT_OWN_ATTRIBUTE_KEYS, componentOwnAttributes, componentReferenceSelection } from '@/utils/bomComposition'
 
 const props = withDefaults(defineProps<{
   line: BomLineInput
@@ -17,9 +19,18 @@ const props = withDefaults(defineProps<{
   refreshKey?: number
   fixedUnit?: '根' | '米'
   presentation?: 'panel' | 'dropdown'
-  source?: 'catalog' | 'sample'
-}>(), { presentation: 'panel', source: 'catalog' })
+  source?: 'catalog' | 'sample' | 'inventory'
+  componentReference?: boolean
+  disabled?: boolean
+  lazy?: boolean
+  showLabel?: boolean
+}>(), { presentation: 'panel', source: 'catalog', showLabel: true })
 const emit = defineEmits<{ maintain: []; loaded: [catalog: MaterialCatalog]; 'public-options': [options: PublicMaterialOptions | undefined] }>()
+const selectionApi = computed(() => props.source === 'inventory'
+  ? { options: fetchInboundMaterialOptions, list: fetchInboundMaterials, detail: fetchInboundMaterial, publicOptions: fetchInboundPublicOptions }
+  : props.source === 'sample'
+    ? { options: fetchSampleMaterialOptions, list: fetchSampleMaterials, detail: fetchSampleMaterial, publicOptions: fetchSamplePublicOptions }
+    : { options: fetchMaterialCatalogOptions, list: fetchMaterialCatalogs, detail: fetchMaterialCatalog, publicOptions: fetchPublicMaterialOptions })
 const names = ref<MaterialCatalogSummary[]>([])
 const keyword = ref('')
 const attributeKeywords = ref<Record<string, string>>({})
@@ -46,10 +57,15 @@ const isBomDropdown = computed(() => isDropdown.value && props.source === 'catal
 const colorAsList = computed(() => isDropdown.value || props.source === 'sample')
 const selectedName = computed(() => {
   const id = props.line.material_catalog_id
-  if (!id) return ''
+  if (!id) return props.componentReference ? props.line.part_name : ''
   if (catalog.value?.id === id) return catalog.value.name
   if (props.line.material_selection_snapshot?.catalog_id === id) return props.line.material_selection_snapshot.name
   return names.value.find(item => item.id === id)?.name || props.line.part_name || ''
+})
+const selectedDescription = computed(() => {
+  if (!props.componentReference) return undefined
+  const selection = props.line.material_selection || props.line.material_selection_snapshot
+  return [selectedName.value, ...Object.values(componentOwnAttributes(selection?.attributes)), props.line.unit].filter(Boolean).join(' / ')
 })
 const availableHeight: Modifier<'materialSelectionHeight', Record<string, never>> = {
   name: 'materialSelectionHeight', enabled: true, phase: 'beforeWrite', requires: ['computeStyles'],
@@ -70,14 +86,23 @@ let namesRequestId = 0
 let namesSearchTimer: ReturnType<typeof setTimeout> | undefined
 let nameComposing = false
 let disposed = false
+let initialized = false
+let initializing: Promise<void> | undefined
 const templateDefinition = computed(() => definitions.value?.categories.flatMap(item => item.templates).find(item => item.key === catalog.value?.template_key))
 const fields = computed(() => {
   const selectedFields = (templateDefinition.value?.fields || []).filter(field =>
-    (!props.fixedUnit || field.key !== 'unit') && !((isDropdown.value || props.source === 'sample') && catalog.value?.category_key === 'TUBE' && field.key === 'length') &&
+    (!props.componentReference || COMPONENT_OWN_ATTRIBUTE_KEYS.includes(field.key)) &&
+    (!(props.fixedUnit || props.componentReference) || field.key !== 'unit') && !((isDropdown.value || props.source === 'sample') && catalog.value?.category_key === 'TUBE' && field.key === 'length') &&
     !(isDropdown.value && catalog.value?.category_key === 'PACKAGING' && ['layers', 'printing'].includes(field.key)) &&
     !(isBomDropdown.value && catalog.value?.category_key === 'PACKAGING' && field.key === 'model'),
   ).filter(field => props.source !== 'sample' || options(field.key).length || drafts.value[field.key] ||
     (field.key === 'section_size' && !drafts.value.shape))
+  if (props.componentReference) {
+    const keys = ['specification', 'size', 'model', 'process']
+    return selectedFields.filter(field => field.key === 'specification' || options(field.key).length || drafts.value[field.key])
+      .sort((left, right) => keys.indexOf(left.key) - keys.indexOf(right.key))
+      .map(field => ({ ...field, label: field.key === 'specification' ? '规格' : field.label }))
+  }
   if (props.source === 'sample' && catalog.value?.category_key === 'TUBE') {
     const keys = ['shape', 'section_size', 'thickness', 'material', 'color', 'unit']
     return selectedFields.filter(field => keys.includes(field.key)).sort((left, right) => keys.indexOf(left.key) - keys.indexOf(right.key))
@@ -117,11 +142,15 @@ const attributeRows = computed(() => Math.max(1, Math.ceil(attributeGroupCount.v
 const fieldOptions = computed(() => {
   const grouped = new Map<string, string[]>()
   const shape = publicOptions.value?.values.find(value => value.field_key === 'shape' && value.value === drafts.value.shape)
-  for (const item of publicOptions.value?.values || []) {
+  const valuesToShow = props.componentReference
+    ? [...(catalog.value?.values || []).filter(item => item.scope === 'BASE' && COMPONENT_OWN_ATTRIBUTE_KEYS.includes(item.field_key)),
+      ...(publicOptions.value?.values || [])]
+    : publicOptions.value?.values || []
+  for (const item of valuesToShow) {
     if (!item.value.trim() || ['/', '-', '—'].includes(item.value.trim())) continue
     if (item.field_key === 'section_size' && (!shape || item.parent_id !== shape.id)) continue
     const values = grouped.get(item.field_key) || []
-    if (item.field_key === 'color' && !usesProductColors.value && values.includes(item.value)) continue
+    if ((props.componentReference || (item.field_key === 'color' && !usesProductColors.value)) && values.includes(item.value)) continue
     values.push(item.value)
     grouped.set(item.field_key, values)
   }
@@ -133,7 +162,7 @@ function searchableField(key: string) {
   if (!isBomDropdown.value) return false
   const categoryFields: Record<string, string[]> = {
     TUBE: ['color'], HARDWARE: ['color', 'specification'], PLASTIC: ['color', 'specification'],
-    FABRIC: ['color'], AUXILIARY: ['color', 'specification', 'material'], PACKAGING: ['color', 'size', 'specification'],
+    FABRIC: ['color'], FABRIC_SEMI: ['color', 'size', 'specification', 'model', 'material'], AUXILIARY: ['color', 'specification', 'material'], PACKAGING: ['color', 'size', 'specification'],
   }
   return categoryFields[catalog.value?.category_key || '']?.includes(key) ?? false
 }
@@ -175,7 +204,7 @@ async function loadNames(reset = false) {
   namesLoading.value = true
   namesError.value = ''
   try {
-    const result = await (props.source === 'sample' ? fetchSampleMaterials : fetchMaterialCatalogs)({ category: category.value, q: keyword.value, page: page.value, page_size: 50 })
+    const result = await selectionApi.value.list({ category: category.value, q: keyword.value, page: page.value, page_size: 50 })
     if (token !== namesRequestId) return
     names.value = result.data
     pages.value = result.meta.total_pages
@@ -187,7 +216,9 @@ async function loadNames(reset = false) {
   } finally { if (token === namesRequestId) namesLoading.value = false }
 }
 async function pickName(id: string, preserve = false) {
-  if (disposed) return
+  if (disposed || props.disabled) return
+  const line = props.line
+  const kind = line.component_kind
   attributeKeywords.value = {}
   sprayKeyword.value = ''
   const token = ++requestId
@@ -198,17 +229,18 @@ async function pickName(id: string, preserve = false) {
   publicSprayOptions.value = undefined
   emit('public-options', undefined)
   try {
-    const result = await (props.source === 'sample' ? fetchSampleMaterial : fetchMaterialCatalog)(id)
-    if (token !== requestId) return
+    const result = await selectionApi.value.detail(id)
+    if (token !== requestId || line !== props.line || (props.componentReference && kind !== line.component_kind)) return
     if (result.data.id !== id) throw new Error('读取的品名与当前选择不一致，请重新读取。')
+    if (props.componentReference && (result.data.category_key !== 'FABRIC_SEMI' || result.data.template_key !== 'FABRIC_SEMI')) throw new Error('请选择部位或裁片品名。')
     const query = { category_key: result.data.category_key, template_key: result.data.template_key }
     const cacheKey = JSON.stringify([query.category_key, query.template_key])
-    const supportsSpray = definitions.value?.categories.flatMap(item => item.templates).find(item => item.key === result.data.template_key)?.supports_spray
+    const supportsSpray = props.source !== 'inventory' && definitions.value?.categories.flatMap(item => item.templates).find(item => item.key === result.data.template_key)?.supports_spray
     const [baseOptions, sprayOptions] = await Promise.all([
-      publicOptionsCache.get(`${cacheKey}:BASE`) || (props.source === 'sample' ? fetchSamplePublicOptions : fetchPublicMaterialOptions)({ ...query, scope: 'BASE' }),
-      supportsSpray ? publicOptionsCache.get(`${cacheKey}:SPRAY`) || (props.source === 'sample' ? fetchSamplePublicOptions : fetchPublicMaterialOptions)({ ...query, scope: 'SPRAY' }) : undefined,
+      publicOptionsCache.get(`${cacheKey}:BASE`) || selectionApi.value.publicOptions({ ...query, scope: 'BASE' }),
+      supportsSpray ? publicOptionsCache.get(`${cacheKey}:SPRAY`) || selectionApi.value.publicOptions({ ...query, scope: 'SPRAY' }) : undefined,
     ])
-    if (token !== requestId) return
+    if (token !== requestId || line !== props.line || (props.componentReference && kind !== line.component_kind)) return
     if (baseOptions.category_key !== query.category_key || baseOptions.template_key !== query.template_key || baseOptions.scope !== 'BASE' ||
       (sprayOptions && (sprayOptions.category_key !== query.category_key || sprayOptions.template_key !== query.template_key || sprayOptions.scope !== 'SPRAY'))) {
       throw new Error('公共属性与当前品名模板不一致，请重新读取。')
@@ -221,6 +253,12 @@ async function pickName(id: string, preserve = false) {
     catalog.value = result.data
     emit('loaded', result.data)
     emit('public-options', sprayOptions)
+    if (props.componentReference) {
+      const saved = componentReferenceSelection(line, result.data.id)
+      drafts.value = componentOwnAttributes(saved?.attributes)
+      if (!preserve) applyComponentReferenceSelection(line, result.data, drafts.value)
+      return
+    }
     if (!preserve) {
       const keepTubeAttributes = isDropdown.value && category.value === 'TUBE' && result.data.category_key === 'TUBE'
       const previousSelection = props.line.material_selection ?? props.line.material_selection_snapshot
@@ -265,9 +303,14 @@ async function pickName(id: string, preserve = false) {
 function options(key: string) {
   return fieldOptions.value.get(key) || []
 }
-function syncLine() {
-  if (!catalog.value || !props.line.material_selection) return
+function syncLine(updateSpecification = false) {
+  if (!catalog.value || props.disabled) return
   const attributes = Object.fromEntries(Object.entries(drafts.value).filter(([key, value]) => key !== 'unit' && value))
+  if (props.componentReference) {
+    applyComponentReferenceSelection(props.line, catalog.value, attributes, updateSpecification)
+    return
+  }
+  if (!props.line.material_selection) return
   const quantityUnit = props.fixedUnit || drafts.value.unit
   const selected = publicOptions.value?.units.find(unit => unit.unit_name === quantityUnit)
   const craft = crafts.value.find(item => item.id === craftId.value)
@@ -281,8 +324,9 @@ function syncLine() {
   props.line.unit = quantityUnit || ''
 }
 function choose(key: string, value: string) {
-  if (loading.value || error.value || !catalog.value) return
-  if (props.fixedUnit && key === 'unit') return
+  if (loading.value || error.value || !catalog.value || props.disabled) return
+  if (props.componentReference && !COMPONENT_OWN_ATTRIBUTE_KEYS.includes(key)) return
+  if ((props.fixedUnit || props.componentReference) && key === 'unit') return
   if (!options(key).includes(value)) return
   if (key === 'shape' && drafts.value.shape !== value) drafts.value.section_size = ''
   if (key === 'unit' && drafts.value.unit !== value) {
@@ -293,7 +337,7 @@ function choose(key: string, value: string) {
   if (key === 'color' && !usesProductColors.value && props.line.material_selection) {
     for (const field of ['product_color_id', 'color_card', 'color_code', 'color_name'] as const) delete props.line.material_selection[field]
   }
-  syncLine()
+  syncLine(props.componentReference && ['size', 'specification', 'model'].includes(key))
 }
 function colorSelection(row: MaterialAttributeValue) {
   return { product_color_id: row.product_color_id || row.id, color_card: row.color_card || '', color_code: row.color_code || '', color_name: row.color_name || row.value }
@@ -319,6 +363,7 @@ function closeOnEscape(event: KeyboardEvent) {
   dropdownOpen.value = false
 }
 async function reloadCurrent() {
+  if (!initialized) { await initialize(); return }
   const id = props.line.material_catalog_id
   const token = ++requestId
   publicOptionsCache.clear()
@@ -335,29 +380,45 @@ async function reloadCurrent() {
     if (token === requestId) loading.value = false
   }
 }
-watch(() => props.refreshKey, reloadCurrent)
+watch(() => props.refreshKey, () => { if (!props.lazy || initialized || initializing) void reloadCurrent() })
+watch(dropdownOpen, opened => {
+  if (!opened || props.disabled) return
+  if (!initialized) void initialize()
+  else if (props.componentReference) {
+    const id = props.line.material_catalog_id
+    if (id && catalog.value?.id !== id) void pickName(id, true)
+    else drafts.value = componentOwnAttributes(componentReferenceSelection(props.line)?.attributes)
+  }
+})
 watch(keyword, scheduleNameSearch, { flush: 'sync' })
 onBeforeUnmount(() => { disposed = true; cancelNameSearch(); ++requestId; ++namesRequestId })
-onMounted(async () => {
+async function initialize(): Promise<void> {
+  if (initializing) return initializing
+  initializing = initializeOptions()
+  try { await initializing } finally { initializing = undefined }
+}
+async function initializeOptions() {
   loading.value = true
   try {
-    definitions.value = await (props.source === 'sample' ? fetchSampleMaterialOptions : fetchMaterialCatalogOptions)()
+    definitions.value = await selectionApi.value.options()
     if (disposed) return
-    if (category.value === 'FABRIC_SEMI') crafts.value = (await (props.source === 'sample' ? fetchSampleMaterialCrafts : fetchBomCatalogSelectionOptions)()).crafts
+    if (category.value === 'FABRIC_SEMI' && !props.componentReference) crafts.value = (await (props.source === 'sample' ? fetchSampleMaterialCrafts : fetchBomCatalogSelectionOptions)()).crafts
     if (disposed) return
     await loadNames()
     if (props.line.material_catalog_id) await pickName(props.line.material_catalog_id, true)
+    initialized = true
   } catch (issue) { error.value = materialCatalogError(issue) }
   finally { loading.value = false }
-})
+}
+onMounted(() => { if (!props.lazy && !props.disabled) void initialize() })
 </script>
 
 <template>
   <div class="material-selection-field" :class="{ 'material-selection-field--dropdown': isDropdown }">
-    <span v-if="isDropdown" class="material-selection-label">品名</span>
-    <component :is="isDropdown ? ElPopover : 'div'" v-bind="isDropdown ? dropdownProps : {}" :visible="isDropdown ? dropdownOpen : undefined" @update:visible="dropdownOpen = $event">
+    <span v-if="isDropdown && showLabel" class="material-selection-label">品名</span>
+    <component :is="isDropdown ? ElPopover : 'div'" v-bind="isDropdown ? dropdownProps : {}" :visible="isDropdown ? dropdownOpen : undefined" :disabled="disabled" @update:visible="dropdownOpen = !disabled && $event">
       <template v-if="isDropdown" #reference>
-        <button type="button" class="material-name-trigger" aria-label="品名" aria-haspopup="dialog" :aria-expanded="dropdownOpen" :class="{ 'is-empty': !selectedName, 'is-open': dropdownOpen }">
+        <button type="button" class="material-name-trigger" aria-label="品名" aria-haspopup="dialog" :aria-expanded="dropdownOpen" :disabled="disabled" :title="selectedDescription" :class="{ 'is-empty': !selectedName, 'is-open': dropdownOpen }">
           <span>{{ selectedName || '选择品名' }}</span><ArrowDown aria-hidden="true" :class="{ 'is-reverse': dropdownOpen }" />
         </button>
       </template>
@@ -375,7 +436,7 @@ onMounted(async () => {
       <button v-if="!isDropdown && source === 'catalog'" type="button" class="maintain-link" @click="openMaintenance">生产维护</button>
     </aside>
     <div v-if="catalog" class="attribute-groups" :class="{ 'attribute-groups--four-columns': attributeGroupCount > 6, 'attribute-groups--seven': attributeGroupCount === 7, 'attribute-groups--fabric-colors': usesProductColors && source !== 'sample' }" :style="{ '--material-attribute-rows': attributeRows }">
-      <fieldset v-for="field in fields" :key="field.key" class="attribute-group" :class="{ 'attribute-group--color': field.key === 'color' && usesProductColors }" :disabled="loading || (field.key === 'section_size' && !drafts.shape)">
+      <fieldset v-for="field in fields" :key="field.key" class="attribute-group" :class="{ 'attribute-group--color': field.key === 'color' && usesProductColors }" :disabled="disabled || loading || (field.key === 'section_size' && !drafts.shape)">
         <legend>{{ field.label === '可用单位' ? '本次数量单位' : field.label }}</legend>
         <input v-if="searchableField(field.key)" v-model="attributeKeywords[field.key]" type="search" class="group-input attribute-search" :aria-label="`搜索${field.label}`" :placeholder="field.key === 'color' && usesProductColors ? '搜索色卡 / 色号 / 颜色' : `搜索${field.label}`" />
         <div v-if="field.key === 'color' && usesProductColors" :class="colorAsList ? 'group-values' : 'color-table-scroll'">
@@ -401,7 +462,7 @@ onMounted(async () => {
         </div>
         <div v-else class="group-values">
           <label v-for="value in filteredOptions(field.key)" :key="value" class="attribute-value" :class="{ selected: drafts[field.key] === value }"><input type="radio" :name="`${selectionId}-${field.key}`" :checked="drafts[field.key] === value" @change="choose(field.key, value)" /><span>{{ value }}</span></label>
-          <span v-if="drafts[field.key] && !options(field.key).includes(drafts[field.key]!)" class="historical-value">{{ drafts[field.key] }}（历史值，待重选）</span>
+          <span v-if="drafts[field.key] && !options(field.key).includes(drafts[field.key]!)" class="historical-value">{{ drafts[field.key] }}（{{ componentReference ? '已保存值' : '历史值，待重选' }}）</span>
           <p v-if="field.key === 'section_size' && !drafts.shape">请先选择截面形状</p>
           <p v-else-if="!options(field.key).length">暂无已有选项，请到分区维护配置中补充。</p>
           <p v-else-if="!filteredOptions(field.key).length">无匹配选项，请调整搜索内容。</p>
@@ -418,7 +479,7 @@ onMounted(async () => {
           <p v-else-if="!filteredSprayColors.length">无匹配选项，请调整搜索内容。</p>
         </div>
       </fieldset>
-      <label v-if="category === 'FABRIC_SEMI'" class="craft-field"><span>已完成工艺</span><ElSelect v-model="craftId" :teleported="!isDropdown" aria-label="裁片已完成工艺" placeholder="选择既有工艺" @change="syncLine"><ElOption v-for="craft in crafts" :key="craft.id" :value="craft.id" :label="craft.name" /></ElSelect></label>
+      <label v-if="category === 'FABRIC_SEMI' && !componentReference" class="craft-field"><span>已完成工艺</span><ElSelect v-model="craftId" :teleported="!isDropdown" aria-label="裁片已完成工艺" placeholder="选择既有工艺" @change="syncLine()"><ElOption v-for="craft in crafts" :key="craft.id" :value="craft.id" :label="craft.name" /></ElSelect></label>
     </div>
     <div v-else class="selection-empty">{{ loading ? '正在读取原料…' : '先选择已有品名，再逐项选择右侧属性。' }}</div>
     <footer v-if="isDropdown" class="selection-footer"><button type="button" class="erp-list-button erp-list-button--primary" :disabled="loading" @click="dropdownOpen = false">完成选择</button></footer>

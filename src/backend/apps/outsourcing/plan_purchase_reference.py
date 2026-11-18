@@ -38,7 +38,7 @@ def purchase_reference(line, purchases, *, cutting):
             if (inbound.inbound.purchase_order_id != purchase.purchase_order_id
                     or not purchase.source_unit_text.strip()
                     or inbound.source_unit_text_snapshot != purchase.source_unit_text
-                    or inbound.source_unit_text_snapshot not in {'米', '根'}
+                    or inbound.source_unit_text_snapshot not in {'米', '根', 'KG', 'kg', '千克'}
                     or (cutting and inbound.source_unit_text_snapshot != '米')):
                 result['conversion_note'] = '采购入库来源或数量单位不一致，暂不能换算。'
                 return result

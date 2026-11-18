@@ -17,7 +17,7 @@ import type { PendingSemiReceipt, SemiReceiptLine, SemiReceiptPreview, SemiRecei
 import { errorMessage } from '@/utils/errors'
 import { createRequestId } from '@/utils/requestId'
 import { quantityText, shanghaiToday, validProductionDate } from '@/utils/reporting'
-import { formatSemiQuantity, parsePendingSemiReceipt, semiAttributeLabels, semiLineError, semiLineName, semiPageBlockers, semiPreviewWhole, semiReceiptFailure, semiReceiptLines, semiReceiptScope, semiWhole } from '@/utils/semiReceipts'
+import { formatSemiQuantity, parsePendingSemiReceipt, semiAttributeLabels, semiLineError, semiLineName, semiPageBlockers, semiPreviewWhole, semiReceiptFailure, semiReceiptLines, semiReceiptScope, semiReceiptTotal, semiWhole } from '@/utils/semiReceipts'
 import { createSemiReceiptPending } from '@/utils/semiReceiptPending'
 
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -42,7 +42,7 @@ const zones = computed(() => preview.value?.zones.filter(zone => warehouseKey(zo
 const warehouseName = computed(() => warehouses.value.find(item => item.id === warehouseId.value)?.name || '请选择半成品仓')
 const zoneName = computed(() => preview.value?.zones.find(item => item.id === zoneId.value)?.name || '请选择库区')
 const selectedLines = computed(() => (preview.value?.lines ?? []).filter(line => (semiWhole(quantities.value[line.bom_line_id] || '') ?? 0n) > 0n))
-const total = computed(() => String(selectedLines.value.reduce((sum, line) => sum + (semiWhole(quantities.value[line.bom_line_id]) ?? 0n), 0n)))
+const total = computed(() => semiReceiptTotal(selectedLines.value, quantities.value))
 const available = (line: SemiReceiptLine) => (semiPreviewWhole(line.can_receive) ?? 0n) > 0n && (scope.value?.plan_category !== 'METAL' || line.metal_processing?.basis_ready)
 const hasAvailable = computed(() => preview.value?.lines.some(available) ?? false)
 const canSubmit = computed(() => current() && !storageBlocked.value && !saving.value && !loading.value && !result.value
@@ -103,7 +103,7 @@ function initialize() {
   loading.value = false; saving.value = false; showDate.value = false; showWarehouse.value = false; showZone.value = false
   pending.value = null; pendingRaw = null; result.value = null; storageBlocked.value = false; needsRefresh.value = false
   loadError.value = ''; actionError.value = ''; sourceUnavailable.value = false; preview.value = null; quantities.value = {}; receiptDate.value = ''; remark.value = ''; warehouseId.value = ''; zoneId.value = ''
-  if (!scope.value) { loadError.value = '入库来源参数无效，请从金工或车缝计划重新进入半成品入库。'; return }
+  if (!scope.value) { loadError.value = '入库来源参数无效，请从金工、裁剪或车缝计划重新进入半成品入库。'; return }
   store = createSemiReceiptPending(scope.value.schedule_product_id, scope.value.plan_category, owner, () => ({ userId: alive ? auth.user?.id ?? null : null, generation: auth.generation }))
   try {
     pendingRaw = store.read()
@@ -213,7 +213,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
 </script>
 
 <template>
-  <WorkPage class="semi-work-page" title="半成品入库" :subtitle="preview?.production_order || (scope?.plan_category === 'METAL' ? '金工' : '车缝')" section="receipt" back-to="/production-receipt">
+  <WorkPage class="semi-work-page" title="半成品入库" :subtitle="preview?.production_order || (scope?.plan_category === 'METAL' ? '金工' : scope?.plan_category === 'CUTTING' ? '裁剪' : '车缝')" section="receipt" back-to="/production-receipt">
     <div class="page-stack semi-page">
       <section v-if="result" class="section-card semi-success" role="status">
         <VanIcon name="passed" size="40" /><h2>{{ result.status === 'CONFIRMED' ? '仓库已确认入库' : '申请已提交，待仓库确认' }}</h2><strong>{{ result.receipt_number }}</strong>
@@ -244,6 +244,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
           <section v-if="!hasAvailable && !blockers.length" class="section-card muted">当前暂无可入库数量，请查看各明细的数量依据。</section>
           <article v-for="line in preview.lines" :key="line.bom_line_id" class="section-card semi-material" :data-line-id="line.bom_line_id">
             <div class="semi-material-heading"><strong>{{ semiLineName(line) }}</strong><span>{{ line.stage }}</span></div>
+            <p v-if="line.parent_part_name" class="semi-material-spec">所属部位：{{ line.parent_part_name }}</p>
             <p class="semi-material-spec">{{ [line.specification || line.attributes.specification, line.attributes.material, line.attributes.color].filter(Boolean).join(' · ') || '规格未填写' }}</p>
             <div class="semi-quantities"><div><span>订单需求</span><b>{{ quantityText(line.required) }}</b></div><div><span>{{ preview.plan_category === 'SEWING' ? '累计入库/待确认' : '累计已提交' }}</span><b>{{ quantityText(line.received) }}</b></div><div class="semi-available"><span>本次可入</span><b>{{ line.metal_processing && !line.metal_processing.basis_ready ? '—' : quantityText(line.can_receive) }} <small>{{ line.attributes.unit_name }}</small></b></div></div>
             <VanField v-model="quantities[line.bom_line_id]" class="semi-quantity" label="本次入库" type="text" inputmode="numeric" :placeholder="available(line) ? '请输入数量' : '暂无可入'" :formatter="value => formatSemiQuantity(value, quantities[line.bom_line_id] || '')" :disabled="locked || !available(line)" :aria-label="`${semiLineName(line)}本次入库数量`" :error-message="semiLineError(preview, line, quantities[line.bom_line_id] || '')"><template #button><span>{{ line.attributes.unit_name }}</span></template></VanField>
@@ -267,7 +268,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
         <section v-if="actionError" class="error-panel" role="alert">{{ actionError }}</section>
       </template>
     </div>
-    <template v-if="!result && (preview || pending)" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项 · ${total} ${scope?.plan_category === 'METAL' ? '支' : '套'}` }} · 仓库确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
+    <template v-if="!result && (preview || pending)" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项${total ? ` · ${total}` : ''}` }} · 仓库确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
     <VanPopup v-model:show="showDate" position="bottom" round teleport="body" class="semi-popup"><VanDatePicker v-model="pickerDate" title="收货日期" :columns-type="['year', 'month', 'day']" :min-date="minDate" :max-date="maxDate" :formatter="formatDate" @confirm="confirmDate" @cancel="showDate = false" /></VanPopup>
     <VanPopup v-model:show="showWarehouse" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>选择半成品仓</h2><div class="semi-options"><VanCell v-for="warehouse in warehouses" :key="warehouse.id" :title="warehouse.name" clickable :icon="warehouse.id === warehouseId ? 'success' : undefined" @click="selectWarehouse(warehouse.id)" /></div></VanPopup>
     <VanPopup v-model:show="showZone" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>{{ warehouseName }} · 选择库区</h2><div class="semi-options"><VanCell v-for="zone in zones" :key="zone.id" :title="zone.name" clickable :icon="zone.id === zoneId ? 'success' : undefined" @click="selectZone(zone.id)" /><p v-if="!zones.length">当前仓库没有可用库区。</p></div></VanPopup>

@@ -22,7 +22,7 @@ class PlanQuantityEditTests(SimpleTestCase):
         manager = Mock()
         manager.all.return_value = self.lines
         manager.select_for_update.return_value.order_by.return_value = self.lines
-        self.order = SimpleNamespace(pk=uuid4(), source_kind='METAL', lines=manager, version=3,
+        self.order = SimpleNamespace(pk=uuid4(), source_kind='METAL', source_snapshot={}, lines=manager, version=3,
             schedule_product=SimpleNamespace(schedule_id=uuid4()), save=Mock())
         self.request = SimpleNamespace(employee=object())
         self.stack = ExitStack()
@@ -46,7 +46,7 @@ class PlanQuantityEditTests(SimpleTestCase):
         invalid = [self.payload(value) for value in [0, -1, '1.5', True, None, '']]
         invalid += [{**self.payload(), 'remark': '不能更改'}, {'lines': []},
                     {'lines': [self.payload()['lines'][0]] * 2},
-                    {'lines': [{**self.payload()['lines'][0], 'unit_price': '2'}]}]
+                    {'lines': [{**self.payload()['lines'][0], 'unit_price': '-2'}]}]
         for data in invalid:
             with self.subTest(data=data):
                 self.assertFalse(TubePlanQuantityWriteSerializer(data=data).is_valid())

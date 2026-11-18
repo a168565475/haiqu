@@ -167,10 +167,24 @@ function quantity(value: string | null, unit: string | null): string {
   return `${formatted} ${unit || '（单位待核对）'}`
 }
 function arrivalQuantity(row: PurchaseTrackingArrival, field: 'ordered' | 'received' | 'unreceived'): string {
+  if (String(row.unit || '').toUpperCase() === 'KG') {
+    const weight = row[`${field}_weight_kg`]
+    return quantity(weight ?? row[`${field}_quantity`], 'kg')
+  }
   const useRoots = [row.ordered_root_count, row.received_root_count, row.unreceived_root_count].every(value => value !== null)
   return quantity(useRoots ? row[`${field}_root_count`] : row[`${field}_quantity`], useRoots ? '根' : row.unit)
 }
+function arrivalProgressQuantity(row: PurchaseTrackingArrival, field: 'accepted' | 'pending_quality' | 'return'): string {
+  if (String(row.unit || '').toUpperCase() === 'KG') {
+    const weight = field === 'accepted' ? row.accepted_weight_kg : field === 'pending_quality' ? row.pending_quality_weight_kg : row.return_weight_kg
+    const fallback = field === 'accepted' ? row.accepted_quantity : field === 'pending_quality' ? row.pending_quality_quantity : row.return_quantity
+    return quantity(weight ?? fallback, 'kg')
+  }
+  const value = field === 'accepted' ? row.accepted_quantity : field === 'pending_quality' ? row.pending_quality_quantity : row.return_quantity
+  return quantity(value, row.unit)
+}
 function coverageQuantity(row: PurchaseTrackingCoverage, field: 'required' | 'purchased' | 'remaining'): string {
+  if (String(row.unit || '').toUpperCase() === 'KG') return quantity(row[`${field}_quantity`], 'kg')
   const useRoots = [row.required_root_count, row.purchased_root_count, row.remaining_root_count].every(value => value !== null)
   return quantity(useRoots ? row[`${field}_root_count`] : row[`${field}_quantity`], useRoots ? '根' : row.unit)
 }
@@ -329,9 +343,9 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
             <ElTableColumn label="规格" width="150"><template #default="{ row }"><span class="tracking-cell" tabindex="0" data-testid="arrival-specification" :aria-label="`查看材料属性：${row.material_name || '材料待核对'}`" @focus="focusMaterialAttributes(row, $event)" @blur="hideMaterialAttributes" @keydown.esc="hideMaterialAttributes">{{ row.specification || '—' }}</span></template></ElTableColumn>
             <ElTableColumn label="采购数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ arrivalQuantity(row, 'ordered') }}</span></template></ElTableColumn>
             <ElTableColumn label="实际收货" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ arrivalQuantity(row, 'received') }}</span></template></ElTableColumn>
-            <ElTableColumn label="合格数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ quantity(row.accepted_quantity, row.unit) }}</span></template></ElTableColumn>
-            <ElTableColumn label="待检数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ quantity(row.pending_quality_quantity, row.unit) }}</span></template></ElTableColumn>
-            <ElTableColumn label="退货数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ hasReturn(row) ? quantity(row.return_quantity, row.unit) : '0' }}</span></template></ElTableColumn>
+            <ElTableColumn label="合格数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ arrivalProgressQuantity(row, 'accepted') }}</span></template></ElTableColumn>
+            <ElTableColumn label="待检数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ arrivalProgressQuantity(row, 'pending_quality') }}</span></template></ElTableColumn>
+            <ElTableColumn label="退货数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number">{{ hasReturn(row) ? arrivalProgressQuantity(row, 'return') : '0' }}</span></template></ElTableColumn>
             <ElTableColumn label="未到数量" width="120" align="right"><template #default="{ row }"><span class="tracking-cell tracking-number" :class="{ 'risk-danger': isDanger(row) }">{{ arrivalQuantity(row, 'unreceived') }}</span></template></ElTableColumn>
             <ElTableColumn label="采购交期" width="112" fixed="right" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell">{{ row.delivery_date || '待核对' }}</span></template></ElTableColumn>
             <ElTableColumn label="交期状态" width="150" fixed="right" show-overflow-tooltip><template #default="{ row }"><ElTag v-bind="arrivalRiskTag(row)" disable-transitions class="tracking-risk-tag" :title="arrivalRiskText(row)" data-testid="arrival-delivery-status"><span class="tracking-cell">{{ arrivalRiskText(row) }}</span></ElTag></template></ElTableColumn>

@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, resolve_bom_line_raw_material, resolve_cutting_fabric_material
 from apps.reference_data.models import FabricMaterial
+from .component_parts import apply_component_quantities, is_cut_piece, is_sewn_part, is_cut_piece_source
 from .material_flow_calculations import (
     CUTTING_QUANTITY_FIELDS, PIPE_PURCHASE_ALLOWANCE_MODES, PIPE_PURCHASE_ALLOWANCE_RULES,
     MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, packaging_quantity, pipe_plan, positive_integer,
@@ -19,6 +20,16 @@ PIPE_FIELDS = ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw
 def is_meter_fabric_section(section):
     title = "".join(section.title.split())
     return section.section_type == "FABRIC" and not any(word in title for word in ("裁剪", "裁片")) and any(word in title for word in ("面辅料", "面料", "布料"))
+
+
+def is_meter_raw_cotton_line(line):
+    snapshot = line.material_selection_snapshot or {}
+    return (bool(line.material_catalog_id) and line.section.section_type == "FABRIC"
+            and line.section.title.strip() == "辅料类"
+            and snapshot.get("category_key") == "AUXILIARY"
+            and snapshot.get("template_key") == "COTTON"
+            and snapshot.get("processing_state") == "RAW"
+            and str(snapshot.get("unit_name", "")).strip().lower() in {"米", "m"})
 
 
 def is_pipe_cutting_line(line):
@@ -38,22 +49,33 @@ def cutting_fabric_attributes(source):
 
 
 def inherit_cutting_fabric_attributes(line):
-    if line.section.title.strip() != "裁剪明细" or is_pipe_cutting_line(line):
+    if line.section.title.strip() != "裁剪明细" or is_sewn_part(line) or (not is_cut_piece(line) and is_pipe_cutting_line(line)):
         return
     line.raw_values.pop("cutting_material_original", None)
     source = line.fabric_source_line
     inherited = cutting_fabric_attributes(source)
+    if is_cut_piece(line) and source is not None and not inherited.get("color"):
+        inherited["color"] = str((source.raw_values or {}).get("accessory_color") or "").strip()
     line.material = inherited.get("material", "")
-    if source is not None:
+    if source is not None and not is_cut_piece(line):
         line.specification = source.specification
     line.raw_values["cutting_color"] = inherited.get("color", "")
     line.raw_values["fabric_width"] = inherited.get("width", "")
-    if line.material_catalog_id and line.material_selection_snapshot and source is not None:
+    from .component_catalog import is_component_catalog_reference
+    if (line.material_catalog_id and line.material_selection_snapshot and source is not None
+            and not is_component_catalog_reference(line.material_selection_snapshot)):
         from apps.material_catalog.colors import COLOR_FIELDS
         snapshot = deepcopy(line.material_selection_snapshot)
         attrs = {key: value for key, value in snapshot["attributes"].items()
                  if key not in {"material", "width", "color", "fabric_spec", "specification", "size", "model", "process"}}
         attrs.update(inherited)
+        if is_cut_piece(line):
+            # 新裁片保留实际裁剪尺寸；原布/棉规格只作为来源属性，不能覆盖裁片尺寸。
+            attrs.pop("specification", None)
+            if source.specification:
+                attrs["fabric_spec"] = source.specification
+            if line.specification:
+                attrs["size"] = line.specification
         snapshot["attributes"] = attrs
         for key in COLOR_FIELDS:
             snapshot.pop(key, None)
@@ -85,6 +107,8 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
             raise ValidationError({"sections": f"{label}手动采购余量必须选择有效选项。"})
     if require_complete and (line.raw_values or {}).get("import_material_matching_deferred"):
         raise ValidationError({"sections": f"{label}的导入物料尚未核对，请完成物料匹配后再确认 BOM。"})
+    if apply_component_quantities(line, order_quantity, require_complete=require_complete):
+        return
     if require_complete and line.section.section_type == "PROFILE" and (line.raw_values or {}).get("pipe_source_sync_pending"):
         raise ValidationError({"sections": f"{label}请补齐材质、形状、截面、厚度及切割参数，保存后再确认 BOM。"})
     if require_complete and is_meter_fabric_section(line.section) and (line.raw_values or {}).get("fabric_source_sync_pending"):
@@ -213,6 +237,32 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
 def validate_fabric_links(lines, *, require_complete=False):
     current = {line.pk: line for line in lines}
     for line in lines:
+        if is_cut_piece(line) or is_sewn_part(line):
+            label = "部位" if is_sewn_part(line) else "裁片"
+            source = current.get(line.fabric_source_line_id)
+            if line.fabric_source_line_id:
+                if source is None or source.section.bom_id != line.section.bom_id or not is_cut_piece_source(source):
+                    raise ValidationError({"sections": f"{label}第 {line.line_number} 行须选择本 BOM 保留的面料或辅料原料。"})
+                line.fabric_source_line = source
+            if require_complete:
+                if source is None:
+                    # 旧部位可不选归属面布；裁片仍须有实际裁剪原料。
+                    if is_sewn_part(line):
+                        continue
+                    raise ValidationError({"sections": f"裁片第 {line.line_number} 行请选择来源原料。"})
+                if source.material_catalog_id:
+                    from apps.material_catalog.saved_selection import validate_saved_material
+                    validate_saved_material(source.material_selection_snapshot, material_catalog_id=source.material_catalog_id)
+                else:
+                    material, _ = resolve_bom_line_raw_material(source)
+                    if (material is None or material.item_type != "MATERIAL" or material.unit.status != "ACTIVE"
+                            or material.unit.archived_at is not None):
+                        raise ValidationError({"sections": f"{label}第 {line.line_number} 行的来源尚未关联有效库存原料。"})
+                # 确认时与后续库存使用相同实物属性校验，避免确认后才发现原料规格缺失。
+                if is_cut_piece(line):
+                    from apps.inventory.part_flow_identity import _piece_properties
+                    _piece_properties(line)
+            continue
         if line.section.title.strip() != "裁剪明细":
             if line.fabric_source_line_id:
                 raise ValidationError({"sections": "只有裁剪明细可以设置来源面料。"})
@@ -220,13 +270,14 @@ def validate_fabric_links(lines, *, require_complete=False):
         if line.fabric_source_line_id:
             source = current.get(line.fabric_source_line_id)
             if (source is None or source.section.bom_id != line.section.bom_id
-                    or not is_meter_fabric_section(source.section)):
-                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行须选择本 BOM 保留的面料行。"})
+                    or not (is_meter_fabric_section(source.section) or is_meter_raw_cotton_line(source))):
+                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行须选择本 BOM 保留的面料或米制棉类原料行。"})
             line.fabric_source_line = source
             if source.material_catalog_id:
                 snapshot = source.material_selection_snapshot
-                if snapshot.get("category_key") != "FABRIC" or snapshot.get("processing_state") != "RAW":
-                    raise ValidationError({"sections": "来源面料必须是本BOM的基础面料。"})
+                if not (is_meter_raw_cotton_line(source) or (
+                        snapshot.get("category_key") == "FABRIC" and snapshot.get("processing_state") == "RAW")):
+                    raise ValidationError({"sections": "来源必须是本 BOM 的基础面料或米制棉类原料。"})
                 continue
             material, error = resolve_cutting_fabric_material(line)
             if error or material is None:

@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomStatus
 from apps.procurement.models import PurchaseQuantityParseStatus
-from apps.procurement.services import _is_purchasable_bom_section, _source_quantity
+from apps.procurement.services import _is_purchasable_bom_section, _source_quantity, _first_direct_quantity, _derived_quantity
 from apps.products.material_identity import lock_bom_line_material_identities, resolve_bom_line_raw_material
 from apps.products.models import RawMaterialInformation
 from apps.production_tasks.models import ProductionTask
@@ -39,6 +39,16 @@ SECTION_TITLE_CODES = {
     "面料类": "FABRIC",
     "包材类": "PACKAGING",
 }
+
+
+def inventory_source_quantity(line, bom):
+    # 五金采购换成KG后，生产领料仍按BOM实际个片需求；不能复用采购计价重量。
+    if line.section.section_type == "ACCESSORY" and str((line.raw_values or {}).get("hardware_weight_mode", "")).upper() in {"AUTO", "MANUAL"}:
+        quantity, field, text, status = _first_direct_quantity(line, ["budget_quantity", "total_consumption"])
+        if not field:
+            quantity, field, text, status = _derived_quantity(line, bom, "unit_consumption")
+        return quantity, field, text, line.unit, status
+    return _source_quantity(line, bom)
 
 
 def _stable_requirement_id(task_id, raw_material_id, unit_id, line_type):
@@ -170,7 +180,7 @@ def build_requirement_specs(production_task_id, *, lock_material_identities=Fals
                     continue
                 material_id = material.pk
                 raw_ids.add(material_id)
-                quantity, source_field, source_text, source_unit, parse_status = _source_quantity(line, bom)
+                quantity, source_field, source_text, source_unit, parse_status = inventory_source_quantity(line, bom)
                 contributions.append(
                     {
                         "product_line": product_line,

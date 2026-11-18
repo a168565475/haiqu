@@ -74,7 +74,6 @@ const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFor
 const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
 const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
 const PurchaseGroupDetailView = () => import('@/views/procurement/PurchaseGroupDetailView.vue')
-const PurchaseSheetTemplateSelectView = () => import('@/views/procurement/PurchaseSheetTemplateSelectView.vue')
 const SupplierPurchaseSheetListView = () => import('@/views/procurement/SupplierPurchaseSheetListView.vue')
 const SupplierPurchaseSheetEditorView = () => import('@/views/procurement/SupplierPurchaseSheetEditorView.vue')
 const PurchaseContractTemplateListView = () => import('@/views/procurement/PurchaseContractTemplateListView.vue')
@@ -84,9 +83,9 @@ const FinishedGoodsOutboundDetailView = () => import('@/views/inventory/Finished
 const MaterialInventoryView = () => import('@/views/inventory/MaterialInventoryView.vue')
 const MaterialInventoryDetailView = () => import('@/views/inventory/MaterialInventoryDetailView.vue')
 const MaterialPurchaseInboundView = () => import('@/views/inventory/MaterialPurchaseInboundView.vue')
-const ManualMaterialInboundView = () => import('@/views/inventory/ManualMaterialInboundView.vue')
 const MaterialQualityConfirmationView = () => import('@/views/inventory/MaterialQualityConfirmationView.vue')
 const MaterialInboundDetailView = () => import('@/views/inventory/MaterialInboundDetailView.vue')
+const MaterialTransferRecordsView = () => import('@/views/inventory/MaterialTransferRecordsView.vue')
 const PurchaseInboundListView = () => import('@/views/procurement/PurchaseInboundListView.vue')
 const WorkshopConfigurationView = () => import('@/views/workshop/WorkshopConfigurationView.vue')
 const ProductionSchedulingDetailView = () => import('@/views/workshop/ProductionSchedulingDetailView.vue')
@@ -1543,13 +1542,27 @@ export const router = createRouter({
     {
       path: '/inventory/materials/inbound',
       name: 'manual-material-inbound',
-      component: ManualMaterialInboundView,
+      redirect: { name: 'material-transfers' },
       meta: {
         requiresAuth: true,
         layout: 'erp',
-        activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 材料库存 / 材料入库',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '材料库存', to: '/inventory/materials' }, { label: '材料入库' }],
+        activeMenu: 'material-transfers',
+        headerTitle: '仓库管理 / 材料收发',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '材料收发' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/inventory/material-transfers',
+      name: 'material-transfers',
+      component: MaterialInboundDetailView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'material-transfers',
+        headerTitle: '仓库管理 / 材料收发',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '材料收发' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1557,13 +1570,27 @@ export const router = createRouter({
     {
       path: '/inventory/material-inbounds',
       name: 'material-inbound-details',
-      component: MaterialInboundDetailView,
+      redirect: { name: 'material-inbound-records' },
       meta: {
         requiresAuth: true,
         layout: 'erp',
-        activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 入库明细',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '入库明细' }],
+        activeMenu: 'material-inbound-records',
+        headerTitle: '仓库管理 / 收发记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '收发记录' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/inventory/material-transfer-records',
+      name: 'material-inbound-records',
+      component: MaterialTransferRecordsView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'material-inbound-records',
+        headerTitle: '仓库管理 / 收发记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '收发记录' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1693,7 +1720,7 @@ export const router = createRouter({
     {
       path: '/purchase-orders/:id/templates',
       name: 'purchase-sheet-template-select',
-      component: PurchaseSheetTemplateSelectView,
+      redirect: to => ({ name: 'supplier-purchase-sheets', query: { purchase_order_id: String(to.params.id) } }),
       meta: {
         requiresAuth: true,
         layout: 'erp',
@@ -1896,6 +1923,15 @@ export const router = createRouter({
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'finance-statements', headerTitle: '财务管理',
         breadcrumbs: [{ label: '财务管理' }, { label: '应收对账单' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/purchase-payables',
+      name: 'finance-purchase-payables',
+      component: () => import('@/views/finance/FinancePurchasePayablesView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-purchase-payables', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '采购应付' }], pageWidth: 'fluid',
       },
     },
     {

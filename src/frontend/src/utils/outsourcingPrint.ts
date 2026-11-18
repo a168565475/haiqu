@@ -63,7 +63,7 @@ export function buildTubePrintDocument(detail: TubeOrderDetail, kind: Outsourcin
     materials: [
       ...detail.lines.map(line => ({
         id: line.id, orderNumber, name: value(line.part_name), unitConsumption: value(line.pieces_per_product),
-        orderQuantity: value(detail.quantity), issueQuantity: value(line.quantity), unit: outputUnit,
+        orderQuantity: value(detail.quantity), issueQuantity: value(line.quantity), unit: detail.part_flow ? value(line.unit) : outputUnit,
         specification: value(line.specification) + (!isCutting && value(line.cutting_length_mm) !== '—' ? ` × ${value(line.cutting_length_mm)}mm` : ''),
         color: value(line.raw_color), material: value(line.material),
       })),

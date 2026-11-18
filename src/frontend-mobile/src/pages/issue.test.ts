@@ -66,6 +66,25 @@ function submitButton(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button').find(button => /提交领料申请|继续提交此申请|核对并继续提交/.test(button.text()))!
 }
 describe('领料申请两步保存恢复', () => {
+  it('车缝可切换裁片库存领取和裁剪直交，按所选余量校验并提交真实来源', async () => {
+    mocks.route.query.plan_category = 'SEWING'
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [{ ...requirement,
+      component_kind: 'CUT_PIECE', parent_part_name: '床面', line_type: 'SEMI', unit: '片', direct_available_quantity: '10',
+      available_stock: '0', max_issue_quantity: '0', warehouse_zones: ['半成品一区'],
+    }] })
+    const wrapper = await preparedPage()
+    expect(wrapper.text()).toContain('所属部位：床面')
+    expect(wrapper.get('.request-field .van-field__error-message').text()).toContain('可领上限')
+    await wrapper.findAll('button').find(button => button.text() === '裁剪直交')!.trigger('click')
+    expect(wrapper.find('.request-field .van-field__error-message').exists()).toBe(false)
+    expect(wrapper.text()).toContain('可直交 10 片')
+    expect(wrapper.text()).not.toContain('库区：半成品一区')
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    expect(api.createMaterialIssue).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [{ requirement_id: 'requirement', requested_quantity: '2', source_kind: 'CUTTING_DIRECT' }],
+    }))
+    wrapper.unmount()
+  })
   it('非法数量输入和整段粘贴保持原值，不把科学计数法改成另一数量', async () => {
     const wrapper = await preparedPage()
     const input = wrapper.get<HTMLInputElement>('.request-field input')
@@ -101,7 +120,7 @@ describe('领料申请两步保存恢复', () => {
   it.each<{ name: string; overrides: Partial<MaterialRequirement>; value: string; error: string }>([
     { name: '四位小数精度', overrides: {}, value: '1.23456', error: '最多四位小数' },
     { name: '管材整根倍数', overrides: { unit: '支', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 2, raw_bar_length_m: '6.00' } }, value: '3', error: '2 的正整数倍' },
-    { name: '半成品整数', overrides: { line_type: 'SEMI', unit: '套' }, value: '1.5', error: '半成品支数和套数必须为正整数' },
+    { name: '半成品整数', overrides: { line_type: 'SEMI', unit: '套' }, value: '1.5', error: '半成品数量必须为正整数' },
   ])('数字输入仍保留 $name 校验，不截断数值或创建申请', async ({ overrides, value, error }) => {
     vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [{ ...requirement, ...overrides }] })
     const wrapper = await preparedPage()

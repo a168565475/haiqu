@@ -99,11 +99,29 @@ export interface PurchaseOrderSourceLine {
   material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   material_attributes_snapshot?: MaterialAttributeSnapshot
   raw_bar_length_m?: string | null
+  raw_bar_weight_kg?: string | null
   suggested_bar_count?: number | null
   suggested_purchase_meters?: string | null
+  suggested_purchase_weight_kg?: string | null
   sample_line_key?: string
   sample_demand_quantity?: string
   sample_supply_quantity?: string
+  sample_demand_unit?: string
+  calculation_snapshot?: {
+    schema_version?: number
+    measurement_unit?: string
+    shortage_meters?: string
+    raw_bar_length_m?: string | null
+    raw_bar_weight_kg?: string | null
+    actual_purchase_weight_kg?: string | null
+    hardware_weight_mode?: 'AUTO' | 'MANUAL' | null
+    hardware_unit_weight_kg?: string | null
+    hardware_piece_quantity?: string | null
+    hardware_suggested_weight_kg?: string | null
+    hardware_quantity_unit?: string | null
+    hardware_weight_unit?: string | null
+    [key: string]: unknown
+  }
   bom_id?: string
   bom_number: string
   bom_status: string
@@ -215,12 +233,14 @@ export interface PurchaseOrderLineInput {
   /** 管材采购时由采购员填写的单根长度（米）；生产 BOM 的既有管材规则仍由来源快照提供。 */
   raw_bar_length_m?: string | null
   actual_bar_count?: number | string | null
+  raw_bar_weight_kg?: string | null
   quantity_difference_reason?: string
   bom_line_id?: string
   sample_line_key?: string
   supplier_id: string | null
   delivery_date: string | null
   actual_purchase_quantity: string | null
+  actual_purchase_weight_kg?: string | null
   unit_price: string | null
 }
 
@@ -380,10 +400,12 @@ export interface PurchaseSheetParty {
 }
 
 export interface SupplierPurchaseSheetLine {
+  calculation_snapshot?: Record<string, unknown>
   measurement_kind?: string
   raw_bar_length_m?: string
   actual_bar_count?: number
   actual_purchase_meters?: string
+  actual_purchase_weight_kg?: string
   source_purchase_order_line_id: string
   section_type?: string
   section_title?: string

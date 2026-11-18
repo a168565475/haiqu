@@ -7,7 +7,6 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import * as api from '@/api/inventory'
 import { router } from '@/router'
 import MaterialInventoryView from './MaterialInventoryView.vue'
-import MaterialInboundDetailView from './MaterialInboundDetailView.vue'
 import ManualMaterialInboundDialog from '@/components/inventory/ManualMaterialInboundDialog.vue'
 import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
 
@@ -32,12 +31,12 @@ beforeEach(() => {
   vi.mocked(api.fetchManualMaterialOptions).mockResolvedValue({ categories: [], materials: [] })
 })
 it('三个库存读取页面仅加载筛选选项，明细和空列表可独立完成', async () => {
-  for (const component of [MaterialInventoryView, MaterialInboundDetailView, FinishedGoodsInventoryView]) {
+  for (const component of [MaterialInventoryView, FinishedGoodsInventoryView]) {
     const wrapper = shallowMount(component, { global: { plugins: [ElementPlus] } }); await flushPromises()
     expect((wrapper.vm as unknown as { loading: boolean }).loading).toBe(false)
     wrapper.unmount()
   }
-  expect(api.fetchMaterialFilterOptions).toHaveBeenCalledTimes(2)
+  expect(api.fetchMaterialFilterOptions).toHaveBeenCalledTimes(1)
   expect(api.fetchFinishedGoodsFilterOptions).toHaveBeenCalledTimes(1)
   expect(api.fetchMaterialInventoryOptions).not.toHaveBeenCalled()
   expect(api.fetchInventoryOptions).not.toHaveBeenCalled()
@@ -48,19 +47,11 @@ it('手工入库只取材料仓和库区，未填写时不能提交', async () =
   expect((wrapper.vm as unknown as { ready: boolean }).ready).toBe(false)
   expect(api.createManualMaterialReceipt).not.toHaveBeenCalled(); wrapper.unmount()
 })
-it('材料入库在列表弹出，关闭不跳页，成功刷新当前库存', async () => {
+it('材料库存右上角不再显示材料入库，仅保留收发记录入口', async () => {
   const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus], stubs: { ElButton: { template: '<button><slot /></button>' } } } }); await flushPromises()
-  expect(wrapper.findAll('button').some(button => button.text() === '材料入库')).toBe(true)
-  const vm = wrapper.vm as unknown as { inboundOpen: boolean }
-  vm.inboundOpen = true; await flushPromises()
-  wrapper.findComponent(ManualMaterialInboundDialog).vm.$emit('close'); await flushPromises()
+  expect(wrapper.findAll('button').some(button => button.text() === '材料入库')).toBe(false)
   expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
-  expect(router.push).not.toHaveBeenCalled(); expect(router.replace).not.toHaveBeenCalled()
-  vm.inboundOpen = true; await flushPromises()
-  vi.mocked(api.fetchMaterialInventory).mockClear()
-  wrapper.findComponent(ManualMaterialInboundDialog).vm.$emit('saved'); await flushPromises()
-  expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
-  expect(api.fetchMaterialInventory).toHaveBeenCalledOnce()
+  expect(wrapper.findAll('button').some(button => button.text() === '收发记录')).toBe(true)
   wrapper.unmount()
 })
 it('材料库存旧响应和卸载后的响应失效', async () => {

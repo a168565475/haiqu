@@ -16,7 +16,7 @@ MANUAL_METRIC_PATTERN = re.compile(r"(?:[0-9]+(?:\.[0-9]{1,4})?|\.[0-9]{1,4})\Z"
 
 
 def _manual_metric_value(raw_value, field):
-    label = "喷塑面积" if field == "coating_unit_area_sqm" else "单支重量"
+    label = {"coating_unit_area_sqm": "喷塑面积", "long_material_unit_weight_kg": "长料单重"}.get(field, "单支重量")
     text = str(raw_value).strip() if raw_value is not None else ""
     if len(text) > 100 or not MANUAL_METRIC_PATTERN.fullmatch(text):
         raise ValidationError({field: f"请填写非负十进制{label}，最多保留 4 位小数。"})
@@ -24,6 +24,25 @@ def _manual_metric_value(raw_value, field):
     if not value.is_finite() or value < 0 or value > Decimal("999999999999.9999"):
         raise ValidationError({field: f"{label}必须介于 0 和 999999999999.9999 之间。"})
     return format(value, ".4f")
+
+
+def _apply_manual_long_weight(line):
+    raw = line.raw_values
+    value = raw.get("long_material_unit_weight_kg")
+    text = str(value).strip() if value is not None else ""
+    raw["long_material_total_weight_kg"] = ""
+    if not text:
+        raw["long_material_unit_weight_kg"] = ""
+        return
+    weight = _manual_metric_value(text, "long_material_unit_weight_kg")
+    if Decimal(weight) <= 0:
+        raise ValidationError({"long_material_unit_weight_kg": "长料单重必须大于 0。"})
+    raw["long_material_unit_weight_kg"] = weight
+    if line.suggested_bar_count is not None:
+        with localcontext() as context:
+            context.prec = 64
+            total = Decimal(weight) * line.suggested_bar_count
+        raw["long_material_total_weight_kg"] = format(total, ".4f")
 
 
 def tube_metric_inputs(line):
@@ -68,14 +87,14 @@ def apply_tube_metrics(line, *, recalculate=False, require_complete=False, recal
         for field in ("coating_unit_area_sqm", "purchase_unit_weight_kg"):
             raw[field] = _manual_metric_value(raw.get(field), field)
         raw["tube_unit_weight_kg"] = raw["purchase_unit_weight_kg"]
-        raw["long_material_unit_weight_kg"] = ""
-        raw["long_material_total_weight_kg"] = ""
+        _apply_manual_long_weight(line)
         for field in ("tube_formula_snapshot", "tube_formula_inputs", "tube_formula_pending"):
             raw.pop(field, None)
         return
     inputs = tube_metric_inputs(line)
     if inputs["tube_shape"] and not supports_tube_metrics(inputs["tube_shape"]):
         # D 形等本次未覆盖的形状继续沿用原手填流程，不能套用其他形状公式。
+        _apply_manual_long_weight(line)
         raw.pop("tube_formula_snapshot", None)
         raw.pop("tube_formula_inputs", None)
         raw.pop("tube_formula_pending", None)
@@ -134,7 +153,7 @@ def apply_tube_metrics(line, *, recalculate=False, require_complete=False, recal
 
 
 def tube_calculation_preview(values):
-    from .material_flow_calculations import MaterialFlowValueError, pipe_plan, positive_integer
+    from .material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan, positive_integer
 
     try:
         positive_integer(values["length_value"], "length_value")
@@ -145,13 +164,18 @@ def tube_calculation_preview(values):
     result = calculate_tube_metrics(**arguments)
     result["formula_version"] = result["formula_snapshot"]["updated_at"]
     result["long_material_unit_weight_kg"] = ""
-    if values.get("tube_cut_piece_count"):
+    if values.get("tube_cut_piece_count") or values.get("source_raw_bar_length_m"):
         try:
-            plan = pipe_plan(cutting_length_mm=values["length_value"], pieces_per_product=1,
-                             pieces_per_bar=values["tube_cut_piece_count"], order_quantity=1)
+            if values.get("tube_cut_piece_count"):
+                plan = pipe_plan(cutting_length_mm=values["length_value"], pieces_per_product=1,
+                                 pieces_per_bar=values["tube_cut_piece_count"], order_quantity=1,
+                                 source_raw_bar_length_m=values.get("source_raw_bar_length_m"))
+                raw_length = Decimal(plan["raw_bar_length_m"])
+            else:
+                raw_length = decimal_quantity(values["source_raw_bar_length_m"], "source_raw_bar_length_m", places=3, max_digits=19)
         except MaterialFlowValueError as error:
             raise ValidationError({error.field: str(error)}) from error
-        arguments["length_mm"] = Decimal(plan["raw_bar_length_m"]) * 1000
+        arguments["length_mm"] = raw_length * 1000
         long_result = calculate_tube_metrics(**arguments, formula=result["formula_snapshot"])
         result["long_material_unit_weight_kg"] = long_result["purchase_unit_weight_kg"]
     return {key: result[key] for key in ("coating_unit_area_sqm", "purchase_unit_weight_kg", "long_material_unit_weight_kg", "formula_version")}

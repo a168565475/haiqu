@@ -5,7 +5,7 @@ import { bomPreviewCell, bomPreviewColumns } from './bomPreview'
 const section = (title: string, section_type: BomSection['section_type'] = 'ACCESSORY') => ({ title, section_type, lines: [] } as unknown as BomSection)
 const line = (values: Partial<BomLine>) => ({ material: '', category: '', cutting_category: '', ...values } as BomLine)
 const columns: Array<[string, string[]]> = [
-  ['管材类', ['序号', '部件名称', '材质', '喷塑颜色', '规格', '切割长度（mm）', '单耗', '总需求（支）', '切割支数', '原材料长度（m）', '采购根数', '建议采购米数', '备注']],
+  ['管材类', ['序号', '部件名称', '材质', '喷塑颜色', '规格', '切割长度（mm）', '单耗', '总需求（支）', '切割支数', '原材料长度（m）', '采购根数', '建议采购重量（kg）', '备注']],
   ['五金件', ['序号', '品名', '材质', '颜色', '规格', '单位', '单个用量', '单个材料重量（kg）', '喷塑颜色', '喷塑单个面积（㎡）', '备注', '图片']],
   ['塑料件类', ['序号', '品名', '材质', '颜色', '规格', '单位', '单个用量', '备注', '图片']],
   ['辅料类', ['序号', '品名', '规格', '颜色', '材质', '单位', '单个用量', '备注', '图片']],

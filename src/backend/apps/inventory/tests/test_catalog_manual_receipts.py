@@ -17,7 +17,7 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         self.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="material_catalog"))
         self.catalog = MaterialCatalog.objects.create(category_key="TUBE", template_key="TUBE", name="手工入库新管材")
         self.payload = {"client_request_id": str(uuid4()), "inbound_date": str(timezone.localdate()), "remark": "盘盈入库",
-            "items": [{"material_catalog_id": str(self.catalog.pk), "zone_id": str(self.zone.pk), "received_bar_count": 3, "raw_bar_length_m": "6.00",
+            "items": [{"material_catalog_id": str(self.catalog.pk), "zone_id": str(self.zone.pk), "received_bar_count": 3, "raw_bar_length_m": "6.00", "received_weight_kg": "7.1000",
                 "material_selection": {"catalog_version": self.catalog.updated_at.isoformat(), "scope": "BASE",
                     "processing_state": "RAW", "unit_id": str(self.root_unit.pk),
                     "attributes": {"material": "铁", "shape": "圆管", "section_size": "20", "thickness": "1", "length": "6000"}}}]}
@@ -36,7 +36,8 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         line = MaterialInbound.objects.get().lines.get()
         self.assertEqual(line.material_catalog_id, self.catalog.pk)
         self.assertIsNone(line.raw_material_information_id)
-        self.assertEqual(line.source_unit_text_snapshot, "米")
+        self.assertEqual(line.source_unit_text_snapshot, "KG")
+        self.assertEqual(line.received_weight_kg, Decimal("7.1"))
         self.assertEqual(PublicStockBalance.objects.get().quantity, 3)
         listing = self.client.get("/api/v1/material-inventory/", {"q": "手工入库新管材"})
         self.assertEqual(listing.status_code, 200, listing.data)
@@ -103,6 +104,7 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         item["material_selection"]["attributes"] = {"specification": "M8"}
         item.pop("received_bar_count")
         item.pop("raw_bar_length_m")
+        item.pop("received_weight_kg")
         item["received_quantity"] = "2.5000"
         item["material_selection"].pop("unit_id")
         item["material_selection"]["unit_name"] = "公斤"

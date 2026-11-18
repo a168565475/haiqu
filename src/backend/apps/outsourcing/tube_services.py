@@ -29,7 +29,7 @@ def _json(value):
 def _stock_amount(source_kind, quantity, row):
     if source_kind in DIRECT_SOURCES:
         return None, None
-    if source_kind in {'PUBLIC_SEMI', 'PUBLIC_CUTTING'}:
+    if source_kind in {'PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'}:
         return quantity, None
     try:
         pieces = Decimal(str(row['pieces_per_bar']))
@@ -49,6 +49,8 @@ def create_tube_order(*, data, request, plan=None, frozen_plan_lines=None):
     if data.get('is_plan'):
         from .plan_services import create_plan
         return create_plan(data=data, request=request)
+    if plan is None and data['source_kind'] in {'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'}:
+        raise ValidationError({'is_plan': '裁片与部位流程请先建立委外总单，再登记分次发货。'})
     require_tube_feature()
     from .tube_selectors import DISPATCH_PERMISSION
     permission = DISPATCH_PERMISSION if plan is not None else CREATE_PERMISSION

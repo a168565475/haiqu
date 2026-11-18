@@ -276,6 +276,8 @@ FILE_VIRUS_SCAN_ENABLED = env_bool("FILE_VIRUS_SCAN_ENABLED", True)
 CONTACT_IMPORT_MAX_BYTES = int(os.getenv("CONTACT_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
 CONTACT_IMPORT_MAX_ROWS = int(os.getenv("CONTACT_IMPORT_MAX_ROWS", "500"))
 BOM_IMPORT_MAX_BYTES = int(os.getenv("BOM_IMPORT_MAX_BYTES", str(100 * 1024 * 1024)))
+# DXF 源文件只经鉴权接口访问，不放入公开 MEDIA_ROOT。
+BOM_NESTING_ROOT = Path(os.getenv("BOM_NESTING_ROOT", str(BASE_DIR / "var" / "bom_nesting")))
 
 # 账户级邮件 SMTP 授权码加密密钥。第一个用于写入，后续密钥用于轮换期解密。
 EMAIL_ACCOUNT_FERNET_KEYS = env_list("EMAIL_ACCOUNT_FERNET_KEYS")

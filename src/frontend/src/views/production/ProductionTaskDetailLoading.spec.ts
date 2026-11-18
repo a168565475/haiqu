@@ -116,7 +116,7 @@ describe('生产任务详情按需选项', () => {
     expect(files).toHaveLength(2)
     expect(files.map(file => (file.element as HTMLDetailsElement).open)).toEqual([true, false])
     expect(wrapper.find('.compare-table').exists()).toBe(false)
-    expect(wrapper.get('.summary-bar').text()).toContain('62.5000')
+    expect(wrapper.get('.summary-bar').text()).toContain('62.5')
     expect(wrapper.get('.summary-bar').text()).toContain('2 把 / 3 张')
     expect(files[0].text()).toContain('独立包装')
     expect(files[0].text()).toContain('保留备注')

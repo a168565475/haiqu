@@ -19,6 +19,7 @@ import {
   fetchPurchaseOrders,
   fetchPurchaseOrderSource,
   generatePurchaseSheets,
+  ensureDefaultPurchaseSheets,
   saveSupplierPurchaseSheet,
   updatePurchaseContractTemplate,
   updatePurchaseOrder,
@@ -205,6 +206,73 @@ describe('采购订单 API', () => {
     expect(mockedPost).toHaveBeenNthCalledWith(2, '/api/v1/purchase-orders/purchase-order-1/generate-sheets/', {
       assignments: [{ supplier_id: 'supplier-1', template_version_id: 'template-v1' }],
     })
+  })
+
+  const sheetOptions = () => ({
+    purchase_order: { id: 'order-1', status: 'SUBMITTED' }, existing_sheet_count: 0,
+    suppliers: [
+      { supplier_id: 'supplier-1', recommended_template_version_id: 'version-2' },
+      { supplier_id: 'supplier-2', recommended_template_version_id: 'retired-version' },
+    ],
+    templates: [{ version_id: 'version-1' }, { version_id: 'version-2' }],
+  })
+
+  it('直接打开供应商采购表沿用原推荐和首个启用模板，不自动发布', async () => {
+    mockedGet.mockResolvedValueOnce({ data: { data: sheetOptions() } })
+    mockedPost.mockResolvedValueOnce({ data: { data: [{ id: 'sheet-1', status: 'DRAFT' }] } })
+    await ensureDefaultPurchaseSheets('order-1')
+    expect(mockedPost).toHaveBeenCalledExactlyOnceWith('/api/v1/purchase-orders/order-1/generate-sheets/', {
+      assignments: [
+        { supplier_id: 'supplier-1', template_version_id: 'version-2' },
+        { supplier_id: 'supplier-2', template_version_id: 'version-1' },
+      ],
+    })
+  })
+
+  it.each(['DRAFT', 'PURCHASING', 'COMPLETED'])('订单%s没有采购表时不擅自确认或重新生成', async status => {
+    mockedGet.mockResolvedValueOnce({ data: { data: { ...sheetOptions(), purchase_order: { status } } } })
+    await ensureDefaultPurchaseSheets('order-1')
+    expect(mockedPost).not.toHaveBeenCalled()
+  })
+
+  it('已有采购表只读进入，重复打开不创建新表', async () => {
+    mockedGet.mockResolvedValue({ data: { data: { ...sheetOptions(), existing_sheet_count: 2 } } })
+    await ensureDefaultPurchaseSheets('order-1')
+    await ensureDefaultPurchaseSheets('order-1')
+    expect(mockedPost).not.toHaveBeenCalled()
+  })
+
+  it.each(['templates', 'suppliers'])('缺少%s时不猜值、不发送生成请求', async field => {
+    mockedGet.mockResolvedValueOnce({ data: { data: { ...sheetOptions(), [field]: [] } } })
+    await expect(ensureDefaultPurchaseSheets('order-1')).rejects.toThrow(field === 'templates' ? '暂无可用采购合同模板' : '暂无可生成采购表的供应商')
+    expect(mockedPost).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 409, 503])('生成结果不确定%s时只回读已生成表，不重复提交', async status => {
+    const error = status ? { response: { status } } : new Error('网络中断')
+    mockedGet.mockResolvedValueOnce({ data: { data: sheetOptions() } })
+      .mockResolvedValueOnce({ data: { data: { ...sheetOptions(), existing_sheet_count: 2 } } })
+    mockedPost.mockRejectedValueOnce(error)
+    await ensureDefaultPurchaseSheets('order-1')
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+    expect(mockedGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('生成失败且未落库时保留原错误，不伪造成功', async () => {
+    const error = { response: { status: 503 } }
+    mockedGet.mockResolvedValue({ data: { data: sheetOptions() } })
+    mockedPost.mockRejectedValueOnce(error)
+    await expect(ensureDefaultPurchaseSheets('order-1')).rejects.toBe(error)
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('无生成权限的403直接返回，不自动重试', async () => {
+    const error = { response: { status: 403 } }
+    mockedGet.mockResolvedValue({ data: { data: sheetOptions() } })
+    mockedPost.mockRejectedValueOnce(error)
+    await expect(ensureDefaultPurchaseSheets('order-1')).rejects.toBe(error)
+    expect(mockedGet).toHaveBeenCalledTimes(1)
+    expect(mockedPost).toHaveBeenCalledTimes(1)
   })
 
   it('已确认采购订单仍通过 ETag 保存当前采购明细', async () => {

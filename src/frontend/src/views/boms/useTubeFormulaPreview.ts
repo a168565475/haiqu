@@ -1,11 +1,13 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { previewBomTubeCalculation } from '@/api/boms'
 import type { BomLineInput, TubeCalculationInput } from '@/types/bom'
+import { supportsTubeFormula } from './bomEditorHelpers'
 
 function inputs(line: BomLineInput): TubeCalculationInput {
   return {
     tube_shape: line.tube_shape, tube_diameter: line.tube_diameter, tube_thickness: line.tube_thickness,
     length_value: line.length_value, tube_cut_piece_count: line.tube_cut_piece_count,
+    source_raw_bar_length_m: line.source_raw_bar_length_m || undefined,
   }
 }
 
@@ -14,7 +16,7 @@ export function useTubeFormulaPreview(
 ) {
   const loading = ref(false)
   const error = ref('')
-  const supported = computed(() => ['圆', '圆管', '方', '方管', '矩形', '矩形管', '椭圆', '椭圆管', '扁圆', '扁圆管'].includes(draft.value?.tube_shape.trim() || ''))
+  const supported = computed(() => !!draft.value && supportsTubeFormula(draft.value))
   const readonly = computed(() => supported.value && (loading.value || !draft.value?.manual_tube_metrics))
   let generation = 0
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -55,6 +57,7 @@ export function useTubeFormulaPreview(
         if (requestGeneration !== generation || line !== draft.value || key !== JSON.stringify(inputs(line)) || !active.value) return false
         line.coating_unit_area_sqm = result.coating_unit_area_sqm
         line.purchase_unit_weight_kg = result.purchase_unit_weight_kg
+        line.long_material_unit_weight_kg = result.long_material_unit_weight_kg
         line.tube_calculation_preview = result
         line.manual_tube_metrics = false
         line.recalculate_tube_metrics = true
@@ -85,18 +88,29 @@ export function useTubeFormulaPreview(
     loading.value = false
     error.value = ''
     if (!active.value || !draft.value) return
-    const preserveManualValues = draft.value.manual_tube_metrics && (!previous?.[0] || previous[1] !== draft.value)
+    const preserveManualValues = (draft.value.manual_tube_metrics || !supported.value) && (!previous?.[0] || previous[1] !== draft.value)
     draft.value.tube_calculation_preview = undefined
     draft.value.recalculate_tube_metrics = false
     draft.value.expected_tube_formula_version = undefined
-    draft.value.manual_tube_metrics = false
+    if (!preserveManualValues) draft.value.long_material_unit_weight_kg = ''
     if (!supported.value) return
+    draft.value.manual_tube_metrics = false
     if (!preserveManualValues) {
       draft.value.coating_unit_area_sqm = ''
       draft.value.purchase_unit_weight_kg = ''
     }
     loading.value = true
     timer = setTimeout(() => { void calculate() }, 250)
+  }, { flush: 'sync' })
+
+  watch(() => [active.value, draft.value, draft.value && JSON.stringify([
+    draft.value.material, draft.value.material_catalog_id, draft.value.source_raw_material_id,
+    draft.value.source_inventory_material_id, draft.value.source_raw_bar_length_m,
+  ])], (current, previous) => {
+    const line = draft.value
+    if (!active.value || !line || !previous?.[0] || previous[1] !== line || current[2] === previous[2]) return
+    // 同规格换料或修改标准长度时，旧手填根重不能随选料沿用；自动公式的预览与请求保持原逻辑。
+    if (line.manual_tube_metrics || !supported.value || !line.tube_calculation_preview) line.long_material_unit_weight_kg = ''
   }, { flush: 'sync' })
 
   onScopeDispose(() => {

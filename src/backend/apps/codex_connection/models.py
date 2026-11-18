@@ -56,7 +56,7 @@ RUNNING_STATES = (OperationState.RUNNING, OperationState.CANCELING)
 class CodexOperation(TimeStampedModel):
     connection = models.ForeignKey(CodexConnection, on_delete=models.PROTECT, related_name='operations')
     actor = models.ForeignKey('organizations.Employee', on_delete=models.PROTECT, related_name='codex_operations')
-    action = models.CharField(max_length=12, choices=[(value, value) for value in ('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract')])
+    action = models.CharField(max_length=12, choices=[(value, value) for value in ('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract', 'nest')])
     state = models.CharField(max_length=16, choices=OperationState.choices, default=OperationState.QUEUED)
     generation = models.PositiveBigIntegerField(default=1)
     model = models.CharField(max_length=200, blank=True)
@@ -77,6 +77,6 @@ class CodexOperation(TimeStampedModel):
             models.UniqueConstraint(fields=['connection'], condition=Q(state__in=RUNNING_STATES), name='codex_one_running_operation'),
             models.UniqueConstraint(fields=['connection'], condition=Q(state=OperationState.QUEUED), name='codex_one_queued_operation'),
             models.CheckConstraint(condition=Q(state__in=OperationState.values), name='codex_operation_state_valid'),
-            models.CheckConstraint(condition=Q(action__in=('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract')), name='codex_operation_action_valid'),
+            models.CheckConstraint(condition=Q(action__in=('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract', 'nest')), name='codex_operation_action_valid'),
             models.CheckConstraint(condition=Q(generation__gte=1), name='codex_operation_generation_positive'),
         ]

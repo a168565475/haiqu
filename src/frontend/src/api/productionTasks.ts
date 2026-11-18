@@ -36,8 +36,8 @@ export async function fetchProductionTask(id: string): Promise<VersionedProducti
   return versioned(response)
 }
 
-export async function fetchProductionTaskOptions(): Promise<ProductionTaskOptions> {
-  const { data } = await apiClient.get<DataResponse<ProductionTaskOptions>>(`${basePath}options/`)
+export async function fetchProductionTaskOptions(requestOptions?: { timeout?: number }): Promise<ProductionTaskOptions> {
+  const { data } = await apiClient.get<DataResponse<ProductionTaskOptions>>(`${basePath}options/`, requestOptions)
   return data.data
 }
 

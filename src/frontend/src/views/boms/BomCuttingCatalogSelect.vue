@@ -4,14 +4,16 @@ import { ElButton, ElOption, ElSelect } from 'element-plus'
 import { fetchMaterialCatalog, fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError } from '@/api/materialCatalog'
 import { fetchBomCatalogSelectionOptions } from '@/api/boms'
 import { applyMaterialSelection } from '@/components/products/materialSelection'
+import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import type { MaterialCatalog, MaterialCatalogSummary, MaterialSelectionInput } from '@/types/materialCatalog'
 import type { BomLineInput } from '@/types/bom'
 
-const props = defineProps<{ line: BomLineInput; refreshKey?: number }>()
+const props = defineProps<{ line: BomLineInput; refreshKey?: number; disabled?: boolean; lazy?: boolean }>()
 const emit = defineEmits<{ selected: [catalog: MaterialCatalog]; refreshed: [catalog: MaterialCatalog] }>()
 const modelValue = computed(() => props.line.material_catalog_id || '')
 const selectedName = computed(() => props.line.part_name)
 const names = ref<MaterialCatalogSummary[]>([])
+const namesLoaded = ref(false)
 const loading = ref(false)
 const selecting = ref(false)
 const error = ref('')
@@ -35,6 +37,7 @@ async function loadNames(query = '') {
       pages = result.meta.total_pages
     }
     names.value = rows
+    namesLoaded.value = true
   } catch (issue) {
     if (!disposed && token === listRequest) error.value = materialCatalogError(issue)
   } finally {
@@ -45,11 +48,12 @@ async function loadNames(query = '') {
 async function readCatalog(id: string, refresh = false) {
   const token = ++selectionRequest
   const line = props.line
+  const kind = line.component_kind
   selecting.value = true
   error.value = ''
   try {
     const result = await fetchMaterialCatalog(id)
-    if (disposed || token !== selectionRequest || line !== props.line) return
+    if (disposed || token !== selectionRequest || line !== props.line || kind !== line.component_kind) return
     if (result.data.category_key !== 'FABRIC_SEMI') throw new Error('请选择裁片品名。')
     const previous = line.material_selection ?? line.material_selection_snapshot
     const [options, craftOptions] = await Promise.all([
@@ -93,23 +97,31 @@ function choose(value: unknown) {
   if (typeof value === 'string') void readCatalog(value)
 }
 
+function visibleChange(visible: boolean) {
+  if (visible && !namesLoaded.value && !loading.value) void loadNames()
+}
+
 async function reload() {
   const selectedId = modelValue.value
   const activeRequest = selectionRequest
   await loadNames(keyword.value)
   if (!disposed && !error.value && selectedId && modelValue.value === selectedId && selectionRequest === activeRequest) await readCatalog(selectedId, true)
 }
-watch(() => props.refreshKey, reload)
-onMounted(() => loadNames())
+watch(() => props.refreshKey, () => {
+  if (!props.line.component_kind && (!props.lazy || namesLoaded.value || loading.value)) void reload()
+})
+watch(() => props.line.component_kind, () => { ++selectionRequest; selecting.value = false; error.value = '' })
+onMounted(() => { if (!props.line.component_kind && !props.lazy) void loadNames() })
 onBeforeUnmount(() => { disposed = true; ++listRequest; ++selectionRequest })
 </script>
 
 <template>
-  <div>
+  <MaterialSelectionPanel v-if="line.component_kind" :key="`${line.id || line.client_key}-${line.component_kind}`" :line="line" section-title="裁剪明细" presentation="dropdown" component-reference :show-label="false" :refresh-key="refreshKey" :disabled="disabled" :lazy="lazy" />
+  <div v-else>
     <ElSelect :model-value="modelValue || ''" filterable remote :remote-method="loadNames"
-      :loading="loading || selecting" :disabled="selecting || !!error" placeholder="选择裁片品名"
-      aria-label="裁片品名" no-data-text="暂无裁片品名，请到维护配置新增" @change="choose">
-      <ElOption v-if="modelValue && !names.some(item => item.id === modelValue)" :value="modelValue" :label="selectedName" disabled />
+      :loading="loading || selecting" :disabled="disabled || selecting || !!error" :placeholder="line.component_kind && !modelValue && selectedName ? selectedName : '选择已有品名'"
+      :aria-label="line.component_kind ? '品名' : '裁片品名'" no-data-text="暂无品名，请到维护配置新增" @change="choose" @visible-change="visibleChange">
+      <ElOption v-if="modelValue && !names.some(item => item.id === modelValue)" :value="modelValue" :label="selectedName" :disabled="!lazy || namesLoaded" />
       <ElOption v-for="item in names" :key="item.id" :value="item.id" :label="item.name" />
     </ElSelect>
     <small v-if="error" role="alert">{{ error }} <ElButton link size="small" @click="reload">重试</ElButton></small>

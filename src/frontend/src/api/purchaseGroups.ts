@@ -40,6 +40,11 @@ export async function createPurchaseGroup(payload: PurchaseGroupInput): Promise<
   return versionedGroup(await apiClient.post<DataResponse<PurchaseGroup>>(basePath, payload))
 }
 
+export async function deletePurchaseGroup(id: string, etag: string): Promise<void> {
+  if (!etag) throw new Error('采购总单版本信息缺失，请刷新后重试。')
+  await apiClient.delete(`${basePath}${id}/`, { headers: { 'If-Match': etag } })
+}
+
 export async function completePurchaseGroup(id: string, remark: string, etag: string): Promise<VersionedPurchaseGroup> {
   return versionedGroup(await apiClient.post<DataResponse<PurchaseGroup>>(
     `${basePath}${id}/complete/`,
@@ -56,7 +61,7 @@ export async function createPurchaseBatch(
   const response = await apiClient.post<DataResponse<PurchaseOrderDetail>>(
     `${basePath}${groupId}/batches/`,
     payload,
-    { headers: groupEtag ? { 'If-Match': groupEtag } : {} },
+    { headers: groupEtag ? { 'If-Match': groupEtag } : {}, timeout: 30000 },
   )
   return {
     data: response.data.data,

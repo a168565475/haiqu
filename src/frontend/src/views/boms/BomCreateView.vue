@@ -510,6 +510,9 @@ onBeforeUnmount(cancelPendingTaskSearch)
           </dl>
           <div class="aside-divider" />
           <h2>数据校验</h2><p>系统已对导入数据进行基础校验</p>
+          <ElAlert v-if="creationMethod === 'IMPORT' && preview?.component_structure?.pending"
+            :title="preview.component_structure.message" description="可以先创建草稿，补齐部位与裁片组成后再确认 BOM。"
+            type="warning" :closable="false" show-icon />
           <div class="check-item is-ok"><i>✓</i><span><strong>来源任务单匹配</strong><small>BOM数据与生产任务单产品一致</small></span></div>
           <div class="check-item" :class="{ 'is-ok': sourceReady }"><i>{{ sourceReady ? '✓' : '!' }}</i><span><strong>字段识别成功</strong><small>{{ sourceReady ? '已识别物料编码、名称、规格、单位、用量等字段' : '等待完成数据来源设置' }}</small></span></div>
           <div class="check-item" :class="{ 'is-ok': !quantityRequiresReason }"><i>{{ quantityRequiresReason ? '!' : '✓' }}</i><span><strong>数量校验</strong><small>{{ quantityRequiresReason ? '来源数量与当前任务数量存在差异，需在下一步说明' : '各数量来源与当前任务数量一致' }}</small></span></div>

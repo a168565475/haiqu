@@ -271,6 +271,10 @@ class PublicStockIdentityTests(SimpleTestCase):
         self.assertEqual(identity, self.raw_pipe(length="6.14"))
         self.assertEqual(identity["raw_bar_length_m"], Decimal("6.14"))
         self.assertNotEqual(identity["identity_key"], self.raw_pipe(length="6.15")["identity_key"])
+        precise = self.raw_pipe(length="6.145")
+        self.assertEqual(precise["raw_bar_length_m"], Decimal("6.145"))
+        self.assertEqual(validate_public_identity(precise), precise)
+        self.assertNotEqual(identity["identity_key"], precise["identity_key"])
         material = self.raw_material()
         material.pk = uuid4()
         self.assertNotEqual(identity["identity_key"], self.raw_pipe(material=material)["identity_key"])
@@ -287,7 +291,7 @@ class PublicStockIdentityTests(SimpleTestCase):
         self.assert_invalid(lambda: self.raw_pipe(unit=self.piece_unit), "unit")
 
     def test_nonfinite_boolean_float_fractional_and_invalid_numbers_are_rejected(self):
-        for value in (True, False, float("nan"), 6.14, "NaN", "Infinity", "-Infinity", "0", "-1", "6.141", "1e30", [], None):
+        for value in (True, False, float("nan"), 6.14, "NaN", "Infinity", "-Infinity", "0", "-1", "6.1411", "1e30", [], None):
             with self.subTest(value=value):
                 self.assert_invalid(lambda: self.raw_pipe(length=value), "raw_bar_length_m")
         for value in (True, "1.5", "NaN", None):

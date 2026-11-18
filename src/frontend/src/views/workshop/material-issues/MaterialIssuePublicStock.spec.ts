@@ -207,6 +207,24 @@ describe('公共库存领料按接收订单提交', () => {
 })
 
 describe('公共库存领料数量展示与实时预检', () => {
+  it('非片单位的裁片可从车间直交，显示行单位并原样提交数量', async () => {
+    const direct = { ...semi, component_kind: 'CUT_PIECE' as const, unit: '件', available_stock: '0',
+      max_issue_quantity: '0', direct_available_quantity: '20', source_kind: 'CUTTING_DIRECT' as const }
+    api.requirements.mockResolvedValue({ items: [direct], blockers: [] })
+    const view = await formView()
+    const vm = view.vm as any
+    vm.selected[direct.requirement_id] = '10'
+    expect(vm.payload().lines).toEqual([{ requirement_id: direct.requirement_id, requested_quantity: '10', source_kind: 'CUTTING_DIRECT' }])
+    const partition = mount(MaterialIssuePartitions, { props: { requirements: [direct], selected: { [direct.requirement_id]: '10' }, allocations: {} },
+      global: { plugins: [ElementPlus], stubs: { AppWindowDialog: dialogStub } } })
+    wrappers.push(partition); await flushPromises()
+    expect(partition.get('[data-testid="semi-partition"]').text()).toContain('各行单位')
+    expect(partition.get('[data-testid="semi-partition"]').text()).not.toContain('裁片按片')
+    expect(partition.get('input[aria-label="前脚管半成品申请数量"]').element.closest('.el-input')?.textContent).toContain('件')
+    expect(partition.text()).toContain('裁剪车间直交')
+    expect(partition.text()).toContain('20 件')
+    expect(partition.text()).not.toContain('库存不足')
+  })
   it('审核详情将材质、规格、颜色单列展示且不显示已完成工艺列', async () => {
     const value = detail()
     value.status = 'PENDING_REVIEW'
@@ -231,7 +249,7 @@ describe('公共库存领料数量展示与实时预检', () => {
     expect(partition.text()).not.toContain('本订单剩余')
     expect(partition.text()).not.toContain('公共可用量')
     expect(partition.text()).toContain('195 支')
-    expect(partition.text()).toContain('不受来源订单限制')
+    expect(partition.text()).not.toContain('不受来源订单限制')
     expect(partition.text()).not.toContain('批次')
 
     await wrapper.setProps({ selected: { 'receiving-bom-line': '' } })
@@ -247,6 +265,17 @@ describe('公共库存领料数量展示与实时预检', () => {
     expect(tableValue(wrapper, '本订单剩余')).toBe('70')
     expect(tableValue(wrapper, '本单出库前库存')).toBe('200')
     expect(tableValue(wrapper, '出库后结余')).toBe('195')
+  })
+
+  it('公共裁片详情使用冻结行单位提示，旧记录继续保留套说明', async () => {
+    const value = detail()
+    value.lines[0]!.unit = '件'
+    const current = await detailView(value)
+    expect(tableValue(current, '单位')).toBe('件')
+    expect(current.text()).toContain('半成品按各行单位填写正整数')
+    expect(current.text()).not.toContain('裁片按正整数套领取')
+    const legacy = await detailView(detail(null))
+    expect(legacy.text()).toContain('裁片按正整数套领取')
   })
 
   it('旧半成品出库记录继续使用历史库存字段，不把库存误称订单需求', async () => {

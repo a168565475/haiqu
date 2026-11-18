@@ -367,11 +367,15 @@ class PurchaseOrderLine(models.Model):
     purchase_group_line = models.ForeignKey(
         PurchaseGroupLine, null=True, blank=True, on_delete=models.PROTECT, related_name="batch_lines",
     )
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
+    # 新管材采购口径：每根长料理论重量；旧米制记录保持为空并继续兼容。
+    raw_bar_weight_kg = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     suggested_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
-    suggested_purchase_meters = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    suggested_purchase_meters = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    suggested_purchase_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     actual_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
-    actual_purchase_meters = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    actual_purchase_meters = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    actual_purchase_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     quantity_difference_reason = models.TextField(blank=True)
     calculation_snapshot = models.JSONField(default=dict, blank=True)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -471,23 +475,36 @@ class PurchaseOrderLine(models.Model):
         ordering = ["purchase_order", "line_number"]
         constraints = [
             models.CheckConstraint(
-                condition=(Q(raw_bar_length_m__isnull=True, suggested_bar_count__isnull=True,
-                             suggested_purchase_meters__isnull=True, actual_bar_count__isnull=True,
-                             actual_purchase_meters__isnull=True)
+                condition=(Q(raw_bar_length_m__isnull=True, raw_bar_weight_kg__isnull=True,
+                             suggested_bar_count__isnull=True, suggested_purchase_meters__isnull=True,
+                             suggested_purchase_weight_kg__isnull=True, actual_bar_count__isnull=True,
+                             actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True)
                            | (Q(raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0,
-                                suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
-                                suggested_purchase_meters__isnull=False, source_unit_text='米',
-                                suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
-                              & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_quantity__isnull=True)
-                                 | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
-                                     actual_purchase_meters__isnull=False, actual_purchase_quantity__isnull=False,
-                                     actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
-                                     actual_purchase_quantity=F('actual_purchase_meters'))))
+                                 suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
+                                 suggested_purchase_meters__isnull=False, source_unit_text='米',
+                                 suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True, actual_purchase_quantity__isnull=True)
+                                  | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
+                                      actual_purchase_meters__isnull=False, actual_purchase_quantity__isnull=False,
+                                      actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
+                                      actual_purchase_quantity=F('actual_purchase_meters'))))
+                           | (Q(raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0,
+                                 raw_bar_weight_kg__isnull=False, raw_bar_weight_kg__gt=0,
+                                 suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
+                                 suggested_purchase_weight_kg__isnull=False, source_unit_text='KG',
+                                 suggested_purchase_weight_kg=F('suggested_bar_count') * F('raw_bar_weight_kg'))
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True, actual_purchase_quantity__isnull=True)
+                                  | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
+                                      actual_purchase_meters__isnull=False, actual_purchase_weight_kg__isnull=False,
+                                      actual_purchase_quantity__isnull=False,
+                                      actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
+                                      actual_purchase_quantity=F('actual_purchase_weight_kg'))))
                            | (Q(material_catalog__isnull=False, section_type_snapshot="PROFILE",
-                                raw_bar_length_m__gt=0, suggested_bar_count__gt=0,
-                                suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
-                              & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True)
-                                 | Q(actual_bar_count__gt=0, actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'))))),
+                                 raw_bar_length_m__gt=0, suggested_bar_count__gt=0,
+                                 suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
+                                & ~Q(source_unit_text='KG')
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True)
+                                  | Q(actual_bar_count__gt=0, actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'))))),
                 name='purchase_pipe_root_meter_consistent',
             ),
             models.UniqueConstraint(
@@ -509,6 +526,18 @@ class PurchaseOrderLine(models.Model):
             models.CheckConstraint(
                 condition=Q(actual_purchase_quantity__isnull=True) | Q(actual_purchase_quantity__gt=0),
                 name="purchase_actual_qty_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(raw_bar_weight_kg__isnull=True) | Q(raw_bar_weight_kg__gt=0),
+                name="purchase_pipe_root_weight_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(suggested_purchase_weight_kg__isnull=True) | Q(suggested_purchase_weight_kg__gt=0),
+                name="purchase_pipe_suggested_weight_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(actual_purchase_weight_kg__isnull=True) | Q(actual_purchase_weight_kg__gt=0),
+                name="purchase_pipe_actual_weight_positive",
             ),
             models.CheckConstraint(
                 condition=Q(unit_price__isnull=True) | Q(unit_price__gte=0),

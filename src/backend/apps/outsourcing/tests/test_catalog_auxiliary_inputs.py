@@ -126,6 +126,8 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         stock = self.opening(100)
         order = self.pending_order('20.5')
         row = next(row for row in self.pending_context()['material_rows'] if row['bom_line_id'] == str(self.auxiliary.pk))
+        self.assertEqual({key: row[key] for key in ('specification', 'material', 'color')},
+                         {'specification': '25mm', 'material': '涤纶', 'color': '黑色'})
         self.assertEqual((Decimal(row['available_stock']), Decimal(row['order_remaining'])), (Decimal('79.5'), Decimal('979.5')))
         issue_rows, blockers = catalog_requirement_rows(self.task.pk, self.product_line.pk)
         self.assertFalse(blockers, blockers)

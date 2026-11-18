@@ -351,11 +351,16 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             public_stock = current_issue.stock_mode == "PUBLIC_V2"
             exclude_issue_id = current_issue.pk
             allowed_section_codes = material_section_codes_for_issue(current_issue)
+            from ..scopes import issue_plan_category
+            plan_category = issue_plan_category(current_issue)
         else:
             plan_category = request.query_params.get("plan_category")
             allowed_section_codes = material_section_codes_for_workshop(workshop.name, plan_category)
         if allowed_section_codes is None:
             raise ValidationError({"plan_category": "作业计划类型与领料车间不一致或暂未开放生产领料。"})
+        from ..scopes import cutting_source_line_ids, raw_line_allowed_for_plan, semi_plan_category
+        cutting_sources = cutting_source_line_ids(product_line_id)
+        source_plan_category = semi_plan_category(workshop.name, plan_category)
         _, specs, blockers, revision_hash = build_requirement_specs(task.pk)
         blockers = filter_blockers_for_scope(
             blockers,
@@ -388,7 +393,9 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         for spec in specs:
             if spec["section_code"] not in allowed_section_codes:
                 continue
-            if not any(item["product_line"].pk == product_line_id for item in spec["contributions"]):
+            if not any(item["product_line"].pk == product_line_id and raw_line_allowed_for_plan(
+                    item['bom_line'].pk, spec['section_code'], source_plan_category, cutting_sources)
+                    for item in spec["contributions"]):
                 continue
             current = existing.get(spec["id"])
             internal = current.internal_issued_quantity if current else 0
@@ -443,7 +450,9 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         from ..catalog_requirements import catalog_requirement_rows
         catalog_rows, catalog_blockers = catalog_requirement_rows(task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
         blockers.extend(item for item in catalog_blockers if item["section_code"] in allowed_section_codes)
-        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes]
+        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes
+            and raw_line_allowed_for_plan(_uuid(row['conversion_snapshot']['bom_line_id'], 'bom_line_id'),
+                row['section_code'], source_plan_category, cutting_sources)]
         if public_stock:
             rows.extend(catalog_rows)
         elif catalog_rows:
@@ -451,8 +460,10 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         if public_stock:
             if "SEMI" in allowed_section_codes:
                 from ..public_semi_requirements import public_semi_requirement_rows
+                from ..scopes import semi_plan_category
                 semi_rows, semi_blockers = public_semi_requirement_rows(
-                    task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
+                    task.pk, product_line_id, exclude_issue_id=exclude_issue_id,
+                    plan_category=semi_plan_category(workshop.name, plan_category))
                 rows.extend(semi_rows)
                 blockers.extend(semi_blockers)
             for row in rows:

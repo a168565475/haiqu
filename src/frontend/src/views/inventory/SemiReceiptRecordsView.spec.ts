@@ -30,6 +30,24 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
+it('待确认多部位单按单位汇总，并逐行展示各部位而非只展示首行', async () => {
+  const pending: SemiReceiptRecord = { ...record, status: 'PENDING', quantity: '', unit: '',
+    quantity_totals: [{ quantity: '2', unit: '个' }, { quantity: '3', unit: '件' }], lines: [
+      { id: 'p1', bom_line_id: 'b1', quantity: '2', unit: '个', stage: '车缝完成', attributes: { ...record.attributes, part_name: '床面' } },
+      { id: 'p2', bom_line_id: 'b2', quantity: '3', unit: '件', stage: '车缝完成', attributes: { ...record.attributes, part_name: '外袋' } },
+    ] }
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(pending)
+  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  try {
+    await flushPromises()
+    expect(wrapper.text()).toContain('2 个、3 件')
+    await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('床面'); expect(wrapper.text()).toContain('外袋')
+    expect(wrapper.text()).not.toContain('部位入库进度')
+  } finally { wrapper.unmount() }
+})
+
 it('委外总单入库按本次实收展示支或套，不推算批次少回', async () => {
   const detail: SemiReceiptRecord = { ...record, source: 'EXTERNAL', source_detail: { source_type: 'TUBE_OUTSOURCING_RETURN', is_plan: true, source_number: 'WF-总单', receipt_number: 'RK-批次', received_quantity: '200', output_unit: '套' } }
   vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)

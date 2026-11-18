@@ -279,6 +279,9 @@ class WorkshopReportingApiTests(APITestCase):
         )
         self.assertEqual(selected_bom["pieces_per_product"], 2)
         self.assertEqual(selected_bom["source_type"], PlanCategory.METAL)
+        self.assertEqual(selected_bom["component_kind"], "")
+        self.assertIn("parts_per_product", selected_bom)
+        self.assertIn("pieces_per_part", selected_bom)
 
         payload = self.scheme_payload()
         payload.pop("operation_product_name")
@@ -531,19 +534,15 @@ class WorkshopReportingApiTests(APITestCase):
         self.assertEqual(status_response.data["data"][0]["plan_status"], WorkshopPlanStatus.COMPLETED)
         self.assertFalse(status_response.data["data"][0]["can_report"])
 
-    def test_sewing_required_quantity_supports_set_and_piece_modes(self):
+    def test_cutting_uses_pieces_and_sewing_uses_parts(self):
         sewing_workshop, _ = Workshop.objects.get_or_create(name="车缝车间")
         sewing_craft = Craft.objects.create(
             craft_type=CraftType.INTERNAL, workshop=sewing_workshop,
             name="工价测试车缝", plan_category=PlanCategory.SEWING,
         )
-        set_operation = Operation.objects.create(
+        sewing_operation = Operation.objects.create(
             operation_number="WG-SEW-SET", product_name="布套", craft=sewing_craft,
-            name="整套车缝", reporting_unit=self.unit,
-        )
-        piece_operation = Operation.objects.create(
-            operation_number="WG-SEW-PIECE", product_name="布套", craft=sewing_craft,
-            name="裁片车缝", reporting_unit=self.unit,
+            name="整套车缝", reporting_unit=ProductionUnit.objects.create(unit_code="WG-SET", unit_name="套"),
         )
         ProductionScheduleProductCraft.objects.create(
             schedule_product=self.schedule_product, craft=sewing_craft,
@@ -553,12 +552,32 @@ class WorkshopReportingApiTests(APITestCase):
         cutting_section = BomSection.objects.create(
             bom=self.bom, line_number=2, section_type=BomSectionType.FABRIC, title="裁剪明细",
         )
-        cutting_line = BomLine.objects.create(
+        sewing_part = BomLine.objects.create(
             section=cutting_section, line_number=1, part_name="椅套", specification="A款",
-            cutting_pieces_per_set=4, fabric_meters_per_piece="0.2500",
-            cutting_sets_per_product=3,
+            component_kind="SEWN_PART", parts_per_product=3, unit="套",
         )
-        payload = {
+        cutting_piece = BomLine.objects.create(
+            section=cutting_section, line_number=2, part_name="椅套面片", specification="A款",
+            component_kind="CUT_PIECE", parent_part=sewing_part, pieces_per_part=4, unit="片",
+        )
+        legacy_line = BomLine.objects.create(
+            section=cutting_section, line_number=3, part_name="旧裁片", specification="A款",
+            cutting_pieces_per_set=4, cutting_sets_per_product=3, unit="套",
+        )
+        context = self.client.get(
+            "/api/v1/workshop-reporting/context/",
+            {"schedule_product_id": str(self.schedule_product.pk)},
+        )
+        self.assertEqual(context.status_code, 200, context.data)
+        bom_items = {item["id"]: item for item in context.data["data"]["bom_items"]}
+        self.assertNotIn(str(legacy_line.pk), bom_items)
+        self.assertEqual(bom_items[str(sewing_part.pk)]["component_kind"], "SEWN_PART")
+        self.assertEqual(bom_items[str(sewing_part.pk)]["parts_per_product"], 3)
+        self.assertEqual(bom_items[str(sewing_part.pk)]["unit"], "套")
+        self.assertEqual(bom_items[str(cutting_piece.pk)]["component_kind"], "CUT_PIECE")
+        self.assertEqual(bom_items[str(cutting_piece.pk)]["parts_per_product"], 3)
+        self.assertEqual(bom_items[str(cutting_piece.pk)]["pieces_per_part"], 4)
+        sewing_payload = {
             "product_line_id": str(self.product_line.pk),
             "schedule_product_id": str(self.schedule_product.pk),
             "workshop_id": str(sewing_workshop.pk),
@@ -567,24 +586,76 @@ class WorkshopReportingApiTests(APITestCase):
             "remark": "车缝计数测试",
             "lines": [
                 {
-                    "craft_id": str(sewing_craft.pk), "operation_id": str(set_operation.pk),
-                    "bom_line_id": str(cutting_line.pk), "display_name": "椅套-A款",
+                    "craft_id": str(sewing_craft.pk), "operation_id": str(sewing_operation.pk),
+                    "bom_line_id": str(sewing_part.pk), "display_name": "椅套-A款",
                     "counting_mode": "SET", "declared_price": "1", "status": "ACTIVE",
-                },
-                {
-                    "craft_id": str(sewing_craft.pk), "operation_id": str(piece_operation.pk),
-                    "bom_line_id": str(cutting_line.pk), "display_name": "椅套-A款",
-                    "counting_mode": "PIECE", "declared_price": "1", "status": "ACTIVE",
                 },
             ],
         }
         response = self.client.post(
-            "/api/v1/workshop-reporting/wage-schemes/", payload, format="json",
+            "/api/v1/workshop-reporting/wage-schemes/", sewing_payload, format="json",
         )
         self.assertEqual(response.status_code, 201, response.data)
         lines = response.data["data"]["lines"]
         self.assertEqual(lines[0]["required_quantity"], "300.0000")
-        self.assertEqual(lines[1]["required_quantity"], "1200.0000")
+        self.assertEqual(lines[0]["counting_mode"], "SET")
+
+        wrong_unit_operation = Operation.objects.create(
+            operation_number="WG-SEW-PIECE-UNIT", product_name="布套", craft=sewing_craft,
+            name="错误单位车缝", reporting_unit=ProductionUnit.objects.create(
+                unit_code="WG-SEW-PIECE", unit_name="片",
+            ),
+        )
+        wrong_unit = {**sewing_payload, "lines": [{
+            **sewing_payload["lines"][0], "operation_id": str(wrong_unit_operation.pk),
+        }]}
+        wrong_unit_response = self.client.post(
+            "/api/v1/workshop-reporting/wage-schemes/", wrong_unit, format="json",
+        )
+        self.assertEqual(wrong_unit_response.status_code, 201, wrong_unit_response.data)
+
+        cutting_workshop, _ = Workshop.objects.get_or_create(name="裁剪车间")
+        cutting_craft = Craft.objects.create(
+            craft_type=CraftType.INTERNAL, workshop=cutting_workshop,
+            name="工价测试裁剪", plan_category=PlanCategory.CUTTING,
+        )
+        cutting_operation = Operation.objects.create(
+            operation_number="WG-CUT-PIECE", product_name="布套", craft=cutting_craft,
+            name="裁片裁剪", reporting_unit=ProductionUnit.objects.create(unit_code="WG-PIECE", unit_name="片"),
+        )
+        ProductionScheduleProductCraft.objects.create(
+            schedule_product=self.schedule_product, craft=cutting_craft,
+            craft_type_snapshot=CraftType.INTERNAL, craft_name_snapshot=cutting_craft.name,
+            plan_category=PlanCategory.CUTTING,
+        )
+        cutting_payload = {
+            **sewing_payload,
+            "workshop_id": str(cutting_workshop.pk),
+            "craft_ids": [str(cutting_craft.pk)],
+            "lines": [{
+                "craft_id": str(cutting_craft.pk), "operation_id": str(cutting_operation.pk),
+                "bom_line_id": str(cutting_piece.pk), "display_name": "椅套面片-A款",
+                "declared_price": "1", "status": "ACTIVE",
+            }],
+        }
+        cutting_response = self.client.post(
+            "/api/v1/workshop-reporting/wage-schemes/", cutting_payload, format="json",
+        )
+        self.assertEqual(cutting_response.status_code, 201, cutting_response.data)
+        cutting_line = cutting_response.data["data"]["lines"][0]
+        self.assertEqual(cutting_line["required_quantity"], "1200.0000")
+        self.assertEqual(cutting_line["counting_mode"], "PIECE")
+
+        wrong_kind = {**sewing_payload, "lines": [{
+            "craft_id": str(sewing_craft.pk), "operation_id": str(sewing_operation.pk),
+            "bom_line_id": str(cutting_piece.pk), "display_name": "椅套面片-A款",
+            "counting_mode": "PIECE", "declared_price": "1", "status": "ACTIVE",
+        }]}
+        rejected = self.client.post(
+            "/api/v1/workshop-reporting/wage-schemes/", wrong_kind, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("车缝部位", str(rejected.data))
 
     def test_schedule_list_progress_has_material_placeholder_and_weighted_work_progress(self):
         approved = self.create_approved_scheme()

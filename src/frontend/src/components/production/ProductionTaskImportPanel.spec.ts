@@ -95,7 +95,7 @@ describe('生产任务导入核对边界（模拟 API 的组件测试）', () =>
     await wrapper.findAll('button').find(button => button.text() === '查看来源')!.trigger('click')
     await wrapper.vm.$router.replace({ query: {} }); await flushPromises()
     finish({ source_index: {}, private_source: 'old-content' }); await flushPromises()
-    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(false)
+    expect(wrapper.findComponent({ name: 'AppWindowDialog' }).props('modelValue')).toBe(false)
     expect(wrapper.text()).not.toContain('old-content')
   })
 })

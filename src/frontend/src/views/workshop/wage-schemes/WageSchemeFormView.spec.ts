@@ -71,8 +71,40 @@ function metalReportingContext(productIds: string[]) {
     bom_items: [{
       id: 'bom-line-1', component_identity: 'component-1', name: '前脚管', material: '铁', specification: '20*1.0*500',
       label: '前脚管-铁-20*1.0*500', source_type: 'METAL', pieces_per_product: 2,
+      component_kind: '', parts_per_product: null, pieces_per_part: null,
+      unit: '支',
       cutting_sets_per_product: null, cutting_pieces_per_set: null,
     }],
+  }
+}
+
+function componentReportingContext(category: 'CUTTING' | 'SEWING') {
+  const context = reportingContext(['product-a'])
+  context.workshops[0] = { id: 'workshop-1', name: category === 'CUTTING' ? '裁剪车间' : '车缝车间' }
+  context.crafts[0] = {
+    ...context.crafts[0]!, name: category === 'CUTTING' ? '裁剪' : '车缝', plan_category: category,
+  }
+  context.operations[0] = {
+    ...context.operations[0]!, name: category === 'CUTTING' ? '裁片裁剪' : '整套车缝',
+  }
+  return {
+    ...context,
+    bom_items: [
+      {
+        id: 'cut-piece-1', component_identity: 'cut-piece-identity', name: '椅面裁片', material: '布', specification: 'A款',
+        label: '椅面裁片-A款', source_type: 'CUTTING', component_kind: 'CUT_PIECE',
+        pieces_per_product: null, parts_per_product: 2, pieces_per_part: 3,
+        unit: '片',
+        cutting_sets_per_product: null, cutting_pieces_per_set: null,
+      },
+      {
+        id: 'sewn-part-1', component_identity: 'sewn-part-identity', name: '椅面部位', material: '布', specification: 'A款',
+        label: '椅面部位-A款', source_type: 'CUTTING', component_kind: 'SEWN_PART',
+        pieces_per_product: null, parts_per_product: 2, pieces_per_part: null,
+        unit: '套',
+        cutting_sets_per_product: null, cutting_pieces_per_set: null,
+      },
+    ],
   }
 }
 
@@ -373,6 +405,32 @@ describe('工价方案产品上下文切换', () => {
     expect(bomSelect.findAllComponents({ name: 'ElOption' }).map(option => option.props('label')))
       .toEqual(['前脚管-铁-20*1.0*500'])
     expect(bomSelect.props('placeholder')).toBe('选择部件、材质和规格')
+  })
+
+  it.each([
+    ['CUTTING', 'cut-piece-1', '椅面裁片-A款', '600', 'PIECE'],
+    ['SEWING', 'sewn-part-1', '椅面部位-A款', '200', 'SET'],
+  ] as const)('%s 工价只使用对应 BOM 对象并按 BOM 配比计算', async (category, expectedId, expectedLabel, expectedQuantity, countingMode) => {
+    api.context.mockResolvedValue(componentReportingContext(category))
+    const wrapper = await render()
+    productSelect(wrapper).vm.$emit('update:modelValue', 'product-a')
+    await flushPromises()
+    wrapper.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', 'workshop-1')
+    await flushPromises()
+    selectByTestId(wrapper, 'wage-craft-select').vm.$emit('update:modelValue', 'craft-1')
+    await flushPromises()
+    await wrapper.find('.wr-card--wide .el-button--primary').trigger('click')
+    await nextTick()
+
+    const bomSelect = selectByTestId(wrapper, 'bom-display-select')
+    expect(bomSelect.findAllComponents({ name: 'ElOption' }).map(option => [option.props('value'), option.props('label')]))
+      .toEqual([[expectedId, expectedLabel]])
+    bomSelect.vm.$emit('update:modelValue', expectedId)
+    bomSelect.vm.$emit('change', expectedId)
+    await nextTick()
+    expect(wrapper.text()).toContain(expectedQuantity)
+    expect(wrapper.find('.wr-wage-line-table').text()).toContain(countingMode === 'SET' ? '按套' : expectedQuantity)
+    if (category === 'SEWING') expect(wrapper.findAllComponents({ name: 'ElSelect' }).some(item => item.text().includes('按片'))).toBe(false)
   })
 
   it('非金工工序同时按车间、工艺和工序品名过滤', async () => {

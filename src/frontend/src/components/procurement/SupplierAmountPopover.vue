@@ -12,9 +12,8 @@ function amountText(value: string | null, currency: string): string {
   const parts = /^(\d+)(?:\.(\d{1,4}))?$/.exec(value?.trim() || '')
   if (!parts) return '待核价'
   // 金额保留后端十进制字符串，避免大额采购转成浮点数后丢失精度。
-  const whole = parts[1]!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  const fraction = (parts[2] || '').replace(/0+$/, '').padEnd(2, '0')
-  const amount = `${whole}.${fraction}`
+  const cents = (BigInt(parts[1]!) * 10000n + BigInt((parts[2] || '').padEnd(4, '0')) + 50n) / 100n
+  const amount = `${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`
   return `${currency === 'CNY' ? '¥' : currency ? `${currency} ` : ''}${amount}`
 }
 </script>

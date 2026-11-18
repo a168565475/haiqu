@@ -17,10 +17,11 @@ from apps.boms.material_attributes import bom_attribute_fields
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
-from apps.inventory.models import MaterialStockBalance, PublicStockBalance, WarehouseZone
+from apps.inventory.models import MaterialStockBalance, PublicStockBalance, PublicStockMovement, WarehouseZone
 from apps.inventory.public_stock_identity import build_pipe_stock_identity, validate_public_identity
 from apps.inventory.public_stock_services import _lock_source, credit_public_stock, debit_public_stock, lock_public_stock_locations
-from apps.inventory.stock_services import credit_material_stock, debit_material_stock
+from apps.inventory.pipe_weight_quantities import returned_pipe_weight
+from apps.inventory.stock_services import credit_material_stock, debit_material_stock, returned_material_weight
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine, OrderMaterialRequirement
 from apps.material_issues.material_flow import pipe_specs
 from apps.material_issues.pipe_requirements import sync_pipe_requirement
@@ -386,11 +387,16 @@ def restore_public_sources(order, source_amounts, *, record, actor_employee, rev
                     or original.balance.zone_id != source.zone_id or original.balance.identity_key != identity["identity_key"]
                     or original.snapshot != source.snapshot):
                 raise Conflict("原公共出库事件与冻结身份不一致。")
+            history = PublicStockMovement.objects.filter(source_type="OUTSOURCING_RAW_RETURN",
+                balance_id=original.balance_id, snapshot__dispatch_line_id=str(source.pk)).order_by("occurred_at", "id")
+            returned_weight = returned_pipe_weight(original=original, adjustments=history, returned_roots=amount)
             movement = credit_public_stock(identity=identity, zone=source.zone, quantity=amount,
                 source_type="OUTSOURCING_RAW_RETURN", source_id=record.pk, source_line_id=returned.pk,
                 actor_employee=actor_employee, production_task=order.schedule.production_task_id,
                 product_line=source.material_item.allocation.processing_item.order_product.schedule_product.product_line_id,
-                bom_line=source.material_item.bom_material_line_id, snapshot=snapshot)
+                bom_line=source.material_item.bom_material_line_id, snapshot=snapshot,
+                bar_weight_kg=original.balance.bar_weight_kg if returned_weight is not None else None,
+                weight_quantity=returned_weight)
             returned.snapshot = {**snapshot, "public_stock_movement_id": str(movement.pk)}
             returned.save(update_fields=["snapshot", "updated_at"])
         else:
@@ -399,7 +405,8 @@ def restore_public_sources(order, source_amounts, *, record, actor_employee, rev
                 raise Conflict("原发料库区不可用，请先核对。")
             credit_material_stock(raw_material=source.raw_material, unit=source.unit, zone=source.zone, quantity=amount,
                 source_type="OUTSOURCING_RAW_RETURN", source_id=record.pk, source_line_id=returned.pk,
-                production_task=order.schedule.production_task, actor_employee=actor_employee, snapshot=snapshot)
+                production_task=order.schedule.production_task, actor_employee=actor_employee, snapshot=snapshot,
+                weight_quantity=returned_material_weight(source=source, quantity=amount))
         requirement = requirements[source.requirement_id]
         delta = Decimal(equivalent) if is_pipe else amount
         if delta > requirement.outsourcing_issued_quantity:

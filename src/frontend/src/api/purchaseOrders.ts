@@ -111,6 +111,8 @@ export async function updatePurchaseOrder(
       id: string
       actual_bar_count?: number | string | null
       raw_bar_length_m?: string | null
+      raw_bar_weight_kg?: string | null
+      actual_purchase_weight_kg?: string | null
       supplier_id: string | null
       delivery_date: string | null
       actual_purchase_quantity: string | null
@@ -154,6 +156,32 @@ export async function generatePurchaseSheets(
     { assignments },
   )
   return data.data
+}
+
+export async function ensureDefaultPurchaseSheets(id: string): Promise<void> {
+  const options = await fetchPurchaseSheetOptions(id)
+  if (options.existing_sheet_count) return
+  if (options.purchase_order.status !== 'SUBMITTED') return
+  if (!options.suppliers.length) throw new Error('暂无可生成采购表的供应商，请先完善采购明细。')
+  if (!options.templates.length) throw new Error('暂无可用采购合同模板，请先在合同模板管理中启用模板。')
+  // 沿用原模板页的默认值：先按供应商类别推荐，再取首个启用模板。
+  const templateIds = new Set(options.templates.map(item => item.version_id))
+  const assignments = options.suppliers.map(item => ({
+    supplier_id: item.supplier_id,
+    template_version_id: item.recommended_template_version_id && templateIds.has(item.recommended_template_version_id)
+      ? item.recommended_template_version_id : options.templates[0]!.version_id,
+  }))
+  try {
+    await generatePurchaseSheets(id, assignments)
+  } catch (error) {
+    const response = (error as { response?: { status?: number } }).response
+    if (!response || response.status === 409 || (response.status ?? 0) >= 500) {
+      // 超时或并发冲突时只回读已提交结果，不再次创建。
+      const current = await fetchPurchaseSheetOptions(id)
+      if (current.existing_sheet_count) return
+    }
+    throw error
+  }
 }
 
 const sheetBasePath = '/api/v1/supplier-purchase-sheets/'

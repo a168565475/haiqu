@@ -3,6 +3,7 @@ RESOURCE_NAMES = dict(item.split(":", 1) for item in (
     "financeaccount:公司账户",
     "accountingsubject:会计科目",
     "receivablestatement:应收对账单",
+    "purchasepayable:采购应付",
     "receipt:收款确认单",
     "productionplan:生产计划",
     "productiontaskexpense:生产零星费用",
@@ -74,6 +75,8 @@ def presentation(code, permission, module):
         model = "accountingsubject"
     if code in {f"finance.{action}_receivablestatement" for action in ("view", "add", "change", "void", "delete")}:
         model = "receivablestatement"
+    if code in {f"finance.{action}_purchasepayable" for action in ("view", "add", "change", "confirm", "void", "delete")}:
+        model = "purchasepayable"
     if code.startswith("access_control."):
         model = codename.split("_reference_", 1)[-1] if "_reference_" in codename else codename.split("_", 1)[1]
     model = {'samplefee': 'samplefeerecord', 'sample': 'samplerequest', 'purchasesheets': 'supplierpurchasesheet', 'bomquantity': 'bom'}.get(model, model)

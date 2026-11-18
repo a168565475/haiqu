@@ -3,7 +3,7 @@ import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Check, DocumentChecked, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, DocumentChecked } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -145,7 +145,8 @@ function validate(): string {
 function payload() {
   const issueLines = recordedRows.value.flatMap((item) => {
     if (item.stock_mode === 'PUBLIC_V2' || item.line_type !== 'SEMI' || !item.semi_balance_allocations?.length) {
-      return [{ requirement_id: item.requirement_id, requested_quantity: selected[item.requirement_id] }]
+      return [{ requirement_id: item.requirement_id, requested_quantity: selected[item.requirement_id],
+        ...(item.source_kind === 'CUTTING_DIRECT' ? { source_kind: 'CUTTING_DIRECT' } : {}) }]
     }
     let remaining = decimalUnits(selected[item.requirement_id]) || 0n
     return item.semi_balance_allocations.flatMap((allocation) => {
@@ -229,6 +230,8 @@ async function loadEdit() {
       const matching = requirements.value.find((item) => item.stock_mode !== 'PUBLIC_V2'
         && item.semi_balance_allocations?.some((allocation) => allocation.balance_id === line.requirement_id))
       const key = matching?.requirement_id || line.requirement_id
+      const requirement = requirements.value.find(item => item.requirement_id === key)
+      if (requirement) requirement.source_kind = line.source_kind || line.conversion_snapshot?.source_kind || 'STOCK'
       const toScaled = (value: string) => {
         const [whole, fraction = ''] = String(value || '0').split('.')
         return BigInt(whole || '0') * 10000n + BigInt(fraction.padEnd(4, '0').slice(0, 4) || '0')
@@ -315,7 +318,6 @@ onMounted(initialize)
             <h1>{{ editing ? '修改生产领料单' : '新增生产领料单' }}</h1>
             <span v-if="planContextActive" class="plan-label">{{ planCategoryLabels[planCategory] }}</span>
           </div>
-          <p><ElIcon><InfoFilled /></ElIcon>按扣除占用后的合格库存领料，可超过 BOM 建议量；仓库确认出库后扣库存。</p>
         </header>
 
         <section class="mi-surface form-basic basic-card">
@@ -390,8 +392,6 @@ onMounted(initialize)
 .form-titlebar { display: flex; min-height: 54px; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .form-title-copy { display: flex; align-items: center; gap: 18px; min-width: 0; }
 .form-titlebar h1 { margin: 0; color: var(--erp-color-text-primary); font: 500 34px/44px 'Noto Serif SC', 'Songti SC', serif; letter-spacing: -0.6px; }
-.form-titlebar p { display: flex; align-items: center; gap: 7px; margin: 15px 4px 0 0; color: var(--erp-color-text-secondary); font-size: 13px; white-space: nowrap; }
-.form-titlebar p :deep(.el-icon) { color: var(--erp-color-text-secondary); font-size: 15px; }
 .plan-label { margin-top: 4px; padding: 4px 10px; border-left: 3px solid var(--erp-color-brand); color: var(--erp-color-brand); background: var(--erp-color-subtle); font-size: 13px; line-height: 22px; white-space: nowrap; }
 .form-basic { margin-bottom: 14px; padding: 8px 15px 12px; }
 .form-basic h2, .category-panel h2, .pick-panel h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; font-weight: 600; line-height: 24px; }
@@ -470,7 +470,6 @@ onMounted(initialize)
   .basic-row--bottom > :nth-child(4) { grid-column: 3; grid-row: 2; }
 }
 @media (max-width: 1400px) {
-  .form-titlebar p { display: none; }
   .product-preview { align-self: center; margin-top: 0; margin-left: 0; }
   .product-preview img { width: 62px; height: 62px; }
   .issue-workspace { grid-template-columns: 150px minmax(0, 1fr); }

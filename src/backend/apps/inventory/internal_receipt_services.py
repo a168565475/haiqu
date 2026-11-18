@@ -93,6 +93,10 @@ def _receipt_frozen_identity(line, fact):
 
 def load_receipt_context(request, schedule_product_id, category, *, lock=False, exclude_receipt_id=None,
                          confirmation=False):
+    from .part_flow_receipts import uses_part_flow_receipt, load_part_flow_context
+    if uses_part_flow_receipt(schedule_product_id, category):
+        return load_part_flow_context(request, schedule_product_id, category, lock=lock,
+            exclude_receipt_id=exclude_receipt_id, confirmation=confirmation)
     if category == 'METAL':
         from .tube_receipt_services import uses_tube_receipt, load_tube_receipt_context
         if uses_tube_receipt(schedule_product_id=schedule_product_id):
@@ -343,8 +347,12 @@ def preview_data(context, actor):
     for key, fact in context['facts'].items():
         identity = fact['identity']['identity_snapshot']
         row = dict(bom_line_id=str(fact['line'].pk), component_key=key, usage=str(fact['usage']), attributes=identity,
+                   component_kind=fact['line'].component_kind,
+                   parent_part_id=str(fact['line'].parent_part_id) if fact['line'].parent_part_id else None,
+                   parent_part_name=fact['line'].parent_part.part_name if fact['line'].parent_part_id else '',
                    output_material_selection_snapshot=identity.get('material_selection_snapshot', {}),
-                   stage='金工完成' if context['category']=='METAL' else '车缝完成')
+                   unit=identity['unit_name'],
+                   stage={'METAL': '金工完成', 'CUTTING': '裁剪完成', 'SEWING': '车缝完成'}[context['category']])
         row.update(fact['material_pair'])
         row.update(_json(asdict(context['calculation'].components[key])))
         if context.get('tube_basis'):
@@ -416,14 +424,15 @@ def submit_receipt(request, data):
         source_snapshot={'production_order':context['task'].task_number,'product':context['product'].product_name_snapshot,
                          'order_quantity':str(context['product'].quantity),'bom_id':str(context['bom'].pk),
                          'plan_category':context['category'],'schedule_id':str(context['plan'].schedule_id),
-                         **({'quantity_basis':'ORDER_REMAINING'} if context['category'] == 'SEWING' else {})})
+                         **({'quantity_basis':'PART_FLOW'} if context.get('part_flow') else
+                            {'quantity_basis':'ORDER_REMAINING'} if context['category'] == 'SEWING' else {})})
     for key, quantity in requested.items():
         fact = context['facts'][key]
         allowance = calculation.components[key]
         row_id = uuid.uuid4()
         demand = next(item for item in context['args']['demands'] if item.component_key == key)
         InternalSemiFinishedReceiptLine.objects.create(id=row_id,receipt=header,bom_line=fact['line'],
-            component_identity=fact['line'].component_identity,unit=context['unit'],input_requirement=fact['requirement'],
+            component_identity=fact['line'].component_identity,unit=fact.get('unit') or context['unit'],input_requirement=fact['requirement'],
             input_unit_name=demand.input_unit,quantity=quantity,input_per_output=demand.input_per_output,
             input_quantity=allowance.consumes_input,required_quantity_snapshot=allowance.required,
             received_before=allowance.received,received_after=allowance.received_after,stock_movement=None,
@@ -474,7 +483,8 @@ def confirm_receipt(request, receipt_id):
         fact = context['facts'][key]
         demand = next(row for row in context['args']['demands'] if row.component_key == key)
         if (item.component_identity != fact['line'].component_identity
-                or item.unit_id != context['unit'].pk or item.input_requirement_id != fact['requirement'].pk
+                or item.unit_id != (fact.get('unit') or context['unit']).pk
+                or item.input_requirement_id != (fact['requirement'].pk if fact['requirement'] else None)
                 or item.input_unit_name != demand.input_unit or item.input_per_output != demand.input_per_output):
             raise Conflict('部位实物属性或投入依据已变化，请删除待入库原单后重新提交。')
         pending_identities[key] = _receipt_frozen_identity(item, fact)

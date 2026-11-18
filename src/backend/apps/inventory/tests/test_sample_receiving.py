@@ -6,17 +6,18 @@ from unittest.mock import patch
 import uuid
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.middleware.csrf import _get_new_csrf_string
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase, APIClient
 
+from apps.access_control.models import RoleActionGrant
 from apps.audit.models import AuditLog
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialStockBalance, PublicStockBalance, PublicStockMovement
 from apps.procurement.models import PurchaseOrder
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.procurement.tests import test_sample_purchase_api as purchase_fixture
 from apps.procurement.tests import test_sample_pipe_flow as pipe_fixture
 from apps.samples.material_arrival_services import material_progress
@@ -80,9 +81,17 @@ class SampleReceivingApiTests(SampleReceivingHelpers, APITestCase):
         purchase_fixture.SamplePurchaseApiTests.setUp(self)
         self.prepare()
 
+    @override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_full_receipt_uses_frozen_quantity_without_quality_permission(self):
         self.user.user_permissions.remove(*Permission.objects.filter(content_type__app_label='samples'))
         self.user.user_permissions.remove(Permission.objects.get(codename='quality_confirm_material'))
+        # 收货岗位的模块范围允许读取样品采购来源；不依赖样品或质检权限。
+        receive_permission = Permission.objects.get(content_type__app_label='inventory', codename='receive_material')
+        group = Group.objects.create(name='SAMPLE_RECEIVING_WAREHOUSE')
+        group.permissions.add(receive_permission)
+        role = RoleProfile.objects.create(auth_group=group, role_code='SAMPLE_RECEIVING_WAREHOUSE', display_name='样品收货仓库')
+        EmployeeRoleAssignment.objects.create(employee=self.employee, role_profile=role, effective_from=timezone.now())
+        RoleActionGrant.objects.create(role=role, permission=receive_permission, scope='MODULE')
         self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         result = self.receive_all()
         self.assertEqual(result.status_code, 201, result.data)
@@ -208,8 +217,7 @@ class SamplePublicPipeReceivingTests(SampleReceivingHelpers, APITestCase):
 
     def purchase_payload(self):
         payload = purchase_fixture.SamplePurchaseApiTests.purchase_payload(self)
-        payload['lines'][0].pop('actual_purchase_quantity')
-        payload['lines'][0].update(actual_bar_count=2, raw_bar_length_m='6')
+        payload['lines'][0].update(actual_purchase_quantity='5', raw_bar_length_m='6', raw_bar_weight_kg='2.5')
         return payload
 
     def test_purchase_two_six_meter_bars_credits_twelve_meters_without_quality(self):
@@ -219,6 +227,7 @@ class SamplePublicPipeReceivingTests(SampleReceivingHelpers, APITestCase):
         self.assertEqual((line.accepted_bar_count, line.raw_bar_length_m, line.accepted_quantity), (2, Decimal('6'), Decimal('12')))
         balance = PublicStockBalance.objects.get(raw_material=self.raw_material, stock_kind='RAW_PIPE')
         self.assertEqual((balance.quantity, balance.meter_quantity), (2, Decimal('12')))
+        self.assertEqual((line.accepted_weight_kg, balance.weight_quantity), (Decimal('5'), Decimal('5')))
         self.assertEqual(PublicStockMovement.objects.count(), 1)
         self.assertFalse(MaterialStockBalance.objects.exists())
         self.assertEqual(SampleMaterialArrival.objects.get().accepted_quantity, 12)

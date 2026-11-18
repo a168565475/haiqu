@@ -2323,7 +2323,7 @@ class BomApiTests(APITestCase):
         self.assertEqual(historical_cutting["part_name"], saved_cutting["part_name"])
         self.assertEqual(historical_cutting["cutting_material_number"], saved_cutting["cutting_material_number"])
 
-    def test_packaging_requires_positive_integer_box_quantity_and_calculates_without_consumption(self):
+    def test_packaging_requires_positive_decimal_usage_and_calculates_without_consumption(self):
         self.product_line.quantity = 25
         self.product_line.save(update_fields=["quantity"])
         created = self.client.post(
@@ -2347,7 +2347,7 @@ class BomApiTests(APITestCase):
             {
                 "part_name": source.material_name,
                 "source_packaging_material_id": str(source.pk),
-                "units_per_box": "1.5",
+                "units_per_box": "1.00001",
                 "unit_consumption": "0",
             }
         ]
@@ -2358,9 +2358,9 @@ class BomApiTests(APITestCase):
             HTTP_IF_MATCH=created.headers["ETag"],
         )
         self.assertEqual(invalid_box_quantity.status_code, 400, invalid_box_quantity.data)
-        self.assertIn("正整数", str(invalid_box_quantity.data))
+        self.assertIn("最多 4 位小数的正数", str(invalid_box_quantity.data))
 
-        packaging_section["lines"][0]["units_per_box"] = "10"
+        packaging_section["lines"][0]["units_per_box"] = "1.2"
         packaging_section["lines"][0].pop("unit_consumption")
         saved = self.client.patch(
             f"/api/v1/boms/{created.data['data']['id']}/",
@@ -2371,8 +2371,9 @@ class BomApiTests(APITestCase):
         self.assertEqual(saved.status_code, 200, saved.data)
         saved_line = BomLine.objects.get(section__bom_id=created.data["data"]["id"], section__title="包材类")
         self.assertEqual(saved_line.unit_consumption, "")
-        self.assertEqual(saved_line.total_consumption, "3")
-        self.assertEqual(saved_line.total_purchase_quantity, "3")
+        self.assertEqual(saved_line.raw_values["units_per_box"], "1.2")
+        self.assertEqual(saved_line.total_consumption, "21")
+        self.assertEqual(saved_line.total_purchase_quantity, "21")
 
     def test_archive_removes_bom_from_list_and_writes_audit(self):
         created = self.client.post(
@@ -2394,3 +2395,21 @@ class BomApiTests(APITestCase):
         self.assertTrue(Bom.objects.get(pk=bom_id).archived_at)
         self.assertFalse(any(item["id"] == bom_id for item in self.client.get("/api/v1/boms/").data["data"]))
         self.assertTrue(AuditLog.objects.filter(object_type="BOM", object_id=bom_id, action="ARCHIVE").exists())
+
+        options = self.client.get("/api/v1/boms/options/", {"task_q": self.task.task_number})
+        self.assertEqual(options.status_code, 200, options.data)
+        candidate_ids = {str(item["id"]) for item in options.data["data"]["production_task_products"]}
+        self.assertIn(str(self.product_line.pk), candidate_ids)
+
+        recreated = self.client.post(
+            "/api/v1/boms/",
+            {"production_task_product_id": str(self.product_line.pk), "creation_method": "BLANK"},
+            format="json",
+        )
+        self.assertEqual(recreated.status_code, 201, recreated.data)
+        self.assertEqual(recreated.data["data"]["version_number"], 2)
+
+        options = self.client.get("/api/v1/boms/options/", {"task_q": self.task.task_number})
+        self.assertEqual(options.status_code, 200, options.data)
+        candidate_ids = {str(item["id"]) for item in options.data["data"]["production_task_products"]}
+        self.assertNotIn(str(self.product_line.pk), candidate_ids)

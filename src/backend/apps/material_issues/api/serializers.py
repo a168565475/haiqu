@@ -60,6 +60,7 @@ class MaterialIssueBatchWriteSerializer(serializers.Serializer):
 
 class MaterialIssueLineWriteSerializer(serializers.Serializer):
     requirement_id = serializers.UUIDField()
+    source_kind = serializers.ChoiceField(choices=['STOCK', 'CUTTING_DIRECT'], required=False)
     batch_allocations = MaterialIssueBatchWriteSerializer(many=True, required=False, max_length=1000)
     requested_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
 
@@ -121,6 +122,8 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                     if all(field in issued_snapshot for field in QUANTITY_SNAPSHOT_FIELDS):
                         quantities = {field: issued_snapshot[field] for field in QUANTITY_SNAPSHOT_FIELDS}
                         quantities["pending_issue_quantity"] = issued_snapshot.get("pending_issue_quantity", "0")
+                        if 'direct_available_quantity' in issued_snapshot:
+                            quantities['direct_available_quantity'] = issued_snapshot['direct_available_quantity']
                     else:
                         if public_quantity_context is None:
                             public_quantity_context = public_issue_quantity_context(issue, exclude_issue_id=issue.pk,

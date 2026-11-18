@@ -19,6 +19,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { TubeCancelInput, TubeDetailLine, TubeDispatchInput, TubeOrderDetail, TubePendingAction } from '@/types/tubeOutsourcing'
 import type { TubeReceipt, TubeReceiptPreview } from '@/types/tubeReceipts'
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
+import { materialSpecificationValue } from '@/utils/componentSourceColumns'
 import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeSourceLabels } from '@/utils/tubeOutsourcing'
 import '@/styles/tubeOutsourcingDetail.scss'
 
@@ -396,7 +397,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
     <section v-if="showDetails && !detail?.is_plan && state === 'COMPLETED' && !pending && materialRows.length" class="panel d4-material-panel d4-ended-materials" :aria-label="`附带${materialName}`">
       <div class="section-heading"><h2>附带{{ materialName }} · {{ materialRows.length }} 项</h2><span class="muted">按所选加工厂随本单一起发出，不单独回货</span></div>
       <TubeOutsourcingDetailTable :columns="materialColumns" :rows="materialRows" class="d4-material-lines">
-        <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
+        <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-specification="{ row }">{{ materialSpecificationValue(row) }}</template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
         <template #cell-unit="{ row }">{{ row.unit || '单位未识别' }}</template>
       </TubeOutsourcingDetailTable>
     </section>
@@ -429,7 +430,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
         <section v-if="materialRows.length" class="d4-material-panel" :aria-label="`附带${materialName}`">
           <div class="section-heading"><h2>附带{{ materialName }} · {{ materialRows.length }} 项</h2><span class="muted">按所选加工厂随本单一起发出，不单独回货</span></div>
           <TubeOutsourcingDetailTable :columns="materialColumns" :rows="materialRows" class="d4-material-lines">
-            <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
+            <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-specification="{ row }">{{ materialSpecificationValue(row) }}</template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
             <template #cell-unit="{ row }">{{ row.unit || '单位未识别' }}</template>
           </TubeOutsourcingDetailTable>
         </section>
@@ -476,7 +477,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
       <template v-if="materialRows.length">
         <div class="d4-dialog-section"><h2>附带{{ materialName }} · {{ materialRows.length }} 项</h2><span class="muted">按所选加工厂随本单一起发出，不单独回货</span></div>
         <TubeOutsourcingDetailTable :columns="materialColumns" :rows="materialRows" class="d4-dispatch-material-lines">
-          <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
+          <template #cell-name="{ row }"><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></template><template #cell-specification="{ row }">{{ materialSpecificationValue(row) }}</template><template #cell-quantity="{ row }">{{ materialQuantity(row.quantity) }}</template>
           <template #cell-unit="{ row }">{{ row.unit || '单位未识别' }}</template>
         </TubeOutsourcingDetailTable>
       </template>

@@ -1,8 +1,8 @@
 import type { OutsourcingOptions, OutsourcingOrder, OutsourcingOrderStatus } from './outsourcing'
 import type { TubePlanSummary } from './tubeOutsourcing'
 
-export type UnifiedOutsourcingSourceKind = 'RAW' | 'METAL' | 'REWORK' | 'UNSELECTED' | 'RAW_PIPE' | 'PUBLIC_SEMI' | 'TUBE_METAL' | 'PUBLIC_CUTTING' | 'SEWING'
-export type UnifiedOutsourcingSourceGroup = 'RAW' | 'TUBE_PUBLIC' | 'TUBE_METAL' | 'OLD_METAL' | 'REWORK' | 'UNSELECTED' | 'CUTTING_PUBLIC' | 'SEWING'
+export type UnifiedOutsourcingSourceKind = 'RAW' | 'METAL' | 'REWORK' | 'UNSELECTED' | 'RAW_PIPE' | 'PUBLIC_SEMI' | 'TUBE_METAL' | 'PUBLIC_CUTTING' | 'SEWING' | 'CUTTING' | 'PUBLIC_PIECE' | 'PUBLIC_PART'
+export type UnifiedOutsourcingSourceGroup = 'RAW' | 'TUBE_PUBLIC' | 'TUBE_METAL' | 'OLD_METAL' | 'REWORK' | 'UNSELECTED' | 'CUTTING_PUBLIC' | 'SEWING' | 'CUTTING' | 'PUBLIC_PIECE' | 'PUBLIC_PART'
 export type UnifiedOutsourcingStatus = OutsourcingOrderStatus | 'PENDING_HANDOFF'
 
 export interface OutsourcingQuantitySummary {
@@ -12,6 +12,8 @@ export interface OutsourcingQuantitySummary {
 
 export interface UnifiedOutsourcingOrder extends Omit<OutsourcingOrder, 'status' | 'delivery_date' | 'planned_amount'> {
   is_plan?: boolean
+  part_flow?: boolean
+  fees_deferred?: boolean
   plan_summary?: TubePlanSummary
   warehouse_actions?: ('dispatch' | 'return' | 'raw')[]
   record_type: 'ORIGINAL' | 'REWORK' | 'TUBE'

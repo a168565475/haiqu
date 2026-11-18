@@ -29,8 +29,10 @@ export interface PurchaseGroupSourceSnapshot {
   source_unit_text: string
   quantity_parse_status: 'READY' | 'MISSING' | 'INVALID'
   raw_bar_length_m?: string | null
+  raw_bar_weight_kg?: string | null
   suggested_bar_count?: number | null
   suggested_purchase_meters?: string | null
+  suggested_purchase_weight_kg?: string | null
   calculation_snapshot: Record<string, unknown>
 }
 
@@ -104,6 +106,7 @@ export interface PurchaseGroup {
   manual_completed_by_name?: string
   manual_completion_remark?: string
   completion?: { can_complete: boolean; blocked_reason: string }
+  deletion?: { can_delete: boolean; blocked_reason: string }
   batches: PurchaseBatchSummary[]
   created_at: string
   updated_at: string
@@ -139,6 +142,7 @@ export interface PurchaseBatchLineInput {
   purchase_group_line_id: string
   actual_purchase_quantity?: string | null
   actual_bar_count?: number | string | null
+  actual_purchase_weight_kg?: string | null
   supplier_id?: string | null
   delivery_date?: string | null
   unit_price?: string | null

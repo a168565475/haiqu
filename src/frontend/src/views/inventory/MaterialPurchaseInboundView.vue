@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { pipeRootError } from '@/utils/pipeQuantities'
+import { hardwareReferenceCount } from '@/views/procurement/purchaseWeight'
+import { pipeMeters, pipeRootError, pipeRootsFromMeters, pipeRootsFromWeight } from '@/utils/pipeQuantities'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { isCancel } from 'axios'
@@ -17,6 +18,7 @@ interface ReceivingRow {
   line: EligibleMaterialLine
   included: boolean
   receivedQuantity: string
+  quantityInputUnit: string
   warehouseId: string
   zoneId: string
   remark: string
@@ -81,9 +83,29 @@ function hasZone(row: Pick<ReceivingRow, 'warehouseId' | 'zoneId'>) {
 function isPipe(line: EligibleMaterialLine): line is EligibleMaterialLine & { raw_bar_length_m: string } {
   return !!line.raw_bar_length_m
 }
+function isWeightPipe(line: EligibleMaterialLine): boolean {
+  return isPipe(line) && (line.weight_unit === true || String(line.unit || '').toUpperCase() === 'KG')
+}
+function receivedRoots(row: ReceivingRow): string {
+  return isWeightPipe(row.line) ? pipeRootsFromWeight(row.receivedQuantity, row.line.raw_bar_weight_kg)
+    : pipeRootsFromMeters(row.receivedQuantity, row.line.raw_bar_length_m)
+}
+function isHardware(line: EligibleMaterialLine): boolean {
+  return line.measurement_kind === 'HARDWARE_WEIGHT'
+}
+function hardwarePieces(line: EligibleMaterialLine): boolean {
+  return isHardware(line) && !['KG', '千克', '公斤'].includes(String(line.quantity_unit || line.piece_unit || '').toUpperCase())
+}
+function referencePieces(row: ReceivingRow): bigint | null { return hardwareReferenceCount(row.receivedQuantity, row.line.unit_weight_kg) }
 function validQuantity(row: ReceivingRow) {
+  if (isHardware(row.line)) return (!hardwarePieces(row.line) || referencePieces(row) !== null)
+    && /^\d{1,14}(\.\d{1,4})?$/.test(row.receivedQuantity) && Number(row.receivedQuantity) > 0
+    && Number(row.receivedQuantity) <= Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)
   if (row.line.material_catalog_id && ['根', '支', '套'].includes(row.line.unit) && pipeRootError(row.receivedQuantity)) return false
-  if (isPipe(row.line)) return !pipeRootError(row.receivedQuantity) && Number(row.receivedQuantity) <= (row.line.remaining_bar_count ?? 0)
+  if (isWeightPipe(row.line)) return /^\d{1,14}(\.\d{1,4})?$/.test(row.receivedQuantity)
+    && !pipeRootError(receivedRoots(row))
+    && Number(row.receivedQuantity) > 0 && Number(row.receivedQuantity) <= Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)
+  if (isPipe(row.line)) return !pipeRootError(receivedRoots(row)) && Number(row.receivedQuantity) <= Number(row.line.remaining_quantity)
   return /^\d{1,14}(\.\d{1,4})?$/.test(row.receivedQuantity)
     && Number(row.receivedQuantity) > 0 && Number(row.receivedQuantity) <= Number(row.line.remaining_quantity)
 }
@@ -111,18 +133,21 @@ function formatQuantity(value: string | number): string {
   return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
 function purchaseQuantityText(line: EligibleMaterialLine): string {
-  if (isPipe(line)) return line.actual_bar_count == null ? '根数未记录' : `${formatQuantity(line.actual_bar_count)} 根`
+  if (isWeightPipe(line)) return `${formatQuantity(line.purchased_quantity)} kg`
   return `${formatQuantity(line.purchased_quantity)} ${line.unit}`
 }
 function receivedQuantityText(line: EligibleMaterialLine): string {
-  if (isPipe(line)) return line.actual_bar_count == null || line.remaining_bar_count == null
-    ? '根数未记录' : `${formatQuantity(line.actual_bar_count - line.remaining_bar_count)} 根`
+  if (isWeightPipe(line)) return `${formatQuantity(Number(line.purchased_quantity) - Number(line.remaining_weight_kg ?? line.remaining_quantity))} kg`
   return `${formatQuantity(Number(line.purchased_quantity) - Number(line.remaining_quantity))} ${line.unit}`
 }
 function sampleReceiptQuantityText(line: EligibleMaterialLine): string {
-  return isPipe(line)
-    ? `${line.remaining_bar_count ?? '—'} 根 × ${formatQuantity(line.raw_bar_length_m)} 米/根 = ${formatQuantity(line.remaining_quantity)} 米`
-    : `${formatQuantity(line.remaining_quantity)} ${line.unit}`
+  if (isWeightPipe(line)) return `${formatQuantity(line.remaining_weight_kg ?? line.remaining_quantity)} kg`
+  return `${formatQuantity(line.remaining_quantity)} ${line.unit}`
+}
+function quantityInputTitle(row: ReceivingRow): string {
+  if (hardwarePieces(row.line) && hardwareReferenceCount('1', row.line.unit_weight_kg) === null) return '采购单件重量未记录或无效，无法折算'
+  if (isPipe(row.line) && !isWeightPipe(row.line)) return `大于0且不超过剩余${row.line.remaining_quantity} ${row.line.unit}；按原长${row.line.raw_bar_length_m}米的整数倍填写。`
+  return `大于0且不超过剩余${row.line.remaining_weight_kg ?? row.line.remaining_quantity} ${isWeightPipe(row.line) ? 'kg' : row.line.unit}，最多4位小数。`
 }
 function initialQuantity(value: string): string {
   const number = Number(value)
@@ -215,10 +240,12 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
     const savedRows = record(draft.rows)
     rows.value = response.data.map((line) => {
       const saved = record(savedRows[line.id])
+      const savedQuantity = typeof saved.receivedQuantity === 'string' || typeof saved.receivedQuantity === 'number' ? String(saved.receivedQuantity) : ''
       const row: ReceivingRow = {
         line, included: isSample.value || (typeof saved.included === 'boolean' ? saved.included : true),
-        receivedQuantity: isSample.value || saved.receivedQuantity === undefined ? isPipe(line) ? String(line.remaining_bar_count ?? '') : initialQuantity(line.remaining_quantity)
-          : typeof saved.receivedQuantity === 'string' || typeof saved.receivedQuantity === 'number' ? String(saved.receivedQuantity) : '',
+        quantityInputUnit: line.unit,
+        receivedQuantity: isSample.value || saved.receivedQuantity === undefined ? initialQuantity(isWeightPipe(line) ? line.remaining_weight_kg ?? line.remaining_quantity : line.remaining_quantity)
+          : isPipe(line) && !isWeightPipe(line) && saved.quantityInputUnit === undefined ? pipeMeters(savedQuantity, line.raw_bar_length_m) : savedQuantity,
         warehouseId: typeof saved.warehouseId === 'string' ? saved.warehouseId : '',
         zoneId: typeof saved.zoneId === 'string' ? saved.zoneId : '',
         remark: typeof saved.remark === 'string' ? saved.remark.slice(0, 3000) : '',
@@ -242,7 +269,7 @@ function saveDraft() {
   try {
     const raw = JSON.stringify({
       purchaseOrderId: selectedPurchaseOrderId.value, inboundDate: form.inboundDate, remark: form.remark,
-      rows: Object.fromEntries(rows.value.map((row) => [row.line.id, { included: row.included, receivedQuantity: row.receivedQuantity, warehouseId: row.warehouseId, zoneId: row.zoneId, remark: row.remark }])),
+      rows: Object.fromEntries(rows.value.map((row) => [row.line.id, { included: row.included, receivedQuantity: row.receivedQuantity, quantityInputUnit: row.quantityInputUnit, warehouseId: row.warehouseId, zoneId: row.zoneId, remark: row.remark }])),
     })
     owned.write(raw); draftRaw = raw
     ElMessage.success('收货草稿已保存在当前浏览器。')
@@ -260,7 +287,8 @@ async function submitReceiving() {
     if (isSample.value) {
       const content = {
         purchase_order_id: selectedPurchaseOrderId.value, inbound_date: form.inboundDate, remark: form.remark,
-        items: rows.value.map((row) => ({ purchase_order_line_id: row.line.id, zone_id: row.zoneId, remark: row.remark })),
+        items: rows.value.map((row) => ({ purchase_order_line_id: row.line.id, zone_id: row.zoneId, remark: row.remark,
+          ...(isWeightPipe(row.line) ? { received_weight_kg: row.line.remaining_weight_kg ?? row.line.remaining_quantity, received_bar_count: receivedRoots(row) } : {}) })),
       }
       const fingerprint = JSON.stringify(content)
       if (!sampleAttempt || sampleAttempt.fingerprint !== fingerprint) {
@@ -270,8 +298,14 @@ async function submitReceiving() {
     } else await createMaterialReceiving({
       inbound_date: form.inboundDate, remark: form.remark,
       items: selectedRows.value.map((row) => ({
-        purchase_order_line_id: row.line.id, zone_id: row.zoneId, expected_remaining_quantity: row.line.remaining_quantity,
-        ...(isPipe(row.line) ? { received_bar_count: row.receivedQuantity, raw_bar_length_m: row.line.raw_bar_length_m } : { received_quantity: row.receivedQuantity }), remark: row.remark,
+        purchase_order_line_id: row.line.id, zone_id: row.zoneId,
+        ...(isHardware(row.line)
+          ? { received_weight_kg: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_weight_kg ?? row.line.remaining_quantity }
+          : isWeightPipe(row.line)
+          ? { received_weight_kg: row.receivedQuantity, received_bar_count: receivedRoots(row), expected_remaining_quantity: row.line.remaining_weight_kg ?? row.line.remaining_quantity }
+          : isPipe(row.line)
+            ? { received_bar_count: receivedRoots(row), raw_bar_length_m: row.line.raw_bar_length_m, expected_remaining_quantity: row.line.remaining_quantity }
+            : { received_quantity: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_quantity }), remark: row.remark,
       })),
     })
     owned.assertCurrent()
@@ -336,8 +370,9 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
               <ElTooltip :content="row.line.supplier_name" placement="top" :show-after="150" :disabled="!row.line.supplier_name" :teleported="true">
                 <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name || '—' }}</td>
               </ElTooltip>
-              <td class="purchase-quantity-cell" :title="isPipe(row.line) ? `${formatQuantity(row.line.purchased_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
-              <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (isPipe(row.line) ? ' 项到货根数' : ' 项到货数量')" :inputmode="isPipe(row.line) ? 'numeric' : 'decimal'" :maxlength="isPipe(row.line) ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (isPipe(row.line) ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ isPipe(row.line) ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
+              <td class="purchase-quantity-cell" :title="purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
+              <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (isWeightPipe(row.line) || isHardware(row.line) ? ' 项到货重量' : ' 项到货数量')" inputmode="decimal" maxlength="19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="quantityInputTitle(row)"><template #append>{{ isWeightPipe(row.line) ? 'kg' : row.line.unit || '单位未识别' }}</template></ElInput>
+              </td>
               <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择仓库" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in rowWarehouses(row.line)" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect><small v-if="rowWarehouseHint(row)" class="warehouse-hint">{{ rowWarehouseHint(row) }}</small></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="'第 ' + (index + 1) + ' 项库区'" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
               <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="'第 ' + (index + 1) + ' 项差异说明'" :maxlength="3000" :disabled="locked" /></td>
@@ -347,7 +382,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
         </div>
         <footer><span>{{ isSample ? '全部' : '已勾选' }} {{ selectedRows.length }} 项 · {{ isSample ? '按采购剩余数量全部入库' : '到货数量按采购剩余数量带入' }}</span><strong :class="{ complete: zoneReadyCount === selectedRows.length && selectedRows.length > 0 }">{{ selectedRows.length > 100 ? '每批最多提交 100 项' : '库区完成 ' + zoneReadyCount + '/' + selectedRows.length }}</strong></footer>
       </section>
-      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>{{ isSample ? '确认剩余采购材料已全部到齐后，直接全部入库，不再填写数量或进行品质确认。' : '提交后进入“待质检”，此时不增加可用库存；品质确认后按实收数量减退货数量入库。' }}</span></div>
+      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>{{ isSample ? '确认剩余采购材料已全部到齐后，按剩余采购量全部入库，无需品质确认。' : '提交后进入“待质检”，此时不增加可用库存；品质确认后按实收数量减退货数量入库。' }}</span></div>
       <section class="submit-bar">
         <label for="receiving-batch-remark">本批次备注（可选）</label><ElInput id="receiving-batch-remark" v-model="form.remark" placeholder="请输入备注信息…" :maxlength="3000" :disabled="locked" />
         <ElButton :disabled="locked || !rows.length" @click="saveDraft">保存草稿</ElButton>

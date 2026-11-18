@@ -24,6 +24,8 @@ from apps.product_catalog.finalization import finalize_product_entry
 from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, validate_fabric_links, validate_used_components
 from .material_flow_calculations import CUTTING_QUANTITY_FIELDS, pipe_plan, MaterialFlowValueError
 from .duplicate_lines import validate_duplicate_material_lines
+from .component_parts import COMPONENT_FIELDS, is_cut_piece, is_sewn_part, validate_component_parts
+from .component_structure import imported_component_structure, new_bom_source_metadata, require_component_structure
 
 from .image_files import delete_business_file_if_unreferenced
 from .maintenance import match_maintenance_configuration
@@ -46,6 +48,7 @@ from .workbook_import import BomWorkbookError, parse_bom_workbook, validate_work
 
 
 EDITABLE_LINE_FIELDS = [
+    *COMPONENT_FIELDS,
     "material_quantity",
     "category",
     "material",
@@ -81,6 +84,7 @@ TUBE_DETAIL_FIELDS = [
     "tube_coating_color",
     "coating_unit_area_sqm",
     "purchase_unit_weight_kg",
+    "long_material_unit_weight_kg",
     "tube_cut_piece_count",
     "source_purchase_allowance_percent",
     "purchase_allowance_mode",
@@ -280,10 +284,14 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
             values["tube_metrics_manual"] = line_data["manual_tube_metrics"]
         tube_shape = line_data.get("tube_shape", values.get("tube_shape", values.get("E", "")))
         automatic_metrics = supports_tube_metrics(tube_shape) and values.get("tube_metrics_manual") is not True
+        if not automatic_metrics and values.get("tube_formula_snapshot") and "long_material_unit_weight_kg" not in line_data:
+            # 切换手填时不能把旧公式的长料重量当作已核实的手工输入。
+            values["long_material_unit_weight_kg"] = ""
+            values["long_material_total_weight_kg"] = ""
         if line_data.get("pipe_source_sync_pending"):
             values["pipe_source_sync_pending"] = True
         for field in TUBE_DETAIL_FIELDS:
-            if automatic_metrics and field in {"coating_unit_area_sqm", "purchase_unit_weight_kg"}:
+            if automatic_metrics and field in {"coating_unit_area_sqm", "purchase_unit_weight_kg", "long_material_unit_weight_kg"}:
                 continue
             if field in line_data:
                 values[field] = (
@@ -429,6 +437,7 @@ def preview_imported_bom(uploaded_file, actor_employee, product_line):
             "has_more_preview_rows": plan["line_count"] > PREVIEW_LINE_LIMIT,
             "sections": _safe_preview_sections(plan),
             "calculation_summary": plan["calculation_summary"],
+            "component_structure": imported_component_structure(plan),
             "maintenance": maintenance,
             "identity_errors": identity_errors,
             "quantity": {
@@ -493,6 +502,7 @@ def _create_sections(bom, plan, *, defer_import_material_matching=False):
 def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
     copied_by_source = {}
     links = []
+    part_links = []
     for section_data in source_bom.sections.prefetch_related("lines__images").all():
         section = BomSection.objects.create(
             bom=bom,
@@ -506,7 +516,7 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
         )
         fields = [
             field.name for field in BomLine._meta.fields
-            if field.name not in {"id", "section", "created_at", "updated_at", "component_identity", "fabric_source_line"}
+            if field.name not in {"id", "section", "created_at", "updated_at", "component_identity", "fabric_source_line", "parent_part"}
         ]
         source_lines = list(section_data.lines.all())
         copied_lines = BomLine.objects.bulk_create(
@@ -516,6 +526,7 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
         for source_line, copied_line in zip(source_lines, copied_lines):
             copied_by_source[source_line.pk] = copied_line
             links.append((source_line.fabric_source_line_id, copied_line))
+            part_links.append((source_line.parent_part_id, copied_line))
             apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
                                   recalculate_tube_metrics=not preserve_tube_formula)
             copied_line.save()
@@ -537,6 +548,14 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
                 raise ValidationError({"source_bom_id": "来源 BOM 的裁片面料关联不完整，请先修正。"})
             line.fabric_source_line = copied_by_source[source_id]
             line.save(update_fields=["fabric_source_line"])
+    for source_id, line in part_links:
+        if source_id:
+            if source_id not in copied_by_source:
+                raise ValidationError({"source_bom_id": "来源 BOM 的部位组成不完整，请先修正。"})
+            line.parent_part = copied_by_source[source_id]
+            apply_line_quantities(line, bom.order_quantity)
+            line.save()
+    validate_component_parts(list(copied_by_source.values()))
 
 
 
@@ -645,7 +664,7 @@ def create_bom(
                 source_file=source_file,
                 source_sheet_name=plan["sheet_name"] if plan else (source_bom.source_sheet_name if source_bom else ""),
                 source_original_name=plan["original_name"] if plan else (source_bom.source_original_name if source_bom else ""),
-                source_metadata=plan["metadata"] if plan else (source_bom.source_metadata if source_bom else {}),
+                source_metadata=new_bom_source_metadata(plan["metadata"] if plan else (source_bom.source_metadata if source_bom else {})),
                 calculation_summary=plan["calculation_summary"] if plan else (source_bom.calculation_summary if source_bom else {}),
                 maintenance_match_count=maintenance["matched_count"],
                 maintenance_unmatched_count=maintenance["unmatched_count"],
@@ -1370,7 +1389,9 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
 
     saved_lines = []
     saved_lines_by_client_key = {}
+    new_lines_by_client_key = {}
     fabric_links = []
+    part_links = []
     kept_section_ids = set()
     kept_line_ids = set()
     for section_number, section_data in enumerate(sections, start=1):
@@ -1441,8 +1462,12 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
 
             if line_data.get("client_key"):
                 saved_lines_by_client_key[line_data["client_key"]] = line
+                if not line_id:
+                    new_lines_by_client_key[line_data["client_key"]] = line
             if "fabric_source_line_id" in line_data or line_data.get("fabric_source_client_key"):
                 fabric_links.append((line, line_data))
+            if "parent_part_id" in line_data or line_data.get("parent_part_client_key"):
+                part_links.append((line, line_data))
             was_piece_usage = any(getattr(line, field) is not None for field in CUTTING_QUANTITY_FIELDS)
             for field in CUTTING_QUANTITY_FIELDS:
                 if field in line_data:
@@ -1459,7 +1484,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             line.raw_material, line.category, line.unit = planned_line.raw_material, planned_line.category, planned_line.unit
             line.specification = planned_line.specification
             line.material = planned_line.material
-            apply_line_quantities(line, locked.order_quantity)
+            if not (is_cut_piece(line) or is_sewn_part(line)):
+                apply_line_quantities(line, locked.order_quantity)
             line.save()
             saved_lines.append(line)
 
@@ -1494,12 +1520,27 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
         line.fabric_source_line_id = source_id
         line.save(update_fields=["fabric_source_line"])
 
+    saved_lines_by_id = {line.pk: line for line in saved_lines}
+    for line, line_data in part_links:
+        parent_key, parent_id = line_data.get("parent_part_client_key"), line_data.get("parent_part_id")
+        if parent_key and parent_id:
+            raise ValidationError({"sections": "所属部位不能同时指定已保存行和未保存行。"})
+        parent = saved_lines_by_client_key.get(parent_key) if parent_key else saved_lines_by_id.get(parent_id)
+        if (parent_key or parent_id) and parent is None:
+            raise ValidationError({"sections": "所属部位已移除或不属于当前 BOM。"})
+        line.parent_part = parent
+        line.save(update_fields=["parent_part"])
+    validate_component_parts(saved_lines)
     validate_fabric_links(saved_lines)
+    from .nesting_services import bind_draft_jobs
+    bind_draft_jobs(bom=locked, owner_user=request.user, new_lines_by_client_key=new_lines_by_client_key)
     for line in saved_lines:
         if line.section.title.strip() != "裁剪明细":
             continue
         inherit_cutting_fabric_attributes(line)
-        line.save(update_fields=["material", "raw_values", "specification", "material_selection_snapshot"])
+        if is_cut_piece(line) or is_sewn_part(line):
+            apply_line_quantities(line, locked.order_quantity)
+        line.save()
     stale_line_ids = set(existing_lines) - kept_line_ids
     stale_image_file_ids = []
     if stale_line_ids:
@@ -1508,7 +1549,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             .values_list("business_file_id", flat=True)
             .distinct()
         )
-        BomLine.objects.filter(id__in=stale_line_ids).update(fabric_source_line=None)
+        BomLine.objects.filter(id__in=stale_line_ids).update(fabric_source_line=None, parent_part=None)
         try:
             BomLine.objects.filter(id__in=stale_line_ids).delete()
         except ProtectedError as error:
@@ -1608,6 +1649,8 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
 
     lines = list(BomLine.objects.select_for_update(of=("self",)).filter(section__bom=locked).select_related("section").order_by("pk"))
     lock_bom_line_material_identities(lines)
+    require_component_structure(locked, lines)
+    validate_component_parts(lines, require_complete=True)
     for line in lines:
         apply_line_quantities(line, locked.order_quantity, require_complete=True)
         line.save()

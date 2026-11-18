@@ -33,7 +33,8 @@ class PublicInventoryFlowTests(APITestCase):
     def manual(self, *, roots=3, length="3.05", request_id=None):
         payload = {"client_request_id": str(request_id or uuid.uuid4()), "inbound_date": timezone.localdate().isoformat(),
                    "remark": "公共库存额外入库测试", "items": [{"raw_material_id": str(self.raw_material.pk),
-                       "zone_id": self.zone_id, "received_bar_count": roots, "raw_bar_length_m": length}]}
+                       "zone_id": self.zone_id, "received_bar_count": roots, "raw_bar_length_m": length,
+                       "received_weight_kg": str(Decimal(roots) * Decimal("2.5"))}]}
         return self.client.post("/api/v1/material-inventory/manual-receipts/", payload, format="json")
 
     def finish_return(self):

@@ -2,10 +2,10 @@
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, ref } from 'vue'
 import { Check, InfoFilled } from '@element-plus/icons-vue'
-import type { PurchaseReturn } from '@/types/purchaseReturn'
+import type { PurchaseReturn, PurchaseReturnLine } from '@/types/purchaseReturn'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 
-const props = defineProps<{ visible: boolean; record: PurchaseReturn | null; submitting: boolean; action?: 'confirm' | 'complete' | 'view' }>()
+const props = defineProps<{ visible: boolean; record: PurchaseReturn | null; submitting: boolean; action?: 'confirm' | 'complete' | 'view'; showPipeRoots?: boolean }>()
 const isComplete = computed(() => props.action === 'complete')
 const isView = computed(() => props.action === 'view')
 const confirmationDone = computed(() => !!props.record && props.record.status !== 'QUALITY_GENERATED')
@@ -14,11 +14,31 @@ const hoveredRowId = ref('')
 const title = computed(() => isView.value ? '退货明细' : isComplete.value ? '完成退货' : '采购确认退货')
 const emit = defineEmits<{ cancel: []; confirm: [] }>()
 function close() { if (!props.submitting) emit('cancel') }
-function quantity(value: string): string {
-  if (!/^\d{1,14}(\.\d{1,4})?$/.test(value)) return '—'
+function quantity(value: unknown): string {
+  if (typeof value !== 'string' || !/^\d{1,14}(\.\d{1,4})?$/.test(value)) return '—'
   const [whole = '0', decimal = ''] = value.split('.')
   const fraction = decimal.replace(/0+$/, '')
   return BigInt(whole).toLocaleString('zh-CN') + (fraction ? '.' + fraction : '')
+}
+function isWeightPipe(line: PurchaseReturnLine): boolean {
+  return Boolean(line.raw_bar_length_m) && ['KG', '千克', '公斤'].includes(String(line.unit || '').trim().toUpperCase())
+}
+function returnQuantity(line: PurchaseReturnLine): string {
+  if (isWeightPipe(line)) {
+    const weight = quantity(line.quantity)
+    const label = weight === '—' ? '重量待核对' : weight
+    if (!props.showPipeRoots) return label
+    const roots = line.return_bar_count == null ? '根数未记录' : `${quantity(String(line.return_bar_count))} 根`
+    return `${roots} / ${label}`
+  }
+  return props.showPipeRoots && line.raw_bar_length_m ? (line.return_bar_count == null ? '根数未记录' : quantity(String(line.return_bar_count))) : quantity(line.quantity)
+}
+function returnUnit(line: PurchaseReturnLine): string {
+  return ['KG', '千克', '公斤'].includes(String(line.unit || '').trim().toUpperCase()) ? 'kg' : props.showPipeRoots && line.raw_bar_length_m ? '根' : line.unit || '—'
+}
+function returnTitle(line: PurchaseReturnLine): string | undefined {
+  if (isWeightPipe(line)) return `${returnQuantity(line)} kg`
+  return props.showPipeRoots && line.raw_bar_length_m ? `${quantity(line.quantity)} 米 · ${line.raw_bar_length_m} 米/根` : undefined
 }
 function time(value: string | null): string {
   const date = value ? new Date(value) : null
@@ -55,7 +75,7 @@ function time(value: string | null): string {
             <div class="return-confirm-materials-title"><h3>退货材料</h3><span>共 {{ record.lines.length }} 项</span></div>
             <div class="return-confirm-materials" tabindex="0" aria-label="只读退货材料">
               <table><colgroup><col v-for="(width,i) in [250,220,200,120,80,220]" :key="i" :style="{ width: width / 1090 * 100 + '%' }" /></colgroup><thead><tr><th v-for="label in ['材料名称','规格','品名','退货数量','单位','品质备注']" :key="label" scope="col">{{ label }}</th></tr></thead>
-                <tbody><tr v-for="line in record.lines" :key="line.id" @mouseenter="hoveredRowId = line.id" @mouseleave="hoveredRowId = ''"><td><span>{{ line.part_name || line.material || '未命名物料' }}</span></td><td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(line) }}</span></ElTooltip></td><td>{{ line.product_name || '—' }}</td><td class="return-confirm-quantity" :title="line.raw_bar_length_m ? `${quantity(line.quantity)} 米 · ${line.raw_bar_length_m} 米/根` : undefined">{{ line.raw_bar_length_m ? (line.return_bar_count == null ? '根数未记录' : quantity(String(line.return_bar_count))) : quantity(line.quantity) }}</td><td>{{ line.raw_bar_length_m ? '根' : line.unit || '—' }}</td><td>{{ line.quality_remark || '—' }}</td></tr><tr v-if="!record.lines.length"><td colspan="6">暂无退货材料明细</td></tr></tbody>
+                <tbody><tr v-for="line in record.lines" :key="line.id" @mouseenter="hoveredRowId = line.id" @mouseleave="hoveredRowId = ''"><td><span>{{ line.part_name || line.material || '未命名物料' }}</span></td><td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(line) }}</span></ElTooltip></td><td>{{ line.product_name || '—' }}</td><td class="return-confirm-quantity" :title="returnTitle(line)">{{ returnQuantity(line) }}</td><td>{{ returnUnit(line) }}</td><td>{{ line.quality_remark || '—' }}</td></tr><tr v-if="!record.lines.length"><td colspan="6">暂无退货材料明细</td></tr></tbody>
               </table>
             </div>
           </section>

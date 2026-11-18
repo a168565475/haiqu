@@ -82,7 +82,7 @@ function open(plan: MobilePlan, action?: 'issue' | 'report' | 'finished-receipt'
     if (props.section === 'receipt' && plan.plan_category === 'ASSEMBLY' && plan.can_receive_finished) void router.push({ path: '/finished-receipt', query: { schedule_product_id: plan.schedule_product_id } })
   }
   else if (action === 'semi-receipt') {
-    if (props.section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category) && plan.can_receive_semi) void router.push({ path: '/semi-receipt', query: { schedule_product_id: plan.schedule_product_id, plan_category: plan.plan_category } })
+    if (props.section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category) && plan.can_receive_semi) void router.push({ path: '/semi-receipt', query: { schedule_product_id: plan.schedule_product_id, plan_category: plan.plan_category } })
   }
   else if (action === 'issue') void router.push({ path: '/issue', query })
   else if (action === 'report' && plan.reporting_crafts.length === 1) void router.push({ path: '/report', query: { ...query, craft_id: plan.reporting_crafts[0]!.id } })

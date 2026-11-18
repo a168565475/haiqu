@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -162,7 +163,7 @@ defineExpose({ saveReview, clearSelectedImage })
       </template>
     </template>
     <div v-else class="import-actions"><span>正在读取导入记录…</span><el-button :disabled="working" @click="load">重新读取</el-button></div>
-    <el-dialog v-model="sourceOpen" title="原文件来源" width="min(900px, 92vw)"><pre class="source-text">{{ sourceText }}</pre></el-dialog>
+    <AppWindowDialog v-model="sourceOpen" title="原文件来源" width="min(900px, 92vw)"><pre class="source-text">{{ sourceText }}</pre></AppWindowDialog>
   </section>
 </template>
 

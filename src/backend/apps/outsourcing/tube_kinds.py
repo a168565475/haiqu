@@ -1,7 +1,8 @@
 """同一外发单据中的管材与裁片分支。"""
 
-CUTTING_SOURCES = {'PUBLIC_CUTTING', 'SEWING'}
-DIRECT_SOURCES = {'METAL', 'SEWING'}
+CUTTING_SOURCES = {'PUBLIC_CUTTING', 'SEWING', 'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'}
+DIRECT_SOURCES = {'METAL', 'SEWING', 'CUTTING'}
+PART_SOURCES = {'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'}
 CUTTING_CRAFT_CODES = {'EMBROIDERY', 'SCREEN_PRINTING', 'CUTTING', 'SEWING'}
 CUTTING_FIELDS = ('pieces_per_set', 'fabric_material', 'fabric_specification', 'fabric_color',
                   'completed_craft_name', 'unit')

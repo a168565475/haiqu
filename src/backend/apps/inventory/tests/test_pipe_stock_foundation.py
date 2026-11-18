@@ -61,6 +61,23 @@ class PipeFixture:
 
 
 class PipeStockFoundationTests(PipeFixture, TestCase):
+    def test_actual_weight_manual_receipt_and_split_production_issues_conserve_weight(self):
+        from apps.inventory.services import create_manual_material_inbound
+
+        inbound = create_manual_material_inbound(client_request_id=uuid.uuid4(), inbound_date=timezone.localdate(),
+            remark="实际重量分批领用", items=[{"raw_material_id": self.raw_material.pk, "zone_id": self.zone.pk,
+                "received_bar_count": 3, "raw_bar_length_m": Decimal("3.05"), "received_weight_kg": Decimal("4.1")}],
+            actor_employee=self.employee, request=None)
+        batch = inbound.lines.get()
+        balance = MaterialStockBalance.objects.get(inbound_line=batch)
+        self.assertEqual((batch.received_bar_count, batch.received_weight_kg), (3, Decimal("4.1")))
+        self.assertEqual((balance.quantity, balance.weight_quantity), (3, Decimal("4.1")))
+        movements = [issue_pipe_material(**self.args(6, batch=batch))[0] for _ in range(3)]
+        balance.refresh_from_db()
+        self.assertEqual((balance.quantity, balance.meter_quantity, balance.weight_quantity), (0, 0, 0))
+        self.assertEqual(sum(row.weight_quantity for row in movements), Decimal("4.1"))
+        self.assertTrue(all(row.quantity == 1 and row.meter_quantity == Decimal("3.05") for row in movements))
+
     def test_inbound_and_retry_have_one_root_meter_entry(self):
         credit_pipe_inbound(inbound_line_id=self.batch.pk, actor_employee=self.employee)
         self.assertEqual((self.balance().quantity, self.balance().meter_quantity), (Decimal(337), Decimal("1027.85")))

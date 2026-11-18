@@ -89,7 +89,7 @@ class SourcePipePurchaseCalculationTests(SimpleTestCase):
     def test_invalid_explicit_source_values_are_rejected(self):
         for field, values in {
             "source_purchase_allowance_percent": ("-1", "101", "NaN", "1.00001", True),
-            "source_raw_bar_length_m": ("0", "-1", "NaN", "3.101", True),
+            "source_raw_bar_length_m": ("0", "-1", "NaN", "3.1011", True),
         }.items():
             for value in values:
                 with self.subTest(field=field, value=value), self.assertRaises(MaterialFlowValueError):
@@ -128,6 +128,21 @@ class SourcePipePurchaseApiTests(TestCase):
         ]}])
         self.assertEqual(response.status_code, 200, response.data)
         return BomLine.objects.get(section__bom=self.bom)
+
+    def test_three_decimal_source_length_is_saved_and_returned_without_rounding(self):
+        response = self.save([{"section_type": "PROFILE", "title": "管材类", "lines": [
+            self.pipe_payload(source_raw_bar_length_m="6.305")
+        ]}])
+        self.assertEqual(response.status_code, 200, response.data)
+        line = BomLine.objects.get(section__bom=self.bom)
+        self.assertEqual(line.raw_bar_length_m, Decimal("6.305"))
+        # 新管材保存沿用既有 AUTO 余量：基础 334 根加 5 根，不改变数量规则。
+        self.assertEqual(line.suggested_bar_count, 339)
+        self.assertEqual(line.raw_values["purchase_allowance_rule"], "PLUS_5")
+        self.assertEqual(line.suggested_purchase_meters, Decimal("2137.395"))
+        row = next(section for section in self.get().data["data"]["sections"] if section["title"] == "管材类")["lines"][0]
+        self.assertEqual(Decimal(row["raw_bar_length_m"]), Decimal("6.305"))
+        self.assertEqual(row["source_raw_bar_length_m"], "6.305")
 
     def test_api_persists_returns_and_keeps_source_values_when_old_ui_omits_them(self):
         line = self.create_source_pipe()

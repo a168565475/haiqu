@@ -22,7 +22,7 @@ class CostSummaryTests(SimpleTestCase):
         task = SimpleNamespace(pk='task-1', currency=SimpleNamespace(code='CNY'),
                                freight_amount=Decimal('0'), other_fee_amount=Decimal('0'))
         data = dict(products=products or [], purchases=[], sheets=[], allocations=[],
-                    reports=[], outsourcing=[], tube=[], expenses=[])
+                    reports=[], outsourcing=[], tube=[], deferred_sewing=[], receipt_only_deferred=[], expenses=[])
         data.update(sources)
         with patch('apps.production_tasks.cost_selectors._cost_sources', return_value=data):
             return task_cost_summary(task=task)
@@ -50,6 +50,21 @@ class CostSummaryTests(SimpleTestCase):
         self.assertIsNone(summary['current_difference'])
         self.assertIsNone(summary['cost_ratio'])
         self.assertEqual(summary['categories'][0]['items'][0]['amount'], '20.00')
+
+    def test_deferred_sewing_keeps_known_cost_and_marks_total_incomplete(self):
+        order = SimpleNamespace(pk='deferred', order_number='WF-DEFERRED', plan_id='plan', created_at=None)
+        old = SimpleNamespace(pk='old-line', order=SimpleNamespace(pk='old', order_number='WF-OLD', created_at=None),
+            quantity=2, unit_price=Decimal('1.25'))
+        summary = self.summary(products=[self.product()], tube=[old], deferred_sewing=[order])
+        self.assertEqual(summary['recorded_cost'], '2.50')
+        self.assertEqual(summary['categories'][2]['missing_count'], 1)
+        deferred = summary['categories'][2]['items'][1]
+        self.assertEqual(deferred['label'], '车缝加工费暂缓')
+        self.assertIsNone(deferred['amount'])
+        self.assertIsNone(deferred['amount_cny'])
+        self.assertFalse(summary['complete'])
+        self.assertIsNone(summary['current_difference'])
+        self.assertIsNone(summary['cost_ratio'])
 
     def test_order_foreign_currency_requires_saved_snapshot(self):
         summary = self.summary(products=[self.product('20', 'USD', '7')])
@@ -170,6 +185,55 @@ class CostSummarySourceDatabaseTests(APITestCase):
     setUp = reporting_fixtures.WorkshopReportingApiTests.setUp
     scheme_payload = reporting_fixtures.WorkshopReportingApiTests.scheme_payload
     create_approved_scheme = reporting_fixtures.WorkshopReportingApiTests.create_approved_scheme
+
+    def test_deferred_sewing_counts_one_gap_per_actual_batch_and_preserves_legacy_cost(self):
+        from apps.boms.models import BomLine, BomSection
+        from apps.outsourcing.models import OutsourcingFactory
+        from apps.outsourcing.tube_models import TubeOutsourcingOrder, TubeOutsourcingLine, TubeOutsourcingInput, TubeOutsourcingAction
+
+        factory = OutsourcingFactory.objects.create(factory_number='COST-SEWING', name='车缝费用暂缓厂',
+            created_by_employee=self.employee, updated_by_employee=self.employee)
+        flags = {'part_flow': True, 'sewing_inputs': True, 'fees_deferred': True}
+        def make(number, *, plan=None, is_plan=False, flags=None):
+            return TubeOutsourcingOrder.objects.create(order_number=number, is_plan=is_plan, plan=plan,
+                schedule_product=self.schedule_product, product_line=self.product_line, bom=self.bom,
+                craft=self.craft, source_kind='CUTTING' if flags else 'METAL',
+                planned_dispatch_date=timezone.localdate(), expected_return_date=timezone.localdate(),
+                client_request_id=uuid4(), request_payload_hash='a' * 64, source_revision_hash='b' * 64,
+                source_snapshot=flags or {}, created_by_employee=self.employee, updated_by_employee=self.employee)
+
+        legacy = make('WF-COST-LEGACY')
+        TubeOutsourcingLine.objects.create(order=legacy, bom_line=self.metal_bom_line,
+            component_identity=self.metal_bom_line.component_identity, factory=factory, quantity=2,
+            unit_price=Decimal('1.25'))
+        section = BomSection.objects.create(bom=self.bom, line_number=2, section_type='FABRIC', title='裁剪明细')
+        part = BomLine.objects.create(section=section, line_number=1, component_kind='SEWN_PART',
+            part_name='床面', unit='个', parts_per_product=1)
+        plan = make('WF-COST-PART-PLAN', is_plan=True, flags=flags)
+        target = TubeOutsourcingLine.objects.create(order=plan, bom_line=part,
+            component_identity=part.component_identity, factory=factory, quantity=100, unit_price=None)
+        batch = make('WF-COST-PART-BATCH', plan=plan, flags=flags)
+        for index in (2, 3):
+            piece = BomLine.objects.create(section=section, line_number=index, component_kind='CUT_PIECE',
+                part_name=f'裁片{index}', unit='片', parent_part=part, pieces_per_part=1)
+            TubeOutsourcingInput.objects.create(order=batch, parent_line=target, bom_line=piece,
+                component_identity=piece.component_identity, factory=factory, quantity=20, source_kind='CUTTING')
+        before = task_cost_summary(task=self.task)['categories'][2]
+        self.assertEqual((before['amount'], before['count'], before['missing_count']), ('2.50', 1, 0))
+        batch.status = 'PROCESSING'
+        batch.save(update_fields=['status'])
+        self.assertEqual(task_cost_summary(task=self.task)['categories'][2]['count'], 1)
+        TubeOutsourcingAction.objects.create(order=batch, kind='DISPATCH', client_request_id=uuid4(),
+            request_payload_hash='c' * 64, actual_dispatch_date=timezone.localdate(), actor_employee=self.employee)
+        summary = task_cost_summary(task=self.task)
+        actual = summary['categories'][2]
+        self.assertEqual((actual['amount'], actual['count'], actual['missing_count']), ('2.50', 2, 1))
+        self.assertEqual([row['number'] for row in actual['items'] if row['amount'] is None], [batch.order_number])
+        self.assertFalse(summary['complete'])
+        batch.status = 'CANCELLED'
+        batch.save(update_fields=['status'])
+        cancelled = task_cost_summary(task=self.task)['categories'][2]
+        self.assertEqual((cancelled['amount'], cancelled['count'], cancelled['missing_count']), ('2.50', 1, 0))
 
     def test_plan_and_pending_batch_do_not_duplicate_actual_dispatch_cost(self):
         from apps.outsourcing.models import OutsourcingFactory

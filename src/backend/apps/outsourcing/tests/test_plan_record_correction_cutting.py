@@ -81,14 +81,18 @@ class PlanCuttingCorrectionTests(CorrectionApiMixin, SewingProcessingFixture, Te
             'quantity': '20.25' if catalog else '20', 'zone_id': str(self.zone.pk)}
         return entered, stock
 
-    def test_sewing_direct_changes_usage_without_stock_and_receipt_prevents_excess_reduction(self):
+    def test_sewing_direct_reduction_and_void_keep_received_stock(self):
         order = self.dispatch(self.plan(), 100)
         changed = self.correct(order, self.correction_payload(order, quantity=150))
         self.assertEqual(sewing_output_usage(self.product_line.pk)[self.component]['dispatched'], 150)
         self.assertFalse(PublicStockMovement.objects.filter(source_type__startswith='TUBE_PLAN').exists())
         changed = self.receive(changed, 120)
-        self.correct(changed, self.correction_payload(changed, quantity=119), expected=400)
-        self.correct(changed, self.correction_payload(changed, operation='DELETE'), expected=400)
+        changed = self.correct(changed, self.correction_payload(changed, quantity=119))
+        self.assertEqual(changed['plan_summary']['received_quantity'], '120')
+        self.assertEqual(sewing_output_usage(self.product_line.pk)[self.component]['dispatched'], 119)
+        changed = self.correct(changed, self.correction_payload(changed, operation='DELETE'))
+        self.assertEqual(changed['plan_summary']['received_quantity'], '120')
+        self.assertEqual(sewing_output_usage(self.product_line.pk)[self.component]['dispatched'], 0)
 
     def test_public_cutting_increase_decrease_delete_returns_saved_pool(self):
         stock = self.opening_cutting(100)
@@ -171,7 +175,8 @@ class PlanCuttingCorrectionTests(CorrectionApiMixin, SewingProcessingFixture, Te
         response = self.client.post(BASE, {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
             'source_revision': context['source_revision'], 'schedule_product_id': str(self.schedule_product.pk),
             'craft_id': str(self.print_craft.pk), 'source_kind': 'PUBLIC_CUTTING', 'zone_id': str(self.semi_zone.pk),
-            'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()), 'lines': lines}, format='json')
+            'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
+            'lines': [{**line, 'quantity': '100'} for line in lines]}, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         order = response.data['data']
         response = self.client.post(BASE + order['id'] + '/plan-dispatch/', {'client_request_id': str(uuid.uuid4()),

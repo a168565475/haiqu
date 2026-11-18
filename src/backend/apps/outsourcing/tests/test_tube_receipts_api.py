@@ -301,12 +301,30 @@ class TubeReceiptsApiTests(TubeReceiptFixture, APITestCase):
             self.receive_final(order, payload, expected=400)
         self.assertEqual(TubeOutsourcingReceipt.objects.count(), 0)
 
-    def test_negative_fraction_boolean_overlarge_and_overdispatch_rejected(self):
+    def test_negative_fraction_boolean_and_overlarge_rejected(self):
         order = self.dispatched()
         before = self.receipt_snapshot()
-        for quantity in ['-1', '1.2', True, '100000000000000', '21']:
+        for quantity in ['-1', '1.2', True, '100000000000000']:
             self.receive_final(order, self.receipt_payload(order, quantity), expected=400)
         self.assertEqual(before, self.receipt_snapshot())
+
+    def test_final_receipt_can_exceed_dispatch_without_shortage_or_duplicate_stock(self):
+        order = self.dispatched(quantity='20')
+        payload = self.receipt_payload(order, '10001', reason='')
+        received = self.receive_final(order, payload).data['data']
+        replay = self.receive_final(order, payload, expected=200).data['data']
+        self.assertEqual(received['id'], replay['id'])
+        self.assertEqual(received['total_dispatched_quantity'], '20')
+        self.assertEqual(received['total_received_quantity'], '10001')
+        self.assertEqual(received['total_shortage_quantity'], '0')
+        self.assertEqual(received['lines'][0]['shortage_reason'], '')
+        movement = PublicStockMovement.objects.get(source_type='TUBE_OUTSOURCING_RETURN')
+        self.assertEqual(movement.quantity, 10001)
+        listing = self.client.get('/api/v1/unified-outsourcing-orders/', HTTP_HOST='localhost')
+        self.assertEqual(listing.status_code, 200, listing.data)
+        row = next(value for value in listing.data['data'] if value['id'] == order['id'])
+        self.assertEqual(row['receipt_state'], 'RECORDED')
+        self.assertEqual(row['returned_quantities'], [{'quantity': '10001', 'unit': '支'}])
 
     def test_each_shortage_requires_reason_and_full_return_does_not(self):
         order = self.multi_part_order()

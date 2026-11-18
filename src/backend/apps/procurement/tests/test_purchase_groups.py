@@ -37,7 +37,9 @@ class PurchaseGroupApiTests(APITestCase):
         self.product_line = self.make_product_line(self.task)
         self.bom, self.bom_line = self.make_bom(self.product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="100")
         # 测试替身仅用于隔离数据库；实际接口、Session和数量规则仍走真实服务。
-        source = self.get_source(self.task).data["data"]
+        source_response = self.get_source(self.task)
+        self.assertEqual(source_response.status_code, 200, source_response.data)
+        source = source_response.data["data"]
         self.group_payload = {"production_task_id": str(self.task.pk), "bom_id": str(self.bom.pk), "source_revision": source["source_revision"]}
         response = self.client.post("/api/v1/purchase-groups/", self.group_payload, format="json")
         self.assertEqual(response.status_code, 201, response.data)

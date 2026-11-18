@@ -185,7 +185,7 @@ def build_pipe_stock_identity(*, raw_material, raw_bar_length_m, unit):
     return _make_identity({
         "schema_version": 1, "stock_kind": "RAW_PIPE", "unit_id": unit_id, "unit_name": "根",
         "raw_material_id": _uuid(getattr(raw_material, "pk", None), "raw_material_id"),
-        "raw_bar_length_m": _number_text(raw_bar_length_m, "raw_bar_length_m", places=2),
+        "raw_bar_length_m": _number_text(raw_bar_length_m, "raw_bar_length_m", places=3),
     })
 
 
@@ -256,6 +256,9 @@ def _cutting_properties(line, values):
 
 def build_semi_finished_identity(*, bom_line, completed_craft, unit, material_cache=None):
     """按实物字段冻结半成品身份；不生成档案，不保留来源 BOM/订单标识。"""
+    if getattr(bom_line, 'component_kind', '') in {'CUT_PIECE', 'SEWN_PART'}:
+        from .part_flow_identity import build_part_flow_identity
+        return build_part_flow_identity(bom_line=bom_line, completed_craft=completed_craft, unit=unit)
     line = bom_line
     section = getattr(line, "section", None)
     section_type = getattr(section, "section_type", None)
@@ -316,6 +319,9 @@ def validate_public_identity(identity):
         from .catalog_stock_identity import validate_catalog_stock_identity
         return validate_catalog_stock_identity(identity)
     snapshot = identity["identity_snapshot"]
+    if isinstance(snapshot, dict) and type(snapshot.get('schema_version')) is int and snapshot['schema_version'] == 3:
+        from .part_flow_identity import validate_part_flow_identity
+        return validate_part_flow_identity(identity)
     if not isinstance(snapshot, dict) or type(snapshot.get("schema_version")) is not int or snapshot["schema_version"] != 1:
         _invalid("identity_snapshot", "不支持或缺失的库存属性快照版本。")
     kind = snapshot.get("stock_kind")
@@ -330,7 +336,7 @@ def validate_public_identity(identity):
         expected_fields = _COMMON_FIELDS | {"raw_material_id", "raw_bar_length_m"}
         if _uuid(snapshot.get("raw_material_id"), "raw_material_id") != snapshot.get("raw_material_id"):
             _invalid("raw_material_id", "快照原料编号未经规范化。")
-        length = _number_text(snapshot.get("raw_bar_length_m"), "raw_bar_length_m", places=2)
+        length = _number_text(snapshot.get("raw_bar_length_m"), "raw_bar_length_m", places=3)
         if length != snapshot.get("raw_bar_length_m") or unit_name != "根":
             _invalid("identity_snapshot", "管材快照长度或单位不符合规范。")
     elif kind == "SEMI":
@@ -417,7 +423,7 @@ def validate_public_identity(identity):
             or identity["unit_id"] != expected["unit_id"] or identity["raw_material_id"] != expected["raw_material_id"]):
         _invalid("identity", "公共库存身份索引、单位或原料字段与冻结内容不一致。")
     if kind == "RAW_PIPE":
-        if _positive_decimal(identity["raw_bar_length_m"], "raw_bar_length_m", places=2) != expected["raw_bar_length_m"]:
+        if _positive_decimal(identity["raw_bar_length_m"], "raw_bar_length_m", places=3) != expected["raw_bar_length_m"]:
             _invalid("raw_bar_length_m", "外围原料长度与冻结内容不一致。")
     elif identity["raw_bar_length_m"] is not None:
         _invalid("raw_bar_length_m", "半成品身份不能带入原料长管长度。")

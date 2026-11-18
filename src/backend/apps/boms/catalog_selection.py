@@ -13,6 +13,7 @@ from apps.material_catalog.services import _finish_change, _restore, resolve_uni
 from apps.material_catalog.snapshots import build_material_snapshot
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
+from .component_parts import is_cut_piece, is_sewn_part
 
 
 SECTION_CATEGORIES = {
@@ -86,6 +87,11 @@ def _craft_input(selection, category):
 
 def apply_catalog_selection(line, data, *, old, request, persist, versions, allow_public_creation=True, require_tube_length=True, require_fabric_meter=False, inherit_fabric_source=False, selection_permission="material_catalog.view_materialcatalog"):
     validate_catalog_input(data, old)
+    if is_cut_piece(line) or is_sewn_part(line):
+        from .component_catalog import apply_component_catalog_selection
+        if apply_component_catalog_selection(line, data, old=old, request=request, persist=persist,
+                versions=versions, selection_permission=selection_permission):
+            return
     inherited = {}
     if inherit_fabric_source and line.section.title.strip() == "裁剪明细":
         from .material_flow_bom import cutting_fabric_attributes, inherit_cutting_fabric_attributes, validate_cutting_specification
@@ -94,6 +100,12 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
             raise ValidationError({"fabric_source_line_id": "请先选择当前 BOM 中的来源面料。"})
         validate_cutting_specification(source.specification, line.line_number)
         inherited = cutting_fabric_attributes(source)
+        if is_cut_piece(line):
+            inherited.pop("specification", None)
+            if source.specification:
+                inherited["fabric_spec"] = source.specification
+            if line.specification:
+                inherited["size"] = line.specification
         selected = deepcopy(data.get("material_selection") or (old.material_selection_snapshot if old else {}))
         attrs = {key: value for key, value in selected.get("attributes", {}).items()
                  if key not in {"material", "width", "color", "fabric_spec", "specification", "size", "model", "process"}}
@@ -238,6 +250,8 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
                                 {"product_color_id": None, **color_identity(attrs["color"], selection)})
     if snapshot["category_key"] != SECTION_CATEGORIES.get(line.section.title.strip()):
         raise ValidationError({"material_catalog_id": "已保存材料的目录类别不能移入不匹配的BOM分区。"})
+    if is_cut_piece(line) and (snapshot["unit_name"] != "片" or (snapshot.get("completed_craft") or {}).get("code") != "CUTTING"):
+        raise ValidationError({"material_selection": "新裁片须选择按片记录的裁剪完成工艺，不能沿用车缝或套数身份。"})
     line.material_catalog_id = catalog_id
     line.material_selection_snapshot = snapshot
     if not unchanged and line.section.section_type == "PROFILE" and snapshot["unit_name"] != "根":
@@ -252,7 +266,7 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
     line.part_name, line.material, line.unit = snapshot["name"], attrs.get("material", ""), snapshot["unit_name"]
     line.category = line.section.title.strip()
     line.raw_material = ""
-    line.specification = " / ".join(attrs[key] for key in ("fabric_spec", "specification", "section_size", "size", "model", "width") if attrs.get(key))
+    line.specification = attrs.get("size", "") if is_cut_piece(line) else " / ".join(attrs[key] for key in ("fabric_spec", "specification", "section_size", "size", "model", "width") if attrs.get(key))
     for key in LEGACY_SOURCE_FIELDS:
         line.raw_values.pop(key, None)
     line.raw_values.pop("pipe_source_sync_pending", None)

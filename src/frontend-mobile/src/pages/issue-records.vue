@@ -96,6 +96,7 @@ onBeforeUnmount(() => { active = false; generation += 1 })
         <p v-if="detail.status === 'PENDING_REVIEW'" class="muted pending-note">申请已提交，实际发料由仓库在 ERP 中确认。</p>
         <h2 class="section-title detail-section-title">申请材料</h2>
         <article v-for="line in detail.lines" :key="line.id" class="section-card line-card">
+          <p v-if="line.source_kind === 'CUTTING_DIRECT'" class="muted">领取来源：裁剪直交</p>
           <h3>{{ line.material_name }}</h3><p class="muted">{{ [line.specification, line.color, line.completed_craft].filter(Boolean).join(' · ') || '规格未记录' }}</p>
           <div class="summary-grid line-quantities"><span>申请 <b>{{ quantityText(line.requested_quantity) }} {{ line.unit }}</b></span><span>已发料 <b>{{ quantityText(line.issued_quantity) }} {{ line.unit }}</b></span></div>
           <details class="line-details"><summary>材料与数量详情</summary>

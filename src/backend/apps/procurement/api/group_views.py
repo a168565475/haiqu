@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, inline_serializer
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -12,7 +12,7 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..group_selectors import purchase_groups_with_context
-from ..group_services import complete_purchase_group, create_purchase_batch, create_purchase_group
+from ..group_services import complete_purchase_group, create_purchase_batch, create_purchase_group, delete_purchase_group
 from ..models import PurchaseGroup
 from .group_serializers import (
     PurchaseBatchCreateSerializer, PurchaseGroupCreateSerializer, PurchaseGroupFilterOptionsSerializer,
@@ -28,6 +28,7 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         "filter_options": "procurement.view_purchaseorder",
         "create": "procurement.add_purchaseorder", "batches": "procurement.add_purchaseorder",
         "complete": "procurement.submit_purchaseorder",
+        "destroy": "procurement.delete_purchaseorder",
     }
     serializer_class = PurchaseGroupSerializer
 
@@ -69,6 +70,25 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         response = Response({"data": PurchaseGroupSerializer(group).data})
         response["ETag"] = etag_for_instance(group)
         return response
+
+    @extend_schema(
+        parameters=[OpenApiParameter("If-Match", str, OpenApiParameter.HEADER, required=True)],
+        responses={
+            204: None,
+            403: OpenApiResponse(description="无删除权限、员工无效或 CSRF 校验失败。"),
+            404: OpenApiResponse(description="总单不存在或不在当前账号的数据范围内。"),
+            409: OpenApiResponse(description="已有确认采购或后续业务记录，不能删除。"),
+            412: OpenApiResponse(description="总单版本已变化，请重新读取并确认。"),
+            428: OpenApiResponse(description="缺少 If-Match 版本标识。"),
+        },
+    )
+    def destroy(self, request, *args, **kwargs):
+        group = self.get_object()
+        delete_purchase_group(
+            group_id=group.pk, allowed_task_ids=self._task_ids(),
+            actor_employee=request.employee, request=request,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(request=PurchaseGroupCompleteSerializer, responses=inline_serializer(
         name="PurchaseGroupCompleteResponse", fields={"data": PurchaseGroupSerializer()},

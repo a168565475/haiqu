@@ -15,12 +15,15 @@ class PackagingQuantityTests(SimpleTestCase):
         self.assertEqual(packaging_quantity(units_per_box="2", order_quantity="101"), 51)
         self.assertEqual(packaging_quantity(units_per_box="1", order_quantity="101"), 101)
 
-    def test_packaging_usage_validation_keeps_positive_integer_requirement(self):
+    def test_packaging_usage_accepts_positive_decimal_to_four_places(self):
         serializer = BomLineWriteSerializer()
         self.assertEqual(serializer.validate_units_per_box("2"), "2")
+        self.assertEqual(serializer.validate_units_per_box("1.2000"), "1.2")
+        self.assertEqual(packaging_quantity(units_per_box="1.2", order_quantity="6"), 5)
+        self.assertEqual(packaging_quantity(units_per_box="1.2", order_quantity="7"), 6)
         self.assertEqual(serializer.validate_units_per_box(""), "")
-        for value in ("abc", "0", "-1", "1.5", "NaN", "Infinity"):
-            with self.subTest(value=value), self.assertRaisesMessage(ValidationError, "用量（多少成品用一份）必须是正整数。"):
+        for value in ("abc", "0", "-1", "1.00001", "NaN", "Infinity"):
+            with self.subTest(value=value), self.assertRaisesMessage(ValidationError, "用量（多少成品用一份）必须是最多 4 位小数的正数。"):
                 serializer.validate_units_per_box(value)
 
     def test_whole_partial_and_zero_boxes(self):
@@ -29,7 +32,7 @@ class PackagingQuantityTests(SimpleTestCase):
                 self.assertEqual(packaging_quantity(units_per_box="10", order_quantity=order), expected)
 
     def test_invalid_box_quantity_is_rejected(self):
-        for value in ("", "0", "-1", "1.5", "NaN", "Infinity"):
+        for value in ("", "0", "-1", "1.00001", "NaN", "Infinity"):
             with self.subTest(value=value), self.assertRaises(MaterialFlowValueError):
                 packaging_quantity(units_per_box=value, order_quantity="25")
 

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { completePurchaseGroup, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
+import { completePurchaseGroup, deletePurchaseGroup, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import type { PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
-import { formatTime } from './purchaseOrderDetailDisplay'
+import { formatMoney, formatTime } from './purchaseOrderDetailDisplay'
+import { isHardwareWeightLine } from './purchaseWeight'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +17,7 @@ const auth = useAuthStore()
 const canView = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.view_purchaseorder'))
 const canAdd = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.add_purchaseorder'))
 const canComplete = computed(() => auth.user?.is_superuser === true || auth.moduleCan('access_control.complete_purchaseorder', 'procurement.submit_purchaseorder'))
+const canDelete = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.delete_purchaseorder'))
 const group = ref<PurchaseGroup | null>(null)
 const groupEtag = ref('')
 const loading = ref(false)
@@ -25,6 +28,9 @@ const completionSubmitting = ref(false)
 const completionRemark = ref('')
 const completionError = ref('')
 const completionSuccess = ref('')
+const deleting = ref(false)
+const deletionError = ref('')
+const deletionBlockedReason = computed(() => group.value?.deletion?.can_delete === true ? '' : group.value?.deletion?.blocked_reason || '删除条件待核对，请刷新后重试。')
 const completionBlockedReason = computed(() => group.value?.completion?.can_complete === true ? '' : group.value?.completion?.blocked_reason || '采购完成条件待核对，请刷新后重试。')
 const completionRemarkTooLong = computed(() => Array.from(completionRemark.value.trim()).length > 2000)
 const hoveredLineId = ref('')
@@ -35,19 +41,36 @@ const batchStatusLabels = { DRAFT: '草稿', SUBMITTED: '已确认', PURCHASING:
 const product = computed(() => group.value?.product)
 const productColor = computed(() => [product.value?.color_card, product.value?.color_name, product.value?.color_code].filter(Boolean).join(' / ') || '—')
 const orderQuantity = computed(() => product.value?.order_quantity ? [product.value.order_quantity, product.value.order_unit].filter(Boolean).join(' ') : '—')
-function quantityText(line: PurchaseGroupProgressLine, quantity: string | null, barCount: string | number | null | undefined): string {
-  const quantityWithUnit = `${compactDecimal(quantity)} ${line.source_unit_text}`.trim()
-  if (line.source_snapshot.section_type_snapshot !== 'PROFILE') return quantityWithUnit
-  return `${barCount === null || barCount === undefined ? '根数待核对' : `${compactDecimal(barCount)} 根`} / ${quantityWithUnit}`
+function isWeightPipeLine(line: PurchaseGroupProgressLine): boolean {
+  const snapshot = line.source_snapshot
+  return snapshot.section_type_snapshot === 'PROFILE' && (
+    String(snapshot.source_unit_text || '').toUpperCase() === 'KG'
+    || Boolean(snapshot.suggested_purchase_weight_kg)
+  )
+}
+function isWeightLine(line: PurchaseGroupProgressLine): boolean {
+  const snapshot = line.source_snapshot
+  return isWeightPipeLine(line) || isHardwareWeightLine({
+    section_type_snapshot: snapshot.section_type_snapshot,
+    section_title_snapshot: snapshot.section_title_snapshot,
+    source_unit_text: line.source_unit_text || snapshot.source_unit_text,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
+    calculation_snapshot: snapshot.calculation_snapshot,
+  })
+}
+function quantityText(line: PurchaseGroupProgressLine, quantity: string | null, _barCount: string | number | null | undefined): string {
+  if (isWeightLine(line)) return `${compactDecimal(quantity)} kg`.trim()
+  return `${compactDecimal(quantity)} ${line.source_unit_text}`.trim()
 }
 async function load(): Promise<void> {
-  if (completionSubmitting.value || completionLoading.value) return
+  if (completionSubmitting.value || completionLoading.value || deleting.value) return
   const current = ++version
   group.value = null
   groupEtag.value = ''
   errorMessage.value = ''
   completionError.value = ''
   completionSuccess.value = ''
+  deletionError.value = ''
   if (!canView.value) return
   loading.value = true
   try {
@@ -58,7 +81,7 @@ async function load(): Promise<void> {
   } finally { if (current === version) loading.value = false }
 }
 async function openCompletion(): Promise<void> {
-  if (!group.value || !canComplete.value || !group.value.completion?.can_complete || completionLoading.value || completionSubmitting.value) return
+  if (!group.value || !canComplete.value || !group.value.completion?.can_complete || completionLoading.value || completionSubmitting.value || deleting.value) return
   const id = group.value.id
   const current = ++version
   completionLoading.value = true
@@ -80,7 +103,7 @@ function closeCompletion(): void {
   if (!completionSubmitting.value) completionVisible.value = false
 }
 async function submitCompletion(): Promise<void> {
-  if (!completionVisible.value || !group.value || !canComplete.value || completionBlockedReason.value || !groupEtag.value || completionRemarkTooLong.value || completionSubmitting.value) return
+  if (!completionVisible.value || !group.value || !canComplete.value || completionBlockedReason.value || !groupEtag.value || completionRemarkTooLong.value || completionSubmitting.value || deleting.value) return
   const id = group.value.id
   const current = version
   completionSubmitting.value = true
@@ -112,7 +135,53 @@ async function submitCompletion(): Promise<void> {
     }
   } finally { if (current === version) completionSubmitting.value = false }
 }
+async function removeGroup(): Promise<void> {
+  if (!group.value || !canDelete.value || deletionBlockedReason.value || deleting.value || completionVisible.value || completionLoading.value || completionSubmitting.value) return
+  const id = group.value.id
+  const current = ++version
+  deleting.value = true
+  deletionError.value = ''
+  completionSuccess.value = ''
+  try {
+    const latest = await fetchVersionedPurchaseGroup(id)
+    if (current !== version) return
+    group.value = latest.data
+    groupEtag.value = latest.etag
+    if (deletionBlockedReason.value) throw new Error(deletionBlockedReason.value)
+    if (!latest.etag) throw new Error('采购总单版本信息缺失，请刷新后重试。')
+    await ElMessageBox.confirm(
+      `确定彻底删除采购总单 ${latest.data.group_number} 及其未确认草稿批次吗？删除后不可恢复，可按最新 BOM 重新创建采购总单。`,
+      '删除采购总单',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
+    )
+    if (current !== version || !canDelete.value) return
+    await deletePurchaseGroup(id, latest.etag)
+    if (current !== version) return
+    group.value = null
+    groupEtag.value = ''
+    ElMessage.success('采购总单及未确认草稿批次已删除，可按最新 BOM 重新创建。')
+    void router.push({ name: 'purchase-orders', query: { view: 'groups' } })
+  } catch (error) {
+    if (current !== version || error === 'cancel' || error === 'close') return
+    const response = (error as { response?: { status?: number; data?: { error?: { message?: string } } } }).response
+    const message = response?.data?.error?.message || (error instanceof Error ? error.message : '采购总单删除失败，请稍后重试。')
+    groupEtag.value = ''
+    if (response?.status === 412 || response?.status === 409) {
+      try {
+        const latest = await fetchVersionedPurchaseGroup(id)
+        if (current !== version) return
+        group.value = latest.data
+        groupEtag.value = latest.etag
+        deletionError.value = deletionBlockedReason.value || `${message} 已读取最新信息，请重新点击“删除总单”核对并确认。`
+      } catch {
+        if (current === version) deletionError.value = '采购总单已变化，但最新信息读取失败。请刷新后重新确认删除。'
+      }
+    } else deletionError.value = message
+  } finally { if (current === version) deleting.value = false }
+}
 watch(() => route.params.id, () => {
+  deleting.value = false
+  deletionError.value = ''
   completionVisible.value = false
   completionLoading.value = false
   completionSubmitting.value = false
@@ -126,14 +195,16 @@ onBeforeUnmount(() => { version++ })
   <section class="group-detail erp-glass-detail" data-testid="purchase-group-detail" v-loading="loading">
     <header><div><h1>采购总单</h1><span>{{ group?.group_number }}</span></div><div class="actions">
       <ElButton @click="router.push({ name: 'purchase-orders', query: { view: 'groups' } })">返回总单列表</ElButton>
-      <ElButton v-if="canView" :disabled="completionLoading || completionSubmitting" @click="load">刷新进度</ElButton>
-      <ElTooltip v-if="group?.completion && canComplete" :content="completionBlockedReason" :disabled="!completionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-complete" :loading="completionLoading" :disabled="!!completionBlockedReason || completionSubmitting" @click="openCompletion">完成采购</ElButton></span></ElTooltip>
-      <ElButton v-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="group.progress.status === 'UNKNOWN'" @click="router.push({ name: 'purchase-batch-create', params: { groupId: group.id } })">新增采购批次</ElButton>
+      <ElButton v-if="canView" :disabled="completionLoading || completionSubmitting || deleting" @click="load">刷新进度</ElButton>
+      <ElTooltip v-if="group?.completion && canComplete" :content="completionBlockedReason" :disabled="!completionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-complete" :loading="completionLoading" :disabled="!!completionBlockedReason || completionSubmitting || deleting" @click="openCompletion">完成采购</ElButton></span></ElTooltip>
+      <ElTooltip v-if="group && canDelete" :content="deletionBlockedReason" :disabled="!deletionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-delete" type="danger" plain :loading="deleting" :disabled="!!deletionBlockedReason || completionLoading || completionSubmitting || completionVisible" @click="removeGroup">删除总单</ElButton></span></ElTooltip>
+      <ElButton v-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="group.progress.status === 'UNKNOWN' || deleting" @click="router.push({ name: 'purchase-batch-create', params: { groupId: group.id } })">新增采购批次</ElButton>
     </div></header>
     <ElAlert v-if="!canView" title="当前账号无权查看采购总单。" type="warning" :closable="false" />
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"><ElButton link @click="load">重新加载</ElButton></ElAlert>
     <ElAlert v-if="completionError && !completionVisible" :title="completionError" type="error" :closable="false" />
     <ElAlert v-if="completionSuccess" :title="completionSuccess" type="success" :closable="false" />
+    <ElAlert v-if="deletionError" data-testid="purchase-group-delete-error" :title="deletionError" type="error" :closable="false" />
     <template v-if="group">
       <dl class="group-summary">
         <div><dt>生产订单</dt><dd>{{ group.production_task_number_snapshot }}</dd></div>
@@ -154,14 +225,14 @@ onBeforeUnmount(() => { version++ })
           <thead><tr><th>序号</th><th>分类</th><th>物料信息</th><th>规格</th><th>BOM 建议量</th><th>累计采购</th><th>正在采购</th><th>合格入库</th><th>入库进度</th></tr></thead>
           <tbody><tr v-for="line in group.progress.lines" :key="line.id" :data-line-id="line.id" @mouseenter="hoveredLineId = line.id" @mouseleave="hoveredLineId = ''">
             <td>{{ line.line_number }}</td><td>{{ line.source_snapshot.category_snapshot || '—' }}</td><td><strong>{{ line.source_snapshot.part_name_snapshot || line.source_snapshot.material_snapshot || line.source_snapshot.raw_material_snapshot }}</strong><small>{{ line.source_snapshot.raw_material_snapshot }}</small></td>
-            <td><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === line.id || focusedLineId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line.source_snapshot)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div><div v-if="!materialAttributeFields(line.source_snapshot).length">暂无物料属性</div><div v-if="line.source_snapshot.section_type_snapshot === 'PROFILE'"><span>采购原长</span><strong>{{ line.source_snapshot.raw_bar_length_m == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_length_m)} 米/根` }}</strong></div></div></template><span class="material-detail" tabindex="0" :aria-label="`查看材料属性：${materialSpecificationValue(line.source_snapshot)}`" @focus="focusedLineId = line.id" @blur="focusedLineId = ''" @keydown.esc="focusedLineId = ''; hoveredLineId = ''">{{ materialSpecificationValue(line.source_snapshot) }}</span></ElTooltip></td>
+            <td><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === line.id || focusedLineId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line.source_snapshot)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div><div v-if="!materialAttributeFields(line.source_snapshot).length">暂无物料属性</div><div v-if="line.source_snapshot.section_type_snapshot === 'PROFILE' && isWeightPipeLine(line)"><span>每根标准重量</span><strong>{{ line.source_snapshot.raw_bar_weight_kg == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_weight_kg)} kg/根` }}</strong></div><div v-else-if="line.source_snapshot.section_type_snapshot === 'PROFILE'"><span>采购原长</span><strong>{{ line.source_snapshot.raw_bar_length_m == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_length_m)} 米/根` }}</strong></div><div v-else-if="isWeightLine(line) && line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg"><span>单个材料重量</span><strong>{{ compactDecimal(String(line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg)) }} kg/个</strong></div></div></template><span class="material-detail" tabindex="0" :aria-label="`查看材料属性：${materialSpecificationValue(line.source_snapshot)}`" @focus="focusedLineId = line.id" @blur="focusedLineId = ''" @keydown.esc="focusedLineId = ''; hoveredLineId = ''">{{ materialSpecificationValue(line.source_snapshot) }}</span></ElTooltip></td>
             <td>{{ quantityText(line, line.required_quantity, line.source_snapshot.suggested_bar_count) }}</td><td>{{ quantityText(line, line.purchased_quantity, line.purchased_bar_count) }}</td><td>{{ quantityText(line, line.in_progress_quantity ?? '待核对', line.in_progress_bar_count) }}</td><td>{{ quantityText(line, line.accepted_quantity, line.accepted_bar_count) }}</td>
             <td :class="{ satisfied: line.is_satisfied, unknown: line.progress_percent === null }"><strong>{{ line.progress_percent === null ? '来源待核对' : `${compactDecimal(line.progress_percent)}%` }}</strong></td>
           </tr><tr v-if="!group.progress.lines.length"><td colspan="9" class="empty">暂无材料明细，来源待核对</td></tr></tbody>
         </table></div>
       </section>
       <section class="group-content-card"><h2>采购批次 <small>{{ group.batches.length }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="batch in group.batches" :key="batch.id"><td>第 {{ batch.batch_number }} 批</td><td>{{ batch.order_number }}</td><td>{{ batch.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</td><td>{{ batchStatusLabels[batch.display_status ?? batch.status] }}</td><td>{{ compactDecimal(batch.total_amount) || '—' }} {{ batch.currency_code_snapshot }}</td><td><ElButton link type="primary" @click="router.push({ name: 'purchase-order-detail', params: { id: batch.id } })">查看明细</ElButton><ElButton v-if="batch.status === 'DRAFT'" link @click="router.push({ name: 'purchase-order-confirm', params: { id: batch.id } })">编辑 / 确认</ElButton></td></tr>
+        <tr v-for="batch in group.batches" :key="batch.id"><td>第 {{ batch.batch_number }} 批</td><td>{{ batch.order_number }}</td><td>{{ batch.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</td><td>{{ batchStatusLabels[batch.display_status ?? batch.status] }}</td><td>{{ formatMoney(batch.total_amount) }} {{ batch.currency_code_snapshot }}</td><td><ElButton link type="primary" @click="router.push({ name: 'purchase-order-detail', params: { id: batch.id } })">查看明细</ElButton><ElButton v-if="batch.status === 'DRAFT'" link @click="router.push({ name: 'purchase-order-confirm', params: { id: batch.id } })">编辑 / 确认</ElButton></td></tr>
         <tr v-if="!group.batches.length"><td colspan="6" class="empty">暂无批次，可从本总单选择材料创建首批采购。</td></tr>
       </tbody></table></div></section>
     </template>

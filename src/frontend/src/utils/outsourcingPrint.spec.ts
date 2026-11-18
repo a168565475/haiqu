@@ -47,6 +47,14 @@ describe('外发打印数据', () => {
     expect(result.factoryNames).toBe('加工厂甲、加工厂乙')
   })
 
+  it('部位流程打印逐行使用冻结单位，不套用统一套单位', () => {
+    const input = tube({ part_flow: true, source_kind: 'CUTTING', category: 'cutting', output_unit: '' })
+    input.lines[0]!.unit = '个'
+    input.lines.push({ ...input.lines[0]!, id: 'part-2', part_name: '外袋', unit: '件' })
+    const result = buildTubePrintDocument(input, 'processing')
+    expect(result.materials.slice(0, 2).map(row => row.unit)).toEqual(['个', '件'])
+  })
+
   it.each(['CLOSED', 'CANCELLED', 'PENDING_DISPATCH'])('%s 不等同于外发完成', status => {
     expect(buildTubePrintDocument(tube({ status }), 'processing').plans[0]!.completed).toBe('否')
   })

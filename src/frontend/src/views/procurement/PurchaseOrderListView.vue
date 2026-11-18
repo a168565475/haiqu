@@ -91,8 +91,10 @@ function formatMoney(value: string | null | undefined): string {
   const normalized = value.trim()
   const matched = /^(-?)(\d+)(?:\.(\d+))?$/.exec(normalized)
   if (!matched) return normalized
-  const grouped = (matched[2] || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return `${matched[1] || ''}${grouped}${matched[3]?.replace(/0+$/, '') ? `.${matched[3].replace(/0+$/, '')}` : ''}`
+  const fraction = (matched[3] || '').padEnd(3, '0')
+  const cents = BigInt(matched[2] || '0') * 100n + BigInt(fraction.slice(0, 2)) + (fraction[2]! >= '5' ? 1n : 0n)
+  const grouped = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${matched[1] || ''}${grouped}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 
 function formatDateTime(value: string): string {
@@ -230,7 +232,7 @@ function openConfirm(row: PurchaseOrderListItem): void {
 }
 
 function openSheets(row: PurchaseOrderListItem): void {
-  void router.push({ name: 'purchase-sheet-template-select', params: { id: row.id } })
+  void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: row.id } })
 }
 
 function returnActionLabel(row: PurchaseOrderListItem): string {

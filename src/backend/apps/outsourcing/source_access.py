@@ -5,8 +5,8 @@ from rest_framework.exceptions import PermissionDenied
 from apps.access_control.resource_scopes import enforcing, has_legacy_permission
 from apps.access_control.sales_policy import access_for
 
-STOCK_SOURCES = {'RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'}
-DIRECT_WORKSHOPS = {'METAL': '金工车间', 'SEWING': '车缝车间'}
+STOCK_SOURCES = {'RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'}
+DIRECT_WORKSHOPS = {'METAL': '金工车间', 'SEWING': '车缝车间', 'CUTTING': '车缝车间'}
 
 
 def source_grants(request, permission):

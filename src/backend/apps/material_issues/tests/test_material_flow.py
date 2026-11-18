@@ -19,6 +19,8 @@ from ..scopes import material_section_codes_for_workshop
 
 class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
     def setUp(self):
+        from apps.procurement.models import PurchaseTrackingPolicy
+        PurchaseTrackingPolicy.objects.get_or_create(key='default')
         super().setUp()
         f = self.f
         f.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="material_issues"))
@@ -52,11 +54,11 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         )
         self.assertEqual(
             material_section_codes_for_workshop("车缝车间", "CUTTING"),
-            frozenset({"FABRIC"}),
+            frozenset({"FABRIC", "AUXILIARY"}),
         )
         self.assertEqual(
             material_section_codes_for_workshop("车缝车间", "SEWING"),
-            frozenset({"AUXILIARY"}),
+            frozenset({"AUXILIARY", "SEMI"}),
         )
         self.assertEqual(
             material_section_codes_for_workshop("装配车间", "ASSEMBLY"),

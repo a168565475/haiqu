@@ -4,7 +4,7 @@ import { validProductionDate } from '@/utils/reporting'
 export const semiReceiptUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export function semiReceiptScope(query: Record<string, unknown>) {
   const { schedule_product_id, plan_category } = query
-  return typeof schedule_product_id === 'string' && semiReceiptUuid.test(schedule_product_id) && (plan_category === 'METAL' || plan_category === 'SEWING')
+  return typeof schedule_product_id === 'string' && semiReceiptUuid.test(schedule_product_id) && (plan_category === 'METAL' || plan_category === 'CUTTING' || plan_category === 'SEWING')
     ? { schedule_product_id, plan_category } as { schedule_product_id: string; plan_category: SemiReceiptCategory } : null
 }
 export function semiWhole(value: unknown): bigint | null {
@@ -18,6 +18,14 @@ export function semiPreviewWhole(value: unknown): bigint | null {
 }
 export function formatSemiQuantity(value: string, previous: string) { return /^\d*$/.test(value) ? value : previous }
 export function semiLineName(line: SemiReceiptLine) { return line.attributes.part_name || line.output_material_selection_snapshot?.name || '未填写部位' }
+export function semiReceiptTotal(lines: SemiReceiptLine[], quantities: Record<string, string>): string {
+  const totals = new Map<string, bigint>()
+  for (const line of lines) {
+    const quantity = semiWhole(quantities[line.bom_line_id]) ?? 0n
+    if (quantity > 0n) totals.set(line.attributes.unit_name, (totals.get(line.attributes.unit_name) ?? 0n) + quantity)
+  }
+  return [...totals].map(([unit, quantity]) => `${quantity} ${unit}`).join('、')
+}
 export function semiPageBlockers(preview: SemiReceiptPreview): string[] {
   return preview.plan_category === 'METAL' ? [...(preview.metal_processing?.blockers ?? []), ...(preview.metal_processing?.future_blockers ?? [])] : []
 }

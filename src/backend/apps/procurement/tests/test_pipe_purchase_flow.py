@@ -152,7 +152,7 @@ class PipePurchaseFlowTests(APITestCase):
     def test_manual_inbound_retries_once_and_conflicting_length_rejected(self):
         payload = {'client_request_id': str(uuid.uuid4()), 'remark': '盘点新增整根管材', 'inbound_date': timezone.localdate().isoformat(),
                    'items': [{'raw_material_id': str(self.raw_material.pk), 'zone_id': self.zone_id,
-                              'received_bar_count': 3, 'raw_bar_length_m': '3.05'}]}
+                              'received_bar_count': 3, 'raw_bar_length_m': '3.05', 'received_weight_kg': '7.1'}]}
         first = self.client.post('/api/v1/material-inventory/manual-receipts/', payload, format='json')
         self.assertEqual(first.status_code, 201, first.data)
         retry = self.client.post('/api/v1/material-inventory/manual-receipts/', payload, format='json')
@@ -167,7 +167,7 @@ class PipePurchaseFlowTests(APITestCase):
         self.bom_line.save(update_fields=['cutting_length_mm'])
         received = self.receive(2)
         self.assertEqual(received.status_code, 201, received.data)
-        self.assertEqual(received.data['data']['lines'][0]['raw_bar_length_m'], '3.05')
+        self.assertEqual(received.data['data']['lines'][0]['raw_bar_length_m'], '3.050')
 
 
 class PipePurchaseOrderApiTests(APITestCase):
@@ -191,25 +191,28 @@ class PipePurchaseOrderApiTests(APITestCase):
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=1000)
         for key in ('cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'raw_bar_length_m', 'suggested_bar_count', 'suggested_purchase_meters'):
             setattr(self.line, key, plan[key])
-        self.line.raw_values['pipe_plan_version'] = 3
+        self.line.raw_values.update(pipe_plan_version=3, long_material_unit_weight_kg='2.5000',
+                                    long_material_total_weight_kg='835.0000')
         self.line.save()
 
     def create(self, **overrides):
         source = self.get_source(self.task)
         self.assertEqual(source.status_code, 200, source.data)
-        values = {'actual_bar_count': 337, 'unit_price': '2.0000', 'supplier_id': str(self.supplier.pk),
+        values = {'actual_purchase_quantity': '842.5000', 'unit_price': '2.0000', 'supplier_id': str(self.supplier.pk),
                   'delivery_date': (timezone.localdate() + timedelta(days=10)).isoformat(), **overrides}
         payload = self.create_payload(self.task, source.data['data'], **values)
         payload['currency_id'] = str(self.cny.pk)
         return self.client.post('/api/v1/purchase-orders/', payload, format='json')
 
-    def test_create_calculates_root_meter_and_price_then_confirms(self):
+    def test_create_calculates_roots_from_weight_and_kg_price_then_confirms(self):
         created = self.create()
         self.assertEqual(created.status_code, 201, created.data)
         line = created.data['data']['lines'][0]
         self.assertEqual(line['actual_bar_count'], 337)
-        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('1027.85'))
-        self.assertEqual(Decimal(line['amount']), Decimal('2055.70'))
+        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('842.5'))
+        self.assertEqual(line['source_unit_text'], 'KG')
+        self.assertEqual(Decimal(line['actual_purchase_weight_kg']), Decimal('842.5'))
+        self.assertEqual(Decimal(line['amount']), Decimal('1685.00'))
         order_id = created.data['data']['id']
         result = self.client.post(f'/api/v1/purchase-orders/{order_id}/confirm/', {}, format='json')
         self.assertEqual(result.status_code, 200, result.data)
@@ -218,12 +221,13 @@ class PipePurchaseOrderApiTests(APITestCase):
         source = self.get_source(self.task)
         self.assertEqual(source.status_code, 200, source.data)
         self.assertEqual(source.data['data']['lines'][0]['suggested_bar_count'], 334)
-        created = self.create(actual_bar_count=334)
+        self.assertEqual(Decimal(source.data['data']['lines'][0]['suggested_purchase_weight_kg']), Decimal('835'))
+        created = self.create(actual_purchase_quantity='835')
         self.assertEqual(created.status_code, 201, created.data)
         line = created.data['data']['lines'][0]
         self.assertEqual(line['calculation_snapshot']['schema_version'], 2)
         self.assertEqual(line['calculation_snapshot']['calculation_version'], 3)
-        self.assertEqual(Decimal(line['amount']), Decimal('2037.40'))
+        self.assertEqual(Decimal(line['amount']), Decimal('1670.00'))
         self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
 
     def test_purchase_uses_base_plus_allowance_and_freezes_the_new_rule(self):
@@ -233,6 +237,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         self.line.suggested_purchase_meters = plan['suggested_purchase_meters']
         self.line.raw_values.update({
             'pipe_plan_version': 4,
+            'long_material_total_weight_kg': '847.5000',
             **{key: plan[key] for key in ('purchase_allowance_mode', 'purchase_allowance_rule',
                                           'base_purchase_bar_count', 'purchase_allowance_bar_count')},
         })
@@ -240,7 +245,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         source = self.get_source(self.task)
         self.assertEqual(source.status_code, 200, source.data)
         self.assertEqual(source.data['data']['lines'][0]['suggested_bar_count'], 339)
-        created = self.create(actual_bar_count=339)
+        created = self.create(actual_purchase_quantity='847.5000')
         self.assertEqual(created.status_code, 201, created.data)
         row = created.data['data']['lines'][0]
         snapshot = row['calculation_snapshot']
@@ -248,17 +253,19 @@ class PipePurchaseOrderApiTests(APITestCase):
                           row['suggested_bar_count']), (334, 5, 339))
         self.assertEqual((snapshot['purchase_allowance_mode'], snapshot['purchase_allowance_rule']),
                          ('AUTO', 'PLUS_5'))
-        self.assertEqual(Decimal(row['actual_purchase_quantity']), Decimal('1033.95'))
-        self.assertEqual(Decimal(row['amount']), Decimal('2067.90'))
+        self.assertEqual(Decimal(row['suggested_purchase_weight_kg']), Decimal('847.5'))
+        self.assertEqual(Decimal(row['actual_purchase_quantity']), Decimal('847.5'))
+        self.assertEqual(Decimal(row['amount']), Decimal('1695.00'))
         confirmed = self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json')
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
-    def test_legacy_bom_and_purchase_source_keep_original_snapshot(self):
+    def test_legacy_bom_calculation_keeps_frozen_parameters_with_weight_source(self):
         self.line.raw_values.pop('pipe_plan_version')
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,
                          order_quantity=1000, calculation_version=2)
         self.line.suggested_bar_count = plan['suggested_bar_count']
         self.line.suggested_purchase_meters = plan['suggested_purchase_meters']
+        self.line.raw_values['long_material_total_weight_kg'] = str(Decimal(plan['suggested_bar_count']) * Decimal('2.5'))
         self.line.save()
         self.line.refresh_from_db()
         before = deepcopy(pipe_source_snapshot(self.line))
@@ -268,13 +275,14 @@ class PipePurchaseOrderApiTests(APITestCase):
         self.assertEqual(before['allowance_pieces'], 2022)
         self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
 
-    def test_changed_roots_without_reason_can_create_and_confirm(self):
-        created = self.create(actual_bar_count=338)
+    def test_changed_weight_without_reason_can_create_and_confirm(self):
+        created = self.create(actual_purchase_quantity='845')
         self.assertEqual(created.status_code, 201, created.data)
         line = created.data['data']['lines'][0]
         self.assertEqual(line['quantity_difference_reason'], '')
-        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('1030.90'))
-        self.assertEqual(Decimal(line['amount']), Decimal('2061.80'))
+        self.assertEqual(line['actual_bar_count'], 338)
+        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('845'))
+        self.assertEqual(Decimal(line['amount']), Decimal('1690.00'))
         confirmed = self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json')
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
@@ -285,7 +293,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         original_line = created.data['data']['lines'][0]
         line_payload = {
             'id': original_line['id'],
-            'actual_bar_count': 338,
+            'actual_purchase_quantity': '845',
             'supplier_id': str(self.supplier.pk),
             'delivery_date': original_line['delivery_date'],
             'unit_price': '2.0000',
@@ -298,7 +306,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         line = updated.data['data']['lines'][0]
         self.assertEqual(line['actual_bar_count'], 338)
         self.assertEqual(line['quantity_difference_reason'], '备用采购')
-        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('1030.90'))
+        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('845'))
 
         line_payload['quantity_difference_reason'] = '客户改量'
         updated_again = self.client.patch(
@@ -308,9 +316,57 @@ class PipePurchaseOrderApiTests(APITestCase):
         self.assertEqual(updated_again.status_code, 200, updated_again.data)
         self.assertEqual(updated_again.data['data']['lines'][0]['quantity_difference_reason'], '客户改量')
 
-    def test_fractional_roots_rejected(self):
-        created = self.create(actual_bar_count='1.5')
-        self.assertEqual(created.status_code, 400, created.data)
+    def test_invalid_weights_rejected(self):
+        for weight in ('0', '-1', 'NaN', '842.50001'):
+            with self.subTest(weight=weight):
+                created = self.create(actual_purchase_quantity=weight)
+                self.assertEqual(created.status_code, 400, created.data)
+
+    def test_missing_bom_weight_blocks_new_purchase_source(self):
+        original_source = self.get_source(self.task).data['data']
+        payload = self.create_payload(self.task, original_source, actual_purchase_quantity='842.5')
+        payload['currency_id'] = str(self.cny.pk)
+        for key in ('long_material_unit_weight_kg', 'long_material_total_weight_kg'):
+            self.line.raw_values.pop(key)
+        self.line.save(update_fields=['raw_values'])
+        source = self.get_source(self.task)
+        self.assertEqual(source.status_code, 200, source.data)
+        self.assertFalse(source.data['data']['can_create'])
+        row = source.data['data']['preview_lines'][0]
+        self.assertEqual(row['source_unit_text'], 'KG')
+        self.assertIsNone(row['required_quantity'])
+        self.assertEqual(row['quantity_parse_status'], 'MISSING')
+        created = self.client.post('/api/v1/purchase-orders/', payload, format='json')
+        self.assertEqual(created.status_code, 409, created.data)
+
+    def test_legacy_meter_group_cannot_create_new_batch(self):
+        from apps.procurement.models import PurchaseGroupLine, PurchaseOrder
+        source = self.get_source(self.task).data['data']
+        created = self.client.post('/api/v1/purchase-groups/', {'production_task_id': str(self.task.pk),
+            'bom_id': str(self.bom.pk), 'source_revision': source['source_revision']}, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        group_id = created.data['data']['id']
+        legacy = PurchaseGroupLine.objects.get(purchase_group_id=group_id)
+        snapshot = deepcopy(legacy.source_snapshot)
+        snapshot['source_unit_text'] = '米'
+        snapshot['required_quantity'] = snapshot['suggested_purchase_meters']
+        snapshot['source_quantity_field'] = 'suggested_purchase_meters'
+        for key in ('raw_bar_weight_kg', 'suggested_purchase_weight_kg'):
+            snapshot.pop(key, None)
+            snapshot['calculation_snapshot'].pop(key, None)
+        snapshot['calculation_snapshot'].pop('measurement_unit', None)
+        legacy.source_unit_text = '米'
+        legacy.required_quantity = Decimal(snapshot['required_quantity'])
+        legacy.source_snapshot = snapshot
+        legacy.save(update_fields=['source_unit_text', 'required_quantity', 'source_snapshot'])
+        detail = self.client.get(f'/api/v1/purchase-groups/{group_id}/')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        response = self.client.post(f'/api/v1/purchase-groups/{group_id}/batches/', {
+            'request_id': str(uuid.uuid4()), 'batch_type': 'NORMAL', 'currency_id': str(self.cny.pk),
+            'lines': [{'purchase_group_line_id': str(legacy.pk), 'actual_bar_count': 337}]},
+            format='json', HTTP_IF_MATCH=detail['ETag'])
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertFalse(PurchaseOrder.objects.filter(purchase_group_id=group_id).exists())
 
     def test_changed_bom_blocks_draft_confirmation(self):
         created = self.create()
@@ -321,7 +377,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         result = self.client.post(f'/api/v1/purchase-orders/{order_id}/confirm/', {}, format='json')
         self.assertEqual(result.status_code, 409, result.data)
 
-    def test_sheet_pdf_and_xlsx_share_root_meter_snapshot(self):
+    def test_sheet_pdf_and_xlsx_share_weight_snapshot(self):
         from apps.procurement.models import PurchaseOrder, PurchaseContractTemplateVersion
         from apps.procurement.purchase_sheet_services import _default_content
         from apps.procurement.purchase_sheet_xlsx import _line_values
@@ -332,9 +388,10 @@ class PipePurchaseOrderApiTests(APITestCase):
         content = _default_content(order, self.supplier, list(order.lines.all()), version, 'S5-SHEET')
         line = content['lines'][0]
         self.assertEqual(line['actual_bar_count'], 337)
-        self.assertEqual(line['actual_purchase_meters'], '1027.85')
+        self.assertEqual(line['actual_purchase_weight_kg'], '842.5000')
         values = _line_values('GENERAL', line, 1, 'S5', False)
-        self.assertIn('337 根 × 3.05 米/根 = 1027.85 米', values[2])
+        self.assertIn('采购重量 842.5 kg', values[2])
+        self.assertNotIn('米/根', values[2])
         from types import SimpleNamespace
         from apps.procurement.purchase_sheet_pdf import build_supplier_purchase_sheet_pdf
         empty_images = SimpleNamespace(select_related=lambda *args: SimpleNamespace(all=lambda: []))
@@ -376,7 +433,7 @@ class PipeReceiptConcurrencyTests(TransactionTestCase):
         other.save()
         manual = {'client_request_id': str(uuid.uuid4()), 'inbound_date': timezone.localdate().isoformat(),
                   'remark': '同库区并发额外入库', 'items': [{'raw_material_id': str(other.pk), 'zone_id': self.zone_id,
-                  'received_bar_count': 3, 'raw_bar_length_m': '3.05'}]}
+                  'received_bar_count': 3, 'raw_bar_length_m': '3.05', 'received_weight_kg': '7.1'}]}
         quality = {'items': [{'line_id': row['id'], 'expected_received_quantity': row['received_quantity'],
                              'return_bar_count': 0} for row in batch['lines']]}
         barrier = threading.Barrier(2)

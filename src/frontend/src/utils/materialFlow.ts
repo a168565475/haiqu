@@ -65,16 +65,17 @@ export function pipePlan(length: string, consumption: string, cuts: string, quan
   }
   const factor = 1000000n + percent
   const roots = usesPurchaseAllowance ? baseRoots + allowanceRoots : (demand * factor + k * 1000000n - 1n) / (k * 1000000n)
-  let centimeters = (l * k + 50n + 9n) / 10n
+  // 无原表长料仍按旧规则向上取到厘米；原表长料保留毫米。
+  let millimeters = (l * k + 50n + 9n) / 10n * 10n
   if (source.source_raw_bar_length_m) {
-    const supplied = scaledDecimal(source.source_raw_bar_length_m, 2)
-    if (supplied === null || supplied <= 0n || supplied * 10n < l * k) return null
-    centimeters = supplied
+    const supplied = scaledDecimal(source.source_raw_bar_length_m, 3)
+    if (supplied === null || supplied <= 0n || supplied < l * k) return null
+    millimeters = supplied
   }
-  const total = centimeters * roots
-  if (demand >= 100000000000000n || roots * k >= 100000000000000n || centimeters >= 1000000000000000000n || total >= 10000000000000000000000n) return null
-  const meters = (value: bigint) => `${value / 100n}.${String(value % 100n).padStart(2, '0')}`
-  return { total_consumption: String(demand), branch_count: String(roots), tube_cut_length_m: meters(centimeters),
+  const total = millimeters * roots
+  if (demand >= 100000000000000n || roots * k >= 100000000000000n || millimeters >= 10000000000000000000n || total >= 100000000000000000000000n) return null
+  const meters = (value: bigint) => `${value / 1000n}.${String(value % 1000n).padStart(3, '0')}`.replace(/0$/, '')
+  return { total_consumption: String(demand), branch_count: String(roots), tube_cut_length_m: meters(millimeters),
     suggested_purchase_meters: meters(total),
     ...(usesPurchaseAllowance ? { base_purchase_bar_count: String(baseRoots), purchase_allowance_bar_count: String(allowanceRoots), purchase_allowance_rule: allowanceRule } : {}) }
 }

@@ -74,16 +74,16 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('首页生产分类与生产计划视图切换', () => {
-  it('半成品入库导航保留金工/车缝类别，拒绝其他类别与无权限入口', async () => {
+  it('半成品入库导航保留金工/裁剪/车缝类别，拒绝装配类别与无权限入口', async () => {
     const view = await openPage('receipt')
-    for (const category of ['METAL', 'SEWING']) {
+    for (const category of ['METAL', 'CUTTING', 'SEWING']) {
       const item = { ...plan('semi'), plan_category: category, can_receive_semi: true }
       child(view).vm.$emit('receiveSemi', item)
       await flushPromises()
       expect(mocks.push).toHaveBeenLastCalledWith({ path: '/semi-receipt', query: { schedule_product_id: item.schedule_product_id, plan_category: category } })
     }
     mocks.push.mockClear()
-    for (const item of [{ ...plan('semi'), can_receive_semi: false }, { ...plan('semi'), can_receive_semi: true, plan_category: 'CUTTING' }, { ...plan('semi'), can_receive_semi: true, plan_category: 'ASSEMBLY' }]) child(view).vm.$emit('receiveSemi', item)
+    for (const item of [{ ...plan('semi'), can_receive_semi: false }, { ...plan('semi'), can_receive_semi: true, plan_category: 'ASSEMBLY' }]) child(view).vm.$emit('receiveSemi', item)
     await flushPromises()
     expect(mocks.push).not.toHaveBeenCalled()
   })

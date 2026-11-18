@@ -28,6 +28,7 @@ import publishedLock from '@/assets/procurement/published-lock.svg'
 import { purchaseSheetPageStatus } from '@/composables/purchaseSheetPageStatus'
 import type { PurchaseSheetPreview, SupplierPurchaseSheet, SupplierPurchaseSheetContent, SupplierPurchaseSheetLine } from '@/types/purchaseOrder'
 import { formatPurchaseSheetNumber, purchaseSheetLineDisplay, purchaseSheetSourceFields } from '@/utils/purchaseSheetLineDisplay'
+import { isHardwareWeightLine } from './purchaseWeight'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -178,7 +179,29 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 
 function money(value: number | string | null): string {
   if (value === null) return '待结算'
-  return `¥${formatPurchaseSheetNumber(typeof value === 'number' ? value.toFixed(4) : value)}`
+  const raw = typeof value === 'number' ? value.toFixed(4) : String(value ?? '').trim()
+  const parts = /^(\d+)(?:\.(\d{1,4}))?$/.exec(raw)
+  if (!parts) return '¥—'
+  const cents = (BigInt(parts[1]!) * 10000n + BigInt((parts[2] || '').padEnd(4, '0')) + 50n) / 100n
+  return `¥${(cents / 100n).toString()}.${(cents % 100n).toString().padStart(2, '0')}`
+}
+
+function isWeightPipeLine(line: SupplierPurchaseSheetLine): boolean {
+  return line.measurement_kind === 'PIPE_WEIGHT' || line.measurement_kind === 'PIPE' && (
+    String(line.unit || '').toUpperCase() === 'KG'
+    || Boolean(line.actual_purchase_weight_kg)
+  )
+}
+
+function isWeightLine(line: SupplierPurchaseSheetLine): boolean {
+  return isWeightPipeLine(line) || isHardwareWeightLine({
+    section_type: line.section_type,
+    section_title: line.section_title,
+    source_unit_text: line.unit,
+    measurement_kind: line.measurement_kind,
+    calculation_snapshot: line.calculation_snapshot,
+    actual_purchase_weight_kg: line.actual_purchase_weight_kg,
+  })
 }
 
 function syncCalculatedAmounts(): void {
@@ -555,8 +578,8 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
                     <ElInput v-if="!isPublished && content.order.source_type === 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="样品颜色" placeholder="颜色" />
                     <span v-else class="readonly-value">{{ purchaseSheetLineDisplay(line, content.order.source_type === 'SAMPLE').color || '—' }}</span>
                   </td>
-                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell"><template v-if="line.measurement_kind === 'PIPE'">{{ line.actual_bar_count == null ? '根数未记录' : `${formatPurchaseSheetNumber(line.actual_bar_count)} 根` }}<small style="display:block">{{ formatPurchaseSheetNumber(line.quantity) }} 米 · {{ formatPurchaseSheetNumber(line.raw_bar_length_m) }} 米/根</small></template><template v-else>{{ formatPurchaseSheetNumber(line.quantity) }} {{ line.unit }}</template></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
-                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.unit_price ? money(line.unit_price).replace('¥', '') : '—' }}{{ line.measurement_kind === 'PIPE' ? ' 元/米' : '' }}</span><ElInput v-else v-model="line.unit_price" :disabled="!editable || busy" aria-label="含税单价" @input="syncCalculatedAmounts" /></td>
+                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE' || isWeightLine(line)" class="readonly-value center-cell">{{ formatPurchaseSheetNumber(line.quantity) }} {{ isWeightLine(line) ? 'kg' : line.unit }}</span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
+                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE' || isWeightLine(line)" class="readonly-value center-cell">{{ line.unit_price ? formatPurchaseSheetNumber(line.unit_price) : '—' }}{{ isWeightLine(line) ? ' 元/kg' : line.measurement_kind === 'PIPE' ? ' 元/米' : '' }}</span><ElInput v-else v-model="line.unit_price" :disabled="!editable || busy" aria-label="含税单价" @input="syncCalculatedAmounts" /></td>
                   <td class="amount-cell">{{ content.settlement_mode === 'ACTUAL_WEIGHT' ? '待结算' : money(line.amount).replace('¥', '') }}</td>
                 </tr>
                 <tr v-if="!content.lines.length"><td colspan="7" class="empty-lines">暂无采购明细，请重新加载或核对来源采购订单。</td></tr>

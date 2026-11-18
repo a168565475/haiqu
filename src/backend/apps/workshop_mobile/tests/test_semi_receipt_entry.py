@@ -20,7 +20,7 @@ class SemiReceiptEntryTests(SimpleTestCase):
         snapshot = {'active': True, 'actions': {selectors.REPORT_VIEW: {'scopes': ['MODULE']}}}
         request = SimpleNamespace(method='GET', user=object(), employee=object(),
                                   parser_context={'view': original_view}, _sales_access_snapshot=snapshot)
-        for category in ('METAL', 'SEWING'):
+        for category in ('METAL', 'CUTTING', 'SEWING'):
             with self.subTest(category=category):
                 read_sources, write_sources = Mock(), Mock()
                 with patch('apps.workshop_mobile.semi_receipts.receipt_plans_for_category',
@@ -55,18 +55,19 @@ class SemiReceiptEntryTests(SimpleTestCase):
 
     def test_links_bind_category_to_its_own_source_and_keep_add_workshop_scope(self):
         queryset = Mock()
-        metal, sewing = object(), object()
+        metal, cutting, sewing = object(), object(), object()
         with patch.object(selectors.module_policy, 'has_permission', return_value=True), \
-                patch.object(selectors, 'semi_receipt_products', side_effect=[metal, sewing]) as sources, \
+                patch.object(selectors, 'semi_receipt_products', side_effect=[metal, cutting, sewing]) as sources, \
                 patch.object(selectors.resource_scopes, 'enforcing', return_value=True), \
                 patch.object(selectors.resource_scopes, 'resource_ids', return_value={'metal-workshop'}) as resource_ids, \
                 patch.object(selectors.resource_scopes, 'has_legacy_permission', return_value=False):
             result = selectors.links_for_permission(queryset, SimpleNamespace(), SEMI_RECEIPT_ADD)
-        self.assertEqual([call.args[1] for call in sources.call_args_list], ['METAL', 'SEWING'])
+        self.assertEqual([call.args[1] for call in sources.call_args_list], ['METAL', 'CUTTING', 'SEWING'])
         category_filter = queryset.filter.call_args.args[0]
         self.assertEqual(category_filter.connector, 'OR')
         self.assertEqual(category_filter.children[0].children, [('plan_category', 'METAL'), ('schedule_product__in', metal)])
-        self.assertEqual(category_filter.children[1].children, [('plan_category', 'SEWING'), ('schedule_product__in', sewing)])
+        self.assertEqual(category_filter.children[1].children, [('plan_category', 'CUTTING'), ('schedule_product__in', cutting)])
+        self.assertEqual(category_filter.children[2].children, [('plan_category', 'SEWING'), ('schedule_product__in', sewing)])
         self.assertEqual(resource_ids.call_args.args[1:], (SEMI_RECEIPT_ADD, 'WORKSHOP'))
         self.assertEqual(queryset.filter.return_value.filter.call_args.args[0].children,
                          [('craft__workshop_id__in', {'metal-workshop'})])
@@ -82,8 +83,8 @@ class SemiReceiptEntryTests(SimpleTestCase):
                     with self.assertRaises(PermissionDenied):
                         require_mobile_access(SimpleNamespace())
 
-    def test_metal_and_sewing_receipt_cards_do_not_grant_issue_reporting_or_finished_receipt(self):
-        for category in ('METAL', 'SEWING'):
+    def test_metal_cutting_and_sewing_receipt_cards_do_not_grant_issue_reporting_or_finished_receipt(self):
+        for category in ('METAL', 'CUTTING', 'SEWING'):
             with self.subTest(category=category):
                 row = self.card(category=category, receipt_permission=False, semi_permission=True)
                 self.assertTrue(row['can_receive_semi'])
@@ -96,8 +97,8 @@ class SemiReceiptEntryTests(SimpleTestCase):
                 self.assertIsNone(row['progress'])
                 self.assertIsNone(row['product']['image_url'])
 
-    def test_cutting_assembly_ineligible_task_and_missing_source_are_not_semi_receipt_entries(self):
-        for fields in ({'category': 'CUTTING'}, {'category': 'ASSEMBLY'}, {'semi_permission': False},
+    def test_assembly_ineligible_task_and_missing_source_are_not_semi_receipt_entries(self):
+        for fields in ({'category': 'ASSEMBLY'}, {'semi_permission': False},
                        {'task_status': 'COMPLETED'}, {'task_status': 'CANCELLED'}):
             with self.subTest(fields=fields):
                 parameters = {'category': 'METAL', 'receipt_permission': False, 'semi_permission': True, **fields}

@@ -68,7 +68,7 @@ class RateLimitsSerializer(serializers.Serializer):
 @extend_schema_serializer(component_name='CodexOperation')
 class OperationSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    action = serializers.ChoiceField(choices=['login', 'switch', 'disconnect', 'refresh', 'test'])
+    action = serializers.ChoiceField(choices=['login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract', 'nest'])
     state = serializers.ChoiceField(choices=['QUEUED', 'RUNNING', 'CANCELING'])
     actor_id = serializers.UUIDField()
     can_cancel = serializers.BooleanField()

@@ -28,7 +28,15 @@ from .tube_prices import parse_unit_area
 
 
 def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False):
-    if source_kind in CUTTING_SOURCES:
+    from .part_flow_sources import uses_part_flow, part_source_context
+    if source_kind == 'PUBLIC_CUTTING' and BomLine.objects.filter(
+            section__bom__product_line_id=schedule_product.product_line_id,
+            section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists():
+        raise ValidationError({'source_kind': '该 BOM 使用部位与裁片结构：车缝请选择车间裁片直发或裁片库存；丝印、刺绣请选择车缝部位来源。'})
+    if uses_part_flow(schedule_product.product_line_id, source_kind):
+        context = part_source_context(schedule_product=schedule_product, source_kind=source_kind,
+            zone=zone, craft=craft, for_plan=for_plan)
+    elif source_kind in CUTTING_SOURCES:
         from .cutting_sources import cutting_source_context
         context = cutting_source_context(schedule_product=schedule_product, source_kind=source_kind,
             zone=zone, craft=craft, plan_mode=True)
@@ -43,6 +51,8 @@ def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
             'source_kind': source_kind, 'craft_id': craft.pk,
             'rows': [{'component_identity': row['component_identity'], 'bom_line_id': row['bom_line_id'],
                 'order_required': row['order_required'], 'output': row['snapshot'].get('public_output_identity'),
+                'component_material_selection_snapshot': row.get('component_material_selection_snapshot'),
+                'component_source_materials': row.get('component_source_materials'),
                 'unit_area_sqm': row.get('unit_area_sqm'),
                 'blockers': row['blockers']} for row in context['rows']]}))
     return context
@@ -70,6 +80,8 @@ def create_plan(*, data, request):
         source_kind=data['source_kind'], craft_id=data.get('craft_id'))
     zone = source_zone(data['source_kind'], data.get('zone_id'))
     context = plan_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, for_plan=True)
+    if any(row.get('unit_price') is None for row in data['lines']):
+        raise ValidationError({'lines': '每个委外计划部件都须填写加工单价。'})
     selected_components = {str(row['component_identity']) for row in data['lines']}
     if any(row['component_identity'] in selected_components and KILOGRAM_TUBE_PROCESSING_MESSAGE in row['blockers']
            for row in context['rows']):
@@ -94,9 +106,12 @@ def create_plan(*, data, request):
         available = {row['bom_line_id']: row for row in material_context['material_rows']}
         for entered in requested_materials:
             material = available.get(str(entered['bom_line_id']))
-            if not material or material['blockers'] or not any(str(zone['zone_id']) == str(entered['zone_id']) for zone in material['zones']):
+            if not material or material['blockers']:
+                raise ValidationError({'materials': '辅料不属于当前产品的有效材料。'})
+            if entered.get('zone_id') and not any(str(zone['zone_id']) == str(entered['zone_id']) for zone in material['zones']):
                 raise ValidationError({'materials': '辅料或来源库区不属于当前产品的有效材料。'})
             planned_materials.append({**_json(entered), 'name': material['name'], 'unit': material['unit'],
+                'specification': material['specification'], 'material': material['material'], 'color': material['color'],
                 'material_catalog_id': material.get('material_catalog_id'),
                 'material_selection_snapshot': material.get('material_selection_snapshot', {}),
                 'factory_name': factories[entered['factory_id']].name})
@@ -112,6 +127,8 @@ def create_plan(*, data, request):
             'spray_color', 'order_required', 'pieces_per_bar', 'raw_bar_length_m', *CUTTING_FIELDS)},
             'factory_name': factories[entered['factory_id']].name}
         price_unit = entered.get('price_unit', PriceUnit.PIECE)
+        if context.get('part_flow') and price_unit != PriceUnit.PIECE:
+            raise ValidationError({'lines': '部位须按各自单位填写单价，按实际回货数量计费。'})
         explicit_price_unit = 'price_unit' in entered
         bom_line = bom_lines[row['bom_line_id']]
         unit_area = (parse_unit_area((bom_line.raw_values or {}).get('coating_unit_area_sqm'))
@@ -121,7 +138,7 @@ def create_plan(*, data, request):
         lines.append(TubeOutsourcingLine(bom_line_id=row['bom_line_id'], component_identity=entered['component_identity'],
             **processing_line_fields(bom_line=bom_line, row=row, craft=craft),
             factory_id=entered['factory_id'], quantity=entered['quantity'], price_unit=price_unit,
-            unit_area_sqm=unit_area, unit_price=entered['unit_price'],
+            unit_area_sqm=unit_area, unit_price=entered.get('unit_price'),
             stock_quantity=None, input_identity=_json(row['input_identity']), snapshot=_json(snapshot)))
     order = TubeOutsourcingOrder.objects.create(is_plan=True, order_number=next_business_number('OUTSOURCING_ORDER'),
         schedule_product=product, product_line=product.product_line, bom_id=context['bom_id'], craft=craft,
@@ -139,7 +156,7 @@ def create_plan(*, data, request):
             'lines': [{'component_identity': str(line.component_identity), 'quantity': line.quantity,
                        'price_unit': line.price_unit,
                        'unit_area_sqm': str(line.unit_area_sqm) if line.unit_area_sqm is not None else None,
-                       'unit_price': str(line.unit_price)} for line in lines]},
+                       'unit_price': str(line.unit_price) if line.unit_price is not None else None} for line in lines]},
         context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
     from apps.wecom.workshop_notifications import outsourcing_created
     outsourcing_created(order, request.employee, tube=True)
@@ -163,7 +180,9 @@ def _lock_plan(order_id, request, permission):
 
 def _update_plan(order, request):
     quantities = plan_quantities([order])[str(order.pk)]['summary']
-    order.status = ('PENDING_DISPATCH' if not int(quantities['dispatched_quantity']) and not int(quantities['received_quantity'])
+    has_dispatched = (any(int(row['dispatched_quantity']) for row in quantities['input_totals'])
+                      if order.source_snapshot.get('sewing_inputs') else bool(int(quantities['dispatched_quantity'])))
+    order.status = ('PENDING_DISPATCH' if not has_dispatched and not int(quantities['received_quantity'])
                     else 'COMPLETED' if quantities['receipt_progress'] >= 100 else 'PROCESSING')
     order.version += 1
     order.updated_by_employee = request.employee
@@ -174,28 +193,51 @@ def _update_plan(order, request):
 def update_plan_quantity(*, order_id, data, request):
     order = _lock_plan(order_id, request, 'outsourcing.change_outsourcingorder')
     lines = list(order.lines.select_for_update(of=('self',)).order_by('pk'))
-    entered = {str(row['order_line_id']): row['quantity'] for row in data['lines']}
+    entered = {str(row['order_line_id']): row for row in data['lines']}
     if len(entered) != len(data['lines']) or set(entered) != {str(line.pk) for line in lines}:
         raise ValidationError({'lines': '须完整提交原委外总单部件，不能增加、删除或重复部件。'})
-    changed = [line for line in lines if entered[str(line.pk)] != line.quantity]
+    part_flow = bool(order.source_snapshot.get('part_flow'))
+    if not part_flow and any('unit_price' in row for row in entered.values()):
+        raise ValidationError({'lines': '本入口只允许修改部位总单单价；原管材和旧裁剪计价不变。'})
+    changed = [line for line in lines if entered[str(line.pk)]['quantity'] != line.quantity
+               or entered[str(line.pk)].get('unit_price', line.unit_price) != line.unit_price]
     if not changed:
         return order
     quantities = plan_quantities([order])[str(order.pk)]['lines']
+    if order.source_snapshot.get('sewing_inputs'):
+        from .part_flow_sources import input_dispatched
+        sent_inputs = input_dispatched(order)
+        for line in changed:
+            for piece in line.snapshot.get('pieces', []):
+                if entered[str(line.pk)]['quantity'] * piece['pieces_per_part'] < sent_inputs.get(piece['component_identity'], 0):
+                    raise ValidationError({'lines': '调整后目标对应裁片数量不能少于累计已发裁片。'})
     before, after = [], []
     for line in changed:
         key = str(line.pk)
-        quantity = entered[key]
+        quantity = entered[key]['quantity']
         name = line.snapshot.get('part_name', '部件')
         if quantity <= 0 or quantity < int(quantities[key]['dispatched_quantity']):
             raise ValidationError({'lines': f'“{name}”计划数量须为正整数，且不能少于累计已外发数量。'})
-        before.append({'order_line_id': key, 'quantity': line.quantity})
-        after.append({'order_line_id': key, 'quantity': quantity})
+        price = entered[key].get('unit_price', line.unit_price)
+        before.append({'order_line_id': key, 'quantity': line.quantity,
+                       'unit_price': str(line.unit_price) if line.unit_price is not None else None})
+        after.append({'order_line_id': key, 'quantity': quantity,
+                      'unit_price': str(price) if price is not None else None})
     for line in changed:
-        line.quantity = entered[str(line.pk)]
-        line.save(update_fields=['quantity', 'updated_at'])
+        line.quantity = entered[str(line.pk)]['quantity']
+        fields = ['quantity', 'updated_at']
+        if 'unit_price' in entered[str(line.pk)]:
+            line.unit_price = entered[str(line.pk)]['unit_price']
+            fields.append('unit_price')
+        line.save(update_fields=fields)
+    order_fields = ['version', 'updated_by_employee', 'updated_at']
+    if part_flow and any('unit_price' in row for row in entered.values()):
+        order.source_snapshot = {**order.source_snapshot, 'billing_basis': 'PART_RECEIPT',
+                                 'fees_deferred': any(line.unit_price is None for line in lines)}
+        order_fields.append('source_snapshot')
     order.version += 1
     order.updated_by_employee = request.employee
-    order.save(update_fields=['version', 'updated_by_employee', 'updated_at'])
+    order.save(update_fields=order_fields)
     write_audit_log(object_type='TUBE_OUTSOURCING_ORDER', object_id=order.pk, action='PLAN_QUANTITY_UPDATED',
         actor_employee=request.employee, before_data={'lines': before},
         after_data={'lines': after, 'version': order.version},
@@ -216,6 +258,11 @@ def dispatch_plan(*, order_id, data, request):
         require_saved_order_access(request, existing.plan, DISPATCH_PERMISSION)
         return existing.plan, False
     order = _lock_plan(order_id, request, DISPATCH_PERMISSION)
+    if order.source_snapshot.get('part_flow'):
+        from .part_flow_services import dispatch_parts
+        return dispatch_parts(order=order, data=data, request=request, payload_hash=payload_hash)
+    if data.get('inputs') or not data.get('lines'):
+        raise ValidationError({'lines': '该历史总单须提交原部件发货明细。'})
     if source_category(order.source_kind) != source_category(data['source_kind']):
         raise ValidationError({'source_kind': '实际发货来源与总单加工类别不一致。'})
     expected = {str(line.component_identity): line for line in order.lines.all()}
@@ -266,22 +313,23 @@ def receive_plan(*, order_id, data, request):
         return existing.order, False
     order = _lock_plan(order_id, request, RETURN_PERMISSION)
     lines = {line.pk: line for line in order.lines.select_for_update(of=('self',)).order_by('pk')}
-    quantities = plan_quantities([order])[str(order.pk)]['lines']
     pending = []
     for entered in data['lines']:
         line = lines.get(entered['order_line_id'])
         if line is None:
             raise ValidationError({'lines': '入库部件不属于该委外总单。'})
         quantity = entered['received_quantity']
-        if quantity > int(quantities[str(line.pk)]['receivable_quantity']):
-            raise ValidationError({'lines': f'“{line.snapshot.get("part_name", "部件")}”累计入库不能超过累计实际外发。'})
         if not quantity:
             continue
         require_saved_processing_materials(line)
         identity = validate_public_identity(line.snapshot['public_output_identity'])
         if identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id):
             raise Conflict('总单冻结加工身份不匹配。')
-        row = TubePlanReceiptLine(order_line=line, received_quantity=quantity, zone_id=entered['zone_id'], snapshot=line.snapshot)
+        snapshot = dict(line.snapshot)
+        if order.source_snapshot.get('part_flow'):
+            from .part_flow_prices import receipt_price_snapshot
+            snapshot.update(receipt_price_snapshot(line))
+        row = TubePlanReceiptLine(order_line=line, received_quantity=quantity, zone_id=entered['zone_id'], snapshot=snapshot)
         pending.append((row, entered, identity))
     if not pending:
         raise ValidationError({'lines': '本次至少填写一个大于0的入库数量。'})

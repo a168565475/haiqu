@@ -49,7 +49,31 @@ describe('样品采购全部入库', () => {
   })
   afterEach(() => { vi.restoreAllMocks() })
 
-  it('忽略旧草稿的部分选择和数量，全部明细只读显示根米或原单位', async () => {
+  it('新打样KG一次全入，只显示采购重量并自动折算根数提交', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [
+      { ...lines[0], unit: 'KG', weight_unit: true, purchased_quantity: '7.2500', remaining_quantity: '7.2500',
+        remaining_weight_kg: '7.2500', raw_bar_weight_kg: '2.5', actual_bar_count: 3, remaining_bar_count: 3 }, lines[1],
+    ], etag: '"sample-weight-v1"' } as never)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    expect(wrapper.find('.receiving-notice').text()).not.toContain('根数可核实修改')
+    expect(wrapper.findComponent({ name: 'PurchaseInboundHistory' }).props('showPipeRoots')).toBe(false)
+    expect(wrapper.findAll('[data-testid="sample-receiving-quantity"]').map(cell => cell.text())).toEqual(['7.25 kg', '4 个'])
+    expect(wrapper.find('[aria-label="第 1 项到货重量"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="第 1 项实收根数"]').exists()).toBe(false)
+    assignZone(vm); expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving(); await flushPromises()
+    const [payload, etag] = vi.mocked(api.createSampleMaterialReceiving).mock.calls[0]!
+    expect(etag).toBe('"sample-weight-v1"')
+    expect(payload.items).toEqual([
+      { purchase_order_line_id: 'pipe', zone_id: 'zone', remark: '', received_weight_kg: '7.2500', received_bar_count: '3' },
+      { purchase_order_line_id: 'screw', zone_id: 'zone', remark: '' },
+    ])
+    expect(api.createMaterialReceiving).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('忽略旧草稿的部分选择和数量，全部明细只读显示采购单位', async () => {
     localStorage.setItem('material-receiving-draft:v2:sample-order', JSON.stringify({ purchaseOrderId: 'sample-order',
       rows: { pipe: { included: false, receivedQuantity: '1', warehouseId: 'warehouse', zoneId: 'zone' } } }))
     const legacy = localStorage.getItem('material-receiving-draft:v2:sample-order')
@@ -58,9 +82,10 @@ describe('样品采购全部入库', () => {
     expect(localStorage.getItem('material-receiving-draft:v2:sample-order')).toBe(legacy)
     expect(localStorage.getItem('material-receiving-draft:v2:sample-order:user:7')).toBeNull()
     expect(vm.rows.map(row => row.included)).toEqual([true, true])
-    expect(vm.rows.map(row => row.receivedQuantity)).toEqual(['2', '4'])
+    expect(wrapper.find('.receiving-notice').text()).not.toContain('根数可核实修改')
+    expect(vm.rows.map(row => row.receivedQuantity)).toEqual(['12', '4'])
     expect(wrapper.find('.quantity-input').exists()).toBe(false)
-    expect(wrapper.findAll('[data-testid="sample-receiving-quantity"]').map(cell => cell.text())).toEqual(['2 根 × 6 米/根 = 12 米', '4 个'])
+    expect(wrapper.findAll('[data-testid="sample-receiving-quantity"]').map(cell => cell.text())).toEqual(['12 米', '4 个'])
     expect(wrapper.findAllComponents({ name: 'ElCheckbox' }).every(input => input.props('disabled') === true)).toBe(true)
     vm.allSelected = false
     expect(vm.selectedRows).toHaveLength(2)

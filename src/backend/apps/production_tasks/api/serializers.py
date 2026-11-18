@@ -877,13 +877,17 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     def get_total_quantity(self, instance) -> Decimal:
         return self._sum(instance.products.all(), "quantity")
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_product_total_amount(self, instance) -> Decimal:
-        return self._sum(instance.products.all(), "total_amount")
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_product_total_amount(self, instance) -> Decimal | None:
+        products = list(instance.products.all())
+        if any(row.currency_id != instance.currency_id for row in products):
+            return None
+        return self._sum(products, "total_amount")
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_total_amount(self, instance) -> Decimal:
-        return self.get_product_total_amount(instance) + instance.freight_amount + instance.other_fee_amount
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_total_amount(self, instance) -> Decimal | None:
+        product_total = self.get_product_total_amount(instance)
+        return None if product_total is None else product_total + instance.freight_amount + instance.other_fee_amount
 
     @extend_schema_field(serializers.DecimalField(max_digits=18, decimal_places=4))
     def get_batch_total_quantity(self, instance) -> Decimal:

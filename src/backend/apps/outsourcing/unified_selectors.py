@@ -18,7 +18,7 @@ from .models import (
     OutsourcingDispatch, OutsourcingDispatchLine, OutsourcingFactoryAllocation,
     OutsourcingOrder, OutsourcingOrderProduct, OutsourcingOrderStatus,
     OutsourcingProcessingItem, OutsourcingReturnLine,
-    TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingMaterial, TubeOutsourcingOrder,
+    TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingInput, TubeOutsourcingMaterial, TubeOutsourcingOrder,
     TubeOutsourcingReceipt, TubeOutsourcingReceiptLine,
 )
 from .selectors import accessible_outsourcing_orders
@@ -34,11 +34,14 @@ from .warehouse_access import (
 VIEW_PERMISSIONS = ("outsourcing.view_outsourcingorder", "material_issues.view_metalprocessingsource")
 SOURCE_LABELS = {"RAW": "仓库原料", "METAL": "金工加工件", "REWORK": "重加工件", "UNSELECTED": "待选择",
                  "RAW_PIPE": "原材料", "PUBLIC_SEMI": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
-                 "PUBLIC_CUTTING": "已入库裁片半成品", "SEWING": "未入库车缝完成件"}
+                 "PUBLIC_CUTTING": "已入库裁片半成品", "SEWING": "未入库车缝完成件",
+                 "CUTTING": "车间裁片直发", "PUBLIC_PIECE": "裁片库存", "PUBLIC_PART": "车缝部位库存"}
 SOURCE_GROUP_LABELS = {"RAW": "原材料", "TUBE_PUBLIC": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
+                       "CUTTING": "车间裁片直发", "PUBLIC_PIECE": "裁片库存", "PUBLIC_PART": "车缝部位库存",
                        "CUTTING_PUBLIC": "已入库裁片半成品", "SEWING": "未入库车缝完成件",
                        "OLD_METAL": "金工加工件（旧流程）", "REWORK": "重加工件（旧流程）", "UNSELECTED": "待选择（旧流程）"}
 SOURCE_GROUP_KINDS = {"RAW": ("RAW", "RAW_PIPE"), "TUBE_PUBLIC": ("PUBLIC_SEMI",),
+                      "CUTTING": ("CUTTING",), "PUBLIC_PIECE": ("PUBLIC_PIECE",), "PUBLIC_PART": ("PUBLIC_PART",),
                       "CUTTING_PUBLIC": ("PUBLIC_CUTTING",), "SEWING": ("SEWING",),
                       "TUBE_METAL": ("TUBE_METAL",), "OLD_METAL": ("METAL",),
                       "REWORK": ("REWORK",), "UNSELECTED": ("UNSELECTED",)}
@@ -355,7 +358,7 @@ def _tube_rows(candidates, filters):
     from .plan_selectors import plan_quantities
     totals = plan_quantities(order for order in orders if order.is_plan)
     plan_factories = defaultdict(dict)
-    for model in (TubeOutsourcingLine, TubeOutsourcingMaterial):
+    for model in (TubeOutsourcingLine, TubeOutsourcingInput, TubeOutsourcingMaterial):
         for value in model.objects.filter(order__plan_id__in=totals,
                 order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH').values(
                     'order__plan_id', 'factory_id', 'snapshot__factory_name').distinct():
@@ -380,6 +383,8 @@ def _tube_rows(candidates, filters):
         product = product if isinstance(product, dict) else {}
         row.update(
             is_plan=order.is_plan,
+            part_flow=bool(order.source_snapshot.get('part_flow')),
+            fees_deferred=bool(order.source_snapshot.get('part_flow')),
             schedule_id=str(order.schedule_product.schedule_id),
             schedule_number=order.schedule_product.schedule.schedule_number,
             production_task_number=order.schedule_product.schedule.production_task.task_number,
@@ -400,6 +405,12 @@ def _tube_rows(candidates, filters):
                 returned_quantities=[{'quantity': summary['received_quantity'], 'unit': unit}],
                 receipt_state='RECORDED' if Decimal(summary['received_quantity']) > 0 else 'NOT_RECEIVED',
                 status_display='入库达标' if order.status == 'COMPLETED' else row['status_display'])
+            if order.source_snapshot.get('part_flow'):
+                row['dispatched_quantities'] = ([{'quantity': value['dispatched_quantity'], 'unit': value['unit']}
+                    for value in summary['input_totals']] if order.source_snapshot.get('sewing_inputs') else [
+                        {'quantity': value['dispatched_quantity'], 'unit': value['unit']} for value in summary['quantity_totals']])
+                row['returned_quantities'] = [{'quantity': value['received_quantity'], 'unit': value['unit']}
+                    for value in summary['quantity_totals']]
             rows[row['row_key']] = row
             continue
         actions = {action.kind: action for action in order.list_actions}
@@ -422,8 +433,8 @@ def _tube_rows(candidates, filters):
                 and len(receipt_lines) == len(order.list_lines)
                 and all(line.pk in receipt_lines
                     and receipt_lines[line.pk].dispatched_quantity == line.quantity
-                    and 0 <= receipt_lines[line.pk].received_quantity <= line.quantity
-                    and receipt_lines[line.pk].shortage_quantity == line.quantity - receipt_lines[line.pk].received_quantity
+                    and 0 <= receipt_lines[line.pk].received_quantity
+                    and receipt_lines[line.pk].shortage_quantity == max(line.quantity - receipt_lines[line.pk].received_quantity, 0)
                     for line in order.list_lines))
             row["receipt_state"] = "RECORDED" if valid_receipt else "MISSING"
             if valid_receipt:
@@ -497,7 +508,7 @@ def _warehouse_actions(request, rows):
     )
     allowed[('TUBE', 'return')] = set(map(str, receivable.values_list('pk', flat=True)))
     allowed[('TUBE', 'return')].update(map(str, warehouse_tube_orders(request, RETURN_PERMISSION).filter(
-        pk__in=tube_ids, is_plan=True, status__in=['PROCESSING', 'COMPLETED']).values_list('pk', flat=True)))
+        pk__in=tube_ids, is_plan=True, status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED']).values_list('pk', flat=True)))
     rework_ids = [row['id'] for row in rows.values() if row['record_type'] == 'REWORK']
     allowed[('REWORK', 'dispatch')] = set(map(str, warehouse_rework_orders(request, REWORK_HANDOFF_PERMISSION).filter(
         pk__in=rework_ids, status='PENDING_HANDOFF').values_list('pk', flat=True)))

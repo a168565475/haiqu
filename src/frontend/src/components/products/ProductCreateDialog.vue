@@ -145,7 +145,6 @@ watch(() => form.category, () => {
         <ElFormItem label="规格" prop="specification" required><ElInput v-model="form.specification" maxlength="300" placeholder="请输入规格" /></ElFormItem>
         <ElFormItem label="单位" prop="unit" required><ElSelect v-model="form.unit" filterable placeholder="请选择单位"><ElOption v-for="item in options.units" :key="item.id" :label="item.unit_name" :value="item.id" /></ElSelect></ElFormItem>
         <ElFormItem label="货号" prop="product_item" required><ElSelect v-model="form.product_item" filterable :disabled="!form.category" placeholder="请先选择类别"><ElOption v-for="item in availableItems" :key="item.id" :label="item.item_number" :value="item.id" /></ElSelect></ElFormItem>
-        <ElFormItem label="仓库号" prop="warehouse_number"><ElInput v-model="form.warehouse_number" maxlength="100" placeholder="请输入仓库号" /></ElFormItem>
         <ElFormItem label="仓库名称" prop="warehouse_name"><ElInput v-model="form.warehouse_name" maxlength="150" placeholder="请输入仓库名称" /></ElFormItem>
         <ElFormItem label="规模" prop="scale" required><ElSelect v-model="form.scale"><ElOption label="定制" value="CUSTOM" /><ElOption label="常规" value="REGULAR" /></ElSelect></ElFormItem>
         <ElFormItem label="状态" prop="status" required><ElSelect v-model="form.status"><ElOption label="正常" value="ACTIVE" /><ElOption label="废弃" value="INACTIVE" /></ElSelect></ElFormItem>

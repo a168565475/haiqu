@@ -21,7 +21,7 @@ class PurchaseReturnLineSerializer(serializers.ModelSerializer):
     material_catalog_id = serializers.UUIDField(source="inbound_line.material_catalog_id", read_only=True, allow_null=True)
     material_selection_snapshot = serializers.JSONField(source="inbound_line.material_selection_snapshot", read_only=True)
     return_bar_count = serializers.IntegerField(source='inbound_line.return_bar_count', read_only=True, allow_null=True)
-    raw_bar_length_m = serializers.DecimalField(source='inbound_line.raw_bar_length_m', max_digits=18, decimal_places=2, read_only=True, allow_null=True)
+    raw_bar_length_m = serializers.DecimalField(source='inbound_line.raw_bar_length_m', max_digits=19, decimal_places=3, read_only=True, allow_null=True)
     purchase_order_line_id = serializers.UUIDField(source="inbound_line.purchase_order_line_id", read_only=True)
     product_name = serializers.CharField(source="inbound_line.product_name_snapshot", read_only=True)
     material = serializers.CharField(source="inbound_line.material_snapshot", read_only=True)

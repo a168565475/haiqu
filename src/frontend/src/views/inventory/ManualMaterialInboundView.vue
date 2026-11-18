@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import MaterialInventoryView from './MaterialInventoryView.vue'
+import MaterialInboundDetailView from './MaterialInboundDetailView.vue'
 </script>
 
 <template>
-  <MaterialInventoryView open-inbound-initially />
+  <MaterialInboundDetailView />
 </template>

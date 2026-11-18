@@ -11,6 +11,7 @@ from apps.inventory.models import MaterialStockBalance, MaterialStockMovement, P
 from apps.inventory.public_stock_cutover import require_business_stock_write
 from apps.inventory.public_stock_mode import public_flow_enabled
 from apps.inventory.public_stock_services import debit_public_stock, lock_public_stock_locations
+from apps.inventory.pipe_weight_quantities import issued_pipe_weight
 from apps.inventory.tube_outsourcing_reservations import reserved_quantity_for_balance
 from apps.products.models import RawMaterialInformation
 
@@ -243,14 +244,20 @@ def debit_pipe_plan(*, plan, source_id, source_line_id, actor_employee, snapshot
         before, before_meters = balance.quantity, balance.meter_quantity
         if before < bars:
             raise Conflict("管材库存已变化，本次未扣库存，请刷新后重试。")
+        before_weight = balance.weight_quantity
+        weight = None
+        if before_weight is not None or balance.bar_weight_kg is not None:
+            weight = issued_pipe_weight(available_roots=before, available_weight_kg=before_weight, issued_roots=bars)
+            balance.weight_quantity -= weight
         balance.quantity -= bars
         balance.meter_quantity -= meters
         balance.version += 1
-        balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
+        balance.save(update_fields=["quantity", "meter_quantity", "weight_quantity", "version", "updated_at"])
         movements.append(MaterialStockMovement.objects.create(
             balance=balance, direction="OUT", quantity=bars, meter_quantity=meters,
             before_quantity=before, after_quantity=balance.quantity,
             before_meter_quantity=before_meters, after_meter_quantity=balance.meter_quantity,
+            weight_quantity=weight, before_weight_quantity=before_weight, after_weight_quantity=balance.weight_quantity,
             source_type="SAMPLE_MATERIAL_ISSUE", source_id=source_id, source_line_id=movement_line_id,
             actor_employee=actor_employee, snapshot=movement_snapshot,
         ))

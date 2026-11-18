@@ -41,6 +41,13 @@ describe('采购表规格和颜色分列', () => {
   it('旧数据无颜色快照时不把材质当成颜色', () => {
     expect(purchaseSheetLineDisplay({ ...line, material_attributes_snapshot: undefined })).toEqual({ specification: '16', attributes: '材质：PE', color: '' })
   })
+  it('采购表属性不再额外显示BOM单位和流转单位', () => {
+    const hardware = { ...line, unit: 'KG', material_attributes_snapshot: { fields: [
+      { key: 'unit', label: '单位', value: 'KG' },
+      { key: 'flow_unit', label: '流转单位', value: '个' },
+    ] } } as SupplierPurchaseSheetLine
+    expect(purchaseSheetLineDisplay(hardware).attributes).toBe('材质：PE')
+  })
   it('样品材质要求放物料属性，原remark颜色保留在颜色列', () => {
     expect(purchaseSheetLineDisplay({ ...line, remark: '深蓝色' }, true)).toEqual({ specification: '16', attributes: '材质：PE；颜色：黑色', color: '深蓝色' })
   })

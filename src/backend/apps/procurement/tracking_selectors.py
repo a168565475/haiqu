@@ -18,8 +18,9 @@ from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, REF
 from apps.products.models import RawMaterialInformation
 
 from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrderLine, SupplierPurchaseSheet
+from .catalog_materials import is_weight_purchase
 from .material_attribute_snapshot import build_material_attribute_snapshot
-from .services import _is_purchasable_bom_section, _source_quantity
+from .services import _hardware_weight_data, _is_purchasable_bom_section, _source_quantity
 from .tracking_rules import BEIJING, arrival_risks, beijing_today, coverage_risks, decimal_value, quantity_text, root_count_value
 from .tracking_deadlines import coverage_timing
 from .tracking_policy import get_tracking_policy
@@ -29,7 +30,7 @@ VALID_PURCHASE_STATUSES = ('SUBMITTED', 'PURCHASING', 'COMPLETED')
 TERMINAL_TASK_STATUSES = ('COMPLETED', 'CANCELLED')
 LINE_IDENTITY_FIELDS = ('id', 'purchase_order_id', 'source_bom_line_id_snapshot', 'product_line_id_snapshot',
     'source_unit_text', 'section_type_snapshot', 'material_catalog_id', 'material_selection_snapshot',
-    'calculation_snapshot', 'raw_material_snapshot', 'raw_bar_length_m', 'actual_bar_count',
+    'calculation_snapshot', 'raw_material_snapshot', 'raw_bar_length_m', 'raw_bar_weight_kg', 'actual_bar_count',
     'actual_purchase_quantity', 'purchase_group_line_id')
 
 
@@ -80,6 +81,8 @@ def _identity(snapshot, materials):
         return None, ['保存的采购来源格式待核对']
     unit = str(snapshot.get('source_unit_text') or '').strip()
     section = snapshot.get('section_type_snapshot')
+    calculation = snapshot.get('calculation_snapshot')
+    hardware = isinstance(calculation, dict) and calculation.get('measurement_kind') == 'HARDWARE_WEIGHT'
     notes = []
     if not unit:
         notes.append('采购来源单位缺失')
@@ -89,7 +92,7 @@ def _identity(snapshot, materials):
                 material_catalog_id=snapshot['material_catalog_id'])
         except ValidationError:
             return None, notes + ['保存的材料目录身份待核对']
-        expected_unit = '米' if section == 'PROFILE' else selected['unit_name']
+        expected_unit = ('KG' if section == 'PROFILE' and unit == 'KG' else '米') if section == 'PROFILE' else ('KG' if hardware else selected['unit_name'])
         if unit != expected_unit or section == 'PROFILE' and selected['unit_name'] != '根':
             notes.append('保存材料与采购单位不一致')
         return ('catalog', str(snapshot['material_catalog_id']), selected), notes
@@ -109,9 +112,9 @@ def _identity(snapshot, materials):
     if calculation.get('unit_id') and str(calculation['unit_id']) != str(material.unit_id):
         notes.append('保存材料单位身份不一致')
     if section == 'PROFILE':
-        if unit != '米' or material.unit.unit_name != '根' or material.category.category_name != '管材':
-            notes.append('管材根米单位或材料分类待核对')
-    elif unit not in {material.unit.unit_name, material.unit.unit_code}:
+        if unit not in {'米', 'KG'} or material.unit.unit_name != '根' or material.category.category_name != '管材':
+            notes.append('管材采购单位或材料分类待核对')
+    elif unit not in ({'KG'} if hardware else {material.unit.unit_name, material.unit.unit_code}):
         notes.append('材料与采购单位不一致')
     return ('raw', str(material.pk)), notes
 
@@ -148,20 +151,32 @@ def _common(task, product_id, product_name, material, specification, unit, group
 def _receipt_summaries(line_ids):
     confirmed = Q(inbound__status='CONFIRMED')
     pending = Q(inbound__status='PENDING_QUALITY')
-    returned = Q(return_quantity__gt=0) | Q(purchase_return_line__isnull=False)
-    bad_return = (Q(purchase_return_line__isnull=True)
+    weight_receipt = Q(source_unit_text_snapshot='KG') & (
+        Q(measurement_kind='PIPE') | Q(calculation_snapshot__measurement_kind='HARDWARE_WEIGHT'))
+    returned = Q(return_quantity__gt=0) | Q(return_weight_kg__gt=0) | Q(purchase_return_line__isnull=False)
+    bad_return_meter = (Q(purchase_return_line__isnull=True)
         | ~Q(purchase_return_line__quantity=F('return_quantity'))
+        | ~Q(purchase_return_line__return_order__purchase_order_id=F('purchase_order_line__purchase_order_id'))
+        | ~Q(purchase_return_line__return_order__inbound_id=F('inbound_id'))
+        | ~Q(purchase_return_line__return_order__status='COMPLETED'))
+    bad_return_weight = (Q(purchase_return_line__isnull=True)
+        | ~Q(purchase_return_line__quantity=F('return_weight_kg'))
         | ~Q(purchase_return_line__return_order__purchase_order_id=F('purchase_order_line__purchase_order_id'))
         | ~Q(purchase_return_line__return_order__inbound_id=F('inbound_id'))
         | ~Q(purchase_return_line__return_order__status='COMPLETED'))
     records = MaterialInboundLine.objects.filter(purchase_order_line_id__in=line_ids).order_by().values(
         'purchase_order_line_id', 'source_unit_text_snapshot', 'raw_material_information_id',
-        'material_catalog_id', 'measurement_kind', 'raw_bar_length_m').annotate(
+        'material_catalog_id', 'measurement_kind', 'raw_bar_length_m', 'bar_weight_kg').annotate(
         received=Sum('received_quantity'), accepted=Sum('accepted_quantity', filter=confirmed, default=0),
         pending=Sum('received_quantity', filter=pending, default=0),
         returned=Sum('return_quantity', filter=confirmed, default=0),
+        received_weight=Sum('received_weight_kg'), accepted_weight=Sum('accepted_weight_kg', filter=confirmed, default=0),
+        pending_weight=Sum('received_weight_kg', filter=pending, default=0), returned_weight=Sum('return_weight_kg', filter=confirmed, default=0),
+        missing_weight=Count('id', filter=Q(received_weight_kg__isnull=True)
+            | (confirmed & (Q(accepted_weight_kg__isnull=True) | Q(return_weight_kg__isnull=True)))),
         received_roots=Sum('received_bar_count'), missing_roots=Count('id', filter=Q(received_bar_count__isnull=True)),
-        return_pending=Count('id', filter=confirmed & returned & bad_return),
+        return_pending_meter=Count('id', filter=confirmed & ~weight_receipt & returned & bad_return_meter),
+        return_pending_weight=Count('id', filter=confirmed & weight_receipt & returned & bad_return_weight),
         bad_owner=Count('id', filter=~Q(inbound__purchase_order_id=F('purchase_order_line__purchase_order_id'))),
         bad_selection=Count('id', filter=Q(material_catalog_id__isnull=False)
                             & ~Q(material_selection_snapshot=F('purchase_order_line__material_selection_snapshot'))))
@@ -181,7 +196,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
     if not include_history:
         # 已完成但尚有退货待处理的旧数据仍需显示，之后按聚合结果筛除普通历史。
         queryset = queryset.filter(Q(purchase_order__archived_at__isnull=True)
-            | Q(material_inbound_lines__return_quantity__gt=0))
+            | Q(material_inbound_lines__return_quantity__gt=0) | Q(material_inbound_lines__return_weight_kg__gt=0))
     lines = list(queryset.select_related('purchase_order__production_task').only(*LINE_IDENTITY_FIELDS,
         'product_name_snapshot', 'part_name_snapshot', 'material_snapshot', 'specification_snapshot', 'material_attributes_snapshot',
         'delivery_date', 'supplier_id', 'supplier_name_snapshot', 'purchase_order__status',
@@ -206,11 +221,16 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
             if ordered is None or ordered == 0:
                 notes.append('采购数量待核对')
             received = accepted = pending = returned = Decimal('0')
+            received_weight = accepted_weight = pending_weight = returned_weight = Decimal('0')
             received_roots = Decimal('0')
             return_pending = False
             receipt_valid = True
-            root_valid = root_count_value(line.actual_bar_count) is not None and line.raw_bar_length_m is not None and line.raw_bar_length_m > 0
-            if root_valid and ordered != line.actual_bar_count * line.raw_bar_length_m:
+            weight_valid = True
+            is_weight = is_weight_purchase(line)
+            root_valid = (root_count_value(line.actual_bar_count) is not None
+                          and (line.raw_bar_weight_kg is not None and line.raw_bar_weight_kg > 0 if is_weight
+                               else line.raw_bar_length_m is not None and line.raw_bar_length_m > 0))
+            if root_valid and not is_weight and ordered != line.actual_bar_count * line.raw_bar_length_m:
                 root_valid = False
             for record in receipts.get(line.pk, []):
                 matches = (record['source_unit_text_snapshot'] == line.source_unit_text and not record['bad_owner']
@@ -225,19 +245,33 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
                 accepted += record['accepted']
                 pending += record['pending']
                 returned += record['returned']
-                return_pending |= bool(record['return_pending'])
-                root_valid &= (record['measurement_kind'] == 'PIPE' and record['raw_bar_length_m'] == line.raw_bar_length_m
+                if is_weight and (record['missing_weight'] or any(decimal_value(record[key]) is None
+                        for key in ('received_weight', 'accepted_weight', 'pending_weight', 'returned_weight'))):
+                    weight_valid = False
+                received_weight += record['received_weight'] or Decimal('0')
+                accepted_weight += record['accepted_weight'] or Decimal('0')
+                pending_weight += record['pending_weight'] or Decimal('0')
+                returned_weight += record['returned_weight'] or Decimal('0')
+                return_pending |= bool(record['return_pending_meter'] or record['return_pending_weight'])
+                root_valid &= (record['measurement_kind'] == 'PIPE' and (record['bar_weight_kg'] == line.raw_bar_weight_kg if is_weight else record['raw_bar_length_m'] == line.raw_bar_length_m)
                                and not record['missing_roots'])
                 if record['received_roots'] is not None:
                     received_roots += record['received_roots']
             if not receipt_valid:
                 notes.append('到货记录的材料、单位或采购归属待核对')
                 received = accepted = pending = returned = None
+                received_weight = accepted_weight = pending_weight = returned_weight = None
+            if is_weight:
+                if not weight_valid:
+                    notes.append('到货重量缺失或无效，采购重量进度待核对')
+                    received_weight = accepted_weight = pending_weight = returned_weight = None
+                # 原数量列保留管材米数或五金个数，采购进度统一使用实收 KG。
+                received, accepted, pending, returned = received_weight, accepted_weight, pending_weight, returned_weight
             unreceived = max(ordered - received, Decimal('0')) if ordered is not None and received is not None else None
             is_pipe = _classification(snapshot)
             root_note = ''
             if is_pipe and (not root_valid or not receipt_valid):
-                root_note = '根数或根长依据不完整，根数待核对；已核实米数仍按米显示'
+                root_note = '根数或每根重量依据不完整，根数待核对；已核实采购重量仍按 KG 显示' if is_weight else '根数或根长依据不完整，根数待核对；已核实米数仍按米显示'
                 notes.append(root_note)
             history = bool(order.archived_at or order.status == 'COMPLETED')
             if history and not include_history and not return_pending:
@@ -254,8 +288,14 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
                 material_attributes_snapshot=line.material_attributes_snapshot if isinstance(line.material_attributes_snapshot, dict) else {},
                 part_name=line.part_name_snapshot, material=line.material_snapshot, raw_material=line.raw_material_snapshot,
                 ordered_quantity=quantity_text(ordered), received_quantity=quantity_text(received), accepted_quantity=quantity_text(accepted),
-                pending_quality_quantity=quantity_text(pending), unreceived_quantity=quantity_text(unreceived),
-                return_quantity=quantity_text(returned), return_pending=return_pending,
+                 pending_quality_quantity=quantity_text(pending), unreceived_quantity=quantity_text(unreceived),
+                 return_quantity=quantity_text(returned), return_pending=return_pending,
+                 ordered_weight_kg=quantity_text(ordered) if is_weight else None,
+                 received_weight_kg=quantity_text(received_weight) if is_weight else None,
+                 accepted_weight_kg=quantity_text(accepted_weight) if is_weight else None,
+                 pending_quality_weight_kg=quantity_text(pending_weight) if is_weight else None,
+                 unreceived_weight_kg=quantity_text(unreceived) if is_weight else None,
+                 return_weight_kg=quantity_text(returned_weight) if is_weight else None,
                 delivery_date=line.delivery_date.isoformat() if line.delivery_date else None,
                 days_remaining=(line.delivery_date-today).days if line.delivery_date else None,
                 ordered_root_count=str(line.actual_bar_count) if is_pipe and root_valid and receipt_valid else None,
@@ -279,6 +319,8 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
 def _bom_snapshot(line, bom, materials):
     notes = []
     raw = line.raw_values if isinstance(line.raw_values, dict) else {}
+    is_weight = line.section.section_type == 'PROFILE' and any(raw.get(key) not in (None, '') for key in (
+        'long_material_unit_weight_kg', 'long_material_total_weight_kg'))
     material_id = None
     for key in DIRECT_RAW_MATERIAL_SOURCE_KEYS:
         if raw.get(key):
@@ -295,13 +337,11 @@ def _bom_snapshot(line, bom, materials):
         'calculation_snapshot': {'raw_material_id': str(material_id)} if material_id else {},
         'raw_material_snapshot': line.raw_material, 'section_type_snapshot': line.section.section_type,
         'section_title_snapshot': line.section.title,
-        'source_unit_text': '米' if line.section.section_type == 'PROFILE' else line.unit,
+        'source_unit_text': 'KG' if is_weight else ('米' if line.section.section_type == 'PROFILE' else line.unit),
         'part_name_snapshot': line.part_name, 'material_snapshot': line.material, 'specification_snapshot': line.specification,
         'material_attributes_snapshot': build_material_attribute_snapshot(line, line.section)
             if isinstance(line.raw_values, dict) else {},
-        'raw_bar_length_m': line.raw_bar_length_m, 'suggested_bar_count': line.suggested_bar_count}
-    identity, identity_notes = _identity(snapshot, materials)
-    notes.extend(identity_notes)
+         'raw_bar_length_m': line.raw_bar_length_m, 'suggested_bar_count': line.suggested_bar_count}
     if not isinstance(line.raw_values, dict):
         required = None
         notes.append('BOM计算依据格式待核对')
@@ -309,9 +349,22 @@ def _bom_snapshot(line, bom, materials):
         try:
             plan = pipe_plan_for_line(line)
             snapshot['calculation_snapshot'].update(plan)
-            required = decimal_value(plan['suggested_purchase_meters'])
+            raw_weight = raw.get('long_material_unit_weight_kg')
+            total_weight = raw.get('long_material_total_weight_kg')
+            if is_weight:
+                snapshot['calculation_snapshot'].update(measurement_unit='kg', raw_bar_weight_kg=str(raw_weight), suggested_purchase_weight_kg=str(total_weight))
+                snapshot['raw_bar_weight_kg'] = decimal_value(raw_weight)
+                required = decimal_value(total_weight)
+                if snapshot['raw_bar_weight_kg'] in (None, Decimal('0')) or required in (None, Decimal('0')):
+                    required = None
+                    notes.append('管材长料单重或建议采购重量缺失')
+                elif required != (snapshot['raw_bar_weight_kg'] * Decimal(plan['suggested_bar_count'])).quantize(Decimal('0.0001')):
+                    notes.append('管材建议采购重量与根数、长料单重不一致')
+            else:
+                required = decimal_value(plan['suggested_purchase_meters'])
             if (decimal_value(plan['raw_bar_length_m']) != line.raw_bar_length_m
-                    or plan['suggested_bar_count'] != line.suggested_bar_count or required != line.suggested_purchase_meters):
+                    or plan['suggested_bar_count'] != line.suggested_bar_count
+                    or decimal_value(plan['suggested_purchase_meters']) != line.suggested_purchase_meters):
                 notes.append('管材计算参数与保存结果不一致')
         except MaterialFlowValueError:
             required = None
@@ -319,8 +372,12 @@ def _bom_snapshot(line, bom, materials):
     else:
         required, _field, _text, unit, parsed = _source_quantity(line, bom)
         snapshot['source_unit_text'] = unit
+        if line.section.section_type == 'ACCESSORY' and _hardware_weight_data(line, bom) is not None:
+            snapshot['calculation_snapshot']['measurement_kind'] = 'HARDWARE_WEIGHT'
         if parsed != 'READY':
             notes.append('BOM需求量未识别')
+    identity, identity_notes = _identity(snapshot, materials)
+    notes.extend(identity_notes)
     required = decimal_value(required)
     if required is None or required <= 0:
         notes.append('BOM需求数量待核对')
@@ -335,7 +392,8 @@ def _semantic(snapshot, identity):
     pipe_basis = tuple(decimal_value(calculation.get(key)) for key in (
         'cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'order_quantity'))
     return (identity, decimal_value(snapshot.get('required_quantity')), snapshot.get('source_unit_text'),
-            decimal_value(snapshot.get('raw_bar_length_m')), decimal_value(snapshot.get('suggested_bar_count')), pipe_basis)
+            decimal_value(snapshot.get('raw_bar_length_m')), decimal_value(snapshot.get('raw_bar_weight_kg')),
+            decimal_value(snapshot.get('suggested_bar_count')), pipe_basis)
 
 
 def _coverage_category(snapshot):
@@ -484,7 +542,9 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                     notes.append('冻结来源行待核对')
                 purchased, purchased_roots = Decimal('0'), Decimal('0')
                 required_roots = root_count_value(snapshot.get('suggested_bar_count'))
-                root_valid = decimal_value(snapshot.get('raw_bar_length_m')) not in (None, Decimal('0')) and required_roots is not None
+                is_weight = snapshot.get('source_unit_text') == 'KG' and snapshot.get('section_type_snapshot') == 'PROFILE'
+                root_valid = (decimal_value(snapshot.get('raw_bar_weight_kg')) not in (None, Decimal('0')) if is_weight
+                              else decimal_value(snapshot.get('raw_bar_length_m')) not in (None, Decimal('0'))) and required_roots is not None
                 for line in purchase_map.get((task.pk, product.pk), []):
                     if str(line.source_bom_line_id_snapshot) != source_id:
                         continue
@@ -496,7 +556,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                         notes.append('采购批次来源身份、单位或数量与需求不一致')
                         continue
                     purchased += quantity
-                    if line.actual_bar_count is None or decimal_value(line.raw_bar_length_m) != decimal_value(snapshot.get('raw_bar_length_m')):
+                    if line.actual_bar_count is None or (is_weight and decimal_value(line.raw_bar_weight_kg) != decimal_value(snapshot.get('raw_bar_weight_kg'))) or (not is_weight and decimal_value(line.raw_bar_length_m) != decimal_value(snapshot.get('raw_bar_length_m'))):
                         root_valid = False
                     else:
                         purchased_roots += line.actual_bar_count
@@ -505,7 +565,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                 is_pipe = _classification(snapshot)
                 root_note = ''
                 if is_pipe and not root_valid:
-                    root_note = '根数或根长依据缺失，保留米数并标记根数待核对'
+                    root_note = '根数或每根重量依据缺失，保留采购量并标记根数待核对'
                     notes.append(root_note)
                 reliable = not notes
                 remaining = max(required - purchased, Decimal('0')) if reliable and required is not None else None

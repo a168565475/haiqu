@@ -48,7 +48,8 @@ class SamplePipeFlowTests(APITestCase):
         return {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk),
                 'source_revision': data['source_revision'], 'currency_id': str(self.currency.pk), 'is_mailed': False,
                 'lines': [{'sample_line_key': self.key, 'supplier_id': str(self.supplier.pk),
-                           'delivery_date': timezone.localdate().isoformat(), 'actual_bar_count': 4, 'unit_price': '2'}]}
+                           'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '10',
+                           'raw_bar_length_m': '3.05', 'raw_bar_weight_kg': '2.5', 'unit_price': '2'}]}
 
     def create_order(self):
         result = self.client.post(self.root, self.purchase_payload(), format='json')
@@ -70,19 +71,31 @@ class SamplePipeFlowTests(APITestCase):
 
     def purchasing(self):
         self.create_order()
+        # 显式构造变更前已保存的米制合同，历史收货/退货用例不通过新建接口申请米制采购。
+        from apps.samples.pipe_materials import sample_pipe_snapshot
+        from apps.procurement.pipe_purchase import purchase_pipe_values
+        frozen = sample_pipe_snapshot(self.procurement, self.demand)
+        values = purchase_pipe_values(frozen, {'actual_bar_count': 4})
+        PurchaseOrderLine.objects.filter(pk=self.purchase_line.pk).update(**values,
+            raw_bar_weight_kg=None, suggested_purchase_weight_kg=None, actual_purchase_weight_kg=None,
+            source_unit_text='米', source_quantity_field='suggested_purchase_meters',
+            source_quantity_text=frozen['suggested_purchase_meters'], required_quantity=frozen['suggested_purchase_meters'],
+            actual_purchase_quantity=values['actual_purchase_meters'], amount=Decimal('24.40'))
+        self.purchase_line.refresh_from_db()
+        self.order.total_amount = Decimal('24.40')
         self.order.status = 'PURCHASING'
-        self.order.save(update_fields=['status'])
+        self.order.save(update_fields=['status', 'total_amount'])
 
     def test_source_uses_shortage_pieces_and_server_computes_amount(self):
         self.create_order()
         line = self.purchase_line
         self.assertIsNone(line.bom_line_id)
-        self.assertEqual(line.calculation_snapshot['demand_pieces'], 18)
+        self.assertEqual(line.calculation_snapshot['sample_demand_snapshot']['demand_pieces'], 18)
         self.assertEqual((line.suggested_bar_count, line.actual_bar_count), (4, 4))
         self.assertEqual((line.raw_bar_length_m, line.actual_purchase_quantity, line.amount),
-                         (Decimal('3.05'), Decimal('12.20'), Decimal('24.40')))
+                         (Decimal('3.05'), Decimal('10'), Decimal('20')))
         self.assertEqual((line.sample_demand_quantity, line.sample_supply_quantity), (20, 2))
-        self.assertEqual(line.source_unit_text, '米')
+        self.assertEqual(line.source_unit_text, 'KG')
 
     def test_old_or_invalid_parameters_block_without_creating_order(self):
         for field, value in [('cuttingLengthMm', ''), ('piecesPerBar', '1.5'), ('unitLabel', '米'),
@@ -103,14 +116,15 @@ class SamplePipeFlowTests(APITestCase):
         payload['lines'][0]['actual_bar_count'] = 4
         self.assertEqual(self.client.post(self.root, payload, format='json').status_code, 409)
 
-    def test_changed_roots_without_reason_uses_computed_meters(self):
+    def test_changed_weight_without_reason_uses_ceil_roots(self):
         payload = self.purchase_payload()
-        payload['lines'][0]['actual_bar_count'] = 5
+        payload['lines'][0]['actual_purchase_quantity'] = '12.5001'
         result = self.client.post(self.root, payload, format='json')
         self.assertEqual(result.status_code, 201, result.data)
         line = result.data['data']['lines'][0]
         self.assertEqual(line['quantity_difference_reason'], '')
-        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('15.25'))
+        self.assertEqual(Decimal(line['actual_purchase_quantity']), Decimal('12.5001'))
+        self.assertEqual(line['actual_bar_count'], 6)
 
     def test_confirmation_rejects_changed_sample_parameters(self):
         self.create_order()
@@ -202,7 +216,7 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
         self.assertEqual(sum(SampleMaterialArrival.objects.values_list('accepted_quantity', flat=True)), 24)
 
-    def test_formal_publish_and_xlsx_use_same_root_meter_snapshot(self):
+    def test_formal_publish_and_xlsx_use_same_weight_snapshot(self):
         from openpyxl import load_workbook
         url = self.generate_sheet()
         detail = self.client.get(url)
@@ -212,8 +226,10 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(exported.status_code, 200)
         binary = b''.join(exported.streaming_content) if exported.streaming else exported.content
         cells = '\n'.join(str(cell.value or '') for row in load_workbook(BytesIO(binary)).active for cell in row)
-        self.assertIn('4 根 × 3.05 米/根 = 12.2 米', cells)
-        self.assertIn('元/米', cells)
+        self.assertEqual(row['actual_purchase_weight_kg'], '10.0000')
+        self.assertEqual((row['unit'], row['price_unit']), ('kg', '元/kg'))
+        self.assertIn('kg', cells)
+        self.assertIn('元/kg', cells)
         published = self.client.post(url + 'publish/', {}, format='json', HTTP_IF_MATCH=detail['ETag'])
         self.assertEqual(published.status_code, 200, published.data)
         self.order.refresh_from_db()

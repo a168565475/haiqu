@@ -68,7 +68,7 @@ describe('RawMaterialInformationView', () => {
     }))
     expect(wrapper.text()).toContain('368 条')
     expect(wrapper.text()).toContain('YL0004')
-    expect(wrapper.text()).toContain('CK04')
+    expect(wrapper.text()).not.toContain('CK04')
     expect(wrapper.text()).toContain('包材仓')
     expect(wrapper.find('.strong-tag.is-material').text()).toBe('材料')
     expect(wrapper.find('.strong-tag.is-category').text()).toBe('包材')

@@ -79,7 +79,7 @@ beforeEach(() => {
     schedule_product: null,
     schedule_products: [{ id: 'product-1', product_line_id: 'line-1', production_task_id: 'task-1', task_number: 'TASK-1', product_name: '折叠椅', product_number: 'P-1', planned_quantity: '100', order_quantity: '100', unit_name: '件' }],
     workshops: [{ id: 'workshop-1', name: '金工车间' }], crafts: [{ id: 'craft-1', name: '管材加工', workshop_id: 'workshop-1', plan_category: 'METAL' }], operations: [],
-    bom_items: [{ id: 'bom-line-1', component_identity: 'component-1', name: '前脚切管', material: '铁', specification: '', label: '前脚切管-铁', source_type: 'METAL', pieces_per_product: 2, cutting_sets_per_product: null, cutting_pieces_per_set: null }],
+    bom_items: [{ id: 'bom-line-1', component_identity: 'component-1', name: '前脚切管', material: '铁', specification: '', label: '前脚切管-铁', source_type: 'METAL', component_kind: '', pieces_per_product: 2, parts_per_product: null, pieces_per_part: null, unit: '支', cutting_sets_per_product: null, cutting_pieces_per_set: null }],
     employees: [{ id: 'worker-1', name: '员工甲', workshop_id: 'workshop-1' }],
   })
   mocks.price.mockResolvedValue(scheme)

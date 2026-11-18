@@ -5,7 +5,7 @@ from rest_framework import serializers
 
 from apps.sales_orders.presentation import specification_display
 
-from ..group_selectors import purchase_batch_display_status, purchase_group_completion_summary, purchase_group_progress
+from ..group_selectors import purchase_batch_display_status, purchase_group_completion_summary, purchase_group_deletion_summary, purchase_group_progress
 from ..models import PurchaseBatchType, PurchaseGroup, PurchaseOrderStatus
 from .serializers import PurchaseOrderUpdateLineSerializer
 
@@ -22,6 +22,11 @@ class PurchaseGroupCompleteSerializer(serializers.Serializer):
 
 class PurchaseGroupCompletionSerializer(serializers.Serializer):
     can_complete = serializers.BooleanField(read_only=True)
+    blocked_reason = serializers.CharField(read_only=True)
+
+
+class PurchaseGroupDeletionSerializer(serializers.Serializer):
+    can_delete = serializers.BooleanField(read_only=True)
     blocked_reason = serializers.CharField(read_only=True)
 
 
@@ -117,6 +122,7 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
     batches = PurchaseBatchSummarySerializer(many=True, read_only=True)
     display_status = serializers.SerializerMethodField()
     completion = serializers.SerializerMethodField()
+    deletion = serializers.SerializerMethodField()
     manual_completed_by_name = serializers.CharField(
         source="manual_completed_by_employee.display_name", read_only=True, default="",
     )
@@ -126,7 +132,7 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
         fields = ["id", "group_number", "production_task_id", "product_line_id_snapshot", "source_bom_id_snapshot",
                   "production_task_number_snapshot", "sales_order_number_snapshot", "customer_name_snapshot",
                   "source_revision", "compatibility_issues", "product", "order_delivery_date",
-                  "progress", "batches", "display_status", "completion", "manual_completed_at",
+                  "progress", "batches", "display_status", "completion", "deletion", "manual_completed_at",
                   "manual_completed_by_name", "manual_completion_remark", "created_at", "updated_at"]
         read_only_fields = fields
 
@@ -141,6 +147,10 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
     @extend_schema_field(PurchaseGroupCompletionSerializer)
     def get_completion(self, instance):
         return purchase_group_completion_summary(instance)
+
+    @extend_schema_field(PurchaseGroupDeletionSerializer)
+    def get_deletion(self, instance):
+        return purchase_group_deletion_summary(instance)
 
     @extend_schema_field(PurchaseGroupProductSerializer(allow_null=True))
     def get_product(self, instance):

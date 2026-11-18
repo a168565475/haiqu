@@ -14,9 +14,9 @@ import WorkPage from '@/components/WorkPage.vue'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { createRequestId } from '@/utils/requestId'
-import { buildIssueLines, materialAttributes, omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, selectedQuantityError } from '@/utils/materialQuantities'
+import { buildIssueLines, materialAttributes, omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError } from '@/utils/materialQuantities'
 import { createMaterialIssue, fetchMaterialIssue, fetchMaterialIssueOptions, fetchMaterialIssueProducts, fetchMaterialRequirements, submitMaterialIssue, updateMaterialIssue } from '@/api/materialIssues'
-import type { IssueWritePayload, MaterialIssue, MaterialIssueOptions, MaterialIssueProduct, MaterialRequirement, MaterialRequirementResponse, VersionedIssue } from '@/types/materialIssue'
+import type { IssueWritePayload, MaterialIssue, MaterialIssueOptions, MaterialIssueProduct, MaterialIssueSourceKind, MaterialRequirement, MaterialRequirementResponse, VersionedIssue } from '@/types/materialIssue'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +36,7 @@ const product = ref<MaterialIssueProduct | null>(null)
 const requirements = ref<MaterialRequirement[]>([])
 const blockers = ref<MaterialRequirementResponse['blockers']>([])
 const selected = reactive<Record<string, string>>({})
+const sources = reactive<Record<string, MaterialIssueSourceKind>>({})
 const context = reactive({ production_task_id: '', product_line_id: '', workshop_id: '' })
 const recipientId = ref('')
 const remark = ref('')
@@ -95,7 +96,9 @@ function formatPickerOption(type: string, option: PickerOption) {
   const labels: Record<string, string> = { year: '年', month: '月', day: '日', hour: '时', minute: '分' }
   return { ...option, text: `${option.text}${labels[type] || ''}` }
 }
-const rowError = (row: MaterialRequirement) => selectedQuantityError(selected[row.requirement_id] || '', row, requirements.value, selected)
+const rowError = (row: MaterialRequirement) => selectedQuantityError(selected[row.requirement_id] || '', row, requirements.value, selected, sources)
+const isDirect = (row: MaterialRequirement) => sources[row.requirement_id] === 'CUTTING_DIRECT'
+const canChooseDirect = (row: MaterialRequirement) => row.component_kind === 'CUT_PIECE' && row.direct_available_quantity != null
 function formatIssueQuantity(value: string, row: MaterialRequirement) {
   // 拒绝整次非法输入，避免粘贴 1e3、负数等内容时被拼成另一个数量。
   return /^\d*(?:\.\d*)?$/.test(value) ? value.replace(/^\./, '0.') : selected[row.requirement_id] || ''
@@ -119,7 +122,7 @@ function confirmRecipient({ selectedValues }: PickerConfirmEventParams) {
 function writePayload(): IssueWritePayload {
   if (!recipientId.value || !recipients.value.some(item => item.id === recipientId.value)) throw new Error('请选择当前车间有效的领料人。')
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(issueAt.value)) throw new Error('请填写领料时间。')
-  const lines = buildIssueLines(requirements.value, selected)
+  const lines = buildIssueLines(requirements.value, selected, sources)
   if (!lines.length) throw new Error('请至少填写一项大于 0 的申请数量。')
   if (hasRawBlocker.value && requirements.value.some(row => row.line_type === 'RAW' && !omittedQuantity(selected[row.requirement_id]))) {
     throw new Error('当前原材料需求存在未解析项，请先在 ERP 处理提示；可用半成品仍可单独申请。')
@@ -149,6 +152,7 @@ async function initialize() {
   persistedId.value = ''; etag.value = ''; savedContent = ''
   createAttempt.value = null; createUncertain.value = false; needsReload.value = false; requestId = createRequestId()
   Object.keys(selected).forEach(key => delete selected[key])
+  Object.keys(sources).forEach(key => delete sources[key])
   try {
     const id = query('issue_id')
     let originalIssue: MaterialIssue | undefined
@@ -186,12 +190,16 @@ async function initialize() {
     if (!product.value || !loadedOptions.workshops.some(item => item.id === context.workshop_id)) throw new Error('产品或车间已不可用，请返回任务列表刷新。')
     if (!id && !loadedOptions.production_tasks.some(item => item.id === context.production_task_id)) throw new Error('生产单当前不可领料，请返回任务列表刷新。')
     requirements.value = data.items; blockers.value = data.blockers
-    if (originalIssue) Object.assign(selected, restoreIssueQuantities(originalIssue.lines, data.items))
+    if (originalIssue) {
+      Object.assign(selected, restoreIssueQuantities(originalIssue.lines, data.items))
+      Object.assign(sources, restoreIssueSources(originalIssue.lines, data.items))
+    }
     if (!recipientId.value && recipients.value.length === 1) recipientId.value = recipients.value[0]!.id
     if (originalIssue) {
       // 旧数量可能已超出现有库存，仍须允许加载并调低，不能在这里执行提交校验。
       savedContent = JSON.stringify({ ...context, recipient_workshop_employee_id: recipientId.value, issue_at: `${issueAt.value}:00+08:00`, remark: remark.value,
-        lines: originalIssue.lines.map(line => ({ requirement_id: line.requirement_id, requested_quantity: quantityText(line.requested_quantity) })) })
+        lines: originalIssue.lines.map(line => ({ requirement_id: line.requirement_id, requested_quantity: quantityText(line.requested_quantity),
+          ...(line.source_kind === 'CUTTING_DIRECT' ? { source_kind: line.source_kind } : {}) })) })
     }
     ready.value = true
   } catch (error) {
@@ -315,12 +323,18 @@ onBeforeUnmount(() => { active = false; generation += 1; window.removeEventListe
           <article v-for="row in requirements" :key="row.requirement_id" class="section-card material-card">
             <div class="material-heading">
               <h2>{{ row.material_name }}<span class="material-spec">{{ [row.material_number, row.specification, row.color].filter(Boolean).join(' · ') || '规格未记录' }}</span></h2>
-              <span class="material-kind" :class="{ 'material-kind--semi': row.line_type === 'SEMI' }">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }}</span>
+              <span class="material-kind" :class="{ 'material-kind--semi': row.line_type === 'SEMI' }">{{ row.component_kind === 'CUT_PIECE' ? '裁片' : row.component_kind === 'SEWN_PART' ? '车缝部位' : row.line_type === 'SEMI' ? '半成品' : '原材料' }}</span>
             </div>
             <p v-if="row.completed_craft" class="muted">已完成工艺：{{ row.completed_craft }}</p>
+            <p v-if="row.parent_part_name" class="muted">所属部位：{{ row.parent_part_name }}</p>
+            <div v-if="canChooseDirect(row) || isDirect(row)" class="material-source" role="group" :aria-label="`${row.material_name}领取来源`">
+              <span>领取来源</span>
+              <VanButton size="small" :type="!isDirect(row) ? 'primary' : 'default'" :aria-pressed="!isDirect(row)" :disabled="fieldsLocked" @click="sources[row.requirement_id] = 'STOCK'">库存领取</VanButton>
+              <VanButton size="small" :type="isDirect(row) ? 'primary' : 'default'" :aria-pressed="isDirect(row)" :disabled="fieldsLocked || !canChooseDirect(row)" @click="sources[row.requirement_id] = 'CUTTING_DIRECT'">裁剪直交</VanButton>
+            </div>
             <div class="quantity-grid">
               <span>需求 <b>{{ quantityText(row.required_quantity) }}</b></span><span>已领 <b>{{ quantityText(row.internal_issued_quantity) }}</b></span>
-              <span>待审核 <b>{{ quantityText(row.pending_issue_quantity) }}</b></span><span class="available">本次可领 <b>{{ quantityText(row.max_issue_quantity) }} {{ row.unit }}</b></span>
+              <span>待审核 <b>{{ quantityText(row.pending_issue_quantity) }}</b></span><span class="available">{{ isDirect(row) ? '可直交' : '本次可领' }} <b>{{ quantityText(isDirect(row) ? row.direct_available_quantity : row.max_issue_quantity) }} {{ row.unit }}</b></span>
             </div>
             <VanField v-model="selected[row.requirement_id]" class="request-field" type="text" inputmode="decimal" label="本次申请" placeholder="请输入数量"
               :formatter="value => formatIssueQuantity(value, row)" :disabled="fieldsLocked" :error-message="rowError(row)" :aria-label="`${row.material_name}本次申请数量，单位${row.unit}`">
@@ -334,8 +348,9 @@ onBeforeUnmount(() => { active = false; generation += 1; window.removeEventListe
               <p v-if="row.part_names?.length || row.conversion_snapshot?.part_name">部位：{{ row.part_names?.join('、') || row.conversion_snapshot?.part_name }}</p>
               <p v-if="row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE'">每根切 {{ row.conversion_snapshot.pieces_per_bar || '—' }} 支，原长 {{ row.conversion_snapshot.raw_bar_length_m || '—' }} 米。</p>
               <p v-for="field in materialAttributes(row)" :key="field.key">{{ field.label }}：{{ field.value }}</p>
-              <p>库存可用 {{ quantityText(row.available_stock) }} {{ row.unit }} · 已外发 {{ quantityText(row.outsourcing_issued_quantity) }} {{ row.unit }}</p>
-              <p v-if="row.warehouse_zones?.length">库区：{{ row.warehouse_zones.join('、') }}</p>
+              <p v-if="isDirect(row)">由裁剪车间直接交给车缝，仓库库存不扣减。</p>
+              <p v-else>库存可用 {{ quantityText(row.available_stock) }} {{ row.unit }} · 已外发 {{ quantityText(row.outsourcing_issued_quantity) }} {{ row.unit }}</p>
+              <p v-if="!isDirect(row) && row.warehouse_zones?.length">库区：{{ row.warehouse_zones.join('、') }}</p>
             </details>
             <p v-for="message in row.validation_errors || []" :key="message" class="field-error">{{ message }}</p>
           </article>
@@ -407,6 +422,7 @@ onBeforeUnmount(() => { active = false; generation += 1; window.removeEventListe
 .material-card h2 { min-width: 0; margin: 0; font-size: 18px; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
 .material-spec { margin-left: 8px; color: var(--mobile-muted); font-size: 13px; font-weight: 400; }
 .material-card > .muted { font-size: 13px; }
+.material-source { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
 .material-kind { flex-shrink: 0; padding: 1px 6px; border-radius: 4px; background: #dbeafe; color: #1e40af; font-size: 12px; font-weight: 600; line-height: 20px; }
 .material-kind--semi { background: #dcfce7; color: #166534; }
 .quantity-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; padding: 6px 0; border-top: 1px solid var(--mobile-border); }

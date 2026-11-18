@@ -30,10 +30,6 @@ function apiMessage(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string }; detail?: string } } })?.response?.data
   return data?.error?.message || data?.detail || fallback
 }
-function formatQuantity(value: string): string {
-  const number = Number(value)
-  return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
-}
 function formatTime(value: string): string {
   const date = new Date(value)
   return Number.isFinite(date.getTime())
@@ -86,6 +82,12 @@ function openDetails(row: ProcurementInboundOrder) {
 }
 function receivingActionLabel(row: ProcurementInboundOrder): string {
   return Number(row.received_quantity) > 0 ? '再次入库' : '办理入库'
+}
+function receiptProgress(row: ProcurementInboundOrder): number | null {
+  const value = row.receipt_progress_percent
+  if (value == null || value.trim() === '') return null
+  const percent = Number(value)
+  return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? percent : null
 }
 function displayProductField(row: ProcurementInboundOrder, field: keyof ProcurementInboundProductSummary): string {
   return row.product_summary?.map(product => product[field]?.trim() || '—').join('、') || '—'
@@ -156,7 +158,7 @@ onMounted(() => { if (canView.value) void loadRows() })
           </template></ElTableColumn>
           <ElTableColumn label="采购明细" width="100" align="center"><template #default="{ row }">{{ row.line_count }} 项</template></ElTableColumn>
           <ElTableColumn label="待入库" width="92" align="center"><template #default="{ row }">{{ row.remaining_line_count }} 项</template></ElTableColumn>
-          <ElTableColumn label="累计到货" width="116" align="right"><template #default="{ row }">{{ formatQuantity(row.received_quantity) }}</template></ElTableColumn>
+          <ElTableColumn label="到货进度" width="160"><template #default="{ row }"><div v-if="receiptProgress(row) !== null" class="receipt-progress" data-testid="receipt-progress"><ElProgress :percentage="receiptProgress(row) ?? 0" :show-text="false" :stroke-width="10" :status="receiptProgress(row) === 100 ? 'success' : undefined" :aria-label="`到货进度 ${receiptProgress(row)}%`" /><span>{{ receiptProgress(row) }}%</span></div><span v-else class="muted" data-testid="receipt-progress-unknown">待核对</span></template></ElTableColumn>
           <ElTableColumn label="当前状态" width="124" align="center"><template #default="{ row }"><span class="status-badge erp-list-tag" :class="[`status-${row.workflow_status}`, row.workflow_status === 'COMPLETED' ? 'erp-list-tag--success' : row.workflow_status === 'PARTIAL_RECEIVED' ? 'erp-list-tag--brand' : row.workflow_status === 'PENDING_QUALITY' ? 'erp-list-tag--warning' : row.workflow_status === 'PENDING_PROCUREMENT_CONFIRMATION' ? 'erp-list-tag--danger' : row.workflow_status === 'PENDING_RETURN' ? 'erp-list-tag--info' : 'erp-list-tag--neutral']">{{ row.workflow_status_display }}</span></template></ElTableColumn>
           <ElTableColumn label="更新时间" width="150"><template #default="{ row }">{{ formatTime(row.updated_at) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center"><template #default="{ row }">
@@ -186,6 +188,8 @@ onMounted(() => { if (canView.value) void loadRows() })
 .filters > .inbound-search { width: min(250px, 100%); flex: none; }
 .filters > .el-select { width: 190px; flex: none; }
 .purchase-number { font-size: 12px; font-weight: 600; }
+.receipt-progress { display: grid; grid-template-columns: 80px 44px; align-items: center; gap: 8px; }
+.receipt-progress > span { text-align: right; font-variant-numeric: tabular-nums; }
 .muted { color: var(--erp-table-text); font-size: 12px; }
 .more-action { display: inline-flex; align-items: center; justify-content: center; }
 .row-more-button { width: 36px; height: 32px; margin: 0; color: var(--erp-table-text); }

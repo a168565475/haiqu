@@ -92,6 +92,7 @@ export const sidebarMenuItems: MenuItem[] = [
     children: [
       { key: 'finished-goods-inventory', label: '成品库存', to: { name: 'finished-goods-inventory' }, permission: 'inventory.view_finishedgoodsreceipt' },
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
+      { key: 'material-transfers', label: '材料收发', to: { name: 'material-transfers' }, permission: 'inventory.receive_material' },
       { key: 'purchase-inbounds', label: '采购入库', to: { name: 'purchase-inbounds' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
       { key: 'purchase-returns', label: '退货明细', to: { name: 'purchase-returns' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
       { key: 'material-issues', label: '生产领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
@@ -106,6 +107,7 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'finance-accounts', label: '公司账户信息', to: { name: 'finance-accounts' }, permission: 'finance.view_financeaccount' },
       { key: 'finance-subjects', label: '会计科目', to: { name: 'finance-subjects' }, permission: 'finance.view_accountingsubject' },
       { key: 'finance-statements', label: '应收对账单', to: { name: 'finance-statements' }, permission: 'finance.view_receivablestatement' },
+      { key: 'finance-purchase-payables', label: '采购应付', to: { name: 'finance-purchase-payables' }, permission: 'finance.view_purchasepayable' },
       { key: 'finance-receipts', label: '收款确认', to: { name: 'finance-receipts' }, permission: 'finance.view_receipt' },
     ],
   },

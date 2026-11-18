@@ -13,6 +13,17 @@ from .models import PurchaseOrder, PurchaseOrderStatus, PurchaseReturn, Purchase
 from .selectors import purchase_orders_with_context
 
 
+def _inbound_quantity(line, field):
+    snapshot = getattr(line, 'calculation_snapshot', None)
+    hardware = isinstance(snapshot, dict) and snapshot.get('measurement_kind') == 'HARDWARE_WEIGHT'
+    if (line.measurement_kind == 'PIPE' or hardware) and line.source_unit_text_snapshot in {'KG', 'kg', '千克', '公斤'}:
+        value = getattr(line, field + '_weight_kg')
+        if value is None or not value.is_finite() or value < 0:
+            raise Conflict('入库实际重量缺失或无效，请核对原入库记录后再处理采购完成或退货。')
+        return value
+    return getattr(line, field + '_quantity')
+
+
 def purchase_completion_summary(order):
     # 采购完成核对已发起的到货流程；未到货数量允许由采购人员手动关闭。
     from apps.inventory.models import MaterialInboundStatus
@@ -30,19 +41,22 @@ def purchase_completion_summary(order):
         line_received_quantity = Decimal("0")
         for inbound_line in line.material_inbound_lines.all():
             has_inbound = True
-            received_quantity += Decimal(inbound_line.received_quantity or 0)
+            received_value = _inbound_quantity(inbound_line, 'received')
+            received_quantity += Decimal(received_value or 0)
             if inbound_line.inbound.status != MaterialInboundStatus.CONFIRMED:
                 pending_quality = True
-                line_received_quantity += Decimal(inbound_line.received_quantity or 0)
+                line_received_quantity += Decimal(received_value or 0)
                 continue
-            line_received_quantity += Decimal(inbound_line.accepted_quantity or 0)
-            if inbound_line.return_quantity > 0:
+            accepted_value = _inbound_quantity(inbound_line, 'accepted')
+            line_received_quantity += Decimal(accepted_value or 0)
+            return_value = _inbound_quantity(inbound_line, 'return')
+            if return_value > 0:
                 try:
                     return_line = inbound_line.purchase_return_line
                 except PurchaseReturnLine.DoesNotExist:
                     missing_return = True
                 else:
-                    if return_line.quantity != inbound_line.return_quantity:
+                    if return_line.quantity != return_value:
                         missing_return = True
                     return_orders[return_line.return_order_id] = return_line.return_order.status
         if line.actual_purchase_quantity is not None and Decimal(line.actual_purchase_quantity) - line_received_quantity > 0:
@@ -156,7 +170,8 @@ def generate_quality_returns(*, inbound, lines, actor_employee, request):
     """由品质确认事务调用；唯一约束保护同一批次、同一明细不重复生成。"""
     grouped = {}
     for line in lines:
-        if line.return_quantity <= 0:
+        return_amount = _inbound_quantity(line, 'return')
+        if return_amount <= 0:
             continue
         supplier_id = line.purchase_order_line.supplier_id
         if not supplier_id:
@@ -173,7 +188,11 @@ def generate_quality_returns(*, inbound, lines, actor_employee, request):
             generated_by_employee=actor_employee,
         )
         PurchaseReturnLine.objects.bulk_create([
-            PurchaseReturnLine(return_order=return_order, inbound_line=line, quantity=line.return_quantity)
+            PurchaseReturnLine(
+                return_order=return_order,
+                inbound_line=line,
+                quantity=_inbound_quantity(line, 'return'),
+            )
             for line in supplier_lines
         ])
         write_audit_log(

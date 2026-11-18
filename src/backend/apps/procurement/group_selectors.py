@@ -1,12 +1,12 @@
 from decimal import Decimal, localcontext
 
-from django.db.models import Prefetch
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from rest_framework.exceptions import ValidationError
 
 from apps.inventory.models import MaterialInboundLine, MaterialInboundStatus
 from apps.production_tasks.models import ProductionTaskProduct
 
-from .catalog_materials import purchase_catalog_selection
+from .catalog_materials import is_weight_purchase, purchase_catalog_selection
 from .models import (
     PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus,
     PurchaseReturnLine, PurchaseReturnStatus,
@@ -15,6 +15,21 @@ from .models import (
 
 def purchase_groups_with_context(queryset=None):
     queryset = PurchaseGroup.objects.all() if queryset is None else queryset
+    # 删除资格必须包括已归档批次，不能由页面进度或可见批次数推断。
+    all_batches = PurchaseOrder.objects.filter(purchase_group_id=OuterRef("pk"))
+    queryset = queryset.annotate(
+        delete_has_purchase=Exists(all_batches.filter(
+            ~Q(status=PurchaseOrderStatus.DRAFT) | Q(completed_at__isnull=False),
+        )),
+        delete_has_documents=Exists(all_batches.filter(
+            Q(supplier_purchase_sheets__isnull=False) | Q(material_inbounds__isnull=False)
+            | Q(returns__isnull=False) | Q(lines__material_inbound_lines__isnull=False)
+            | Q(lines__purchase_payable_lines__isnull=False) | Q(lines__sample_material_source__isnull=False),
+        )),
+        delete_has_foreign_lines=Exists(PurchaseOrderLine.objects.filter(
+            purchase_group_line__purchase_group_id=OuterRef("pk"),
+        ).exclude(purchase_order__purchase_group_id=OuterRef("pk"))),
+    )
     batch_lines = PurchaseOrderLine.objects.select_related("purchase_order").prefetch_related("material_inbound_lines__inbound")
     display_lines = PurchaseOrderLine.objects.prefetch_related(Prefetch(
         "material_inbound_lines",
@@ -30,6 +45,20 @@ def purchase_groups_with_context(queryset=None):
         Prefetch("batches", queryset=PurchaseOrder.objects.filter(archived_at__isnull=True)
                  .prefetch_related(Prefetch("lines", queryset=display_lines)).order_by("batch_number", "id")),
     )
+
+
+def purchase_group_deletion_summary(group):
+    if group.manual_completed_at:
+        reason = "采购总单已完成，不能删除。"
+    elif group.delete_has_purchase:
+        reason = "已有确认采购或已完成的批次，不能删除总单。"
+    elif group.delete_has_documents:
+        reason = "已有关联供应商采购表、入库、退货或其他后续记录，不能删除总单。"
+    elif group.delete_has_foreign_lines:
+        reason = "总单材料被其他采购批次引用，请先核对关联记录。"
+    else:
+        reason = ""
+    return {"can_delete": not reason, "blocked_reason": reason}
 
 
 def purchase_batch_display_status(order):
@@ -70,7 +99,10 @@ def purchase_batch_display_status(order):
                     return order.status
             elif inbound_line.material_catalog_id or str(inbound_line.raw_material_information_id or "") != material_id:
                 return order.status
-            quantity, returned = inbound_line.accepted_quantity, inbound_line.return_quantity
+            if is_weight_purchase(line):
+                quantity, returned = inbound_line.accepted_weight_kg, inbound_line.return_weight_kg
+            else:
+                quantity, returned = inbound_line.accepted_quantity, inbound_line.return_quantity
             if (quantity is None or not quantity.is_finite() or quantity < 0
                     or returned is None or not returned.is_finite() or returned < 0):
                 return order.status
@@ -99,7 +131,9 @@ def purchase_group_progress(group):
         issues = list(source.compatibility_issues)
         purchased, accepted = Decimal("0"), Decimal("0")
         is_pipe = source.source_snapshot.get("section_type_snapshot") == "PROFILE"
-        # 根数仅用于展示；历史缺数保持未知，不影响已有米数进度。
+        is_weight = source.source_unit_text == "KG" and (is_pipe or
+            source.source_snapshot.get("calculation_snapshot", {}).get("measurement_kind") == "HARDWARE_WEIGHT")
+        # 根数仅用于展示；历史缺数保持未知，不影响已有主数量进度。
         purchased_bars, accepted_bars = (0, 0) if is_pipe else (None, None)
         in_progress = Decimal("0")
         in_progress_bars = 0 if is_pipe else None
@@ -137,14 +171,18 @@ def purchase_group_progress(group):
                             and str(inbound_line.raw_material_information_id) != material_id)):
                     issues.append("INBOUND_IDENTITY_OR_UNIT_MISMATCH")
                     continue
-                # accepted_quantity已经扣除质检退货；不再减采购退货单数量。
-                accepted += inbound_line.accepted_quantity
+                quantity = inbound_line.accepted_weight_kg if is_weight else inbound_line.accepted_quantity
+                if is_weight and (quantity is None or not quantity.is_finite() or quantity < 0):
+                    issues.append("INBOUND_WEIGHT_MISSING_OR_INVALID")
+                    continue
+                # 合格数量已经扣除质检退货；不再减采购退货单数量。
+                accepted += quantity
                 if is_pipe and accepted_bars is not None:
                     accepted_bars = None if inbound_line.accepted_bar_count is None else accepted_bars + inbound_line.accepted_bar_count
                 if is_active:
                     with localcontext() as context:
                         context.prec = 64
-                        batch_remaining -= inbound_line.accepted_quantity
+                        batch_remaining -= quantity
                     if is_pipe and batch_remaining_bars is not None:
                         batch_remaining_bars = (None if inbound_line.accepted_bar_count is None
                                                 else batch_remaining_bars - inbound_line.accepted_bar_count)
@@ -207,8 +245,11 @@ def purchase_group_completion_summary(group):
                     return_line = inbound_line.purchase_return_line
                 except PurchaseReturnLine.DoesNotExist:
                     return_line = None
-                if inbound_line.return_quantity > 0 or return_line is not None:
-                    if (return_line is None or return_line.quantity != inbound_line.return_quantity
+                returned = inbound_line.return_weight_kg if is_weight_purchase(line) else inbound_line.return_quantity
+                if returned is None or not returned.is_finite() or returned < 0:
+                    return {"can_complete": False, "blocked_reason": "到货退货数量缺失或无效，请先核对。"}
+                if returned > 0 or return_line is not None:
+                    if (return_line is None or return_line.quantity != returned
                             or return_line.return_order.purchase_order_id != batch.pk
                             or return_line.return_order.inbound_id != inbound_line.inbound_id):
                         return {"can_complete": False, "blocked_reason": "存在未关联或不匹配的品质退货记录，请先核对退货明细。"}

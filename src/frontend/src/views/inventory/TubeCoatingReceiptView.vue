@@ -100,10 +100,10 @@ function receivedValue(row: Entry): number | null {
   const text = row.received.trim()
   if (!text) return 0
   if (!/^\d+$/.test(text)) return null
-  const value = Number(text), sent = Number(row.dispatched_quantity)
-  return Number.isSafeInteger(value) && Number.isSafeInteger(sent) && value >= 0 && value <= sent ? value : null
+  const value = Number(text)
+  return Number.isSafeInteger(value) && value >= 0 && value <= 99999999999999 ? value : null
 }
-function difference(row: Entry): number | null { const value = receivedValue(row); return value === null ? null : Number(row.dispatched_quantity) - value }
+function difference(row: Entry): number | null { const value = receivedValue(row); return value === null ? null : Math.max(Number(row.dispatched_quantity) - value, 0) }
 function zoneLabel(row: Entry): string { return (receivedValue(row) || 0) > 0 ? isEnded.value ? row.zone_name || '—' : zones.value.find(item => item.id === row.zone)?.name || '—' : '—' }
 function warn(message: string) { if (!owned.isCurrent()) return; ElMessage.closeAll(); ElMessage.warning({ message, duration: 4500 }) }
 function errorText(cause: unknown, fallback: string): string {
@@ -155,7 +155,7 @@ async function loadPreview(preserve = true) {
   } finally { if (owned.isCurrent() && !disposed && sequence === previewSequence) loading.value = false }
 }
 function validateQuantity(row: Entry): boolean {
-  if (receivedValue(row) === null) { warn(`${row.part_name}：实收须为0至${format(row.dispatched_quantity)}的整数，空白按0${quantityUnit.value}处理。`); return false }
+  if (receivedValue(row) === null) { warn(`${row.part_name}：实收须为有效非负整数，空白按0${quantityUnit.value}处理。`); return false }
   return true
 }
 function onReceivedChange(row: Entry) { if ((receivedValue(row) || 0) > 0 && !row.zone && zones.value.length) row.zone = zones.value[0]!.id }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
-import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
+import { pipeMeters, pipeRootsFromMeters, samplePipeSuggestedWeight } from '@/utils/pipeQuantities'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
 import refreshIcon from '@/assets/procurement/create-refresh.svg'
@@ -31,6 +31,7 @@ import type {
   PurchaseBatchType,
 } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
+import { isHardwareWeightLine, isWeightPurchaseLine as isWeightSourceLine } from './purchaseWeight'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
   purchase_group_line_id?: string
@@ -67,11 +68,17 @@ const lines = ref<PurchaseLineDraft[]>([])
 const batchRemainingQuantities = computed(() => new Map((group.value?.progress.lines || []).map(line => {
   const snapshot = line.source_snapshot
   const isPipe = snapshot.section_type_snapshot === 'PROFILE'
-  const quantity = remainingPurchaseQuantity(isPipe ? snapshot.suggested_purchase_meters : line.required_quantity, line.purchased_quantity)
-  const roots = isPipe ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) : null
+  const isWeight = isWeightSourceLine({
+    section_type: snapshot.section_type_snapshot,
+    section_title: snapshot.section_title_snapshot,
+    source_unit_text: line.source_unit_text || snapshot.source_unit_text,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
+    calculation_snapshot: snapshot.calculation_snapshot,
+  })
+  const quantity = remainingPurchaseQuantity(isWeight ? snapshot.suggested_purchase_weight_kg || line.required_quantity : isPipe ? snapshot.suggested_purchase_meters : line.required_quantity, line.purchased_quantity)
   return [line.id, {
-    primary: isPipe ? roots === null ? '根数待核对' : `${roots} 根` : quantity ?? '待核对',
-    detail: isPipe ? quantity === null ? '米数待核对' : `${quantity} 米` : line.source_unit_text || '单位未识别',
+    primary: isWeight ? quantity === null ? '重量待核对' : `${quantity} kg` : isPipe ? quantity === null ? '米数待核对' : `${quantity} 米` : quantity ?? '待核对',
+    detail: isWeight || isPipe ? '' : line.source_unit_text || '单位未识别',
   }]
 })))
 const selectedTaskId = ref('')
@@ -342,12 +349,38 @@ function handleLineMouseLeave(): void {
 }
 
 /**
- * 样品管材按总米数提出需求，采购员在采购单中填写采购根数和每根长度。
- * 生产订单仍沿用来源快照中的 raw_bar_length_m，不进入这个分支。
+ * 样品管材来源保留米需求；新采购按手填的单根参数预算 KG，旧米单保留原输入。
  */
 function isPipePurchaseLine(line: PurchaseLineDraft): boolean {
   return isSampleSource.value && line.section_type === 'PROFILE'
 }
+
+function isWeightPipeLine(line: Pick<PurchaseLineDraft, 'section_type' | 'raw_bar_length_m' | 'source_unit_text' | 'suggested_purchase_weight_kg'>): boolean {
+  return line.section_type === 'PROFILE' && (String(line.source_unit_text || '').toUpperCase() === 'KG' || Boolean(line.suggested_purchase_weight_kg))
+}
+
+function isWeightLine(line: PurchaseLineDraft): boolean {
+  return isWeightPipeLine(line) || isHardwareWeightLine(line)
+}
+
+function weightSuggestedQuantity(line: PurchaseLineDraft): string {
+  if (isPipePurchaseLine(line) && line.calculation_snapshot?.schema_version === 4) {
+    return samplePipeSuggestedWeight(line.calculation_snapshot.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)
+  }
+  return line.suggested_purchase_weight_kg || (isWeightLine(line) ? line.required_quantity || line.source_quantity_text : '') || '—'
+}
+
+function pipeActualWeight(line: PurchaseLineDraft): string {
+  return line.actual_purchase_quantity.trim()
+}
+function purchasePriceUnit(line: PurchaseLineDraft): string {
+  return isWeightLine(line) ? '元/kg' : isPipePurchaseLine(line) || line.raw_bar_length_m ? '元/米' : line.source_unit_text ? `元/${line.source_unit_text}` : '元'
+}
+const pipePricingText = computed(() => [
+  lines.value.some(isWeightLine) ? '重量物料金额＝采购重量 × 元/kg 单价' : '',
+  lines.value.some(line => !isWeightLine(line) && (isPipePurchaseLine(line) || line.raw_bar_length_m)) ? '米制管材金额＝采购米数 × 元/米 单价' : '',
+  '其他物料按采购数量计价',
+].filter(Boolean).join('；'))
 
 function productColorText(product: PurchaseOrderProductSource): string {
   return [product.color_card, product.color_name, product.color_code]
@@ -400,21 +433,17 @@ function refreshBulkDeliveryDate(): void {
     : ''
 }
 
-function fillGridColumnDown(rowIndex: number, columnIndex: number): void {
-  if (!canWriteLines.value || sourceLoading.value || saving.value || rowIndex < 0 || rowIndex >= lines.value.length) return
+function fillNextGridRow(rowIndex: number, columnIndex: number): void {
+  if (!canWriteLines.value || sourceLoading.value || saving.value || rowIndex < 0 || rowIndex >= lines.value.length - 1) return
   if (columnIndex === 0) {
     const value = lines.value[rowIndex]?.supplier_id
     if (!value) return
-    for (let index = rowIndex + 1; index < lines.value.length; index += 1) {
-      lines.value[index]!.supplier_id = value
-    }
+    lines.value[rowIndex + 1]!.supplier_id = value
     refreshBulkSupplier()
   } else if (columnIndex === 1) {
     const value = lines.value[rowIndex]?.delivery_date
     if (!value) return
-    for (let index = rowIndex + 1; index < lines.value.length; index += 1) {
-      lines.value[index]!.delivery_date = value
-    }
+    lines.value[rowIndex + 1]!.delivery_date = value
     refreshBulkDeliveryDate()
   }
 }
@@ -447,7 +476,7 @@ function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnInde
   let targetColumn = columnIndex
   if (event.key === 'Enter') {
     if (!event.shiftKey && (columnIndex === 0 || columnIndex === 1)) {
-      fillGridColumnDown(rowIndex, columnIndex)
+      fillNextGridRow(rowIndex, columnIndex)
       // 末行也消费回车，避免重新展开选择框或触发表单默认动作。
       event.preventDefault()
       event.stopPropagation()
@@ -480,26 +509,39 @@ function formatSuggestedQuantity(value: string | null | undefined): string {
 }
 
 function defaultPurchaseQuantity(line: PurchaseLineDraft): string {
+  if (isWeightLine(line)) return weightSuggestedQuantity(line) || ''
   if (line.quantity_parse_status !== 'READY' || !line.required_quantity) return ''
   const quantity = formatSuggestedQuantity(line.required_quantity)
   return isPositiveDecimal(quantity) ? quantity : ''
 }
 
 function effectivePurchaseQuantity(line: PurchaseLineDraft): string {
-  if (isPipePurchaseLine(line) || line.raw_bar_length_m) return pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
+  if (isWeightLine(line)) return pipeActualWeight(line)
+  if (isPipePurchaseLine(line) || line.raw_bar_length_m) return line.actual_purchase_quantity.trim() || pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
   return line.actual_purchase_quantity.trim() || (isBatchMode.value ? '' : defaultPurchaseQuantity(line))
 }
 
-function pipeMetersLabel(line: PurchaseLineDraft): string {
-  const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
-  if (!meters) return '—'
-  return `${meters} 米 · ${line.raw_bar_length_m} 米/根`
+function pipeQuantitySummary(line: PurchaseLineDraft): string {
+  const meters = effectivePurchaseQuantity(line)
+  return meters ? `${formatSuggestedQuantity(meters)}米` : '米'
 }
 
-function pipeQuantitySummary(line: PurchaseLineDraft): string {
-  if (!line.actual_bar_count && !line.raw_bar_length_m) return '根/米'
-  const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
-  return `${line.actual_bar_count || '—'}根 / ${formatSuggestedQuantity(meters)}米`
+function setPipePurchaseMeters(line: PurchaseLineDraft, value: string): void {
+  line.actual_purchase_quantity = value
+  line.actual_bar_count = pipeRootsFromMeters(value.trim(), line.raw_bar_length_m)
+}
+
+function setPipeLength(line: PurchaseLineDraft, value: string): void {
+  const meters = effectivePurchaseQuantity(line)
+  line.raw_bar_length_m = value
+  setPipePurchaseMeters(line, meters)
+}
+
+function pipeMeterError(line: PurchaseLineDraft, allowZero = false): string {
+  const meters = effectivePurchaseQuantity(line)
+  if (!(allowZero ? isNonNegativeDecimal(meters) : isPositiveDecimal(meters))) return '实际采购米数应为大于 0、最多 4 位小数的数字。'
+  if (!pipeRootsFromMeters(meters, line.raw_bar_length_m)) return '实际采购米数必须为每根长度的整数倍，请核对数量。'
+  return ''
 }
 
 function focusPipeQuantity(lineKey: string): void {
@@ -541,10 +583,9 @@ function scaledProduct(quantity: string, price: string): bigint | null {
 }
 
 function formatScaled(value: bigint): string {
-  const raw = value.toString().padStart(5, '0')
-  const whole = raw.slice(0, -4).replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '0'
-  const fraction = raw.slice(-4).replace(/0+$/, '')
-  return fraction ? `${whole}.${fraction}` : `${whole}.00`
+  const cents = (value + 50n) / 100n
+  const whole = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${whole}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 
 function lineAmount(line: PurchaseLineDraft): string {
@@ -575,6 +616,7 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
     line.supplier_id
     && line.delivery_date
     && isPositiveDecimal(effectivePurchaseQuantity(line))
+    && (!isPipePurchaseLine(line) || !isWeightPipeLine(line) || Boolean(samplePipeSuggestedWeight(line.calculation_snapshot?.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)))
     && isNonNegativeDecimal(line.unit_price),
   )
 }
@@ -584,11 +626,15 @@ function validateDraft(): string {
     if (!canWriteLines.value || !groupEtag.value) return '总单不可用或版本信息缺失，请重新读取。'
     // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
     for (const [index, line] of lines.value.entries()) {
-      const quantity = (line.raw_bar_length_m ? line.actual_bar_count : line.actual_purchase_quantity).trim()
+       const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
       if (!quantity) continue
-      if (line.raw_bar_length_m ? !/^\d{1,14}$/.test(quantity) : !isNonNegativeDecimal(quantity)) {
-        return line.raw_bar_length_m ? `第 ${index + 1} 行管材根数应为整数，0 表示本批不采购。`
+       if (!isNonNegativeDecimal(quantity)) {
+          return isWeightLine(line) ? `第 ${index + 1} 行采购重量应为大于或等于 0、最多 4 位小数的数字。`
           : `第 ${index + 1} 行实际采购数量应为大于或等于 0、最多 4 位小数的数字。`
+      }
+      if (!isWeightLine(line) && line.raw_bar_length_m) {
+        const error = pipeMeterError(line, true)
+        if (error) return `第 ${index + 1} 行：${error}`
       }
     }
     if (!selectedLines.value.length) return '请至少填写一项需求数量大于 0 的材料采购数量。'
@@ -605,12 +651,17 @@ function validateDraft(): string {
   if (!lines.value.length) return '当前生产订单没有可保存的采购明细。'
   for (const [index, line] of selectedLines.value.entries()) {
     if (isBatchMode.value && !isPositiveDecimal(effectivePurchaseQuantity(line))) return `第 ${index + 1} 项实际采购数量应大于 0。`
-    if (isPipePurchaseLine(line)) {
+    if (isWeightLine(line)) {
+      const samplePipe = isPipePurchaseLine(line) && isWeightPipeLine(line)
+      if ((!samplePipe || pipeActualWeight(line)) && !isPositiveDecimal(pipeActualWeight(line))) return `第 ${index + 1} 行实际采购重量应为大于 0、最多 4 位小数的数字。`
+      if (isWeightPipeLine(line) && (!samplePipe || line.raw_bar_weight_kg) && !isPositiveDecimal(line.raw_bar_weight_kg || '')) return `第 ${index + 1} 行请填写大于 0、最多 4 位小数的每根标准重量。`
+      if (samplePipe && line.raw_bar_length_m && (!/^\d{1,14}(?:\.\d{1,3})?$/.test(line.raw_bar_length_m) || Number(line.raw_bar_length_m) <= 0)) return `第 ${index + 1} 行每根长度应大于 0，最多三位小数。`
+    } else if (isPipePurchaseLine(line)) {
       if (!isPositiveDecimal(line.raw_bar_length_m || '')) return `第 ${index + 1} 行：请填写大于 0 的每根长度（米）。`
-      const error = pipeRootError(line.actual_bar_count)
+      const error = pipeMeterError(line)
       if (error) return `第 ${index + 1} 行：${error}`
     } else if (line.raw_bar_length_m) {
-      const error = pipeRootError(line.actual_bar_count)
+      const error = pipeMeterError(line)
       if (error) return `第 ${index + 1} 行：${error}`
     }
     if (line.actual_purchase_quantity && !isPositiveDecimal(line.actual_purchase_quantity)) {
@@ -632,7 +683,11 @@ function validateConfirmation(): string {
     const missing: string[] = []
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')
-    if (!isPositiveDecimal(effectivePurchaseQuantity(line))) missing.push('实际采购数量')
+    if (!isPositiveDecimal(effectivePurchaseQuantity(line))) missing.push(isWeightLine(line) ? '实际采购重量' : '实际采购数量')
+    if (isPipePurchaseLine(line) && isWeightPipeLine(line)) {
+      if (!isPositiveDecimal(line.raw_bar_weight_kg || '')) missing.push('每根标准重量')
+      if (!line.raw_bar_length_m) missing.push('每根长度')
+    }
     if (!isNonNegativeDecimal(line.unit_price)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
     if (missing.length) return `第 ${index + 1} 行缺少或填写错误：${missing.join('、')}。`
@@ -653,8 +708,9 @@ function buildPayload(): PurchaseOrderInput {
       ...(isSampleSource.value ? { sample_line_key: line.sample_line_key } : { bom_line_id: line.bom_line_id }),
       supplier_id: line.supplier_id || null,
       delivery_date: line.delivery_date || null,
-      actual_purchase_quantity: isPipePurchaseLine(line) || line.raw_bar_length_m ? null : effectivePurchaseQuantity(line) || null,
-      ...(isPipePurchaseLine(line) || line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : {}),
+      actual_purchase_quantity: isWeightLine(line) ? effectivePurchaseQuantity(line) || null : (isPipePurchaseLine(line) || line.raw_bar_length_m ? null : effectivePurchaseQuantity(line) || null),
+      ...(isWeightLine(line) ? { ...(!isSampleSource.value ? { actual_purchase_weight_kg: effectivePurchaseQuantity(line) } : {}), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : {}),
+      ...(!isWeightLine(line) && (isPipePurchaseLine(line) || line.raw_bar_length_m) ? { actual_bar_count: line.actual_bar_count } : {}),
       ...(isPipePurchaseLine(line) ? { raw_bar_length_m: line.raw_bar_length_m || null } : {}),
       unit_price: line.unit_price.trim() || null,
     })),
@@ -680,7 +736,7 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
           purchase_group_line_id: line.purchase_group_line_id!,
           supplier_id: line.supplier_id || null,
           delivery_date: line.delivery_date || null,
-          ...(line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
+          ...(isWeightLine(line) ? { actual_purchase_quantity: effectivePurchaseQuantity(line), actual_purchase_weight_kg: effectivePurchaseQuantity(line), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
           unit_price: line.unit_price.trim() || null,
         })),
       }
@@ -858,6 +914,13 @@ function groupSupplierCategory(snapshot: PurchaseGroupProgressLine['source_snaps
 
 function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
   const snapshot = line.source_snapshot
+  const weightLine = isWeightSourceLine({
+    section_type: snapshot.section_type_snapshot,
+    section_title: snapshot.section_title_snapshot,
+    source_unit_text: line.source_unit_text || snapshot.source_unit_text,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
+    calculation_snapshot: snapshot.calculation_snapshot,
+  })
   return {
     purchase_group_line_id: line.id,
     material_catalog_id: snapshot.material_catalog_id, material_selection_snapshot: snapshot.material_selection_snapshot,
@@ -873,11 +936,14 @@ function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
     source_quantity_text: snapshot.source_quantity_text, source_unit_text: line.source_unit_text,
     quantity_parse_status: snapshot.quantity_parse_status, suggested_supplier_category: groupSupplierCategory(snapshot), category_source: 'UNKNOWN',
     material_attributes_snapshot: snapshot.material_attributes_snapshot,
+    calculation_snapshot: snapshot.calculation_snapshot,
     raw_bar_length_m: snapshot.raw_bar_length_m, suggested_bar_count: snapshot.suggested_bar_count,
     suggested_purchase_meters: snapshot.suggested_purchase_meters,
+    raw_bar_weight_kg: snapshot.raw_bar_weight_kg,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
     supplier_id: null, delivery_date: '',
-    actual_bar_count: snapshot.raw_bar_length_m ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) ?? '' : '',
-    actual_purchase_quantity: snapshot.raw_bar_length_m ? '' : remainingPurchaseQuantity(line.required_quantity, line.purchased_quantity) ?? '',
+     actual_bar_count: snapshot.raw_bar_length_m && !weightLine ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) ?? '' : '',
+     actual_purchase_quantity: weightLine ? remainingPurchaseQuantity(snapshot.suggested_purchase_weight_kg || line.required_quantity, line.purchased_quantity) ?? '' : snapshot.raw_bar_length_m ? '' : remainingPurchaseQuantity(line.required_quantity, line.purchased_quantity) ?? '',
     unit_price: '',
   }
 }
@@ -1136,13 +1202,13 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="需求数量" width="104">
-            <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_demand_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
+             <template #default="{ row }"><span v-if="isWeightLine(row)">见打样需求</span><template v-else>{{ formatSuggestedQuantity(row.sample_demand_quantity) }} {{ row.sample_demand_unit || (isPipePurchaseLine(row) ? '米' : row.source_unit_text) }}</template></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="仓库可供" width="100">
-            <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
+              <template #default="{ row }"><span v-if="isWeightLine(row)">见打样需求</span><template v-else>{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ row.sample_demand_unit || (isPipePurchaseLine(row) ? '米' : row.source_unit_text) }}</template></template>
           </ElTableColumn>
           <ElTableColumn :label="isBatchMode ? '剩余采购量' : isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><template v-if="isBatchMode"><strong>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}</strong><small>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.detail }}</small></template><template v-else-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ compactDecimal(row.suggested_purchase_meters) }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
+             <template #default="{ row }"><div class="quantity-cell"><template v-if="isBatchMode"><strong>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}</strong><small v-if="batchRemainingQuantities.get(row.purchase_group_line_id)?.detail">{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.detail }}</small></template><template v-else-if="isWeightLine(row)"><strong>{{ weightSuggestedQuantity(row) ? `${formatSuggestedQuantity(weightSuggestedQuantity(row))} kg` : '待填写重量' }}</strong></template><template v-else-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ compactDecimal(row.suggested_purchase_meters) }} 米</strong></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
@@ -1155,28 +1221,32 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购交期" :width="isSampleSource ? 170 : 195">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
+            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
             <template #default="{ row, $index }">
-              <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
-                <ElPopover v-if="isPipePurchaseLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
+              <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': isWeightLine(row) || !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
+                <ElPopover v-if="isPipePurchaseLine(row) && !isWeightLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
                   <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!canWriteLines">{{ pipeQuantitySummary(row) }}</button></template>
                   <div class="pipe-quantity-editor erp-table-editor" :data-pipe-editor="purchaseLineKey(row)">
-                    <label><span>采购根数</span><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="填写根数"><template #append>根</template></ElInput></label>
-                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!canWriteLines" placeholder="每根米数"><template #append>米/根</template></ElInput></label>
+                    <label><span>采购数量</span><ElInput :model-value="effectivePurchaseQuantity(row)" aria-label="实际采购数量（米）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines" placeholder="填写米数" @update:model-value="setPipePurchaseMeters(row, $event)"><template #append>米</template></ElInput></label>
+                    <label><span>每根长度</span><ElInput :model-value="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!canWriteLines" placeholder="每根米数" @update:model-value="setPipeLength(row, $event)"><template #append>米/根</template></ElInput></label>
                   </div>
                 </ElPopover>
-                <ElInput v-else-if="row.raw_bar_length_m" v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="整根数"><template #append>根</template></ElInput>
-                <ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" :placeholder="isBatchMode ? '本批采购数量' : defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
+                <ElInput v-else-if="row.raw_bar_length_m && !isWeightLine(row)" :model-value="effectivePurchaseQuantity(row)" aria-label="实际采购数量（米）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines" placeholder="填写米数" @update:model-value="setPipePurchaseMeters(row, $event)"><template #append>米</template></ElInput>
+                <ElInput v-else v-model="row.actual_purchase_quantity" :aria-label="isWeightLine(row) ? '实际采购重量（kg）' : '实际采购数量'" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" :placeholder="isBatchMode ? '本批采购数量' : defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ isWeightLine(row) ? 'kg' : row.source_unit_text || '单位未识别' }}</template></ElInput>
+                <ElPopover v-if="isPipePurchaseLine(row) && isWeightPipeLine(row)" trigger="click" placement="top" :width="380" :teleported="true" :disabled="!canWriteLines">
+                  <template #reference><ElButton link type="primary" :disabled="!canWriteLines" aria-label="填写管材单根参数">单根参数</ElButton></template>
+                  <div class="pipe-quantity-editor erp-table-editor">
+                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="17" :disabled="!canWriteLines"><template #append>米/根</template></ElInput></label>
+                    <label><span>每根标准重量</span><ElInput v-model="row.raw_bar_weight_kg" aria-label="采购每根标准重量（kg）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines"><template #append>kg/根</template></ElInput></label>
+                  </div>
+                </ElPopover>
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="折算采购米数" width="180">
-            <template #default="{ row }"><ElTooltip :content="pipeMetersLabel(row)" placement="top" :show-after="200"><span v-if="row.raw_bar_length_m" class="pipe-meters">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></ElTooltip></template>
-          </ElTableColumn>
-          <ElTableColumn label="采购单价（管材元/米）" width="164">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" placeholder="请输入" /></div></template>
+           <ElTableColumn label="采购单价" width="164">
+            <template #default="{ row, $index }"><div class="line-field line-field--price" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" placeholder="请输入"><template #append>{{ purchasePriceUnit(row) }}</template></ElInput></div></template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
             <template #default="{ row }"><div class="amount-preview">{{ lineAmount(row) }}</div></template>
@@ -1190,7 +1260,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           </template>
         </ElTable>
         <p v-if="isSampleSource && source?.notes" class="sample-warehouse-note">仓库备注：{{ source.notes }}</p>
-        <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>管材金额＝总米数 × 米单价；其他物料按采购数量计价</span></footer>
+         <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>{{ pipePricingText }}</span></footer>
       </section>
 
       <section v-if="isDetailStep" class="summary-card">
@@ -1326,6 +1396,8 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .line-field :deep(.el-input__wrapper) { padding: 1px 13px; }
 .line-field :deep(.el-input__prefix) { margin-right: 4px; }
 .line-field--quantity :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; }
+.line-field--price :deep(.el-input__wrapper) { padding: 1px 8px; }
+.line-field--price :deep(.el-input-group__append) { padding: 0 6px; font-size: 12px; white-space: nowrap; }
 :global(.purchase-detail-popper) { z-index: 4000 !important; }
 .material-cell, .quantity-cell { display: flex; min-width: 0; }
 .material-cell { flex-direction: column; }

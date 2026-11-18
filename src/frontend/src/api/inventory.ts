@@ -2,7 +2,7 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type { MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchase, MaterialReceivingOptions, MaterialFilterOptions } from '@/types/inventory'
-import type { SampleMaterialReceivingPayload } from '@/types/inventory'
+import type { ManualMaterialReceivingPayload, MaterialTransferPayload, MaterialTransferRecord, SampleMaterialReceivingPayload } from '@/types/inventory'
 import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, FinishedGoodsOutbound, FinishedGoodsOutboundDetail, FinishedGoodsReceipt, InventoryOptions, ManualMaterialOptions, MaterialInbound, MaterialInventoryOptions, PaginatedInventory, PaginatedMaterialInventory, ProcurementInboundOrder, Warehouse, WarehouseLocation, WarehouseZone } from '@/types/inventory'
 
 const root = '/api/v1/'
@@ -65,7 +65,9 @@ export async function createSampleMaterialReceiving(payload: SampleMaterialRecei
   const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/sample-receivings/`, payload, { headers: { 'If-Match': etag } })
   return data.data
 }
-export async function createManualMaterialReceipt(payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/manual-receipts/`, payload); return data.data }
+export async function createManualMaterialReceipt(payload: ManualMaterialReceivingPayload) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/manual-receipts/`, payload); return data.data }
+export async function createMaterialTransfer(payload: MaterialTransferPayload) { const { data } = await apiClient.post<DataResponse<MaterialTransferRecord>>(`${root}material-transfers/`, payload); return data.data }
+export async function fetchMaterialTransfers(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<MaterialTransferRecord[]>>(`${root}material-transfers/`, { params }); return data.data }
 export async function fetchMaterialQualityBatches(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<MaterialInbound[]>>(`${root}material-inventory/quality-batches/`, { params }); return data.data }
 export async function fetchMaterialQualityBatch(inboundId: string) { const { data } = await apiClient.get<DataResponse<MaterialInbound>>(`${root}material-inventory/quality-batches/${inboundId}/`); return data.data }
 export async function confirmMaterialQuality(inboundId: string, payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/quality-batches/${inboundId}/confirm/`, payload); return data.data }

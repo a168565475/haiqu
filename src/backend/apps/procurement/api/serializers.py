@@ -158,13 +158,22 @@ class SupplierInputSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderLineInputSerializer(serializers.Serializer):
     actual_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False, allow_null=True, default=None)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True, default=None)
     quantity_difference_reason = serializers.CharField(max_length=2000, required=False, allow_blank=True, default='')
     bom_line_id = serializers.UUIDField(required=False)
     sample_line_key = serializers.UUIDField(required=False)
     supplier_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     delivery_date = serializers.DateField(required=False, allow_null=True, default=None)
     actual_purchase_quantity = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    actual_purchase_weight_kg = serializers.DecimalField(
         max_digits=18,
         decimal_places=4,
         min_value=Decimal("0.0001"),
@@ -209,7 +218,8 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
 
 class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
     actual_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False, allow_null=True, default=None)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True)
     quantity_difference_reason = serializers.CharField(max_length=2000, required=False, allow_blank=True)
     id = serializers.UUIDField()
     supplier_id = serializers.UUIDField(required=False, allow_null=True, default=None)
@@ -221,6 +231,13 @@ class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         default=None,
+    )
+    actual_purchase_weight_kg = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        required=False,
+        allow_null=True,
     )
     unit_price = serializers.DecimalField(
         max_digits=18,
@@ -246,6 +263,7 @@ class PurchaseOrderUpdateSerializer(serializers.Serializer):
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     sample_line_key = serializers.UUIDField(source="sample_material_source.line_key", read_only=True, allow_null=True, default=None)
+    sample_demand_unit = serializers.SerializerMethodField()
     color = serializers.CharField(source="color_snapshot", read_only=True)
     bom_id = serializers.UUIDField(read_only=True, allow_null=True)
     bom_line_id = serializers.UUIDField(read_only=True, allow_null=True)
@@ -269,10 +287,16 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     supplier_type = serializers.CharField(source="supplier_type_snapshot", read_only=True)
     supplier_categories = serializers.ListField(source="supplier_categories_snapshot", read_only=True)
 
+    def get_sample_demand_unit(self, obj) -> str:
+        snapshot = obj.calculation_snapshot or {}
+        if snapshot.get('source') == 'SAMPLE' and snapshot.get('measurement_kind') == 'PIPE':
+            return snapshot.get('sample_demand_unit') or ('米' if snapshot.get('schema_version') == 3 else '支')
+        return obj.source_unit_text
+
     class Meta:
         model = PurchaseOrderLine
         fields = [
-            "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "color",
+            "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "sample_demand_unit", "color",
             "purchase_group_line_id",
             "id",
             "line_number",
@@ -305,8 +329,9 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "supplier_type",
             "supplier_categories",
             "delivery_date",
-            "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters",
-            "actual_bar_count", "actual_purchase_meters", "quantity_difference_reason", "calculation_snapshot",
+            "raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters",
+            "suggested_purchase_weight_kg", "actual_bar_count", "actual_purchase_meters", "actual_purchase_weight_kg",
+            "quantity_difference_reason", "calculation_snapshot",
             "actual_purchase_quantity",
             "unit_price",
             "amount",

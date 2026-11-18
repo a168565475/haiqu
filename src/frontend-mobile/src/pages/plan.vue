@@ -82,12 +82,11 @@ onUnmounted(() => { controller?.abort(); controller = undefined })
         <p class="permission-note">{{ plan.can_receive_finished ? '提交后由仓库确认入库。' : plan.finished_receipt_reason }}</p>
         <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_finished" @click="navigate('/finished-receipt')">成品入库</van-button>
       </section>
-      <section v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" class="section-card receipt-section">
+      <section v-if="section === 'receipt' && ['METAL', 'CUTTING', 'SEWING'].includes(plan.plan_category)" class="section-card receipt-section">
         <h2 class="section-title">半成品入库</h2>
         <p class="permission-note">{{ plan.can_receive_semi ? '提交后由仓库确认入库。' : plan.semi_receipt_reason }}</p>
         <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_semi" @click="navigate('/semi-receipt')">半成品入库</van-button>
       </section>
-      <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="permission-note">裁剪计划暂无手机入库入口</p>
       <section v-if="section === 'report'" class="section-card report-section">
         <h2 class="section-title">选择报工工艺</h2>
         <p v-if="!plan.reporting_crafts.length" class="permission-note">{{ plan.report_reason || '暂无可查看的工艺' }}</p>

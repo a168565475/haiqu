@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createPurchaseBatch, createPurchaseGroup, fetchPurchaseGroupFilterOptions, fetchPurchaseGroups, fetchVersionedPurchaseGroup } from './purchaseGroups'
+import { createPurchaseBatch, createPurchaseGroup, deletePurchaseGroup, fetchPurchaseGroupFilterOptions, fetchPurchaseGroups, fetchVersionedPurchaseGroup } from './purchaseGroups'
 import { apiClient } from './request'
 import type { PurchaseBatchInput } from '@/types/purchaseGroup'
 
-vi.mock('./request', () => ({ apiClient: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('./request', () => ({ apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } }))
 
 const mockedGet = vi.mocked(apiClient.get)
 const mockedPost = vi.mocked(apiClient.post)
+const mockedDelete = vi.mocked(apiClient.delete)
 
 function batchPayload(batchType: PurchaseBatchInput['batch_type'] = 'NORMAL'): PurchaseBatchInput {
   return {
@@ -22,6 +23,22 @@ describe('采购总单 API 契约', () => {
   beforeEach(() => {
     mockedGet.mockReset()
     mockedPost.mockReset()
+    mockedDelete.mockReset()
+  })
+
+  it('删除总单携带最新If-Match，204成功无需读取响应体', async () => {
+    mockedDelete.mockResolvedValueOnce({ status: 204 })
+    await expect(deletePurchaseGroup('group-1', '"group-v2"')).resolves.toBeUndefined()
+    expect(mockedDelete).toHaveBeenCalledWith('/api/v1/purchase-groups/group-1/', { headers: { 'If-Match': '"group-v2"' } })
+  })
+
+  it('缺少版本时不发送删除请求，服务端冲突原样交给页面处理', async () => {
+    await expect(deletePurchaseGroup('group-1', '')).rejects.toThrow('版本信息缺失')
+    expect(mockedDelete).not.toHaveBeenCalled()
+    const error = { response: { status: 409 } }
+    mockedDelete.mockRejectedValueOnce(error)
+    await expect(deletePurchaseGroup('group-1', '"group-v1"')).rejects.toBe(error)
+    expect(mockedDelete).toHaveBeenCalledTimes(1)
   })
 
   it('任务筛选读取全部可见父单选项，不复用子采购单或创建选项', async () => {
@@ -78,6 +95,7 @@ describe('采购总单 API 契约', () => {
 
     expect(mockedPost).toHaveBeenCalledWith('/api/v1/purchase-groups/group-1/batches/', payload, {
       headers: { 'If-Match': '"group-v1"' },
+      timeout: 30000,
     })
     expect(payload.lines).toHaveLength(1)
     expect(payload.lines[0]?.actual_purchase_quantity).toBe('120.0001')
@@ -124,6 +142,6 @@ describe('采购总单 API 契约', () => {
     mockedPost.mockRejectedValueOnce(error)
 
     await expect(createPurchaseBatch('group-1', batchPayload(), '')).rejects.toBe(error)
-    expect(mockedPost.mock.calls[0]?.[2]).toEqual({ headers: {} })
+    expect(mockedPost.mock.calls[0]?.[2]).toEqual({ headers: {}, timeout: 30000 })
   })
 })

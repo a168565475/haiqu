@@ -4,11 +4,13 @@ from uuid import UUID
 from collections.abc import Mapping
 from pathlib import Path
 import json
+from decimal import Decimal, ROUND_CEILING
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.db.models.functions import Coalesce
 from django.http import FileResponse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -58,6 +60,7 @@ from ..models import (
     WarehouseZone,
 )
 from ..selectors import (
+    accepted_material_inbound_totals,
     eligible_material_lines,
     eligible_material_purchase_orders,
     finished_goods_inventory_rows,
@@ -65,6 +68,7 @@ from ..selectors import (
     locations_with_usage,
     material_inbounds,
     material_inbound_order_totals,
+    material_receipt_progress,
     material_inventory_rows,
     material_received_totals,
     material_receiving_warehouse_suggestions,
@@ -576,9 +580,11 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                     "balance_id": row["_balance_id"], "identity_key": row["identity_key"]} if row.get("material_catalog_id") else {}),
                 'stock_kind': 'RAW',
                 'stock_mode': 'PUBLIC_V2' if public_enabled or row.get("material_catalog_id") else 'LEGACY',
-                'measurement_kind': row['measurement_kind'],
+                'measurement_kind': "HARDWARE_WEIGHT" if row['measurement_kind'] == 'OTHER' and row["raw_material__category__category_name"] in {"五金", "五金件"} else row['measurement_kind'],
                 'raw_bar_length_m': row['raw_bar_length_m'],
+                'bar_weight_kg': row.get('bar_weight_kg'),
                 'meter_quantity': row['meter_quantity'],
+                'weight_quantity': row.get('weight_quantity'),
                 "stock_item_id": row["raw_material_id"],
                 "section_type": row["raw_material__item_type"],
                 "section_title": row["raw_material__category__category_name"],
@@ -715,8 +721,9 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             "unit": material.unit.unit_name,
             "current_quantity": str(available),
             'stock_kind': 'RAW',
-            'measurement_kind': 'PIPE' if material.category.category_name == '管材' else 'OTHER',
+            'measurement_kind': 'PIPE' if material.category.category_name == '管材' else 'HARDWARE_WEIGHT' if material.category.category_name in {'五金', '五金件'} else 'OTHER',
             'meter_quantity': str(balances.filter(quality=MaterialStockQuality.AVAILABLE).aggregate(total=Sum('meter_quantity'))['total'] or 0),
+            'weight_quantity': None if balances.filter(quality=MaterialStockQuality.AVAILABLE, quantity__gt=0, weight_quantity__isnull=True).exists() else str(balances.filter(quality=MaterialStockQuality.AVAILABLE).aggregate(total=Sum('weight_quantity'))['total'] or 0),
             "available_quantity": str(available),
             "defective_quantity": str(defective),
             "cumulative_inbound_quantity": str(inbound),
@@ -733,6 +740,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                     'inbound_line_id': str(item.inbound_line_id) if item.inbound_line_id else None,
                     'raw_bar_length_m': str(item.raw_bar_length_m) if item.raw_bar_length_m else None,
                     'meter_quantity': str(item.meter_quantity) if item.meter_quantity is not None else None,
+                    'bar_weight_kg': str(item.bar_weight_kg) if item.bar_weight_kg is not None else None,
+                    'weight_quantity': str(item.weight_quantity) if item.weight_quantity is not None else None,
                 }
                 for item in balances.select_related("zone", "zone__warehouse").order_by(
                     "zone__warehouse__warehouse_number", "zone__zone_name", "quality"
@@ -752,15 +761,17 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             ).select_related("purchase_order").order_by("purchase_order__order_number", "line_number", "id")
             lines = [line for line in candidates if build_catalog_stock_identity(material_catalog_id=line.material_catalog_id,
                 material_selection_snapshot=line.material_selection_snapshot, raw_bar_length_m=line.raw_bar_length_m)["identity_key"] == catalog.identity_key]
-            totals = dict(MaterialInboundLine.objects.filter(purchase_order_line_id__in=[line.pk for line in lines],
-                inbound__status=MaterialInboundStatus.CONFIRMED).values("purchase_order_line_id").annotate(total=Sum("accepted_quantity"))
-                .values_list("purchase_order_line_id", "total"))
+            totals = accepted_material_inbound_totals(MaterialInboundLine.objects.filter(
+                purchase_order_line_id__in=[line.pk for line in lines]))
             return Response({"data": [{"purchase_order_id": str(line.purchase_order_id), "purchase_order_number": line.purchase_order.order_number,
                 "production_task_id": str(line.purchase_order.production_task_id) if line.purchase_order.production_task_id else None,
                 "production_task_number": line.purchase_order.production_task_number_snapshot,
-                "purchase_quantity": str(line.actual_purchase_quantity or 0), "actual_inbound_quantity": str(totals.get(line.pk, 0)),
-                "pending_inbound_quantity": str(max((line.actual_purchase_quantity or 0) - totals.get(line.pk, 0), 0)),
-                "unit": line.source_unit_text, "can_view_purchase_detail": request.user.has_perm("procurement.view_purchaseorder")} for line in lines]})
+                "purchase_quantity": str(line.actual_purchase_quantity or 0),
+                "actual_inbound_quantity": str(totals.get(line.pk, 0)) if totals.get(line.pk, 0) is not None else None,
+                "pending_inbound_quantity": str(max((line.actual_purchase_quantity or 0) - totals.get(line.pk, 0), 0))
+                    if totals.get(line.pk, 0) is not None else None,
+                "unit": line.source_unit_text, "weight_unit": line.source_unit_text in {"KG", "kg", "千克"},
+                "can_view_purchase_detail": request.user.has_perm("procurement.view_purchaseorder")} for line in lines]})
         material = self._stock_material(pk)
         if material is None:
             raise NotFound("材料库存项不存在。")
@@ -815,14 +826,13 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         )
         if has_conflicting_line:
             raise Conflict("采购明细存在多个已冻结库存原料身份，追溯数量不可靠，请先完成受控数据修复。")
-        inbound_totals = dict(MaterialInboundLine.objects.filter(
+        inbound_totals = accepted_material_inbound_totals(MaterialInboundLine.objects.filter(
             purchase_order_line_id__in=[line.pk for line in lines],
-            inbound__status=MaterialInboundStatus.CONFIRMED,
             raw_material_information=material,
-        ).values("purchase_order_line_id").annotate(total=Sum("accepted_quantity")).values_list("purchase_order_line_id", "total"))
+        ))
         rows = []
         for line in lines:
-            inbound = inbound_totals.get(line.pk) or 0
+            inbound = inbound_totals.get(line.pk, 0)
             purchased = line.actual_purchase_quantity or 0
             rows.append({
                 "purchase_order_id": str(line.purchase_order_id),
@@ -830,9 +840,10 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "production_task_id": str(line.purchase_order.production_task_id) if line.purchase_order.production_task_id else None,
                 "production_task_number": line.purchase_order.production_task_number_snapshot,
                 "purchase_quantity": str(purchased),
-                "actual_inbound_quantity": str(inbound),
-                "pending_inbound_quantity": str(max(purchased - inbound, 0)),
+                "actual_inbound_quantity": str(inbound) if inbound is not None else None,
+                "pending_inbound_quantity": str(max(purchased - inbound, 0)) if inbound is not None else None,
                 "unit": line.source_unit_text,
+                "weight_unit": line.source_unit_text in {"KG", "kg", "千克"},
                 "can_view_purchase_detail": request.user.has_perm("procurement.view_purchaseorder"),
             })
         return Response({"data": rows})
@@ -1013,6 +1024,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         purchase_lines = [line for order in orders for line in order.lines.all()]
         received_totals = material_received_totals([line.pk for line in purchase_lines])
         batch_totals = material_inbound_order_totals(order_ids)
+        receipt_progress_by_order = material_receipt_progress(purchase_lines)
         return_statuses_by_order = {order_id: set() for order_id in order_ids}
         for order_id, return_status in PurchaseReturn.objects.filter(
             inbound__purchase_order_id__in=order_ids,
@@ -1031,6 +1043,11 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             confirmed_count = progress.get("confirmed_count", 0)
             return_quantity = progress.get("return_quantity", 0)
             received_quantity = progress.get("received_quantity", 0)
+            received_weight_quantity = progress.get("received_weight_quantity", 0)
+            return_weight_quantity = progress.get("return_weight_quantity", 0)
+            # 混合单位不展示相加后的数量，避免把 kg、米、件混成一个数字。
+            weight_unit = bool(lines) and all(str(line.source_unit_text or "").strip().upper() in {"KG", "千克", "公斤"} for line in lines)
+            quantity_unit = 'kg' if weight_unit else next(iter({line.source_unit_text for line in lines}), '') if len({line.source_unit_text for line in lines}) <= 1 else 'MIXED'
             return_statuses = return_statuses_by_order.get(order.pk, set())
             if PurchaseReturnStatus.QUALITY_GENERATED in return_statuses:
                 current_return_status = PurchaseReturnStatus.QUALITY_GENERATED
@@ -1045,7 +1062,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 has_lines=bool(lines),
                 has_remaining_lines=bool(remaining_lines),
                 pending_quality_count=pending_count,
-                received_quantity=received_quantity,
+                received_quantity=received_weight_quantity if weight_unit and received_weight_quantity is not None else received_quantity,
                 return_status=current_return_status,
             )
             supplier_names = list(dict.fromkeys(line.supplier_name_snapshot for line in lines if line.supplier_name_snapshot))
@@ -1066,6 +1083,11 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "confirmed_batch_count": confirmed_count,
                 "received_quantity": f"{received_quantity:.4f}",
                 "return_quantity": f"{return_quantity:.4f}",
+                "received_weight_quantity": f"{received_weight_quantity:.4f}" if received_weight_quantity is not None else None,
+                "return_weight_quantity": f"{return_weight_quantity:.4f}" if return_weight_quantity is not None else None,
+                "weight_unit": weight_unit,
+                "quantity_unit": quantity_unit,
+                "receipt_progress_percent": receipt_progress_by_order.get(order.pk),
                 "return_status": current_return_status,
                 "workflow_status": workflow_status,
                 "workflow_status_display": workflow_status_display,
@@ -1146,6 +1168,19 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         warehouse_suggestions = material_receiving_warehouse_suggestions([line for line, _remaining in lines])
         rows = []
         for line, remaining in lines:
+            from apps.inventory.hardware_receipts import is_hardware_weight, hardware_piece_unit
+            hardware_weight = is_hardware_weight(line)
+            weight_unit = line.source_unit_text in {"KG", "kg", "千克"}
+            raw_bar_weight_kg = getattr(line, "raw_bar_weight_kg", None)
+            remaining_bar_count = None
+            if weight_unit and raw_bar_weight_kg:
+                remaining_bar_count = int(
+                    (Decimal(str(remaining)) / Decimal(str(raw_bar_weight_kg))).to_integral_value(
+                        rounding=ROUND_CEILING
+                    )
+                )
+            elif line.raw_bar_length_m:
+                remaining_bar_count = int(Decimal(str(remaining)) / Decimal(str(line.raw_bar_length_m)))
             text = " ".join(filter(None, [
                 line.section_title_snapshot, line.category_snapshot, line.material_snapshot,
                 line.part_name_snapshot, line.specification_snapshot, line.raw_material_snapshot,
@@ -1165,12 +1200,19 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "material_selection_snapshot": line.material_selection_snapshot,
                 "suggested_warehouse_id": warehouse_suggestions.get(line.pk),
                 "unit": line.source_unit_text,
+                "weight_unit": weight_unit,
+                "measurement_kind": "HARDWARE_WEIGHT" if hardware_weight else "PIPE" if line.raw_bar_length_m else "OTHER",
+                "piece_unit": hardware_piece_unit(line) if hardware_weight else "",
+                "quantity_unit": hardware_piece_unit(line) if hardware_weight else line.source_unit_text,
+                "unit_weight_kg": (line.calculation_snapshot or {}).get("hardware_unit_weight_kg") if hardware_weight else None,
                 "supplier_name": line.supplier_name_snapshot,
                 "purchased_quantity": f"{line.actual_purchase_quantity:.4f}",
                 'raw_bar_length_m': str(line.raw_bar_length_m) if line.raw_bar_length_m else None,
+                'raw_bar_weight_kg': str(raw_bar_weight_kg) if raw_bar_weight_kg else None,
                 'actual_bar_count': line.actual_bar_count,
-                'remaining_bar_count': int(remaining / line.raw_bar_length_m) if line.raw_bar_length_m else None,
+                'remaining_bar_count': remaining_bar_count,
                 "remaining_quantity": f"{remaining:.4f}",
+                "remaining_weight_kg": f"{remaining:.4f}" if weight_unit else None,
                 "pinyin_search": build_pinyin_search(text),
             })
         return Response({"data": rows}, headers={"ETag": etag_for_instance(order)})

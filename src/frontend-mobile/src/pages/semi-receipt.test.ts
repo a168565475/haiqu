@@ -39,7 +39,7 @@ function fixture(category: SemiReceiptCategory = 'METAL'): SemiReceiptPreview {
 const storageKey = (category = 'METAL', id = 1) => `internal-receipt-pending:${planId}:${category}:user:${id}`
 function pendingValue(quantity: string | number = '10'): PendingSemiReceipt { return { etag: '"original-etag"', payload: { request_id: '77777777-7777-4777-8777-777777777777', schedule_product_id: planId, plan_category: 'METAL', zone_id: zoneId, receipt_date: '2020-01-02', remark: '原备注', lines: [{ bom_line_id: lineId, quantity }] } } }
 let wrapper: VueWrapper | undefined
-function cleanup() { for (const category of ['METAL', 'SEWING']) for (const key of [storageKey(category), storageKey(category, 2), `internal-receipt-pending:${planId}:${category}`]) sessionStorage.removeItem(key) }
+function cleanup() { for (const category of ['METAL', 'CUTTING', 'SEWING']) for (const key of [storageKey(category), storageKey(category, 2), `internal-receipt-pending:${planId}:${category}`]) sessionStorage.removeItem(key) }
 async function openPage() { wrapper = mount(SemiReceiptPage); await flushPromises(); return wrapper }
 async function button(view: VueWrapper, text: string) { const target = view.findAll('button').find(item => item.text() === text); expect(target).toBeTruthy(); await target!.trigger('click'); await flushPromises() }
 async function selectZone(view: VueWrapper, name = '一区') { await view.get('.semi-zone').trigger('click'); await flushPromises(); await view.findAllComponents(Cell).find(cell => cell.props('title') === name)!.trigger('click'); await flushPromises() }
@@ -102,6 +102,37 @@ describe('手机金工和车缝半成品入库', () => {
     expect(view.get('.semi-quantity .van-field__button').text()).toBe(category === 'METAL' ? '支' : '套')
     if (category === 'METAL') { expect(view.text()).toContain('加工状态：未喷塑'); expect(view.text()).toContain('弯管：已报 60 支') }
     else { expect(view.text()).not.toContain('原料支持数量'); expect(view.text()).toContain('累计数量含外发同阶段入库和厂内入库') }
+  })
+  it('裁剪按片入库并显示所属部位，超过实际额度不能提交', async () => {
+    const data = fixture('CUTTING')
+    for (const line of data.lines) {
+      line.component_kind = 'CUT_PIECE'; line.parent_part_name = '床面'; line.attributes.unit_name = '片'; line.stage = '裁剪完成'
+    }
+    mocks.route.query.plan_category = 'CUTTING'; mocks.preview.mockResolvedValue(data)
+    const view = await openPage()
+    expect(mocks.preview).toHaveBeenCalledWith(planId, 'CUTTING', expect.any(AbortSignal))
+    expect(view.text()).toContain('所属部位：床面')
+    expect(view.get('.semi-quantity .van-field__button').text()).toBe('片')
+    await selectZone(view)
+    await view.get(`[data-line-id="${lineId}"] input`).setValue('31')
+    await button(view, '提交入库申请')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(view.text()).toContain('本次最多可入 30 片')
+    await view.get(`[data-line-id="${lineId}"] input`).setValue('10')
+    expect(view.get('.semi-footer-note').text()).toContain('本次 1 项 · 10 片')
+    await button(view, '提交入库申请')
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ plan_category: 'CUTTING', lines: [{ bom_line_id: lineId, quantity: '10' }] }), '"semi-one"')
+  })
+  it('车缝部位分别保留单位，汇总不把不同部位单位加成套数', async () => {
+    const data = fixture('SEWING')
+    data.lines[0]!.component_kind = 'SEWN_PART'; data.lines[0]!.attributes.unit_name = '张'
+    data.lines[1]!.component_kind = 'SEWN_PART'; data.lines[1]!.attributes.unit_name = '个'
+    mocks.route.query.plan_category = 'SEWING'; mocks.preview.mockResolvedValue(data)
+    const view = await openPage()
+    await view.get(`[data-line-id="${lineId}"] input`).setValue('10')
+    await view.get(`[data-line-id="${secondLineId}"] input`).setValue('20')
+    expect(view.get('.semi-footer-note').text()).toContain('本次 2 项 · 10 张、20 个')
+    expect(view.get('.semi-footer-note').text()).not.toContain('30 套')
   })
   it('库区只列当前仓库，改仓清空库区，不会自动选择入库位置', async () => {
     const data = fixture(); data.zones.push({ id: '88888888-8888-4888-8888-888888888888', warehouse: '半成品二仓', name: '独立区' }); mocks.preview.mockResolvedValue(data)
@@ -223,14 +254,14 @@ describe('手机金工和车缝半成品入库', () => {
     const view = await prepare(); vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked') }); await button(view, '提交入库申请')
     expect(view.text()).toContain('SEMI-TEST'); expect(view.text()).toContain('申请已提交，待仓库确认'); expect(view.text()).toContain('原请求记录未能清理'); expect(view.findAll('button').some(item => item.text() === '提交入库申请')).toBe(false)
   })
-  it.each(['CUTTING', '缺少计划', '无view', '无add', '未来阻断', '依据未就绪'] as const)('%s保留真实阻断，不扩展来源和权限', async reason => {
-    if (reason === 'CUTTING') mocks.route.query.plan_category = 'CUTTING'
+  it.each(['ASSEMBLY', '缺少计划', '无view', '无add', '未来阻断', '依据未就绪'] as const)('%s保留真实阻断，不扩展来源和权限', async reason => {
+    if (reason === 'ASSEMBLY') mocks.route.query.plan_category = 'ASSEMBLY'
     if (reason === '缺少计划') mocks.route.query.schedule_product_id = 'invalid'
     if (reason === '无view' || reason === '无add') mocks.auth.hasPermission.mockImplementation(permission => !permission.includes(reason === '无view' ? 'view_' : 'add_'))
     if (reason === '未来阻断') { const data = fixture(); data.metal_processing!.future_blockers = ['存在未来生效加工依据']; mocks.preview.mockResolvedValue(data) }
     if (reason === '依据未就绪') { const data = fixture(); for (const line of data.lines) { line.metal_processing!.basis_ready = false; line.metal_processing!.blockers = ['尚未完成必需工序报工'] }; mocks.preview.mockResolvedValue(data) }
     const view = await openPage()
-    expect(view.text()).toContain(reason === 'CUTTING' || reason === '缺少计划' ? '入库来源参数无效' : reason === '无view' || reason === '无add' ? '没有半成品入库查看和申请权限' : reason === '未来阻断' ? '存在未来生效加工依据' : '尚未完成必需工序报工')
+    expect(view.text()).toContain(reason === 'ASSEMBLY' || reason === '缺少计划' ? '入库来源参数无效' : reason === '无view' || reason === '无add' ? '没有半成品入库查看和申请权限' : reason === '未来阻断' ? '存在未来生效加工依据' : '尚未完成必需工序报工')
     expect(mocks.create).not.toHaveBeenCalled(); if (reason !== '未来阻断' && reason !== '依据未就绪') expect(mocks.preview).not.toHaveBeenCalled()
   })
   it('切换无效来源终止旧加载，迟到预览不能恢复旧表单', async () => {

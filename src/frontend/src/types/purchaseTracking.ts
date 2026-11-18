@@ -61,6 +61,12 @@ export interface PurchaseTrackingArrival extends PurchaseTrackingRow {
   pending_quality_quantity: string | null
   unreceived_quantity: string | null
   return_quantity: string | null
+  ordered_weight_kg?: string | null
+  received_weight_kg?: string | null
+  accepted_weight_kg?: string | null
+  pending_quality_weight_kg?: string | null
+  unreceived_weight_kg?: string | null
+  return_weight_kg?: string | null
   return_pending: boolean
   delivery_date: string | null
   days_remaining: number | null

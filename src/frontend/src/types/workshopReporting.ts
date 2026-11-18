@@ -13,7 +13,11 @@ export interface BomDisplayOption {
   specification: string
   label: string
   source_type: 'METAL' | 'CUTTING'
+  component_kind: '' | 'CUT_PIECE' | 'SEWN_PART'
   pieces_per_product: number | null
+  parts_per_product: number | null
+  pieces_per_part: number | null
+  unit: string
   cutting_sets_per_product: number | null
   cutting_pieces_per_set: number | null
 }

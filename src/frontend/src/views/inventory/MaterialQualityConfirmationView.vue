@@ -70,6 +70,13 @@ function acceptedPieces(row: QualityRow): bigint | null {
   return hardwareReferenceCount(`${remaining / 10000n}.${(remaining % 10000n).toString().padStart(4, '0')}`,
     row.line.calculation_snapshot?.hardware_unit_weight_kg)
 }
+function partialReturnLeavesLessThanOneBar(row: QualityRow): boolean {
+  if (row.line.calculation_snapshot?.receipt_root_rounding !== 'FLOOR') return false
+  const received = scaled(receivedInput(row)), returned = scaled(row.returnQuantity)
+  const barWeight = scaled(String(row.line.bar_weight_kg ?? ''))
+  return received !== null && returned !== null && barWeight !== null && returned > 0n
+    && returned < received && received - returned < barWeight
+}
 function validRow(row: QualityRow): boolean {
   if (isWeightPipe(row.line) && !/^\d{1,14}(?:\.\d{1,4})?$/.test(row.returnQuantity)) return false
   if (row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line) && returnRoots(row) === '') return false
@@ -82,7 +89,8 @@ function validRow(row: QualityRow): boolean {
   }
   if (isWeightPipe(row.line)) {
     const weight = scaled(String(row.line.bar_weight_kg ?? ''))
-    if (weight === null || weight <= 0n || !Number.isInteger(row.line.received_bar_count) || Number(row.line.received_bar_count) <= 0) return false
+    if (weight === null || weight <= 0n || !Number.isInteger(row.line.received_bar_count) || Number(row.line.received_bar_count) <= 0
+      || partialReturnLeavesLessThanOneBar(row)) return false
   }
   if (row.line.material_catalog_id && ['根', '支', '套'].includes(row.line.source_unit_text_snapshot) && returned !== null && returned % 10000n !== 0n) return false
   return returned !== null && received !== null && received > 0n && returned <= received && row.qualityRemark.length <= 3000
@@ -109,6 +117,7 @@ function acceptedQuantityText(row: QualityRow): string {
   return quantity === '—' ? quantity : `${quantity} ${isWeightPipe(row.line) ? 'kg' : row.line.source_unit_text_snapshot || ''}`.trim()
 }
 function quantityInputTitle(row: QualityRow): string {
+  if (partialReturnLeavesLessThanOneBar(row)) return '剩余合格重量不足一整根，请核对退货重量。'
   if (hardwarePieces(row.line) && hardwareReferenceCount('1', row.line.calculation_snapshot?.hardware_unit_weight_kg) === null) return '采购单件重量未记录或无效，无法折算'
   if (isWeightPipe(row.line) && (scaled(String(row.line.bar_weight_kg ?? '')) ?? 0n) <= 0n) return '采购单根重量未记录或无效，无法折算'
   if (row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line)) return `按原长${row.line.raw_bar_length_m}米的整数倍填写，不能超过到货数量。`

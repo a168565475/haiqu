@@ -53,6 +53,22 @@ describe('品质确认读取', () => {
     expect(submitted.items[0]).not.toHaveProperty('return_bar_count')
     confirm.mockRestore(); wrapper.unmount()
   })
+  it('新采购管材部分退货后须至少剩一整根，整根边界和全退可确认', async () => {
+    const pipe = { ...line, measurement_kind: 'PIPE', source_unit_text_snapshot: 'KG',
+      received_bar_count: 2, bar_weight_kg: '2.5', received_weight_kg: '6', return_weight_kg: '0',
+      calculation_snapshot: { receipt_root_rounding: 'FLOOR' } }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [pipe] }] as never)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    vm.rows[0]!.returnQuantity = '3.5001'; await flushPromises()
+    expect(vm.canSubmit).toBe(false)
+    expect(wrapper.get('[aria-label="第 1 项退货重量"]').attributes('title')).toContain('不足一整根')
+    for (const value of ['0', '3.5', '6']) {
+      vm.rows[0]!.returnQuantity = value
+      expect(vm.canSubmit).toBe(true)
+    }
+    wrapper.unmount()
+  })
   it('旧米制质检草稿先从根换米，刷新保留米输入并按精确根数提交', async () => {
     const pipeLine = { ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 10, return_bar_count: 0, received_quantity: '33.5000', source_unit_text_snapshot: '米' }
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [pipeLine] }] as never)

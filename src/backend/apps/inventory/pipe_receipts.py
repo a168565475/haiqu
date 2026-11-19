@@ -1,11 +1,35 @@
 """根米收货和品质确认；不把未质检数量写成可用余额。"""
 from apps.boms.material_flow_calculations import pipe_meters_text
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from rest_framework.exceptions import ValidationError
 from apps.core.api.exceptions import Conflict
 from apps.procurement.pipe_purchase import pipe_meters
 from apps.products.models import RawMaterialInformation
 from .hardware_receipts import hardware_receipt_values, is_hardware_weight, quality_hardware_quantities
+
+
+def estimated_receipt_roots(weight, bar_weight, *, round_down):
+    return int((weight / bar_weight).to_integral_value(rounding=ROUND_FLOOR if round_down else ROUND_CEILING))
+
+
+def weight_pipe_receipt_quantities(purchase_line, item):
+    snapshot = purchase_line.calculation_snapshot or {}
+    try:
+        weight = Decimal(str(item.get("received_weight_kg", item.get("received_quantity"))))
+        bar_weight = Decimal(str(snapshot.get("raw_bar_weight_kg") or purchase_line.raw_bar_weight_kg))
+    except (InvalidOperation, TypeError, ValueError) as error:
+        raise ValidationError({"received_weight_kg": "管材采购重量或每根标准重量无效。"}) from error
+    if not weight.is_finite() or weight <= 0 or not bar_weight.is_finite() or bar_weight <= 0:
+        raise ValidationError({"received_weight_kg": "管材采购重量和每根标准重量必须大于 0。"})
+    roots = item.get("received_bar_count")
+    if roots is None:
+        round_down = purchase_line.purchase_order.source_type == "PRODUCTION"
+        roots = estimated_receipt_roots(weight, bar_weight, round_down=round_down)
+        if roots == 0:
+            raise ValidationError({"received_weight_kg": "实收重量按每根标准重量折算不足一根，请核对本次实收重量。"})
+        if round_down:
+            snapshot = {**snapshot, "receipt_root_rounding": "FLOOR"}
+    return weight, bar_weight, roots, snapshot
 
 
 def receipt_pipe_values(item, purchase_line=None, material=None):
@@ -70,19 +94,9 @@ def receipt_pipe_values(item, purchase_line=None, material=None):
             "calculation_snapshot": {**snapshot, "measurement_unit": "kg", "received_bar_count": roots,
                 "received_meters": pipe_meters_text(meters), "received_weight_kg": format(weight, ".4f")},
             "raw_material_information": material}
-    weight_text = snapshot.get("raw_bar_weight_kg") or getattr(purchase_line, "raw_bar_weight_kg", None)
     weight_mode = str(getattr(purchase_line, "source_unit_text", "") or "") in {"KG", "kg", "千克"}
     if weight_mode:
-        try:
-            weight = Decimal(str(item.get("received_weight_kg", item.get("received_quantity"))))
-            bar_weight = Decimal(str(weight_text))
-        except (InvalidOperation, TypeError, ValueError) as error:
-            raise ValidationError({"received_weight_kg": "管材采购重量或每根标准重量无效。"}) from error
-        if not weight.is_finite() or weight <= 0 or not bar_weight.is_finite() or bar_weight <= 0:
-            raise ValidationError({"received_weight_kg": "管材采购重量和每根标准重量必须大于 0。"})
-        roots = item.get("received_bar_count")
-        if roots is None:
-            roots = int((weight / bar_weight).to_integral_value(rounding=ROUND_CEILING))
+        weight, bar_weight, roots, snapshot = weight_pipe_receipt_quantities(purchase_line, item)
         roots, meters = pipe_meters(roots, length, field="received_bar_count")
         item["received_weight_kg"] = weight
         item["received_quantity"] = meters
@@ -133,9 +147,12 @@ def quality_pipe_quantities(line, item):
             elif weight == received_weight:
                 roots = line.received_bar_count
             else:
-                # 按剩余重量折算合格根数，避免部分退货将仍有重量的库存扣成零根。
-                accepted_roots = min(line.received_bar_count,
-                    int(((received_weight - weight) / bar_weight).to_integral_value(rounding=ROUND_CEILING)))
+                # 旧单及实点收货继续使用原退货规则。
+                round_down = (line.calculation_snapshot or {}).get("receipt_root_rounding") == "FLOOR"
+                accepted_roots = min(line.received_bar_count, estimated_receipt_roots(
+                    received_weight - weight, bar_weight, round_down=round_down))
+                if accepted_roots == 0:
+                    raise ValidationError({"return_weight_kg": "剩余合格重量按每根标准重量折算不足一根，请核对退货重量。"})
                 roots = line.received_bar_count - accepted_roots
         roots, meters = pipe_meters(roots, line.raw_bar_length_m, field="return_bar_count", allow_zero=True)
     else:

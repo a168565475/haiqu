@@ -4,7 +4,7 @@ from uuid import UUID
 from collections.abc import Mapping
 from pathlib import Path
 import json
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -40,6 +40,7 @@ from apps.files.uploads import save_scanned_image
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import AccessoryMaterial, FabricMaterial, ProductColor, ReferenceStatus
 from apps.reference_data.pinyin_search import build_pinyin_search
+from ..pipe_receipts import estimated_receipt_roots
 
 from ..models import (
     FinishedGoodsReceipt,
@@ -1175,11 +1176,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             raw_bar_weight_kg = getattr(line, "raw_bar_weight_kg", None)
             remaining_bar_count = None
             if weight_unit and raw_bar_weight_kg:
-                remaining_bar_count = int(
-                    (Decimal(str(remaining)) / Decimal(str(raw_bar_weight_kg))).to_integral_value(
-                        rounding=ROUND_CEILING
-                    )
-                )
+                remaining_bar_count = estimated_receipt_roots(
+                    remaining, raw_bar_weight_kg, round_down=order.source_type == "PRODUCTION")
             elif line.raw_bar_length_m:
                 remaining_bar_count = int(Decimal(str(remaining)) / Decimal(str(line.raw_bar_length_m)))
             text = " ".join(filter(None, [

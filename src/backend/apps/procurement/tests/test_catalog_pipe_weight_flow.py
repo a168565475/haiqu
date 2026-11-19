@@ -137,14 +137,16 @@ class CatalogPipeWeightFlowTests(APITestCase):
 
     def test_catalog_receipt_rejects_invalid_roots_or_excess_weight(self):
         batch = self.create_batch()
-        for weight, roots in (('4.1', '1.5'), ('4.1', 0), ('4.1002', 3)):
+        for weight, roots in (('4.1', '1.5'), ('4.1', 0), ('4.1002', 3), ('2.4999', None)):
             with self.subTest(weight=weight, roots=roots):
                 response = self.receive(batch, weight=weight, roots=roots)
                 self.assertEqual(response.status_code, 400, response.data)
                 self.assertFalse(MaterialInboundLine.objects.exists())
         receipt = self.receive(batch, roots=None)
         self.assertEqual(receipt.status_code, 201, receipt.data)
-        self.assertEqual(receipt.data['data']['lines'][0]['received_bar_count'], 2)
+        row = receipt.data['data']['lines'][0]
+        self.assertEqual(row['received_bar_count'], 1)
+        self.assertEqual(row['calculation_snapshot']['receipt_root_rounding'], 'FLOOR')
 
     def test_catalog_quality_requires_consistent_roots_and_weight_and_all_return_has_no_stock(self):
         batch = self.create_batch()
@@ -161,29 +163,33 @@ class CatalogPipeWeightFlowTests(APITestCase):
         self.assertEqual(Decimal(self.detail().data['data']['progress']['lines'][0]['accepted_quantity']), Decimal('0'))
 
     def test_weight_only_partial_return_preserves_remaining_stock(self):
-        batch = self.create_batch()
-        receipt = self.receive(batch, roots=None)
+        batch = self.create_batch(weight='8.1')
+        receipt = self.receive(batch, weight='8.1', roots=None)
         self.assertEqual(receipt.status_code, 201, receipt.data)
+        invalid = self.quality(receipt, weight='6', roots=None)
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+        self.assertFalse(PublicStockBalance.objects.exists())
+        self.assertFalse(PurchaseReturnLine.objects.exists())
         confirmed = self.quality(receipt, weight='3', roots=None)
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         received = MaterialInboundLine.objects.get()
-        self.assertEqual((received.accepted_bar_count, received.return_bar_count), (1, 1))
+        self.assertEqual((received.accepted_bar_count, received.return_bar_count), (2, 1))
         balance = PublicStockBalance.objects.get()
-        self.assertEqual((balance.quantity, balance.weight_quantity), (Decimal('1'), Decimal('1.1')))
+        self.assertEqual((balance.quantity, balance.weight_quantity), (Decimal('2'), Decimal('5.1')))
         returned = PurchaseReturnLine.objects.get()
         self.assertEqual(returned.quantity, Decimal('3'))
         self.assertEqual(purchase_return_amount(returned.return_order), '6.0000')
 
     def test_positive_return_weight_with_zero_reference_roots_is_recorded(self):
-        batch = self.create_batch(weight='2')
-        receipt = self.receive(batch, weight='2', roots=None)
+        batch = self.create_batch(weight='4')
+        receipt = self.receive(batch, weight='4', roots=None)
         self.assertEqual(receipt.status_code, 201, receipt.data)
         confirmed = self.quality(receipt, weight='0.1', roots=None)
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         received = MaterialInboundLine.objects.get()
         self.assertEqual((received.accepted_bar_count, received.return_bar_count), (1, 0))
         balance = PublicStockBalance.objects.get()
-        self.assertEqual((balance.quantity, balance.weight_quantity), (Decimal('1'), Decimal('1.9')))
+        self.assertEqual((balance.quantity, balance.weight_quantity), (Decimal('1'), Decimal('3.9')))
         returned = PurchaseReturnLine.objects.get()
         self.assertEqual(returned.quantity, Decimal('0.1'))
         self.assertEqual(purchase_return_amount(returned.return_order), '0.2000')

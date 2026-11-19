@@ -1,11 +1,12 @@
 """目录材料收货复制采购事实；质检后的合格数量才计入公共库存。"""
 from rest_framework.exceptions import ValidationError
 from django.db import transaction
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal
 
 from apps.material_catalog.saved_selection import validate_saved_material
 from .catalog_stock_identity import build_catalog_stock_identity
 from .hardware_receipts import hardware_receipt_values, is_hardware_weight, validate_hardware_inbound
+from .pipe_receipts import weight_pipe_receipt_quantities
 
 
 def catalog_receipt_values(*, purchase_line, item):
@@ -22,16 +23,7 @@ def catalog_receipt_values(*, purchase_line, item):
         weight_mode = purchase_line.source_unit_text in {"KG", "kg", "千克"}
         snapshot = purchase_line.calculation_snapshot or {}
         if weight_mode:
-            try:
-                weight = Decimal(str(item.get("received_weight_kg", item.get("received_quantity"))))
-                bar_weight = Decimal(str(snapshot.get("raw_bar_weight_kg") or purchase_line.raw_bar_weight_kg))
-            except (InvalidOperation, TypeError, ValueError) as error:
-                raise ValidationError({"received_weight_kg": "管材采购重量或每根标准重量无效。"}) from error
-            if not weight.is_finite() or weight <= 0 or not bar_weight.is_finite() or bar_weight <= 0:
-                raise ValidationError({"received_weight_kg": "管材采购重量和每根标准重量必须大于 0。"})
-            roots = item.get("received_bar_count")
-            if roots is None:
-                roots = int((weight / bar_weight).to_integral_value(rounding=ROUND_CEILING))
+            weight, bar_weight, roots, snapshot = weight_pipe_receipt_quantities(purchase_line, item)
             roots, meters = pipe_meters(roots, length, field="received_bar_count")
             item["received_weight_kg"] = weight
         else:
@@ -44,7 +36,7 @@ def catalog_receipt_values(*, purchase_line, item):
             "received_weight_kg": (weight if weight_mode else None),
             "accepted_weight_kg": (weight if weight_mode else None),
             "return_weight_kg": (Decimal("0") if weight_mode else None),
-            "calculation_snapshot": {**purchase_line.calculation_snapshot, "received_bar_count": roots,
+            "calculation_snapshot": {**snapshot, "received_bar_count": roots,
                                       "received_meters": str(meters),
                                       **({"received_weight_kg": format(weight, ".4f")} if weight_mode else {})}}
     if item.get("received_bar_count") is not None or item.get("raw_bar_length_m") is not None:

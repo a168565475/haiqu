@@ -16,6 +16,7 @@ class PipeWeightReceiptTests(SimpleTestCase):
         self.material = SimpleNamespace(pk=uuid4(), item_type="MATERIAL", archived_at=None,
             unit=SimpleNamespace(unit_name="根", catalog_owner_id=None, **active), category=SimpleNamespace(category_name="管材", **active))
         self.purchase = SimpleNamespace(section_type_snapshot="PROFILE", source_unit_text="KG",
+            purchase_order=SimpleNamespace(source_type="PRODUCTION"),
             raw_bar_length_m=Decimal("6"), raw_bar_weight_kg=Decimal("2.5"), material_catalog_id=uuid4(),
             calculation_snapshot={"raw_material_id": str(self.material.pk), "raw_bar_weight_kg": "2.5"})
         self.selected = {"category_key": "TUBE", "processing_state": "RAW", "unit_name": "根"}
@@ -29,13 +30,30 @@ class PipeWeightReceiptTests(SimpleTestCase):
             query.return_value.filter.return_value.first.return_value = self.material
             return receipt_pipe_values(item, purchase_line=self.purchase), item
 
-    def test_missing_receipt_roots_are_rounded_up_in_both_paths(self):
+    def test_production_weight_credits_only_whole_roots_in_both_paths(self):
         for mode in ("catalog", "legacy"):
             with self.subTest(mode=mode):
                 values, item = self.receive(mode)
-                self.assertEqual(values["received_bar_count"], 2)
+                self.assertEqual(values["received_bar_count"], 1)
                 self.assertEqual(values["received_weight_kg"], Decimal("4.1"))
-                self.assertEqual(item["received_quantity"], Decimal("12"))
+                self.assertEqual(item["received_quantity"], Decimal("6"))
+                self.assertEqual(values["calculation_snapshot"]["receipt_root_rounding"], "FLOOR")
+
+    def test_automatic_receipt_requires_one_whole_root_in_both_paths(self):
+        for mode in ("catalog", "legacy"):
+            with self.subTest(mode=mode):
+                with self.assertRaisesMessage(ValidationError, "不足一根"):
+                    self.receive(mode, received_weight_kg=Decimal("2.4999"))
+                exact, _ = self.receive(mode, received_weight_kg=Decimal("2.5"))
+                self.assertEqual(exact["received_bar_count"], 1)
+
+    def test_sample_receipt_still_rounds_up_in_both_paths(self):
+        self.purchase.purchase_order.source_type = "SAMPLE"
+        for mode in ("catalog", "legacy"):
+            with self.subTest(mode=mode):
+                values, _ = self.receive(mode)
+                self.assertEqual(values["received_bar_count"], 2)
+                self.assertNotIn("receipt_root_rounding", values["calculation_snapshot"])
 
     def test_verified_receipt_roots_override_estimate_without_changing_weight(self):
         for mode in ("catalog", "legacy"):
@@ -43,6 +61,7 @@ class PipeWeightReceiptTests(SimpleTestCase):
                 values, item = self.receive(mode, received_bar_count=3)
                 self.assertEqual(values["received_bar_count"], 3)
                 self.assertEqual(values["accepted_bar_count"], 3)
+                self.assertNotIn("receipt_root_rounding", values["calculation_snapshot"])
                 self.assertEqual(values["received_weight_kg"], Decimal("4.1"))
                 self.assertEqual(item["received_quantity"], Decimal("18"))
 
@@ -61,6 +80,7 @@ class PipeWeightReceiptTests(SimpleTestCase):
 
     def line(self, roots=2):
         return SimpleNamespace(measurement_kind="PIPE", source_unit_text_snapshot="KG",
+            calculation_snapshot={},
             raw_bar_length_m=Decimal("6"), bar_weight_kg=Decimal("2.5"),
             received_bar_count=roots, received_weight_kg=Decimal("4.1"))
 

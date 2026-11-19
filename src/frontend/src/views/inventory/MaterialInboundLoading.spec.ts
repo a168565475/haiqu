@@ -70,20 +70,24 @@ describe('采购入库读取', () => {
     await vm.submitReceiving()
     expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_weight_kg: '2.5', expected_remaining_quantity: '20.1' })] }))
     const payload = vi.mocked(api.createMaterialReceiving).mock.calls[0]![0] as { items: Record<string, unknown>[] }
-    expect(payload.items[0]).toHaveProperty('received_bar_count', '1')
+    expect(payload.items[0]).not.toHaveProperty('received_bar_count')
     wrapper.unmount()
   })
-  it('KG管材只显示采购重量，根数沿标准重量自动换算且不沿用旧手填根数', async () => {
+  it('KG管材按整根向下换算，保留实称重量，不足一根时禁止提交', async () => {
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: 'KG', weight_unit: true, raw_bar_length_m: '3.35', raw_bar_weight_kg: '2.5', remaining_weight_kg: '6' }], etag: '"weight-v1"' } as never)
     const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
     const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string; warehouseId: string; zoneId: string }>; readyToSubmit: boolean; submitReceiving: () => Promise<void> }
-    Object.assign(vm.rows[0]!, { receivedQuantity: '4.1', warehouseId: 'wh', zoneId: 'zone' })
+    Object.assign(vm.rows[0]!, { receivedQuantity: '2.49', warehouseId: 'wh', zoneId: 'zone' })
+    expect(vm.readyToSubmit).toBe(false)
+    vm.rows[0]!.receivedQuantity = '4.1'
     await flushPromises()
     expect(wrapper.find('[aria-label="第 1 项实收根数"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('自动估算，请按实收核对')
     expect(vm.readyToSubmit).toBe(true)
     await vm.submitReceiving()
-    expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_weight_kg: '4.1', received_bar_count: '2' })] }))
+    expect(vi.mocked(api.createMaterialReceiving).mock.calls[0]![0].items).toEqual([{
+      purchase_order_line_id: line.id, zone_id: 'zone', received_weight_kg: '4.1', expected_remaining_quantity: '6', remark: '',
+    }])
     wrapper.unmount()
   })
   it('旧米制owned草稿按原根数转米，保存后带单位标记且重开不重复换算', async () => {

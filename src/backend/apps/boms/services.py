@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from django.db import transaction
 from django.db.models.deletion import ProtectedError
-from django.db.models import Max, Sum
+from django.db.models import Max, Q, Sum
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import require_matching_etag
@@ -463,7 +463,11 @@ def _next_version(product_line):
         .filter(product_line=product_line)
         .aggregate(latest=Max("version_number"))["latest"]
     )
-    return (latest or 0) + 1
+    deleted_versions = AuditLog.objects.filter(
+        object_type="BOM", context_type="PRODUCTION_TASK", context_id=product_line.production_task_id,
+        action="DELETE", before_data__product_line_id=str(product_line.pk),
+    ).values_list("before_data__version_number", flat=True)
+    return max(latest or 0, max(deleted_versions, default=0)) + 1
 
 
 def _bom_number():
@@ -1703,19 +1707,46 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
 
 
 @transaction.atomic
-def archive_bom(*, bom, actor_employee, request):
+def delete_bom(*, bom, actor_employee, request):
+    from apps.procurement.models import PurchaseGroup, PurchaseOrderLine
+
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
-    locked = Bom.objects.select_for_update().get(pk=bom.pk)
+    try:
+        locked = Bom.objects.select_for_update().get(pk=bom.pk)
+    except Bom.DoesNotExist as error:
+        raise NotFound("BOM 不存在。") from error
     require_matching_etag(request, locked)
-    locked.archived_at = timezone.now()
-    locked.archived_by_employee = actor_employee
-    locked.archive_reason = "BOM 列表删除"
-    locked.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+    lines = BomLine.objects.filter(section__bom=locked)
+    line_ids = lines.values("pk")
+    if PurchaseGroup.objects.filter(
+        Q(source_bom_id_snapshot=locked.pk) | Q(lines__source_bom_line_id_snapshot__in=line_ids)
+    ).exists():
+        raise Conflict("该 BOM 已被采购总单引用，无法删除。")
+    if PurchaseOrderLine.objects.filter(source_bom_line_id_snapshot__in=line_ids).exists():
+        raise Conflict("该 BOM 已被采购明细引用，无法删除。")
+
+    bom_id, task_id = locked.pk, locked.production_task_id
+    before = {
+        "bom_number": locked.bom_number, "status": locked.status,
+        "product_line_id": str(locked.product_line_id), "version_number": locked.version_number,
+    }
+    image_files = set(BomLineImage.objects.filter(bom_line__section__bom=locked).values_list("business_file_id", flat=True))
+    if locked.source_file_id:
+        image_files.add(locked.source_file_id)
+
+    # 解除同一 BOM 内将一起删除的引用，其余引用继续由外键保护。
+    lines.filter(parent_part__section__bom=locked).update(parent_part=None)
+    lines.filter(fabric_source_line__section__bom=locked).update(fabric_source_line=None)
+    try:
+        locked.delete()
+    except ProtectedError as error:
+        raise Conflict("该 BOM 或其明细已被其他业务记录引用，无法删除。") from error
+
     write_audit_log(
-        object_type="BOM", object_id=locked.pk, context_type="PRODUCTION_TASK", context_id=locked.production_task_id,
-        action="ARCHIVE", actor_employee=actor_employee,
-        before_data={"archived_at": None, "bom_number": locked.bom_number},
-        after_data={"archived_at": locked.archived_at.isoformat(), "bom_number": locked.bom_number}, request=request,
+        object_type="BOM", object_id=bom_id, context_type="PRODUCTION_TASK", context_id=task_id,
+        action="DELETE", actor_employee=actor_employee, before_data=before,
+        after_data={"deleted": True}, request=request,
     )
-    expire_task_bom_events(locked.production_task_id)
-    return locked
+    expire_task_bom_events(task_id)
+    for file_id in image_files:
+        transaction.on_commit(lambda file_id=file_id: delete_business_file_if_unreferenced(file_id))

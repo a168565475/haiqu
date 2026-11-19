@@ -48,9 +48,9 @@ from ..material_flow_calculations import MaterialFlowValueError, decimal_quantit
 from ..material_save_plan import material_save_preview
 from ..selectors import accessible_boms, boms_with_context, pipe_material_matches, search_boms
 from ..services import (
-    archive_bom,
     confirm_bom_product,
     create_bom,
+    delete_bom,
     preview_imported_bom,
     sync_latest_boms_from_order,
     update_bom_lines,
@@ -149,7 +149,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "sync_order_quantity": "boms.change_bom",
         "verify": "boms.verify_bom",
         "confirm_product": "boms.change_bom",
-        "archive": "boms.delete_bom",
+        "destroy": "boms.delete_bom",
     }
 
     def _filtered_queryset(self, *, include_status=True):
@@ -386,11 +386,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         )
         return self._detail_response(boms_with_context(include_lines=True).get(pk=confirmed.pk))
 
-    @extend_schema(request=None, responses=None)
-    @action(detail=True, methods=["post"])
-    def archive(self, request, pk=None):
-        bom = archive_bom(bom=self.get_object(), actor_employee=getattr(request, "employee", None), request=request)
-        return Response({"data": {"id": str(bom.pk), "archived": True}})
+    @extend_schema(responses={204: None}, description="永久删除 BOM 及其明细。已有业务引用时返回冲突。必须提供 If-Match。")
+    def destroy(self, request, *args, **kwargs):
+        delete_bom(bom=self.get_object(), actor_employee=getattr(request, "employee", None), request=request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(request=BomUpdateInputSerializer, responses=BomDetailSerializer)
     def partial_update(self, request, *args, **kwargs):

@@ -6,7 +6,7 @@ import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Plus } from '@element-plus/icons-vue'
 
-import { archiveBom, fetchBomForEdit, fetchBomFilterOptions, fetchBoms } from '@/api/boms'
+import { deleteBom, fetchBomForEdit, fetchBomFilterOptions, fetchBoms } from '@/api/boms'
 import searchIcon from '@/assets/crm-v2/search.svg'
 import { useAuthStore } from '@/stores/auth'
 import type { Bom, BomFilterOptions, BomQuery, BomStatus } from '@/types/bom'
@@ -186,7 +186,7 @@ async function deleteRow(row: Bom) {
   if (!canDelete.value || deletingId.value) return
   try {
     await ElMessageBox.confirm(
-      `删除后“${row.bom_number}”将从 BOM 列表移除，历史审计记录仍会保留。`,
+      `确定永久删除“${row.bom_number}”及其明细吗？删除后无法恢复。`,
       '确认删除 BOM',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
     )
@@ -196,7 +196,7 @@ async function deleteRow(row: Bom) {
   deletingId.value = row.id
   try {
     const current = await fetchBomForEdit(row.id)
-    await archiveBom(row.id, current.etag)
+    await deleteBom(row.id, current.etag)
     ElMessage.success('BOM 已删除。')
     if (rows.value.length === 1 && page.value > 1) page.value -= 1
     await loadRows()

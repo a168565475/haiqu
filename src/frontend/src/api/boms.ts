@@ -139,12 +139,10 @@ export async function fetchBomForEdit(id: string, signal?: AbortSignal): Promise
   return versionedBom(await apiClient.get<DataResponse<BomDetail>>(`${basePath}${encodeURIComponent(id)}/`, { signal }))
 }
 
-export async function archiveBom(id: string, etag: string): Promise<void> {
-  await apiClient.post(
-    `${basePath}${encodeURIComponent(id)}/archive/`,
-    {},
-    { headers: { 'If-Match': etag } },
-  )
+export async function deleteBom(id: string, etag: string): Promise<void> {
+  await apiClient.delete(`${basePath}${encodeURIComponent(id)}/`, {
+    headers: { 'If-Match': etag },
+  })
 }
 
 function writableBomSections(sections: BomSectionInput[]) {

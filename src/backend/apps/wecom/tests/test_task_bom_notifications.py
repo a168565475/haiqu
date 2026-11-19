@@ -15,7 +15,7 @@ from apps.boms.models import Bom, BomLine, BomSection
 from apps.boms.notification_events import (
     EVENT_CODE, current_task_bom_snapshot, register_task_boms_confirmed, snapshot_version,
 )
-from apps.boms.services import archive_bom, confirm_bom_product, create_bom, update_bom_lines, verify_bom
+from apps.boms.services import confirm_bom_product, create_bom, delete_bom, update_bom_lines, verify_bom
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.exceptions import Conflict
 from apps.wecom.models import NotificationDelivery, NotificationEvent, NotificationRule
@@ -189,7 +189,7 @@ class TaskBomAggregationTests(APITestCase):
         self.assertEqual(result.status, "VERIFIED")
         self.assertEqual(NotificationEvent.objects.get().event_code, EVENT_CODE)
 
-    def test_archive_latest_does_not_reactivate_previous_combination(self):
+    def test_delete_latest_does_not_reactivate_previous_combination(self):
         f = aggregation_fixture(two=False)
         verify(f, f.bom)
         original = NotificationEvent.objects.get()
@@ -199,9 +199,9 @@ class TaskBomAggregationTests(APITestCase):
         verify(f, newer)
         current = NotificationEvent.objects.exclude(pk=original.pk).get()
         newer.refresh_from_db()
-        url = f"/api/v1/boms/{newer.pk}/archive/"
-        result = f.client.post(url, {}, format="json", HTTP_IF_MATCH=etag_for_instance(newer))
-        self.assertEqual(result.status_code, 200, result.data)
+        url = f"/api/v1/boms/{newer.pk}/"
+        result = f.client.delete(url, HTTP_IF_MATCH=etag_for_instance(newer))
+        self.assertEqual(result.status_code, 204, result.data)
         original.refresh_from_db(); current.refresh_from_db()
         self.assertEqual(original.status, "STALE")
         self.assertEqual(current.status, "STALE")
@@ -266,9 +266,15 @@ class TaskBomAggregationConcurrencyTests(TransactionTestCase):
     def test_expired_event_is_not_sent_to_wecom(self):
         f = aggregation_fixture(two=False)
         verify(f, f.bom)
-        delivery = NotificationDelivery.objects.get(channel="WECOM")
-        f.bom.refresh_from_db()
-        archive_bom(bom=f.bom, actor_employee=f.employee, request=request_for(f, f.bom))
+        # 夹具原 BOM 已被采购引用，使用尚未采购的新版验证永久删除后的通知状态。
+        newer = create_bom(product_line=f.line, creation_method="COPY", source_bom=f.bom, actor_employee=f.employee)
+        review_bom(f, newer)
+        verify(f, newer)
+        delivery = NotificationDelivery.objects.get(
+            channel="WECOM", recipient__event__event_code=EVENT_CODE, recipient__event__status="CREATED",
+        )
+        newer.refresh_from_db()
+        delete_bom(bom=newer, actor_employee=f.employee, request=request_for(f, newer))
         with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             result = process_delivery(delivery)
         self.assertEqual(result.error_code, "EVENT_STALE")

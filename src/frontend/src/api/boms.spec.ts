@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  archiveBom,
   confirmBomProduct,
   createBom,
+  deleteBom,
   deleteBomDraftLineImage,
   deleteBomLineImage,
   exportBoms,
@@ -313,12 +313,12 @@ describe('BOM API', () => {
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { signal: controller.signal })
   })
 
-  it('列表删除使用归档接口并携带当前 BOM ETag', async () => {
-    mockedPost.mockResolvedValueOnce({ data: { data: { id: 'bom-1', archived: true } } })
+  it('永久删除 BOM 时携带当前 ETag', async () => {
+    mockedDelete.mockResolvedValueOnce({ status: 204 })
 
-    await archiveBom('bom-1', '"bom-etag"')
+    await deleteBom('bom-1', '"bom-etag"')
 
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/archive/', {}, {
+    expect(mockedDelete).toHaveBeenCalledWith('/api/v1/boms/bom-1/', {
       headers: { 'If-Match': '"bom-etag"' },
     })
   })

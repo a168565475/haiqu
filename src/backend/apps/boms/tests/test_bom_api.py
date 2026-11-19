@@ -21,6 +21,7 @@ from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.files.models import FileScanStatus
 from apps.imports.security import InfectedFile, ScannerUnavailable
 from apps.organizations.models import Employee
+from apps.procurement.models import PurchaseGroup
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.exceptions import Conflict
@@ -2375,7 +2376,25 @@ class BomApiTests(APITestCase):
         self.assertEqual(saved_line.total_consumption, "21")
         self.assertEqual(saved_line.total_purchase_quantity, "21")
 
-    def test_archive_removes_bom_from_list_and_writes_audit(self):
+    def test_delete_rejects_bom_referenced_by_purchase_group(self):
+        created = self.client.post(
+            "/api/v1/boms/",
+            {"production_task_product_id": str(self.product_line.pk), "creation_method": "BLANK"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        bom_id = created.data["data"]["id"]
+        group = PurchaseGroup.objects.create(
+            group_number="CGZD261119001",
+            production_task=self.task,
+            source_bom_id_snapshot=bom_id,
+        )
+        result = self.client.delete(f"/api/v1/boms/{bom_id}/", HTTP_IF_MATCH=created.headers["ETag"])
+        self.assertEqual(result.status_code, 409, result.data)
+        self.assertTrue(Bom.objects.filter(pk=bom_id, archived_at__isnull=True).exists())
+        self.assertTrue(PurchaseGroup.objects.filter(pk=group.pk).exists())
+
+    def test_delete_removes_bom_and_owned_lines_and_writes_audit(self):
         created = self.client.post(
             "/api/v1/boms/",
             {"production_task_product_id": str(self.product_line.pk), "creation_method": "BLANK"},
@@ -2384,17 +2403,24 @@ class BomApiTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         bom_id = created.data["data"]["id"]
 
-        archived = self.client.post(
-            f"/api/v1/boms/{bom_id}/archive/",
-            {},
-            format="json",
+        section = BomSection.objects.filter(bom_id=bom_id).first()
+        source_line = BomLine.objects.create(section=section, line_number=1)
+        BomLine.objects.create(section=section, line_number=2, fabric_source_line=source_line)
+
+        url = f"/api/v1/boms/{bom_id}/"
+        self.assertEqual(self.client.delete(url).status_code, 428)
+        self.assertEqual(self.client.delete(url, HTTP_IF_MATCH='"stale"').status_code, 412)
+        deleted = self.client.delete(
+            url,
             HTTP_IF_MATCH=created.headers["ETag"],
         )
 
-        self.assertEqual(archived.status_code, 200, archived.data)
-        self.assertTrue(Bom.objects.get(pk=bom_id).archived_at)
+        self.assertEqual(deleted.status_code, 204, deleted.data)
+        self.assertFalse(Bom.objects.filter(pk=bom_id).exists())
+        self.assertFalse(BomSection.objects.filter(bom_id=bom_id).exists())
+        self.assertFalse(BomLine.objects.filter(section_id=section.pk).exists())
         self.assertFalse(any(item["id"] == bom_id for item in self.client.get("/api/v1/boms/").data["data"]))
-        self.assertTrue(AuditLog.objects.filter(object_type="BOM", object_id=bom_id, action="ARCHIVE").exists())
+        self.assertTrue(AuditLog.objects.filter(object_type="BOM", object_id=bom_id, action="DELETE").exists())
 
         options = self.client.get("/api/v1/boms/options/", {"task_q": self.task.task_number})
         self.assertEqual(options.status_code, 200, options.data)

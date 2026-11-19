@@ -19,6 +19,7 @@ class HardwareWeightPurchaseTests(SimpleTestCase):
     def _line(self, **raw_values):
         return SimpleNamespace(
             section=SimpleNamespace(section_type=BomSectionType.ACCESSORY, title="五金件"),
+            part_name="铆钉",
             raw_values={
                 "hardware_weight_mode": "AUTO",
                 "unit_material_weight_kg": "0.00396000",
@@ -71,6 +72,7 @@ class HardwareWeightPurchaseTests(SimpleTestCase):
 
     def test_washer_piece_source_preserves_piece_unit(self):
         line = self._line(unit_material_weight_kg="0.00101645")
+        line.part_name = "垫片"
         line.unit = "片"
         result = _source_quantity(line, SimpleNamespace(order_quantity=1))
         self.assertEqual(result[0], Decimal("0.0122"))

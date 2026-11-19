@@ -305,12 +305,7 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
             calculation = pipe_source_snapshot(item["_bom_line"])
             snapshot.update({key: calculation[key] for key in ("raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters", "suggested_purchase_weight_kg") if key in calculation})
         else:
-            calculation = build_purchase_material_snapshot(item["_bom_line"])
-            if item["section_type"] == "ACCESSORY" and str((item["_bom_line"].raw_values or {}).get("hardware_weight_mode") or "").upper() in {"AUTO", "MANUAL"}:
-                from .services import _hardware_calculation_snapshot, _hardware_weight_data
-                weight_data = _hardware_weight_data(item["_bom_line"], item["_bom"])
-                if weight_data is not None:
-                    calculation = _hardware_calculation_snapshot(item["_bom_line"], item["_bom"], weight_data)
+            calculation = item.get("calculation_snapshot") or build_purchase_material_snapshot(item["_bom_line"])
         snapshot["calculation_snapshot"] = calculation
         line = _save_group_line(group, number, _json_value(snapshot))
         if line.compatibility_issues:

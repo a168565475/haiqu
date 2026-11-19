@@ -110,6 +110,21 @@ const copyCandidates = computed(() => {
   ))
 })
 
+const historyBomLabels = computed(() => {
+  const choices = copyCandidates.value.map(bom => {
+    const quantity = `${number(bom.order_quantity)} ${bom.product_unit_name}`.trim()
+    const description = [bom.production_task_number, bom.product_name_snapshot, bom.product_color_snapshot, quantity]
+      .filter(Boolean).join(' · ')
+    return { bom, description }
+  })
+  return new Map(choices.map(choice => {
+    const { bom, description } = choice
+    const repeated = choices.some(other => other !== choice && other.description === description && other.bom.status === bom.status)
+    const label = [description, repeated ? `V${bom.version_number}` : '', bom.status_display].filter(Boolean).join(' · ')
+    return [bom.id, label]
+  }))
+})
+
 const sourceReady = computed(() => {
   if (creationMethod.value === 'IMPORT') return Boolean(preview.value && !preview.value.identity_errors.length)
   if (creationMethod.value === 'COPY') return Boolean(sourceBomId.value)
@@ -135,18 +150,32 @@ const reviewQuantities = computed(() => {
   const sourceValue = creationMethod.value === 'IMPORT'
     ? preview.value?.quantity.source_quantity
     : creationMethod.value === 'COPY'
-      ? reviewSource.value?.source_quantity || reviewSource.value?.order_quantity
+      ? reviewSource.value?.order_quantity
       : null
   const batchValue = preview.value?.quantity.batch_quantity ?? selectedProduct.value?.batch_quantity ?? null
   return [
     { label: '订单依据数量', value: baseline, difference: 0 },
     { label: '当前任务数量', value: current, difference: current - baseline },
-    { label: creationMethod.value === 'IMPORT' ? 'Excel原表数量' : creationMethod.value === 'COPY' ? '历史BOM数量' : '来源数据数量', value: sourceValue === null || sourceValue === undefined ? null : Number(sourceValue), difference: sourceValue === null || sourceValue === undefined ? null : Number(sourceValue) - baseline },
+    { label: creationMethod.value === 'IMPORT' ? 'Excel原表数量' : creationMethod.value === 'COPY' ? '历史BOM数量（参考）' : '来源数据数量', value: sourceValue == null ? null : Number(sourceValue), difference: sourceValue == null ? null : Number(sourceValue) - baseline, referenceOnly: creationMethod.value === 'COPY' },
     { label: '生产批次数量', value: batchValue === null || batchValue === undefined ? null : Number(batchValue), difference: batchValue === null || batchValue === undefined ? null : Number(batchValue) - baseline },
   ]
 })
 
-const quantityRequiresReason = computed(() => reviewQuantities.value.some((item) => item.difference !== null && item.difference !== 0))
+const quantityRequiresReason = computed(() => reviewQuantities.value.some((item) => !item.referenceOnly && item.difference !== null && item.difference !== 0))
+
+const quantityCheckMessage = computed(() => {
+  if (!sourceReady.value) return '选择数据来源后核对数量。'
+  if (quantityRequiresReason.value) {
+    const step = currentStep.value === 3 ? '本页' : '下一步'
+    return `请在${step}的「数量差异说明」填写本次使用哪个数量及原因。`
+  }
+  if (reviewSource.value && selectedProduct.value) {
+    const current = selectedProduct.value
+    const unit = productEntryUnitName(current) || 'PCS'
+    return `历史 BOM 为 ${number(reviewSource.value.order_quantity)} ${reviewSource.value.product_unit_name || unit}，本次按 ${number(current.order_quantity)} ${unit}创建草稿。`
+  }
+  return '各数量来源与当前任务数量一致。'
+})
 
 const expectedResult = computed(() => {
   if (preview.value) {
@@ -236,8 +265,8 @@ function goPrevious() {
 
 function differenceText(value: number | null) {
   if (value === null) return '—'
-  if (value === 0) return '0'
-  return `${value > 0 ? '+' : ''}${number(value)}`
+  if (value === 0) return '一致'
+  return `${value > 0 ? '多' : '少'} ${number(Math.abs(value))}`
 }
 
 function taskOptionLabel(item: BomProductionTaskProduct) {
@@ -478,7 +507,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
                 <ElTableColumn prop="notes" label="备注" min-width="110"><template #default="{ row }">{{ row.notes || '—' }}</template></ElTableColumn>
               </ElTable>
             </div>
-            <div v-else-if="creationMethod === 'COPY'" class="alternative-source"><ElSelect v-model="sourceBomId" placeholder="请选择同产品历史BOM" clearable><ElOption v-for="item in copyCandidates" :key="item.id" :label="`${item.bom_number} · ${item.section_count}个分区 · ${item.line_count}行`" :value="item.id" /></ElSelect><span v-if="selectedProduct && !copyCandidates.length">当前产品没有可复制的历史BOM</span></div>
+            <div v-else-if="creationMethod === 'COPY'" class="alternative-source"><ElSelect v-model="sourceBomId" placeholder="请选择同产品历史BOM" clearable><ElOption v-for="item in copyCandidates" :key="item.id" :label="historyBomLabels.get(item.id)" :value="item.id" /></ElSelect><span v-if="selectedProduct && !copyCandidates.length">当前产品没有可复制的历史BOM</span></div>
             <div v-else-if="creationMethod === 'BLANK'" class="blank-source">仅建立BOM主记录和默认分区，不生成虚构用料数据；创建后在编辑页新增物料。</div>
           </section>
         </section>
@@ -486,12 +515,12 @@ onBeforeUnmount(cancelPendingTaskSearch)
         <section v-else class="content-card review-content">
           <h2>检查并创建BOM草稿</h2>
           <dl class="review-meta">
-            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${reviewSource?.bom_number || '—'}` : '空白建立' }}</dd></div>
+            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${historyBomLabels.get(sourceBomId) || '—'}` : '空白建立' }}</dd></div>
             <div><dt>识别结果</dt><dd>{{ expectedResult }}</dd></div>
             <div><dt>来源产品</dt><dd>{{ selectedProduct?.product_code || selectedProduct?.product_number }} {{ selectedProduct?.product_name }}</dd></div>
           </dl>
-          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/{{ productEntryUnitName(selectedProduct) || 'PCS' }}</th><th>与当前任务差异</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
-          <label class="reason-field"><span>数量差异说明<span v-if="quantityRequiresReason"> *</span></span><ElInput v-model="quantityDifferenceReason" maxlength="500" show-word-limit :placeholder="quantityRequiresReason ? '请说明数量差异及本次执行依据' : '数量一致，可不填写'" /></label>
+          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/{{ productEntryUnitName(selectedProduct) || 'PCS' }}</th><th>与本次产品数量相比</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference && !item.referenceOnly }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
+          <label class="reason-field"><span>数量差异说明<span v-if="quantityRequiresReason"> *</span></span><ElInput v-model="quantityDifferenceReason" maxlength="500" show-word-limit :placeholder="quantityRequiresReason ? '请说明数量差异及本次执行依据' : '可选填'" /></label>
           <div class="info-strip">此操作只创建草稿，BOM需在编辑页单独确认。</div>
         </section>
 
@@ -515,7 +544,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
             type="warning" :closable="false" show-icon />
           <div class="check-item is-ok"><i>✓</i><span><strong>来源任务单匹配</strong><small>BOM数据与生产任务单产品一致</small></span></div>
           <div class="check-item" :class="{ 'is-ok': sourceReady }"><i>{{ sourceReady ? '✓' : '!' }}</i><span><strong>字段识别成功</strong><small>{{ sourceReady ? '已识别物料编码、名称、规格、单位、用量等字段' : '等待完成数据来源设置' }}</small></span></div>
-          <div class="check-item" :class="{ 'is-ok': !quantityRequiresReason }"><i>{{ quantityRequiresReason ? '!' : '✓' }}</i><span><strong>数量校验</strong><small>{{ quantityRequiresReason ? '来源数量与当前任务数量存在差异，需在下一步说明' : '各数量来源与当前任务数量一致' }}</small></span></div>
+          <div class="check-item" :class="{ 'is-ok': sourceReady && !quantityRequiresReason }"><i>{{ !sourceReady ? '…' : quantityRequiresReason ? '!' : '✓' }}</i><span><strong>数量校验</strong><small>{{ quantityCheckMessage }}</small></span></div>
           <div class="check-item" :class="{ 'is-ok': creationMethod !== 'IMPORT' || Boolean(preview) }"><i>{{ creationMethod !== 'IMPORT' || preview ? '✓' : '!' }}</i><span><strong>数据结构完整</strong><small>{{ preview ? `共${preview.section_count}个分区，${preview.line_count}行数据` : creationMethod === 'IMPORT' ? '等待解析Excel数据' : '创建后在编辑页维护结构' }}</small></span></div>
         </aside>
       </main>

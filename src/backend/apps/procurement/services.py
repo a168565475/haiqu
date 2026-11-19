@@ -227,10 +227,13 @@ def _hardware_weight_data(line, bom):
     """返回五金按重量采购所需的快照；未启用重量规则时返回 None。"""
     if line.section.title.strip() != "五金件":
         return None
-    raw = line.raw_values or {}
-    mode = str(raw.get("hardware_weight_mode") or "").strip().upper()
-    if mode not in {"AUTO", "MANUAL"}:
+    # 普通五金可以记录单重，采购时仍沿用选料单位；铆钉套也按普通配件处理。
+    name = re.split(r"[-（(]", line.part_name, maxsplit=1)[0].strip()
+    if not name.endswith(("铆钉", "平垫", "垫片", "垫圈")):
         return None
+    raw = line.raw_values or {}
+    mode = raw.get("hardware_weight_mode") or "MANUAL"
+    unit_weight, unit_status = _parsed_decimal(raw.get("unit_material_weight_kg"))
     source_unit = str(line.unit or "").strip()
     weight_source = source_unit.upper() in {"KG", "公斤", "千克"}
     piece_source = source_unit.upper() in {"个", "片", "件", "只", "颗", "粒", "枚", "支", "PCS", "PC", "PIECE", "PIECES"}
@@ -239,7 +242,6 @@ def _hardware_weight_data(line, bom):
     )
     if not source_field:
         piece_quantity, source_field, source_text, piece_status = _derived_quantity(line, bom, "unit_consumption")
-    unit_weight, unit_status = _parsed_decimal(raw.get("unit_material_weight_kg"))
     if unit_status == PurchaseQuantityParseStatus.READY:
         try:
             unit_weight = unit_weight.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
@@ -546,6 +548,22 @@ def _latest_bom_for_product(product):
     return boms[0] if boms else None
 
 
+def _hardware_quantity_blocker(product, bom, section, line, source):
+    weight = _hardware_weight_data(line, bom)
+    if weight.get("weight_source"):
+        detail = "请核对按公斤填写的采购数量。"
+    elif weight["piece_status"] == PurchaseQuantityParseStatus.READY and weight["unit_status"] != PurchaseQuantityParseStatus.READY:
+        detail = "按公斤采购，请填写有效的单个材料重量（kg），以便从件数换算。"
+    else:
+        detail = "按公斤采购，请核对五金用量、数量单位和计算出的总重量。"
+    name = (line.material_selection_snapshot or {}).get("name") or line.part_name or line.raw_material
+    return _blocker(
+        "BOM_PURCHASE_QUANTITY_INVALID", f"{section.title}第{line.line_number}行「{name}」：{detail}",
+        product=product, bom=bom, bom_line_id=str(line.pk), line_number=line.line_number,
+        section_title=section.title, source_quantity_field=source["source_quantity_field"],
+    )
+
+
 def _bom_source_details(product, bom):
     blockers = []
     source_lines = []
@@ -583,7 +601,10 @@ def _bom_source_details(product, bom):
                 source_lines.append(source_line)
                 if line.material_catalog_id:
                     if source_line["quantity_parse_status"] != "READY":
-                        identity_errors.append({"bom_line_id": str(line.pk), "reason": "MATERIAL_QUANTITY_REQUIRED"})
+                        if source_line["source_quantity_field"] == "hardware_weight_kg":
+                            blockers.append(_hardware_quantity_blocker(product, bom, section, line, source_line))
+                        else:
+                            identity_errors.append({"bom_line_id": str(line.pk), "reason": "MATERIAL_QUANTITY_REQUIRED"})
                     continue
                 material, source_key = resolve_bom_line_raw_material(
                     line,
@@ -614,6 +635,8 @@ def _bom_source_details(product, bom):
                     and source_unit == "KG"
                     and is_hardware_weight_snapshot(source_line.get("calculation_snapshot"))
                 )
+                if hardware_weighted and source_line["quantity_parse_status"] != "READY":
+                    blockers.append(_hardware_quantity_blocker(product, bom, section, line, source_line))
                 if source_unit not in valid_units and not hardware_weighted:
                     identity_errors.append(
                         {

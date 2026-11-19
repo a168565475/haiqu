@@ -23,7 +23,7 @@ def build_purchase_material_snapshot(bom_line):
         return {"schema_version": 1, "source": "PRODUCTION_PURCHASE", **bom_catalog_fields(bom_line),
                 "material_catalog_id": str(bom_line.material_catalog_id), "unit_id": bom_line.material_selection_snapshot["unit_id"]}
     material, _ = resolve_bom_line_raw_material(bom_line)
-    if material is None or material.item_type != "MATERIAL":
+    if material is None or material.item_type != "MATERIAL" or material.unit.catalog_owner_id:
         raise ValidationError({"lines": "采购明细必须关联有效的库存材料后才能保存。"})
     return {
         "schema_version": 1,
@@ -59,7 +59,7 @@ def resolve_purchase_material(purchase_line):
         if len(matches) != 1:
             raise PurchaseMaterialIdentityMissing()
         material = matches[0]
-    if material is None or material.archived_at is not None or material.item_type != "MATERIAL":
+    if material is None or material.archived_at is not None or material.item_type != "MATERIAL" or material.unit.catalog_owner_id:
         raise PurchaseMaterialIdentityMissing()
 
     unit_id = purchase_line.calculation_snapshot.get("unit_id")

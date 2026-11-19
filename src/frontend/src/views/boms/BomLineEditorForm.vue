@@ -4,7 +4,6 @@ import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel
 import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
 import { selectHardwareWeight, setManualHardwareWeight } from './useHardwareWeightPreview'
 import type { MaterialCatalog, PublicMaterialOptions } from '@/types/materialCatalog'
-import PinyinFilterSelect from '@/components/production/PinyinFilterSelect.vue'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { packagingQuantity } from '@/utils/bomPackagingQuantity'
 import { componentDemand, componentKey, componentMaterialValue, setComponentParent, setComponentUnit } from '@/utils/bomComposition'
@@ -18,17 +17,13 @@ type DisplayImage = AnyRecord
 const props = withDefaults(defineProps<{
   catalogMode?: boolean
   catalogRefreshKey?: number
+  canEditCatalogAttributes?: boolean
   componentUnits?: Array<{ id: string; unit_name: string }>
   changeComponentType?: (line: BomLineInput, kind: 'SEWN_PART' | 'CUT_PIECE') => void
   editingSection: BomSectionInput | null
   editingLineDraft: BomLineInput | null
   editorReferenceOptionsError: string
   ensureEditorReferenceOptions: AnyFunction
-  tubeShapes: AnyRecord[]
-  tubeProductNames: AnyRecord[]
-  tubeMaterials: AnyRecord[]
-  tubeDiameters: AnyRecord[]
-  tubeThicknesses: AnyRecord[]
   tubeCoatingColors: AnyRecord[]
   tubeOptionsLoading: boolean
   editingLineCalculations: AnyRecord | null
@@ -65,11 +60,6 @@ const props = withDefaults(defineProps<{
   bom: BomDetail | null
   number: AnyFunction
 }>(), {
-  tubeShapes: () => [],
-  tubeProductNames: () => [],
-  tubeMaterials: () => [],
-  tubeDiameters: () => [],
-  tubeThicknesses: () => [],
   tubeCoatingColors: () => [],
   componentUnits: () => [],
 })
@@ -77,6 +67,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   maintain: []
   'use-catalog': []
+  'catalog-attribute-added': [id: string, previousVersion: string, version: string]
   'update:editingFabricSourceKey': [value: string]
 }>()
 const currentCatalog = ref<MaterialCatalog>()
@@ -89,7 +80,7 @@ const hardwareWeightMethod = computed({
     if (props.editingLineDraft) selectHardwareWeight(props.editingLineDraft, value)
   },
 })
-const currentPublicSpray = ref<PublicMaterialOptions>()
+const catalogSprayOptions = ref<PublicMaterialOptions>()
 const selectedPurchaseAllowance = computed(() => props.editingLineDraft?.purchase_allowance_mode === 'MANUAL'
   ? props.editingLineDraft.purchase_allowance_rule : props.editingLineDraft?.purchase_allowance_mode === 'AUTO' ? 'AUTO' : '')
 const automaticPurchaseAllowanceLabel = computed(() => {
@@ -103,20 +94,23 @@ function selectPurchaseAllowance(value: PurchaseAllowanceRule | 'AUTO') {
   props.editingLineDraft.purchase_allowance_mode = value === 'AUTO' ? 'AUTO' : 'MANUAL'
   props.editingLineDraft.purchase_allowance_rule = value === 'AUTO' ? '' : value
 }
-const coatingOptions = computed(() => props.catalogMode ? (currentPublicSpray.value?.values || []).filter(value => value.field_key === 'color').map(value => ({ id: value.id, color_name: value.value })) : props.tubeCoatingColors)
-const catalogCoatingEnabled = computed(() => !!currentCatalog.value?.spray_enabled && !!currentPublicSpray.value && currentCatalog.value.id === props.editingLineDraft?.material_catalog_id)
+const coatingOptions = computed(() => props.catalogMode ? (catalogSprayOptions.value?.values || []).filter(value => value.field_key === 'color').map(value => ({ id: value.id, color_name: value.value })) : props.tubeCoatingColors)
+const catalogCoatingEnabled = computed(() => !!currentCatalog.value?.spray_enabled && !!catalogSprayOptions.value && currentCatalog.value.id === props.editingLineDraft?.material_catalog_id)
 const coatingPlaceholder = computed(() => {
   if (props.catalogMode) {
     if (!props.editingLineDraft?.material_catalog_id) return '请先选择品名'
     if (!currentCatalog.value || currentCatalog.value.id !== props.editingLineDraft.material_catalog_id) return '品名配置未加载，请重新选择'
     if (!currentCatalog.value.spray_enabled) return '该品名未启用半成品'
-    if (!currentPublicSpray.value) return '喷塑颜色未加载，请重新选择品名'
+    if (!catalogSprayOptions.value) return '喷塑颜色未加载，请重新选择品名'
   }
   return coatingOptions.value.length ? '选择喷塑颜色' : '暂无喷塑颜色，请到维护配置新增'
 })
 const selectedAttributes = computed(() => props.editingLineDraft?.material_selection?.attributes ?? props.editingLineDraft?.material_selection_snapshot?.attributes)
 const selectedColor = computed(() => props.editingLineDraft?.material_selection ?? props.editingLineDraft?.material_selection_snapshot)
 function selectedAttribute(key: string, fallback: string): string {
+  if (props.editingSection?.section_type === 'PROFILE' && props.editingLineDraft?.id && !props.editingLineDraft.material_catalog_id) {
+    return fallback || selectedAttributes.value?.[key] || '—'
+  }
   return (props.catalogMode && selectedAttributes.value ? selectedAttributes.value[key] : fallback) || '—'
 }
 const selectedSpecification = computed(() => {
@@ -137,7 +131,6 @@ const partFabricTitle = computed(() => props.editingLineDraft?.component_kind ==
 
 const {
   editingSection, editingLineDraft, editorReferenceOptionsError, ensureEditorReferenceOptions,
-  tubeShapes, tubeProductNames, tubeMaterials, tubeDiameters, tubeThicknesses,
   tubeOptionsLoading, editingLineCalculations, normalizeTubeCutPieceCount, displayLineImages,
   openLineImageManager, formatHardwareColor, auxiliaryLineHasActiveProduct,
   auxiliarySpecificationOptions, setAuxiliarySpecification, auxiliaryColorOptions, setAuxiliaryColor,
@@ -155,8 +148,8 @@ const {
           <label v-if="editingSection?.title === '裁剪明细'" class="drawer-field"><span>类型</span><ElSelect :model-value="editingLineDraft.component_kind || ''" placeholder="选择部位或裁片" aria-label="类型" @change="changeComponentType?.(editingLineDraft, $event)"><ElOption label="部位" value="SEWN_PART" /><ElOption label="裁片" value="CUT_PIECE" /></ElSelect></label>
           <label v-if="editingLineDraft.component_kind === 'CUT_PIECE'" class="drawer-field"><span>所属部位</span><ElSelect :model-value="editingLineDraft.parent_part_id || editingLineDraft.parent_part_client_key || ''" placeholder="选择部位" aria-label="所属部位" @change="setComponentParent(editingLineDraft, $event, componentParts)"><ElOption v-for="part in componentParts" :key="componentKey(part)" :value="componentKey(part)" :label="part.part_name || '未选择品名的部位'" /></ElSelect></label>
           <label v-if="editingSection?.title === '裁剪明细'" class="drawer-field" :title="partFabricTitle"><span>{{ editingLineDraft.component_kind === 'SEWN_PART' ? '归属面布' : editingLineDraft.component_kind ? '来源原料' : '来源面料' }}</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKeyModel" filterable :clearable="editingLineDraft.component_kind === 'SEWN_PART'" value-on-clear="" :placeholder="editingLineDraft.component_kind === 'SEWN_PART' ? '选择归属面布' : '选择本 BOM 的布料或棉'" :aria-label="editingLineDraft.component_kind === 'SEWN_PART' ? '归属面布' : editingLineDraft.component_kind ? '来源原料' : '来源面料'" no-data-text="请先添加面料或棉原料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small v-if="!catalogMode && !editingLineDraft.component_kind">材质和颜色自动使用来源面料，保存 BOM 时一并保存关联。</small></template></label>
-          <label v-if="(catalogMode || editingLineDraft.component_kind) && editingSection?.title === '裁剪明细'" class="drawer-field"><span>品名</span><BomCuttingCatalogSelect :key="editingLineDraft.client_key || editingLineDraft.id" :line="editingLineDraft" :refresh-key="catalogRefreshKey" /></label>
-          <MaterialSelectionPanel v-else-if="catalogMode && editingSection" :key="editingLineDraft.client_key || editingLineDraft.id" presentation="dropdown" :line="editingLineDraft" :section-title="editingSection.title" :refresh-key="catalogRefreshKey" :fixed-unit="editingSection.section_type === 'PROFILE' ? '根' : editingSection.title === '面料类' ? '米' : undefined" @maintain="emit('maintain')" @loaded="currentCatalog = $event" @public-options="currentPublicSpray = $event" />
+          <label v-if="(catalogMode || editingLineDraft.component_kind) && editingSection?.title === '裁剪明细'" class="drawer-field"><span>品名</span><BomCuttingCatalogSelect :key="editingLineDraft.client_key || editingLineDraft.id" :line="editingLineDraft" :refresh-key="catalogRefreshKey" :can-edit-catalog-attributes="canEditCatalogAttributes" @catalog-attribute-added="(id, previousVersion, version) => emit('catalog-attribute-added', id, previousVersion, version)" /></label>
+          <MaterialSelectionPanel v-else-if="catalogMode && editingSection" :key="editingLineDraft.client_key || editingLineDraft.id" presentation="dropdown" :line="editingLineDraft" :section-title="editingSection.title" :refresh-key="catalogRefreshKey" :fixed-unit="editingSection.section_type === 'PROFILE' ? '根' : editingSection.title === '面料类' ? '米' : undefined" :can-edit-catalog-attributes="canEditCatalogAttributes" @maintain="emit('maintain')" @loaded="currentCatalog = $event" @public-options="catalogSprayOptions = $event" @catalog-attribute-added="(id, previousVersion, version) => emit('catalog-attribute-added', id, previousVersion, version)" />
           <ElAlert
             v-if="(editingSection?.title === '裁剪明细' || (!catalogMode && (editingSection?.title === '辅料类' || editingSection?.title === '面料类'))) && editorReferenceOptionsError"
             class="reference-options-error drawer-field--wide"
@@ -168,45 +161,14 @@ const {
             <template #default><ElButton size="small" @click="ensureEditorReferenceOptions">重新加载生产维护数据</ElButton></template>
           </ElAlert>
           <template v-if="editingSection?.section_type === 'PROFILE'">
-            <template v-if="!catalogMode">
-            <label class="drawer-field">
-              <span>形状</span>
-              <PinyinFilterSelect v-model="editingLineDraft.tube_shape" :options="tubeShapes" label-key="shape_name" :loading="tubeOptionsLoading" placeholder="选择形状" aria-label="形状" />
-            </label>
-            <label class="drawer-field">
-              <span>品名</span>
-              <PinyinFilterSelect v-model="editingLineDraft.part_name" :options="tubeProductNames" label-key="product_name" :loading="tubeOptionsLoading" placeholder="选择品名" aria-label="品名" />
-            </label>
-            <label class="drawer-field">
-              <span>材质</span>
-              <PinyinFilterSelect v-model="editingLineDraft.material" :options="tubeMaterials" label-key="material_name" :loading="tubeOptionsLoading" placeholder="选择材质" aria-label="材质" />
-            </label>
-            <label class="drawer-field">
-              <span>规格</span>
-              <ElSelect v-model="editingLineDraft.tube_diameter" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择规格" aria-label="规格">
-                <ElOption v-for="item in tubeDiameters" :key="item.id" :label="item.diameter_value" :value="item.diameter_value" />
-              </ElSelect>
-            </label>
-            <label class="drawer-field">
-              <span>厚度</span>
-              <ElSelect v-model="editingLineDraft.tube_thickness" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择厚度" aria-label="厚度">
-                <ElOption v-for="item in tubeThicknesses" :key="item.id" :label="item.thickness_value" :value="item.thickness_value" />
-              </ElSelect>
-            </label>
-            </template>
-            <template v-else>
-              <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ selectedAttribute('material', editingLineDraft.material) }}</strong></label>
-              <label class="drawer-field"><span>形状</span><strong class="drawer-readonly-value">{{ selectedAttribute('shape', editingLineDraft.tube_shape) }}</strong></label>
-              <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedAttribute('section_size', editingLineDraft.tube_diameter) }}</strong></label>
-              <label class="drawer-field"><span>厚度</span><strong class="drawer-readonly-value">{{ selectedAttribute('thickness', editingLineDraft.tube_thickness) }}</strong></label>
-              <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ selectedAttribute('color', '') }}</strong></label>
-            </template>
+            <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ selectedAttribute('material', editingLineDraft.material) }}</strong></label>
+            <label class="drawer-field"><span>形状</span><strong class="drawer-readonly-value">{{ selectedAttribute('shape', editingLineDraft.tube_shape) }}</strong></label>
+            <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedAttribute('section_size', editingLineDraft.tube_diameter || editingLineDraft.specification) }}</strong></label>
+            <label class="drawer-field"><span>厚度</span><strong class="drawer-readonly-value">{{ selectedAttribute('thickness', editingLineDraft.tube_thickness) }}</strong></label>
+            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ selectedAttribute('color', '') }}</strong></label>
             <label class="drawer-field">
               <span>喷塑颜色</span>
-              <strong v-if="catalogMode" class="drawer-readonly-value">{{ editingLineDraft.tube_coating_color || '—' }}</strong>
-              <ElSelect v-else v-model="editingLineDraft.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :placeholder="coatingPlaceholder" no-data-text="暂无喷塑颜色，请到分区的维护配置新增" aria-label="喷塑颜色">
-                <ElOption v-for="item in coatingOptions" :key="item.id" :label="item.color_name" :value="item.color_name" />
-              </ElSelect>
+              <strong class="drawer-readonly-value">{{ editingLineDraft.tube_coating_color || '—' }}</strong>
             </label>
             <label class="drawer-field">
               <span>采购余量</span>

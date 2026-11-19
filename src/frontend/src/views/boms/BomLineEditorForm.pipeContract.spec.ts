@@ -5,7 +5,6 @@ import ElementPlus from 'element-plus'
 import { blankLine } from '@/views/boms/bomEditorHelpers'
 import BomLineEditorForm from './BomLineEditorForm.vue'
 
-vi.mock('@/components/production/PinyinFilterSelect.vue', () => ({ default: { template: '<select />' } }))
 vi.mock('@/api/materialCatalog', () => ({ fetchMaterialCatalog: vi.fn(), fetchMaterialCatalogOptions: vi.fn(), fetchMaterialCatalogs: vi.fn(), fetchPublicMaterialOptions: vi.fn(), materialCatalogError: String }))
 vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
@@ -18,7 +17,7 @@ describe('BOM管材沿原根米支输入流程', () => {
       catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
       editingLineDraft: line, editingLineCalculations: { long_material_unit_weight_kg: '2.5' }, tubeCalculationReadonly: false,
       editorReferenceOptionsError: '', ensureEditorReferenceOptions: vi.fn(),
-      tubeShapes: [], tubeProductNames: [], tubeMaterials: [], tubeDiameters: [], tubeThicknesses: [], tubeCoatingColors: [],
+      tubeCoatingColors: [],
       tubeOptionsLoading: false, normalizeTubeCutPieceCount: vi.fn(), openLineImageManager: vi.fn(),
       auxiliaryLineHasActiveProduct: () => false, auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: vi.fn(),
       auxiliaryColorOptions: () => [], setAuxiliaryColor: vi.fn(), auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: vi.fn(),
@@ -185,7 +184,7 @@ describe('BOM管材沿原根米支输入流程', () => {
     if (title !== '裁剪明细') expect(wrapper.find('[aria-label="单个用量"]').exists()).toBe(true)
     wrapper.unmount()
   })
-  it('管材喷塑颜色只回显共享行的选中值，读取公共候选不赋默认值', async () => {
+  it('管材喷塑颜色只回显共享行的选中值，读取候选不赋默认值', async () => {
     const line = reactive(blankLine('根'))
     const wrapper = shallowMount(BomLineEditorForm, { props: {
       displayLineImages: () => [], formatHardwareColor: String,

@@ -21,7 +21,8 @@ vi.mock('@/api/materialCatalog', async original => ({ ...await original<typeof i
 const versioned = { data: { id: 'b1', status: 'PENDING_CONFIRMATION', order_quantity: '1000', current_order_quantity: '1000', product_information_confirmed: true, sections: [], configured_field_labels: {} }, etag: 'v1' }
 // Node 直接加载 ESM 发行版时 async-validator 的默认导出不兼容；使用真实 CJS 发行版执行表单校验。
 const elementPlusRuntime = createRequire(import.meta.url)('element-plus').default as typeof ElementPlus
-const dialog = { props: ['modelValue', 'title'], template: '<section v-if="modelValue" :aria-label="title"><slot /><slot name="footer" /></section>' }
+const dialog = { props: ['modelValue', 'title', 'beforeClose'], template: '<section v-if="modelValue" :aria-label="title"><slot /><slot name="footer" /></section>' }
+const canLeaveCatalog = vi.fn<() => Promise<boolean>>()
 let wrapper: VueWrapper | undefined
 let host: HTMLDivElement | undefined
 interface Editor { sections: BomSectionInput[]; activeSectionIndex: number; blankLine: (unit?: string) => BomLineInput }
@@ -34,6 +35,10 @@ async function open(specification?: string) {
     AppWindowDialog: dialog, BomPrintDocument: true, InquiryProductDialog: true, ProductCreateDialog: true,
     BomLineImageSummary: true, BomProductImage: true,
     ProductionDataView: { name: 'ProductionDataView', props: { initialCategory: String, embedded: Boolean }, template: '<div data-testid="production-maintenance" />' },
+    RawMaterialManagementView: {
+      name: 'RawMaterialManagementView', props: { fixedCategory: String, initialCatalogId: String, initialCatalogName: String, fromBom: Boolean },
+      setup: () => ({ canLeave: canLeaveCatalog }), template: '<div />',
+    },
   } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
@@ -50,6 +55,7 @@ function button(page: VueWrapper, text: string) { return page.findAll('button').
 
 beforeEach(() => {
   vi.clearAllMocks()
+  canLeaveCatalog.mockResolvedValue(true)
   vi.mocked(api.fetchBomForEdit).mockResolvedValue(structuredClone(versioned) as never)
   vi.mocked(api.fetchBomEditorReferenceOptions).mockResolvedValue({ component_units: [{ id: 'unit', unit_name: '个', unit_code: 'PCS' }], auxiliary_products: [], accessory_materials: [], fabric_materials: [], fabric_specifications: [], fabric_widths: [], product_colors: [] })
   vi.mocked(api.fetchBomSemiFinishedMaterials).mockResolvedValue({ data: [], meta: { page: 1, page_size: 50, total: 0, total_pages: 0 } })
@@ -316,17 +322,107 @@ describe('裁剪规格提醒和新增裁片', () => {
     expect(submitted).toMatchObject({ cutting_pieces_per_set: 2, cutting_sets_per_product: 1 })
   })
 
-  it('原表格添加材料和维护入口保留，没有独立部位卡片且不创建材料档案', async () => {
+  it('裁剪分区无所选品名时从维护配置打开本分区列表，不加载公共维护或新建档案', async () => {
     const { page } = await open()
     expect(button(page, '添加材料')).toBeDefined()
     expect(button(page, '添加部位')).toBeUndefined()
     expect(page.find('.composition-editor').exists()).toBe(false)
     await button(page, '维护配置').trigger('click')
     await flushPromises()
-    expect(page.get('[aria-label="生产维护"]').find('[data-testid="production-maintenance"]').exists()).toBe(true)
+    const catalog = page.getComponent({ name: 'RawMaterialManagementView' })
+    expect(catalog.props()).toMatchObject({ fixedCategory: 'FABRIC_SEMI', fromBom: true })
+    expect(catalog.props('initialCatalogId')).toBeFalsy()
+    expect(page.find('[data-testid="production-maintenance"]').exists()).toBe(false)
     expect(catalogApi.createMaterialCatalog).not.toHaveBeenCalled()
     expect(rawApi.createRawMaterial).not.toHaveBeenCalled()
     expect(api.saveBomDraft).not.toHaveBeenCalled()
+  })
+
+  it('全屏表格维护点击行的品名，确认关闭后切分区不沿用原品名', async () => {
+    const { page } = await open()
+    const vm = page.vm as unknown as Editor
+    const tube = vm.sections.find(section => section.title === '管材类')!
+    tube.lines.push(
+      { ...vm.blankLine('根'), part_name: '横杆', material_catalog_id: 'tube-rail' },
+      { ...vm.blankLine('根'), part_name: '上下脚', material_catalog_id: 'tube-feet' },
+    )
+    const sectionButton = (label: string) => page.findAll('.section-tabs button').find(el => el.get('span').text() === label)!
+    await sectionButton('型材').trigger('click')
+    await page.get('.tube-table button[aria-label="全屏"]').trigger('click')
+    await page.findAll('.tube-table tbody td').find(cell => cell.text() === '上下脚')!.trigger('click')
+    const fullscreen = page.get('.fullscreen-table-actions')
+    await fullscreen.findAll('button').find(el => el.text() === '维护配置')!.trigger('click')
+    await flushPromises()
+    const catalog = page.getComponent({ name: 'RawMaterialManagementView' })
+    expect(catalog.props()).toMatchObject({ fixedCategory: 'TUBE', initialCatalogId: 'tube-feet' })
+    expect(page.find('[data-testid="production-maintenance"]').exists()).toBe(false)
+    const modal = page.findAllComponents(dialog).find(component => component.classes().includes('material-catalog-maintenance-dialog'))!
+    const close = modal.props('beforeClose') as (done: () => void) => Promise<void>
+    const done = vi.fn(() => {
+      modal.vm.$emit('update:modelValue', false)
+      modal.vm.$emit('closed')
+    })
+    const table = page.getComponent({ name: 'BomMaterialSectionTables' })
+    const version = table.props('catalogRefreshKey')
+    canLeaveCatalog.mockResolvedValueOnce(false)
+    await close(done)
+    expect(done).not.toHaveBeenCalled()
+    expect(page.findComponent({ name: 'RawMaterialManagementView' }).exists()).toBe(true)
+    expect(table.props('catalogRefreshKey')).toBe(version)
+    catalog.vm.$emit('saved')
+    await flushPromises()
+    expect(table.props('catalogRefreshKey')).toBeGreaterThan(version)
+    const savedVersion = table.props('catalogRefreshKey')
+    await close(done)
+    await flushPromises()
+    expect(done).toHaveBeenCalledOnce()
+    expect(table.props('catalogRefreshKey')).toBe(savedVersion)
+    await page.get('.tube-table button[aria-label="退出全屏"]').trigger('click')
+    await sectionButton('面料').trigger('click')
+    await button(page, '维护配置').trigger('click')
+    const fabric = page.getComponent({ name: 'RawMaterialManagementView' })
+    expect(fabric.props()).toMatchObject({ fixedCategory: 'FABRIC', fromBom: true })
+    expect(fabric.props('initialCatalogId')).toBeFalsy()
+    expect(fabric.props('initialCatalogName')).toBeFalsy()
+  })
+
+  it('第二行应用更换的品名后从表头维护该档案，再点旧文字行仅带该行品名', async () => {
+    const { page } = await open()
+    const vm = page.vm as unknown as Editor
+    const section = vm.sections.find(item => item.title === '塑料件类')!
+    section.lines.push(
+      { ...vm.blankLine('个'), id: 'legacy', part_name: '旧脚套' },
+      { ...vm.blankLine('个'), part_name: '圆脚套', material_catalog_id: 'round-cap' },
+    )
+    vi.mocked(catalogApi.fetchMaterialCatalogOptions).mockResolvedValue({ categories: [{ key: 'PLASTIC', label: '塑料件', templates: [{ key: 'PLASTIC', label: '塑料件', supports_spray: false, fields: [
+      { key: 'specification', label: '规格', kind: 'text' }, { key: 'unit', label: '单位', kind: 'unit' },
+    ] }] }], spray_fields: [], units: [], warehouses: [] })
+    vi.mocked(catalogApi.fetchMaterialCatalog).mockImplementation(async id => ({ data: {
+      id, name: id === 'round-cap' ? '圆脚套' : '方脚套', category_key: 'PLASTIC', template_key: 'PLASTIC',
+      updated_at: 'v1', values: [{ id: 'size', scope: 'BASE', field_key: 'specification', parent_id: null, value: '25mm' }],
+      units: [{ id: 'allowed', scope: 'BASE', unit_id: 'pcs', unit_name: '个' }], spray_enabled: false, base_warehouse_id: null, semi_warehouse_id: null,
+    }, etag: 'v1' }))
+    await page.findAll('.section-tabs button').find(el => el.get('span').text() === '塑料')!.trigger('click')
+    await page.findAll('.el-table button[aria-label="编辑当前行"]')[1]!.trigger('click')
+    await flushPromises()
+    const form = page.getComponent({ name: 'BomLineEditorForm' })
+    const picker = form.getComponent(MaterialSelectionPanel).vm as unknown as { pickName: (id: string) => Promise<void>; choose: (key: string, value: string) => void }
+    await picker.pickName('square-cap')
+    picker.choose('specification', '25mm')
+    picker.choose('unit', '个')
+    await button(page, '应用修改').trigger('click')
+    await flushPromises()
+    expect(section.lines[1]).toMatchObject({ part_name: '方脚套', material_catalog_id: 'square-cap' })
+    await button(page, '维护配置').trigger('click')
+    expect(page.getComponent({ name: 'RawMaterialManagementView' }).props()).toMatchObject({ fixedCategory: 'PLASTIC', initialCatalogId: 'square-cap' })
+    const modal = page.findAllComponents(dialog).find(component => component.classes().includes('material-catalog-maintenance-dialog'))!
+    modal.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    await page.findAll('.el-table tbody td').find(cell => cell.text() === '旧脚套')!.trigger('click')
+    await button(page, '维护配置').trigger('click')
+    const legacy = page.getComponent({ name: 'RawMaterialManagementView' })
+    expect(legacy.props('initialCatalogId')).toBeFalsy()
+    expect(legacy.props()).toMatchObject({ fixedCategory: 'PLASTIC', initialCatalogName: '旧脚套' })
   })
 
   it('原抽屉选现有部位档案后可先应用，表格中选裁片与所属部位再保存刷新', async () => {

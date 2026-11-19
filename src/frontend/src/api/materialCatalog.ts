@@ -16,8 +16,9 @@ function versioned(response: AxiosResponse<DataResponse<MaterialCatalog>>): Vers
   return { data: response.data.data, etag: typeof response.headers.etag === 'string' ? response.headers.etag : '' }
 }
 
-export async function fetchMaterialCatalogOptions(): Promise<MaterialCatalogOptions> {
-  return (await apiClient.get<DataResponse<MaterialCatalogOptions>>(`${basePath}options/`)).data.data
+export async function fetchMaterialCatalogOptions(includeUnits = false): Promise<MaterialCatalogOptions> {
+  const query = includeUnits ? '?include_units=true' : ''
+  return (await apiClient.get<DataResponse<MaterialCatalogOptions>>(`${basePath}options/${query}`)).data.data
 }
 export async function fetchPublicMaterialFields(): Promise<PublicMaterialFields> {
   return (await apiClient.get<DataResponse<PublicMaterialFields>>(`${basePath}public-fields/`)).data.data
@@ -71,7 +72,7 @@ export async function addMaterialAttributeValue(id: string, payload: MaterialAtt
 export async function deleteMaterialAttributeValue(id: string, valueId: string, etag: string): Promise<VersionedMaterialCatalog> {
   return versioned(await apiClient.delete<DataResponse<MaterialCatalog>>(`${path(id)}values/${encodeURIComponent(valueId)}/`, headers(etag)))
 }
-export async function updateMaterialAttributeValue(id: string, valueId: string, payload: { value: string }, etag: string): Promise<VersionedMaterialCatalog> {
+export async function updateMaterialAttributeValue(id: string, valueId: string, payload: Omit<MaterialAttributeInput, 'scope' | 'field_key' | 'parent_id'>, etag: string): Promise<VersionedMaterialCatalog> {
   return versioned(await apiClient.patch<DataResponse<MaterialCatalog>>(`${path(id)}values/${encodeURIComponent(valueId)}/`, payload, headers(etag)))
 }
 export async function addMaterialAllowedUnit(id: string, payload: MaterialUnitInput, etag: string): Promise<VersionedMaterialCatalog> {

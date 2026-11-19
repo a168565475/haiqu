@@ -7,6 +7,7 @@ import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogSummary, M
 import type { MaterialReceivingOptions, MaterialTransferDirection, MaterialTransferPayload } from '@/types/inventory'
 import type { SampleMaterialCategory } from '@/types/sampleMaterial'
 import { createMaterialTransfer, fetchMaterialReceivingOptions } from '@/api/inventory'
+import { inboundCatalogOptions } from '@/components/products/materialSelection'
 import { fetchInboundMaterial, fetchInboundMaterialOptions, fetchInboundMaterials, fetchInboundPublicOptions } from '@/api/inventoryMaterialSources'
 import { useAuthStore } from '@/stores/auth'
 import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
@@ -149,19 +150,24 @@ function valuesFor(row: TransferRow, fieldKey: string) {
 function colorRows(row: TransferRow) {
   return (row.publicOptions?.values || []).filter(item => item.scope === 'BASE' && item.field_key === 'color' && validValue(item.value))
 }
-function colorId(color: MaterialAttributeValue) {
-  return color.product_color_id || color.id
+function productColorId(color: MaterialAttributeValue) {
+  return color.product_color_id === undefined ? color.id : color.product_color_id
 }
 function colorLabel(color: MaterialAttributeValue) {
   return [color.color_card, color.color_code, color.color_name || color.value].filter(Boolean).join(' - ')
 }
 function chooseColor(row: TransferRow, id: string) {
   if (draftDisabled.value) return
-  setColor(row, colorRows(row).find(item => colorId(item) === id))
+  setColor(row, colorRows(row).find(item => item.id === id))
 }
 function setColor(row: TransferRow, color?: MaterialAttributeValue) {
-  row.color = color ? { product_color_id: colorId(color), color_card: color.color_card || '', color_code: color.color_code || '', color_name: color.color_name || color.value } : {}
+  row.color = color ? { product_color_id: productColorId(color), color_card: color.color_card || '', color_code: color.color_code || '', color_name: color.color_name || color.value } : {}
   row.attributes.color = color?.value || ''
+}
+function selectedColor(row: TransferRow) {
+  return colorRows(row).find(color => productColorId(color) === row.color.product_color_id
+    && color.value === row.attributes.color && (color.color_card || '') === row.color.color_card
+    && (color.color_code || '') === row.color.color_code && (color.color_name || color.value) === row.color.color_name)
 }
 function zonesFor(row: TransferRow) {
   return options.value.zones.filter(zone => zone.warehouse === row.warehouseId)
@@ -217,9 +223,7 @@ function rowError(row: TransferRow) {
     if (key === 'length') continue
     if (!hasField(row, key) || !valuesFor(row, key).includes(value)) return '所选属性已失效，请重新选择'
   }
-  if (row.category === 'fabric' && !colorRows(row).some(color => colorId(color) === row.color.product_color_id && color.value === row.attributes.color
-    && (color.color_card || '') === row.color.color_card && (color.color_code || '') === row.color.color_code
-    && (color.color_name || color.value) === row.color.color_name)) return '请选择完整的面料颜色'
+  if (row.category === 'fabric' && !selectedColor(row)) return '请选择完整的面料颜色'
   const unit = unitsFor(row).find(item => item.id === row.unitId)
   if (!unit) return '请选择有效单位'
   if (row.catalog.base_warehouse_id && !options.value.warehouses.some(item => item.id === row.catalog!.base_warehouse_id)) return '品名默认仓库不可用，请核实配置后刷新'
@@ -337,7 +341,7 @@ async function loadRowMaterial(row: TransferRow, value: string, preserveDraft = 
     catalogDetails[value] = catalog
     publicOptionsCache[key] = publicData
     row.catalog = catalog
-    row.publicOptions = publicData
+    row.publicOptions = inboundCatalogOptions(catalog, publicData)
     if (!preserveDraft) setSingleValues(row)
     const suggested = catalog.base_warehouse_id || ''
     const availableWarehouse = options.value.warehouses.some(item => item.id === suggested)
@@ -513,8 +517,8 @@ onBeforeUnmount(() => { sourceVersion += 1 })
         <ElTableColumn v-for="field in tableFields" :key="field.key" :label="field.label || FIELD_LABELS[field.key] || field.key" min-width="120">
           <template #default="{ row }">
             <span v-if="!hasField(row, field.key)">—</span>
-            <ElSelect v-else-if="field.key === 'color' && row.category === 'fabric'" :model-value="row.color.product_color_id || ''" :disabled="draftDisabled || row.selectionLoading" filterable clearable placeholder="色卡 / 色号 / 颜色" @update:model-value="(id: string) => chooseColor(row, id)">
-              <ElOption v-for="color in colorRows(row)" :key="colorId(color)" :value="colorId(color)" :label="colorLabel(color)" />
+            <ElSelect v-else-if="field.key === 'color' && row.category === 'fabric'" :model-value="selectedColor(row)?.id" :disabled="draftDisabled || row.selectionLoading" filterable clearable placeholder="色卡 / 色号 / 颜色" @update:model-value="(id: string) => chooseColor(row, id)">
+              <ElOption v-for="color in colorRows(row)" :key="color.id" :value="color.id" :label="colorLabel(color)" />
             </ElSelect>
             <ElSelect v-else v-model="row.attributes[field.key]" :disabled="draftDisabled || row.selectionLoading || (field.key === 'section_size' && !row.attributes.shape)" filterable clearable :placeholder="field.label || FIELD_LABELS[field.key]" @change="() => attributeChanged(row, field.key)">
               <ElOption v-for="value in valuesFor(row, field.key)" :key="value" :value="value" :label="value" />

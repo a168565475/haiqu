@@ -18,7 +18,7 @@ describe('五金重量表单真实 Element Plus 控件', () => {
       props: {
         displayLineImages: () => [], formatHardwareColor: String,
         editorReferenceOptionsError: '', ensureEditorReferenceOptions: noop,
-        tubeShapes: [], tubeProductNames: [], tubeMaterials: [], tubeDiameters: [], tubeThicknesses: [], tubeCoatingColors: [], tubeOptionsLoading: false,
+        tubeCoatingColors: [], tubeOptionsLoading: false,
         normalizeTubeCutPieceCount: noop, openLineImageManager: noop, auxiliaryLineHasActiveProduct: () => false,
         auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: noop, auxiliaryColorOptions: () => [], setAuxiliaryColor: noop,
         auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: noop, fabricSpecificationOptions: () => [], setFabricSpecification: noop,

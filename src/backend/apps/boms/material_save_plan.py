@@ -300,7 +300,7 @@ def build_material_save_plan(*, bom, sections, request, for_update=False, defer_
             line.raw_values["import_material_matching_deferred"] = True
         elif uses_catalog(data, old):
             apply_catalog_selection(line, data, old=old, request=request, persist=for_update,
-                                    versions=catalog_versions, allow_public_creation=False, require_tube_length=False,
+                                    versions=catalog_versions, require_tube_length=False, require_catalog_options=True,
                                     require_fabric_meter=True, inherit_fabric_source=True)
         elif pending is not None:
             source = _generic_source(pending, sources, request=request,

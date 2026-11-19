@@ -72,6 +72,7 @@ def _resolve_catalog(item, *, request, versions, direction):
         persist=True,
         versions=versions,
         allow_public_creation=can_contribute(request),
+        prefer_catalog_options=True,
         selection_permission="inventory.receive_material",
     )
     selected = deepcopy(projection.material_selection_snapshot)

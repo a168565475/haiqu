@@ -61,7 +61,7 @@ def catalog_requirement_specs(task_id, product_id, *, lock=False):
                     quantity, _, _, unit_name, status = inventory_source_quantity(line, bom)
                     if status != "READY" or quantity is None or quantity <= 0 or unit_name != selected["unit_name"]:
                         raise ValidationError("缺少所选材料单位下的明确需求数量。")
-                    unit = ProductionUnit.objects.filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
+                    unit = ProductionUnit.for_catalog(line.material_catalog_id).filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
                 if unit is None:
                     raise ValidationError("需求数量单位不存在、已停用或归档。")
                 snapshot = _json({**(plan if roots else {}), "kind": "PIPE" if roots else "CATALOG",

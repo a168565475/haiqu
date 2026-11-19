@@ -89,6 +89,38 @@ async function choose(vm: Vm, template = 'HARDWARE') {
 }
 
 describe('材料收发表格契约（真实组件、模拟请求边界）', () => {
+  it('同一模板只给所属品名显示专用单位及属性，同时保留旧公共候选', async () => {
+    details.second = { ...details.HARDWARE!, id: 'second' }
+    details.HARDWARE = { ...details.HARDWARE!,
+      values: [{ id: 'local', scope: 'BASE', field_key: 'specification', value: '专属型号', parent_id: null }],
+      units: [{ id: 'binding', scope: 'BASE', unit_id: 'private-unit', unit_name: '专用提' }] }
+    const { vm } = await render()
+    const row = await choose(vm)
+    expect(vm.unitsFor(row).map(unit => unit.unit_name)).toEqual(['专用提', 'KG'])
+    expect(vm.valuesFor(row, 'specification')).toEqual(['专属型号', 'specification-value'])
+    row.attributes.specification = '专属型号'; row.unitId = 'private-unit'
+    await vm.submit()
+    expect(vi.mocked(api.createMaterialTransfer).mock.calls[0]![0].items[0]!.material_selection).toMatchObject({ unit_id: 'private-unit', attributes: { specification: '专属型号' } })
+    await vm.chooseMaterial(vm.rows[0]!, 'second')
+    expect(vm.unitsFor(vm.rows[0]!).map(unit => unit.unit_name)).toEqual(['KG'])
+    expect(vm.valuesFor(vm.rows[0]!, 'specification')).toEqual(['specification-value'])
+  })
+
+  it('公共与品名内同一形状能够同时读取各自规格，选择私有颜色时不把档案行 ID 当作色卡 ID', async () => {
+    details.TUBE!.values = [
+      { id: 'catalog-shape', scope: 'BASE', field_key: 'shape', value: 'shape-value', parent_id: null },
+      { id: 'catalog-dim', scope: 'BASE', field_key: 'section_size', value: '本品规格', parent_id: 'catalog-shape' },
+    ]
+    details.FABRIC!.values = [{ id: 'catalog-color', product_color_id: null, scope: 'BASE', field_key: 'color', value: '品名蓝', color_card: '本地卡', color_code: '01', parent_id: null }]
+    const { vm } = await render()
+    const tube = await choose(vm,'TUBE')
+    expect(vm.valuesFor(tube, 'section_size')).toEqual(['本品规格', 'section_size-value'])
+    const fabric = await choose(vm,'FABRIC')
+    vm.chooseColor(fabric, 'catalog-color')
+    expect(vm.ready).toBe(true)
+    await vm.submit()
+    expect(vi.mocked(api.createMaterialTransfer).mock.calls[0]![0].items[0]!.material_selection).toMatchObject({ product_color_id: null, color_card: '本地卡', color_code: '01', attributes: { color: '品名蓝' } })
+  })
   it('公共候选和单位可在品名历史选项为空时选择，管材不混入其他单位', async () => {
     publicData.TUBE!.units.push({ id: 'meter', unit_name: '米' })
     const { vm } = await render()

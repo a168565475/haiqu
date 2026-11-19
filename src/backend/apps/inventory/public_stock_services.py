@@ -209,8 +209,8 @@ def _validate_location(*, zone_id, stock_kind, quality):
     return zone
 
 
-def _validate_unit_and_quantity(*, unit_id, stock_kind, quantity, expected_unit_name):
-    unit = ProductionUnit.objects.filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
+def _validate_unit_and_quantity(*, unit_id, catalog_id, stock_kind, quantity, expected_unit_name):
+    unit = ProductionUnit.for_catalog(catalog_id).filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
     if unit is None:
         _invalid("库存单位不存在或已停用。", "UNIT_UNAVAILABLE")
     name = unit.unit_name.strip()
@@ -348,7 +348,8 @@ def credit_public_stock(*, identity, zone, quantity, source_type, source_id, sou
     if identity["stock_kind"] == "RAW_PIPE":
         _validate_pipe_material(raw_material_id=identity["raw_material_id"], unit_id=identity["unit_id"])
     _validate_location(zone_id=zone_id, stock_kind=identity["stock_kind"], quality=quality)
-    _validate_unit_and_quantity(unit_id=identity["unit_id"], stock_kind=identity["stock_kind"], quantity=quantity,
+    catalog_id = identity["identity_snapshot"]["material_selection_snapshot"]["catalog_id"] if identity["stock_kind"] in CATALOG_STOCK_KINDS else None
+    _validate_unit_and_quantity(unit_id=identity["unit_id"], catalog_id=catalog_id, stock_kind=identity["stock_kind"], quantity=quantity,
                                 expected_unit_name=identity["identity_snapshot"]["unit_name"])
     balance = _locked_balance(identity, zone_id, quality, bar_weight_kg=bar_weight_kg, weight_quantity=weight_quantity)
     return _record(balance=balance, quantity=quantity, direction=MaterialStockDirection.IN, source=source,
@@ -383,7 +384,7 @@ def debit_public_stock(*, balance_id, quantity, source_type, source_id, source_l
         _invalid("公共库存所在库区或实物身份已变化，请刷新后重试。", "STOCK_LOCATION_CHANGED")
     if balance.quality != MaterialStockQuality.AVAILABLE:
         _invalid("只有合格库存可以领用。", "QUALITY_UNAVAILABLE")
-    _validate_unit_and_quantity(unit_id=balance.unit_id, stock_kind=balance.stock_kind, quantity=quantity,
+    _validate_unit_and_quantity(unit_id=balance.unit_id, catalog_id=balance.material_catalog_id, stock_kind=balance.stock_kind, quantity=quantity,
                                 expected_unit_name=balance.identity_snapshot["unit_name"])
     from .tube_outsourcing_reservations import reserved_quantity_for_balance
     reserved = reserved_quantity_for_balance(balance)

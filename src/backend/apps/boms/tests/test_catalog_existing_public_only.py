@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.audit.models import AuditLog
-from apps.material_catalog.models import MaterialCatalog, MaterialAttributeValue
+from apps.material_catalog.models import MaterialCatalog
 from apps.material_catalog.public_configuration import public_options, require_public_value
 from apps.organizations.models import Employee
 from apps.reference_data.models import (
@@ -29,6 +29,8 @@ class CatalogExistingPublicOnlyTests(TestCase):
         self.catalog = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name="只选公共五金", spray_enabled=True)
         self.unit = ProductionUnit.objects.create(unit_code="SELECT-ONLY", unit_name="只选公共单位")
         self.public = MaterialAttributePublicValue.objects.create(category_key="HARDWARE", template_key="HARDWARE", scope="BASE", field_key="specification", value="只选已有规格")
+        self.catalog.attribute_values.create(scope="BASE", field_key="specification", value=self.public.value)
+        self.catalog.allowed_units.create(scope="BASE", unit=self.unit)
         self.bom = Bom(order_quantity=10)
 
     def data(self, **changes):
@@ -51,19 +53,19 @@ class CatalogExistingPublicOnlyTests(TestCase):
         return (MaterialAttributePublicValue.objects.count(), ProductionUnit.objects.count(),
                 self.catalog.attribute_values.count(), self.catalog.allowed_units.count(), AuditLog.objects.count())
 
-    def test_bom_entry_rejects_new_or_catalog_only_values_even_for_admin_and_forged_flag(self):
-        MaterialAttributeValue.objects.create(catalog=self.catalog, scope="BASE", field_key="specification", value="仅品名已有规格")
+    def test_bom_entry_rejects_new_or_public_only_values_even_for_admin_and_forged_flag(self):
+        MaterialAttributePublicValue.objects.create(category_key="HARDWARE", template_key="HARDWARE", scope="BASE", field_key="specification", value="仅公共已有规格")
         before = self.counts()
-        for value in ("BOM禁止补录的新规格", "仅品名已有规格"):
+        for value in ("BOM禁止补录的新规格", "仅公共已有规格"):
             for persist in (False, True):
                 with self.subTest(value=value, persist=persist):
                     data = self.data(attributes={"specification": value})
                     data["allow_public_creation"] = True
-                    with self.assertRaisesMessage(ValidationError, "生产维护"):
+                    with self.assertRaisesMessage(ValidationError, "当前品名"):
                         self.plan(data, persist=persist)
                     self.assertEqual(self.counts(), before)
 
-    def test_existing_public_values_record_usage_without_maintenance_permission_and_preserve_history(self):
+    def test_existing_own_values_can_be_selected_without_maintenance_permission_and_preserve_history(self):
         user = get_user_model().objects.create_user(username="select_only_editor")
         employee = Employee.objects.create(user=user, employee_code="SELECT_ONLY_EDITOR", display_name="只选配置编辑员")
         for app, code in (("material_catalog", "view_materialcatalog"), ("boms", "change_bom")):
@@ -104,11 +106,14 @@ class CatalogExistingPublicOnlyTests(TestCase):
         color = TubeCoatingColor.objects.create(color_name="只选喷塑颜色", status="INACTIVE")
         for value in ("BOM不能创建的新喷塑色", color.color_name):
             data = {**self.data(), "powder_coating_color": value}
-            with self.assertRaisesMessage(ValidationError, "生产维护"):
+            with self.assertRaisesMessage(ValidationError, "当前品名"):
                 self.plan(data, persist=True)
             self.assertEqual(self.counts(), before)
         color.status = "ACTIVE"
         color.save(update_fields=["status", "updated_at"])
+        with self.assertRaisesMessage(ValidationError, "当前品名"):
+            self.plan({**self.data(), "powder_coating_color": color.color_name}, persist=True)
+        self.catalog.attribute_values.create(scope="SPRAY", field_key="color", value=color.color_name)
         colors_before = TubeCoatingColor.objects.count()
         self.plan({**self.data(), "powder_coating_color": color.color_name}, persist=True)
         self.assertTrue(self.catalog.attribute_values.filter(scope="SPRAY", field_key="color", value=color.color_name).exists())

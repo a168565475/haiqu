@@ -3,14 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { ElSelect, ElOption, ElPopover, type PopoverProps } from 'element-plus'
 import { ArrowDown, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import type { Modifier } from '@popperjs/core'
-import { fetchMaterialCatalog, fetchMaterialCatalogOptions, fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError } from '@/api/materialCatalog'
+import { addMaterialAllowedUnit, addMaterialAttributeValue, fetchMaterialCatalog, fetchMaterialCatalogOptions, fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError } from '@/api/materialCatalog'
 import { fetchBomCatalogSelectionOptions } from '@/api/boms'
 import { fetchSampleMaterial, fetchSampleMaterialCrafts, fetchSampleMaterialOptions, fetchSampleMaterials, fetchSamplePublicOptions } from '@/api/sampleMaterialSources'
 import { fetchInboundMaterial, fetchInboundMaterialOptions, fetchInboundMaterials, fetchInboundPublicOptions } from '@/api/inventoryMaterialSources'
 import type { BomLineInput } from '@/types/bom'
 import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogOptions, MaterialCatalogSummary, MaterialSelectionInput, PublicMaterialOptions } from '@/types/materialCatalog'
 import { matchesPinyinSearch } from '@/utils/pinyinSearch'
-import { applyMaterialSelection, bomCatalogCategories } from './materialSelection'
+import { applyMaterialSelection, bomCatalogCategories, catalogOwnOptions, inboundCatalogOptions } from './materialSelection'
 import { applyComponentReferenceSelection, COMPONENT_OWN_ATTRIBUTE_KEYS, componentOwnAttributes, componentReferenceSelection } from '@/utils/bomComposition'
 
 const props = withDefaults(defineProps<{
@@ -21,11 +21,13 @@ const props = withDefaults(defineProps<{
   presentation?: 'panel' | 'dropdown'
   source?: 'catalog' | 'sample' | 'inventory'
   componentReference?: boolean
+  catalogOnly?: boolean
+  canEditCatalogAttributes?: boolean
   disabled?: boolean
   lazy?: boolean
   showLabel?: boolean
 }>(), { presentation: 'panel', source: 'catalog', showLabel: true })
-const emit = defineEmits<{ maintain: []; loaded: [catalog: MaterialCatalog]; 'public-options': [options: PublicMaterialOptions | undefined] }>()
+const emit = defineEmits<{ maintain: []; loaded: [catalog: MaterialCatalog]; 'public-options': [options: PublicMaterialOptions | undefined]; 'catalog-attribute-added': [id: string, previousVersion: string, version: string] }>()
 const selectionApi = computed(() => props.source === 'inventory'
   ? { options: fetchInboundMaterialOptions, list: fetchInboundMaterials, detail: fetchInboundMaterial, publicOptions: fetchInboundPublicOptions }
   : props.source === 'sample'
@@ -34,12 +36,14 @@ const selectionApi = computed(() => props.source === 'inventory'
 const names = ref<MaterialCatalogSummary[]>([])
 const keyword = ref('')
 const attributeKeywords = ref<Record<string, string>>({})
-const sprayKeyword = ref('')
 const namesLoading = ref(false)
 const namesError = ref('')
 const page = ref(1)
 const pages = ref(1)
 const catalog = ref<MaterialCatalog>()
+const catalogEtag = ref('')
+const attributeErrors = ref<Record<string, string>>({})
+const savingField = ref('')
 const publicOptions = ref<PublicMaterialOptions>()
 const publicSprayOptions = ref<PublicMaterialOptions>()
 // 仅在当前选择器会话内复用；维护关闭或显式重读时失效。
@@ -54,10 +58,14 @@ const dropdownOpen = ref(false)
 const selectionId = useId()
 const isDropdown = computed(() => props.presentation === 'dropdown')
 const isBomDropdown = computed(() => isDropdown.value && props.source === 'catalog')
+const usesOwnOptions = computed(() => props.source === 'catalog' && (isDropdown.value || props.catalogOnly || props.componentReference))
+const tubeFieldLimits: Record<string, number> = { material: 150, color: 200, shape: 150, section_size: 50, thickness: 50, spray_color: 200 }
+const lacksFixedUnit = computed(() => usesOwnOptions.value && props.fixedUnit && catalog.value
+  && !publicOptions.value?.units.some(unit => unit.unit_name === props.fixedUnit))
 const colorAsList = computed(() => isDropdown.value || props.source === 'sample')
 const selectedName = computed(() => {
   const id = props.line.material_catalog_id
-  if (!id) return props.componentReference ? props.line.part_name : ''
+  if (!id) return props.componentReference || (usesOwnOptions.value && props.line.id) ? props.line.part_name : ''
   if (catalog.value?.id === id) return catalog.value.name
   if (props.line.material_selection_snapshot?.catalog_id === id) return props.line.material_selection_snapshot.name
   return names.value.find(item => item.id === id)?.name || props.line.part_name || ''
@@ -99,7 +107,8 @@ const fields = computed(() => {
     (field.key === 'section_size' && !drafts.value.shape))
   if (props.componentReference) {
     const keys = ['specification', 'size', 'model', 'process']
-    return selectedFields.filter(field => field.key === 'specification' || options(field.key).length || drafts.value[field.key])
+    return selectedFields.filter(field => (isBomDropdown.value && props.canEditCatalogAttributes)
+      || field.key === 'specification' || options(field.key).length || drafts.value[field.key])
       .sort((left, right) => keys.indexOf(left.key) - keys.indexOf(right.key))
       .map(field => ({ ...field, label: field.key === 'specification' ? '规格' : field.label }))
   }
@@ -122,33 +131,37 @@ const fields = computed(() => {
 })
 const category = computed(() => bomCatalogCategories[props.sectionTitle])
 const showSprayColors = computed(() => isDropdown.value && !!catalog.value?.spray_enabled && !!templateDefinition.value?.supports_spray && ['TUBE', 'HARDWARE'].includes(catalog.value?.category_key || ''))
+const displayFields = computed(() => isBomDropdown.value && showSprayColors.value
+  ? [...fields.value, { key: 'spray_color', label: '喷塑颜色', kind: 'text' as const }] : fields.value)
 const sprayColors = computed(() => (publicSprayOptions.value?.values || []).filter(value => value.field_key === 'color' && value.value.trim() && !['/', '-', '—'].includes(value.value.trim())).map(value => value.value))
-const filteredSprayColors = computed(() => sprayColors.value.filter(value => matchesPinyinSearch(value, '', sprayKeyword.value)))
 const selectedSprayColor = computed(() => catalog.value?.category_key === 'TUBE' ? props.line.tube_coating_color : props.line.powder_coating_color)
-const usesProductColors = computed(() => catalog.value?.category_key === 'FABRIC' && (publicOptions.value?.fields.some(field => field.key === 'color' && field.source === 'product-colors') ?? false))
+const usesProductColors = computed(() => catalog.value?.category_key === 'FABRIC' && (usesOwnOptions.value
+  || publicOptions.value?.fields.some(field => field.key === 'color' && field.source === 'product-colors')))
 const colorRows = computed(() => (publicOptions.value?.values || []).filter(item => item.field_key === 'color' && item.value.trim() && !['/', '-', '—'].includes(item.value.trim())))
 const filteredColorRows = computed(() => colorRows.value.filter(row => matchesPinyinSearch(
   [row.color_card, row.color_code, row.color_name, row.value].filter(Boolean).join(' '), '', attributeKeywords.value.color,
 )))
 const selectedColorRow = computed(() => {
   const saved = props.line.material_selection ?? props.line.material_selection_snapshot
-  if (saved?.product_color_id) return colorRows.value.find(item => (item.product_color_id || item.id) === saved.product_color_id)
+  if (saved?.product_color_id) return colorRows.value.find(item => colorSelection(item).product_color_id === saved.product_color_id)
+  if (saved?.product_color_id === null) {
+    const local = colorRows.value.find(item => !item.product_color_id && item.value === drafts.value.color
+      && (item.color_card || '') === (saved.color_card || '') && (item.color_code || '') === (saved.color_code || ''))
+    if (local) return local
+  }
   const matches = colorRows.value.filter(item => item.value === drafts.value.color &&
     (!saved?.color_card || item.color_card === saved.color_card) && (!saved?.color_code || item.color_code === saved.color_code))
   return matches.length === 1 ? matches[0] : undefined
 })
 const attributeGroupCount = computed(() => fields.value.length + (showSprayColors.value ? 1 : 0))
 const attributeRows = computed(() => Math.max(1, Math.ceil(attributeGroupCount.value / (attributeGroupCount.value > 6 ? 4 : 3))))
+const selectedShape = computed(() => publicOptions.value?.values.find(value => value.field_key === 'shape' && value.value === drafts.value.shape))
 const fieldOptions = computed(() => {
   const grouped = new Map<string, string[]>()
-  const shape = publicOptions.value?.values.find(value => value.field_key === 'shape' && value.value === drafts.value.shape)
-  const valuesToShow = props.componentReference
-    ? [...(catalog.value?.values || []).filter(item => item.scope === 'BASE' && COMPONENT_OWN_ATTRIBUTE_KEYS.includes(item.field_key)),
-      ...(publicOptions.value?.values || [])]
-    : publicOptions.value?.values || []
+  const valuesToShow = publicOptions.value?.values || []
   for (const item of valuesToShow) {
     if (!item.value.trim() || ['/', '-', '—'].includes(item.value.trim())) continue
-    if (item.field_key === 'section_size' && (!shape || item.parent_id !== shape.id)) continue
+    if (item.field_key === 'section_size' && (!selectedShape.value || item.parent_id !== selectedShape.value.id)) continue
     const values = grouped.get(item.field_key) || []
     if ((props.componentReference || (item.field_key === 'color' && !usesProductColors.value)) && values.includes(item.value)) continue
     values.push(item.value)
@@ -158,16 +171,13 @@ const fieldOptions = computed(() => {
   return grouped
 })
 
-function searchableField(key: string) {
-  if (!isBomDropdown.value) return false
-  const categoryFields: Record<string, string[]> = {
-    TUBE: ['color'], HARDWARE: ['color', 'specification'], PLASTIC: ['color', 'specification'],
-    FABRIC: ['color'], FABRIC_SEMI: ['color', 'size', 'specification', 'model', 'material'], AUXILIARY: ['color', 'specification', 'material'], PACKAGING: ['color', 'size', 'specification'],
-  }
-  return categoryFields[catalog.value?.category_key || '']?.includes(key) ?? false
-}
 function filteredOptions(key: string) {
-  return options(key).filter(value => matchesPinyinSearch(value, '', attributeKeywords.value[key]))
+  const keyword = attributeKeywords.value[key] || ''
+  if (isBomDropdown.value && (key === 'section_size' || key === 'thickness')) {
+    // 规格和厚度中的小数点是有效数据，例如 1.5 与 15。
+    return options(key).filter(value => value.toLowerCase().includes(keyword.trim().toLowerCase()))
+  }
+  return options(key).filter(value => matchesPinyinSearch(value, '', keyword))
 }
 function cancelNameSearch() {
   if (namesSearchTimer !== undefined) clearTimeout(namesSearchTimer)
@@ -219,8 +229,8 @@ async function pickName(id: string, preserve = false) {
   if (disposed || props.disabled) return
   const line = props.line
   const kind = line.component_kind
-  attributeKeywords.value = {}
-  sprayKeyword.value = ''
+  if (!preserve || !isBomDropdown.value) attributeKeywords.value = {}
+  attributeErrors.value = {}
   const token = ++requestId
   loading.value = true
   error.value = ''
@@ -236,7 +246,9 @@ async function pickName(id: string, preserve = false) {
     const query = { category_key: result.data.category_key, template_key: result.data.template_key }
     const cacheKey = JSON.stringify([query.category_key, query.template_key])
     const supportsSpray = props.source !== 'inventory' && definitions.value?.categories.flatMap(item => item.templates).find(item => item.key === result.data.template_key)?.supports_spray
-    const [baseOptions, sprayOptions] = await Promise.all([
+    const [baseOptions, sprayOptions] = usesOwnOptions.value
+      ? [catalogOwnOptions(result.data, 'BASE'), supportsSpray ? catalogOwnOptions(result.data, 'SPRAY') : undefined] as const
+      : await Promise.all([
       publicOptionsCache.get(`${cacheKey}:BASE`) || selectionApi.value.publicOptions({ ...query, scope: 'BASE' }),
       supportsSpray ? publicOptionsCache.get(`${cacheKey}:SPRAY`) || selectionApi.value.publicOptions({ ...query, scope: 'SPRAY' }) : undefined,
     ])
@@ -246,11 +258,14 @@ async function pickName(id: string, preserve = false) {
       throw new Error('公共属性与当前品名模板不一致，请重新读取。')
     }
     // 完整成功且仍为当前请求才写缓存，失败或迟到响应均不能污染后续选择。
-    publicOptionsCache.set(`${cacheKey}:BASE`, baseOptions)
-    if (sprayOptions) publicOptionsCache.set(`${cacheKey}:SPRAY`, sprayOptions)
-    publicOptions.value = baseOptions
+    if (!usesOwnOptions.value) {
+      publicOptionsCache.set(`${cacheKey}:BASE`, baseOptions)
+      if (sprayOptions) publicOptionsCache.set(`${cacheKey}:SPRAY`, sprayOptions)
+    }
+    publicOptions.value = props.source === 'inventory' ? inboundCatalogOptions(result.data, baseOptions) : baseOptions
     publicSprayOptions.value = sprayOptions
     catalog.value = result.data
+    catalogEtag.value = 'etag' in result && typeof result.etag === 'string' ? result.etag : ''
     emit('loaded', result.data)
     emit('public-options', sprayOptions)
     if (props.componentReference) {
@@ -301,7 +316,11 @@ async function pickName(id: string, preserve = false) {
   finally { if (token === requestId) loading.value = false }
 }
 function options(key: string) {
+  if (key === 'spray_color') return sprayColors.value
   return fieldOptions.value.get(key) || []
+}
+function chosenValue(key: string) {
+  return key === 'spray_color' ? selectedSprayColor.value : drafts.value[key]
 }
 function syncLine(updateSpecification = false) {
   if (!catalog.value || props.disabled) return
@@ -311,7 +330,7 @@ function syncLine(updateSpecification = false) {
     return
   }
   if (!props.line.material_selection) return
-  const quantityUnit = props.fixedUnit || drafts.value.unit
+  const quantityUnit = lacksFixedUnit.value ? '' : props.fixedUnit || drafts.value.unit
   const selected = publicOptions.value?.units.find(unit => unit.unit_name === quantityUnit)
   const craft = crafts.value.find(item => item.id === craftId.value)
   const selection: MaterialSelectionInput = {
@@ -325,10 +344,17 @@ function syncLine(updateSpecification = false) {
 }
 function choose(key: string, value: string) {
   if (loading.value || error.value || !catalog.value || props.disabled) return
+  if (key === 'spray_color') { chooseSprayColor(value); return }
   if (props.componentReference && !COMPONENT_OWN_ATTRIBUTE_KEYS.includes(key)) return
   if ((props.fixedUnit || props.componentReference) && key === 'unit') return
   if (!options(key).includes(value)) return
-  if (key === 'shape' && drafts.value.shape !== value) drafts.value.section_size = ''
+  if (key === 'shape' && drafts.value.shape !== value) {
+    drafts.value.section_size = ''
+    if (isBomDropdown.value) {
+      delete attributeKeywords.value.section_size
+      delete attributeErrors.value.section_size
+    }
+  }
   if (key === 'unit' && drafts.value.unit !== value) {
     props.line.material_quantity = null
     if (props.sectionTitle === '面料类') props.line.unit_consumption = ''
@@ -340,7 +366,8 @@ function choose(key: string, value: string) {
   syncLine(props.componentReference && ['size', 'specification', 'model'].includes(key))
 }
 function colorSelection(row: MaterialAttributeValue) {
-  return { product_color_id: row.product_color_id || row.id, color_card: row.color_card || '', color_code: row.color_code || '', color_name: row.color_name || row.value }
+  const colorId = row.product_color_id === undefined ? (usesOwnOptions.value ? null : row.id) : row.product_color_id
+  return { product_color_id: colorId, color_card: row.color_card || '', color_code: row.color_code || '', color_name: row.color_name || row.value }
 }
 function chooseColor(row: MaterialAttributeValue) {
   if (loading.value || error.value || !catalog.value || !props.line.material_selection || !colorRows.value.includes(row)) return
@@ -352,6 +379,69 @@ function chooseSprayColor(value: string) {
   if (loading.value || error.value || !catalog.value?.spray_enabled || !showSprayColors.value || !sprayColors.value.includes(value)) return
   if (catalog.value.category_key === 'TUBE') props.line.tube_coating_color = value
   else props.line.powder_coating_color = value
+}
+function attributeSearch(key: string) {
+  const value = attributeKeywords.value[key]?.trim() || ''
+  if (key === 'color' && usesProductColors.value) {
+    const rows = filteredColorRows.value
+    const exact = rows.filter(row => [row.value, row.color_code, row.color_card].some(text => text && text === value))
+    const color = exact.length === 1 ? exact[0] : rows.length === 1 ? rows[0] : undefined
+    return { value, existing: color?.value, color, hasMatches: rows.length > 0 }
+  }
+  const matches = filteredOptions(key)
+  const existing = matches.includes(value) ? value : matches.length === 1 ? matches[0] : undefined
+  return { value, existing, color: undefined, hasMatches: matches.length > 0 }
+}
+function attributeLimit(key: string) {
+  if (key === 'unit' || key === 'flow_unit') return 80
+  if (catalog.value?.category_key === 'TUBE') return tubeFieldLimits[key] || 300
+  return usesProductColors.value && key === 'color' ? 200 : 300
+}
+async function saveCatalogAttribute(event: KeyboardEvent, key: string) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  event.stopPropagation()
+  const item = catalog.value
+  const { value, existing, color, hasMatches } = attributeSearch(key)
+  if (!value || !isBomDropdown.value || !displayFields.value.some(field => field.key === key) || props.disabled || loading.value || !item) return
+  const shape = selectedShape.value
+  if (key === 'section_size' && !shape) return
+  delete attributeErrors.value[key]
+  if (existing) {
+    if (color) chooseColor(color)
+    else choose(key, existing)
+    return
+  }
+  if (hasMatches || !props.canEditCatalogAttributes || savingField.value) return
+  if (!catalogEtag.value) { attributeErrors.value[key] = '缺少品名版本，请重新读取。'; return }
+  savingField.value = key
+  const token = requestId
+  const spray = key === 'spray_color'
+  try {
+    const result = key === 'unit'
+      ? await addMaterialAllowedUnit(item.id, { scope: 'BASE', unit_name: value }, catalogEtag.value)
+      : await addMaterialAttributeValue(item.id, {
+          scope: spray ? 'SPRAY' : 'BASE', field_key: spray ? 'color' : key, value,
+          ...(key === 'section_size' && shape ? { parent_id: shape.id } : {}),
+        }, catalogEtag.value)
+    emit('catalog-attribute-added', item.id, item.updated_at, result.data.updated_at)
+    if (token !== requestId) return
+    catalog.value = result.data
+    catalogEtag.value = result.etag
+    if (spray) {
+      publicSprayOptions.value = catalogOwnOptions(result.data, 'SPRAY')
+      emit('public-options', publicSprayOptions.value)
+    } else publicOptions.value = catalogOwnOptions(result.data, 'BASE')
+    emit('loaded', result.data)
+    if (props.line.material_selection) props.line.material_selection.catalog_version = result.data.updated_at
+    if (key === 'color' && usesProductColors.value) {
+      const saved = colorRows.value.find(row => row.value === value && !row.color_card && !row.color_code)
+      if (!saved) throw new Error('品名已保存，未能在返回的颜色中定位新增项，请重新读取。')
+      chooseColor(saved)
+    } else if (key !== 'section_size' || selectedShape.value?.id === shape?.id) choose(key, value)
+  } catch (issue) {
+    if (token === requestId) attributeErrors.value[key] = materialCatalogError(issue)
+  } finally { savingField.value = '' }
 }
 function openMaintenance() {
   dropdownOpen.value = false
@@ -422,31 +512,39 @@ onMounted(() => { if (!props.lazy && !props.disabled) void initialize() })
           <span>{{ selectedName || '选择品名' }}</span><ArrowDown aria-hidden="true" :class="{ 'is-reverse': dropdownOpen }" />
         </button>
       </template>
-  <section class="material-selection" :class="{ 'material-selection--dropdown': isDropdown }" aria-label="品名及公共属性选择" :aria-busy="loading" @keydown.esc="closeOnEscape">
+  <section class="material-selection" :class="{ 'material-selection--dropdown': isDropdown }" :aria-label="usesOwnOptions ? sectionTitle + '品名及属性选择' : '品名及公共属性选择'" :aria-busy="loading" @keydown.esc="closeOnEscape">
     <div v-if="error" class="selection-error" role="alert">{{ error }} <button type="button" @click="reloadCurrent">重新读取</button></div>
+    <div v-else-if="lacksFixedUnit" class="selection-error" role="status">请在原料管理中为该品名维护基础单位“{{ fixedUnit }}”。</div>
     <aside class="catalog-names">
       <header><strong>品名</strong><form @submit.prevent="submitNameSearch"><input v-model="keyword" class="group-input" aria-label="筛选品名" :placeholder="isBomDropdown ? '中文/拼音/首字母搜索' : '中文/拼音/首字母，回车筛选'" @compositionstart="beginNameComposition" @compositionend="endNameComposition" /></form></header>
       <div class="catalog-name-list">
         <p v-if="namesError" role="alert">{{ namesError }} <button type="button" @click="submitNameSearch">重新搜索</button></p>
         <p v-else-if="isBomDropdown && namesLoading" role="status">正在搜索品名…</p>
         <p v-else-if="!names.length && !loading">{{ isBomDropdown && keyword.trim() ? '无匹配品名，请调整搜索内容。' : '暂无品名，请到分区维护配置中补充。' }}</p>
-        <button v-for="item in names" :key="item.id" type="button" class="name-option" :class="{ selected: line.material_catalog_id === item.id }" :disabled="loading || (isBomDropdown && (namesLoading || !!namesError))" @click="pickName(item.id)">{{ item.name }}</button>
+        <button v-for="item in names" :key="item.id" type="button" class="name-option" :class="{ selected: line.material_catalog_id === item.id }" :disabled="loading || !!savingField || (isBomDropdown && (namesLoading || !!namesError))" @click="pickName(item.id)">{{ item.name }}</button>
       </div>
       <nav v-if="pages > 1" class="catalog-pages" aria-label="品名分页"><button type="button" aria-label="上一页" :disabled="page <= 1 || (isBomDropdown && namesLoading)" @click="page--; loadNames()"><ArrowLeft aria-hidden="true" /></button><span>{{ page }}/{{ pages }}</span><button type="button" aria-label="下一页" :disabled="page >= pages || (isBomDropdown && namesLoading)" @click="page++; loadNames()"><ArrowRight aria-hidden="true" /></button></nav>
       <button v-if="!isDropdown && source === 'catalog'" type="button" class="maintain-link" @click="openMaintenance">生产维护</button>
     </aside>
     <div v-if="catalog" class="attribute-groups" :class="{ 'attribute-groups--four-columns': attributeGroupCount > 6, 'attribute-groups--seven': attributeGroupCount === 7, 'attribute-groups--fabric-colors': usesProductColors && source !== 'sample' }" :style="{ '--material-attribute-rows': attributeRows }">
-      <fieldset v-for="field in fields" :key="field.key" class="attribute-group" :class="{ 'attribute-group--color': field.key === 'color' && usesProductColors }" :disabled="disabled || loading || (field.key === 'section_size' && !drafts.shape)">
+      <fieldset v-for="field in displayFields" :key="field.key" class="attribute-group" :data-field="field.key" :class="{ 'attribute-group--color': field.key === 'color' && usesProductColors, 'spray-color-group': field.key === 'spray_color' }" :disabled="disabled || loading || (field.key === 'section_size' && !(usesOwnOptions ? selectedShape : drafts.shape))">
         <legend>{{ field.label === '可用单位' ? '本次数量单位' : field.label }}</legend>
-        <input v-if="searchableField(field.key)" v-model="attributeKeywords[field.key]" type="search" class="group-input attribute-search" :aria-label="`搜索${field.label}`" :placeholder="field.key === 'color' && usesProductColors ? '搜索色卡 / 色号 / 颜色' : `搜索${field.label}`" />
+        <template v-if="isBomDropdown">
+          <input v-model="attributeKeywords[field.key]" type="search" class="group-input attribute-search" :aria-label="`搜索${field.label}`" :placeholder="field.key === 'color' && usesProductColors ? (canEditCatalogAttributes ? '搜索色卡 / 色号 / 颜色，或新增颜色' : '搜索色卡 / 色号 / 颜色') : (canEditCatalogAttributes ? '搜索或新增' : '搜索') + field.label" :maxlength="attributeLimit(field.key)" :readonly="savingField === field.key" @input="delete attributeErrors[field.key]" @keydown.enter="saveCatalogAttribute($event, field.key)" />
+          <small v-if="savingField === field.key" class="attribute-hint" role="status">正在保存…</small>
+          <small v-else-if="attributeKeywords[field.key]?.trim() && !attributeErrors[field.key] && !attributeSearch(field.key).hasMatches" class="attribute-hint" role="status">{{ !canEditCatalogAttributes ? '无匹配选项。' : field.key === 'unit' ? '无匹配，回车为当前品名添加单位。' : '无匹配，回车加入当前品名。' }}</small>
+          <div v-if="attributeErrors[field.key]" class="attribute-error" role="alert">{{ attributeErrors[field.key] }} <button type="button" @click="reloadCurrent">重新读取</button></div>
+        </template>
         <div v-if="field.key === 'color' && usesProductColors" :class="colorAsList ? 'group-values' : 'color-table-scroll'">
           <template v-if="colorAsList">
             <label v-for="row in filteredColorRows" :key="row.product_color_id || row.id" class="attribute-value" :class="{ selected: selectedColorRow?.id === row.id }">
               <input type="radio" :name="`${selectionId}-color`" :checked="selectedColorRow?.id === row.id" @change="chooseColor(row)" />
               <span>{{ [row.color_card, row.color_code, row.color_name || row.value].filter(value => value && !['/', '-', '—'].includes(value.trim())).join('-') }}</span>
             </label>
-            <p v-if="!colorRows.length">暂无已有选项，请到分区维护配置中补充。</p>
-            <p v-else-if="!filteredColorRows.length">无匹配选项，请调整搜索内容。</p>
+            <template v-if="!isBomDropdown || !attributeKeywords.color?.trim()">
+              <p v-if="!colorRows.length">{{ usesOwnOptions ? '该品名尚未维护颜色。' : '暂无已有选项，请到分区维护配置中补充。' }}</p>
+              <p v-else-if="!filteredColorRows.length">无匹配选项，请调整搜索内容。</p>
+            </template>
           </template>
           <table v-else class="color-options-table" aria-label="普通颜色选择">
             <thead><tr><th scope="col" class="color-choice-column"><span class="color-choice-label">选择</span></th><th scope="col">色卡</th><th scope="col">色号</th><th scope="col">颜色</th></tr></thead>
@@ -461,28 +559,28 @@ onMounted(() => { if (!props.lazy && !props.disabled) void initialize() })
           <p v-if="drafts.color && !selectedColorRow" class="historical-value">{{ [line.material_selection?.color_card, line.material_selection?.color_code, drafts.color].filter(Boolean).join(' / ') }}（历史值，待重选）</p>
         </div>
         <div v-else class="group-values">
-          <label v-for="value in filteredOptions(field.key)" :key="value" class="attribute-value" :class="{ selected: drafts[field.key] === value }"><input type="radio" :name="`${selectionId}-${field.key}`" :checked="drafts[field.key] === value" @change="choose(field.key, value)" /><span>{{ value }}</span></label>
-          <span v-if="drafts[field.key] && !options(field.key).includes(drafts[field.key]!)" class="historical-value">{{ drafts[field.key] }}（{{ componentReference ? '已保存值' : '历史值，待重选' }}）</span>
-          <p v-if="field.key === 'section_size' && !drafts.shape">请先选择截面形状</p>
-          <p v-else-if="!options(field.key).length">暂无已有选项，请到分区维护配置中补充。</p>
-          <p v-else-if="!filteredOptions(field.key).length">无匹配选项，请调整搜索内容。</p>
+          <label v-for="value in filteredOptions(field.key)" :key="value" class="attribute-value" :class="{ selected: chosenValue(field.key) === value }"><input type="radio" :name="`${selectionId}-${field.key}`" :checked="chosenValue(field.key) === value" @change="choose(field.key, value)" /><span>{{ value }}</span></label>
+          <span v-if="chosenValue(field.key) && !options(field.key).includes(chosenValue(field.key)!)" class="historical-value">{{ chosenValue(field.key) }}（{{ componentReference ? '已保存值' : '历史值，待重选' }}）</span>
+          <p v-if="field.key === 'section_size' && !(usesOwnOptions ? selectedShape : drafts.shape)">请先选择截面形状</p>
+          <template v-else-if="!isBomDropdown || !attributeKeywords[field.key]?.trim()">
+            <p v-if="!options(field.key).length">{{ usesOwnOptions ? '该品名尚未维护此属性。' : '暂无已有选项，请到分区维护配置中补充。' }}</p>
+            <p v-else-if="!filteredOptions(field.key).length">无匹配选项，请调整搜索内容。</p>
+          </template>
         </div>
       </fieldset>
-      <fieldset v-if="showSprayColors" class="attribute-group spray-color-group" :disabled="loading || !catalog.spray_enabled">
+      <fieldset v-if="showSprayColors && !isBomDropdown" class="attribute-group spray-color-group" :disabled="loading || !catalog.spray_enabled">
         <legend>喷塑颜色</legend>
-        <input v-if="isBomDropdown" v-model="sprayKeyword" type="search" class="group-input attribute-search" aria-label="搜索喷塑颜色" placeholder="搜索喷塑颜色" />
         <div class="group-values">
-          <label v-for="value in filteredSprayColors" :key="value" class="attribute-value" :class="{ selected: selectedSprayColor === value }"><input type="radio" :name="`${selectionId}-spray-color`" :checked="selectedSprayColor === value" @change="chooseSprayColor(value)" /><span>{{ value }}</span></label>
+          <label v-for="value in sprayColors" :key="value" class="attribute-value" :class="{ selected: selectedSprayColor === value }"><input type="radio" :name="`${selectionId}-spray-color`" :checked="selectedSprayColor === value" @change="chooseSprayColor(value)" /><span>{{ value }}</span></label>
           <span v-if="selectedSprayColor && !sprayColors.includes(selectedSprayColor)" class="historical-value">{{ selectedSprayColor }}（历史值，待重选）</span>
           <p v-if="!catalog.spray_enabled">该品名未启用半成品</p>
-          <p v-else-if="!sprayColors.length">暂无喷塑颜色，请到分区维护配置中补充。</p>
-          <p v-else-if="!filteredSprayColors.length">无匹配选项，请调整搜索内容。</p>
+          <p v-else-if="!sprayColors.length">{{ usesOwnOptions ? '该品名尚未维护喷塑颜色。' : '暂无喷塑颜色，请到分区维护配置中补充。' }}</p>
         </div>
       </fieldset>
       <label v-if="category === 'FABRIC_SEMI' && !componentReference" class="craft-field"><span>已完成工艺</span><ElSelect v-model="craftId" :teleported="!isDropdown" aria-label="裁片已完成工艺" placeholder="选择既有工艺" @change="syncLine()"><ElOption v-for="craft in crafts" :key="craft.id" :value="craft.id" :label="craft.name" /></ElSelect></label>
     </div>
     <div v-else class="selection-empty">{{ loading ? '正在读取原料…' : '先选择已有品名，再逐项选择右侧属性。' }}</div>
-    <footer v-if="isDropdown" class="selection-footer"><button type="button" class="erp-list-button erp-list-button--primary" :disabled="loading" @click="dropdownOpen = false">完成选择</button></footer>
+    <footer v-if="isDropdown" class="selection-footer"><button type="button" class="erp-list-button erp-list-button--primary" :disabled="loading || !!savingField" @click="dropdownOpen = false">完成选择</button></footer>
   </section>
     </component>
   </div>
@@ -503,6 +601,8 @@ onMounted(() => { if (!props.lazy && !props.disabled) void initialize() })
 .catalog-names strong { display: block; margin-bottom: 8px; }
 .group-input { box-sizing: border-box; width: 100%; height: 28px; padding: 0 8px; border: 1px solid var(--erp-color-border); border-radius: 5px; font: inherit; font-size: 12px; color: var(--erp-color-text-primary); background: var(--erp-input-background); }
 .attribute-search { flex-shrink: 0; }
+.attribute-error { color: var(--erp-color-danger); font-size: 12px; }
+.attribute-hint { margin-top: 3px; color: var(--erp-color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .name-option { display: block; width: 100%; margin-top: 5px; padding: 6px 8px; text-align: left; overflow-wrap: anywhere; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
 .selected { background: var(--erp-color-selected); border-color: var(--erp-color-brand); }
 .attribute-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; padding: 12px 12px 12px 0; min-width: 0; }

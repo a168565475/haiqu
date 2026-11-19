@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElButton, ElOption, ElSelect } from 'element-plus'
-import { fetchMaterialCatalog, fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError } from '@/api/materialCatalog'
+import { fetchMaterialCatalog, fetchMaterialCatalogs, materialCatalogError } from '@/api/materialCatalog'
 import { fetchBomCatalogSelectionOptions } from '@/api/boms'
 import { applyMaterialSelection } from '@/components/products/materialSelection'
 import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import type { MaterialCatalog, MaterialCatalogSummary, MaterialSelectionInput } from '@/types/materialCatalog'
 import type { BomLineInput } from '@/types/bom'
 
-const props = defineProps<{ line: BomLineInput; refreshKey?: number; disabled?: boolean; lazy?: boolean }>()
-const emit = defineEmits<{ selected: [catalog: MaterialCatalog]; refreshed: [catalog: MaterialCatalog] }>()
+const props = defineProps<{ line: BomLineInput; refreshKey?: number; disabled?: boolean; lazy?: boolean; canEditCatalogAttributes?: boolean }>()
+const emit = defineEmits<{ selected: [catalog: MaterialCatalog]; refreshed: [catalog: MaterialCatalog]; 'catalog-attribute-added': [id: string, previousVersion: string, version: string] }>()
 const modelValue = computed(() => props.line.material_catalog_id || '')
 const selectedName = computed(() => props.line.part_name)
 const names = ref<MaterialCatalogSummary[]>([])
@@ -56,15 +56,12 @@ async function readCatalog(id: string, refresh = false) {
     if (disposed || token !== selectionRequest || line !== props.line || kind !== line.component_kind) return
     if (result.data.category_key !== 'FABRIC_SEMI') throw new Error('请选择裁片品名。')
     const previous = line.material_selection ?? line.material_selection_snapshot
-    const [options, craftOptions] = await Promise.all([
-      previous?.unit_id || previous?.unit_name ? null : fetchPublicMaterialOptions({ category_key: 'FABRIC_SEMI', template_key: result.data.template_key, scope: 'BASE' }),
-      previous?.completed_craft ? null : fetchBomCatalogSelectionOptions(),
-    ])
+    const craftOptions = previous?.completed_craft ? null : await fetchBomCatalogSelectionOptions()
     if (disposed || token !== selectionRequest || line !== props.line) return
-    const unit = options?.units.find(item => item.unit_name === '套')
-    const unitId = previous?.unit_id || unit?.id
-    const unitName = previous?.unit_name || (previous?.unit_id ? line.unit : unit?.unit_name)
-    if (!unitName) throw new Error('裁片配置暂不可用，请重试。')
+    const units = result.data.units.filter(item => item.scope === 'BASE' && item.selectable !== false)
+    const unit = units.find(item => previous?.unit_id ? item.unit_id === previous.unit_id : item.unit_name === previous?.unit_name)
+      || units.find(item => item.unit_name === '套')
+    if (!unit) throw new Error('请先在当前裁片品名中配置单位。')
     let craft = previous?.completed_craft
     if (!craft) {
       const matches = craftOptions?.crafts.filter(item => item.craft_type === 'INTERNAL' && item.code === 'CUTTING') || []
@@ -79,10 +76,10 @@ async function readCatalog(id: string, refresh = false) {
     const selection: MaterialSelectionInput = {
       catalog_version: result.data.updated_at, scope: 'BASE', processing_state: 'PROCESSED', semi_kind: 'CUTTING',
       attributes, completed_craft: { id: craft.id, craft_type: craft.craft_type, code: craft.code },
-      ...(unitId ? { unit_id: unitId } : { unit_name: unitName }),
+      unit_id: unit.unit_id,
     }
     applyMaterialSelection(line, result.data, selection)
-    line.unit = unitName
+    line.unit = unit.unit_name
     line.specification = specification
     if (refresh) emit('refreshed', result.data)
     else emit('selected', result.data)
@@ -116,7 +113,7 @@ onBeforeUnmount(() => { disposed = true; ++listRequest; ++selectionRequest })
 </script>
 
 <template>
-  <MaterialSelectionPanel v-if="line.component_kind" :key="`${line.id || line.client_key}-${line.component_kind}`" :line="line" section-title="裁剪明细" presentation="dropdown" component-reference :show-label="false" :refresh-key="refreshKey" :disabled="disabled" :lazy="lazy" />
+  <MaterialSelectionPanel v-if="line.component_kind" :key="`${line.id || line.client_key}-${line.component_kind}`" :line="line" section-title="裁剪明细" presentation="dropdown" component-reference :show-label="false" :refresh-key="refreshKey" :disabled="disabled" :lazy="lazy" :can-edit-catalog-attributes="canEditCatalogAttributes" @catalog-attribute-added="(id, previousVersion, version) => emit('catalog-attribute-added', id, previousVersion, version)" />
   <div v-else>
     <ElSelect :model-value="modelValue || ''" filterable remote :remote-method="loadNames"
       :loading="loading || selecting" :disabled="disabled || selecting || !!error" :placeholder="line.component_kind && !modelValue && selectedName ? selectedName : '选择已有品名'"

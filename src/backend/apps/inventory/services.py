@@ -850,6 +850,7 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
             category__status="ACTIVE",
             unit__archived_at__isnull=True,
             unit__status="ACTIVE",
+            unit__catalog_owner__isnull=True,
         )
         .order_by("id")
     )

@@ -14,7 +14,7 @@ class PipeWeightReceiptTests(SimpleTestCase):
     def setUp(self):
         active = {"status": "ACTIVE", "archived_at": None}
         self.material = SimpleNamespace(pk=uuid4(), item_type="MATERIAL", archived_at=None,
-            unit=SimpleNamespace(unit_name="根", **active), category=SimpleNamespace(category_name="管材", **active))
+            unit=SimpleNamespace(unit_name="根", catalog_owner_id=None, **active), category=SimpleNamespace(category_name="管材", **active))
         self.purchase = SimpleNamespace(section_type_snapshot="PROFILE", source_unit_text="KG",
             raw_bar_length_m=Decimal("6"), raw_bar_weight_kg=Decimal("2.5"), material_catalog_id=uuid4(),
             calculation_snapshot={"raw_material_id": str(self.material.pk), "raw_bar_weight_kg": "2.5"})

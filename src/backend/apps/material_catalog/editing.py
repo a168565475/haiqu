@@ -11,9 +11,8 @@ from apps.inventory.models import Warehouse
 
 from .definitions import SPRAY_FIELDS, TEMPLATES
 from .models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog, MaterialScope
-from .public_configuration import ensure_public_draft
 from .selectors import catalog_detail
-from .services import _archive, _finish_change, _locked_catalog, _restore, resolve_unit
+from .services import _archive, _finish_change, _locked_catalog, _restore, catalog_value_fields, resolve_catalog_unit
 
 
 def _raise_write_conflict(exc):
@@ -67,13 +66,14 @@ def _validate_ids(values, units, existing_values, existing_units):
         raise ValidationError({"units": "单位标识不属于当前品名，或已被其他记录占用。"})
 
 
-def _value_key(scope, field_key, value, parent_id, product_color_id=None):
-    return scope, field_key, ("color", str(product_color_id)) if product_color_id else ("text", value), parent_id
+def _value_key(scope, field_key, value, parent_id, product_color_id, color_card, color_code):
+    return scope, field_key, ("color", str(product_color_id)) if product_color_id else ("text", value, color_card, color_code), parent_id
 
 
 def _plan_values(catalog, rows, existing):
     existing_by_value = {
-        _value_key(row.scope, row.field_key, row.value, row.parent_id, row.product_color_id): row for row in existing.values()
+        _value_key(row.scope, row.field_key, row.value, row.parent_id, row.product_color_id, row.color_card, row.color_code): row
+        for row in existing.values()
     }
     planned = []
     canonical_ids = {}
@@ -91,16 +91,16 @@ def _plan_values(catalog, rows, existing):
                 raise ValidationError({"values": "截面尺寸必须引用本次草稿中保留的有效截面形状。"})
         elif parent_id is not None:
             raise ValidationError({"values": "只有截面尺寸可以关联截面形状。"})
-        product_color_id = row.get("product_color_id")
-        key = _value_key(row["scope"], row["field_key"], row["value"], parent_id, product_color_id)
+        option = existing.get(row["id"])
+        fields = catalog_value_fields(catalog, row["scope"], row["field_key"], row["value"], color=row, previous=option)
+        key = _value_key(row["scope"], row["field_key"], parent_id=parent_id, **fields)
         if key in planned_values:
             raise ValidationError({"values": "同一属性组和形状下不可重复填写相同属性值。"})
-        option = existing.get(row["id"])
         duplicate = existing_by_value.get(key)
         if option is not None:
             if (option.scope, option.field_key, option.parent_id) != (row["scope"], row["field_key"], parent_id):
                 raise ValidationError({"values": "已有属性不可更换属性组、字段或所属形状。"})
-            if option.archived_at is not None and (option.value != row["value"] or option.product_color_id != product_color_id):
+            if option.archived_at is not None and any(getattr(option, k) != v for k, v in fields.items()):
                 raise ValidationError({"values": "已移除属性只能按原值恢复，不能篡改历史记录。"})
             if duplicate is not None and duplicate.pk != option.pk:
                 raise ValidationError({"values": "属性值已存在（含已移除记录），请使用其他值。"})
@@ -111,13 +111,13 @@ def _plan_values(catalog, rows, existing):
         else:
             option = MaterialAttributeValue(
                 id=row["id"], catalog=catalog, scope=row["scope"], field_key=row["field_key"],
-                value=row["value"], parent_id=parent_id, product_color_id=product_color_id,
+                parent_id=parent_id, **fields,
             )
         canonical_ids[row["id"]] = option.pk
         if row["scope"] == MaterialScope.BASE and row["field_key"] == "shape":
             shapes.add(option.pk)
         planned_values.add(key)
-        planned.append((option, row["value"], product_color_id))
+        planned.append((option, fields))
     return planned
 
 
@@ -134,7 +134,10 @@ def _plan_units(catalog, rows, existing):
             if option.archived_at is not None and option.unit.unit_name != row["unit_name"]:
                 raise ValidationError({"units": "已移除单位只能按原名称恢复，不能篡改历史记录。"})
         # 只变更本品名的单位关联；不修改共享 ProductionUnit 的名称。
-        unit = option.unit if option is not None and option.archived_at is None and option.unit.unit_name == row["unit_name"] else resolve_unit({"unit_name": row["unit_name"]})
+        if option is not None and option.archived_at is None and option.unit.unit_name == row["unit_name"]:
+            unit = option.unit
+        else:
+            unit = resolve_catalog_unit(catalog, row["scope"], {"unit_name": row["unit_name"]})
         key = row["scope"], unit.pk
         if key in planned_units:
             raise ValidationError({"units": "同一属性组不可重复填写相同可用单位。"})
@@ -158,10 +161,9 @@ def _apply_draft(catalog, data, request):
     existing_units = {row.pk: row for row in catalog.allowed_units.select_for_update(of=("self",)).select_related("unit")}
     _validate_ids(data["values"], data["units"], existing_values, existing_units)
     catalog.name = data["name"]
-    ensure_public_draft(catalog, data, request=request)
     values = _plan_values(catalog, data["values"], existing_values)
     units = _plan_units(catalog, data["units"], existing_units)
-    kept_values = {option.pk for option, _, _ in values}
+    kept_values = {option.pk for option, _ in values}
     kept_units = {option.pk for option, _ in units}
     # 完整草稿中省略的项表示用户移除；开关状态本身不删除或恢复任何子项。
     for option in sorted(existing_values.values(), key=lambda item: item.parent_id is None):
@@ -170,15 +172,15 @@ def _apply_draft(catalog, data, request):
     for option in existing_units.values():
         if option.pk not in kept_units and option.archived_at is None:
             _archive(option, request)
-    for option, value, product_color_id in values:
+    for option, fields in values:
         if option._state.adding:
             option.save(force_insert=True)
         elif option.archived_at is not None:
             _restore(option)
-        elif option.value != value or option.product_color_id != product_color_id:
-            option.value = value
-            option.product_color_id = product_color_id
-            option.save(update_fields=["value", "product_color", "updated_at"])
+        elif any(getattr(option, k) != v for k, v in fields.items()):
+            for key, value in fields.items():
+                setattr(option, key, value)
+            option.save(update_fields=[*fields, "updated_at"])
     for option, unit in units:
         if option._state.adding:
             option.save(force_insert=True)

@@ -44,7 +44,7 @@ def resolve_manual_catalog(item, *, request, versions):
     projection = SimpleNamespace(section=SimpleNamespace(title=title, section_type="PROFILE" if catalog.category_key == "TUBE" else "GENERAL"), raw_values={})
     apply_catalog_selection(
         projection, item, old=None, request=request, persist=True, versions=versions,
-        allow_public_creation=can_contribute(request), selection_permission="inventory.receive_material",
+        allow_public_creation=can_contribute(request), prefer_catalog_options=True, selection_permission="inventory.receive_material",
     )
     selected = projection.material_selection_snapshot
     auxiliary = {}

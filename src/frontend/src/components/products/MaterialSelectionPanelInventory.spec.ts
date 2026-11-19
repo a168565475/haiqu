@@ -70,6 +70,20 @@ function expectNoBroaderSources() {
 }
 
 describe('材料入库专用选料源（真实组件，模拟请求边界）', () => {
+  it('在旧公共候选旁选择本品名专用规格和单位，并提交其真实单位 ID', async () => {
+    inboundApi.detail.mockResolvedValue({ data: { ...catalog,
+      values: [{ id: 'private-spec', scope: 'BASE', field_key: 'specification', value: '档案规格', parent_id: null }],
+      units: [...catalog.units, { id: 'binding', scope: 'BASE', unit_id: 'private-unit', unit_name: '专用提' }],
+    } })
+    const { wrapper, line } = await start()
+    await wrapper.get('.name-option').trigger('click'); await flushPromises()
+    const options = wrapper.findAll('.attribute-value').map(item => item.text())
+    expect(options).toEqual(expect.arrayContaining(['M8', '公斤', '档案规格', '专用提']))
+    expect(options.filter(item => item === '个')).toHaveLength(1)
+    await choose(wrapper, '档案规格'); await choose(wrapper, '专用提')
+    expect(line.material_selection).toMatchObject({ unit_id: 'private-unit', attributes: { specification: '档案规格' } })
+    expectNoBroaderSources()
+  })
   it('四个读取请求均走入库源，选择规格单位和默认仓回传保持完整且无维护入口', async () => {
     const { wrapper, line } = await start()
     expect(inboundApi.options).toHaveBeenCalledOnce()

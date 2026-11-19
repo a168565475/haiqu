@@ -29,7 +29,7 @@ import {
 } from '@/api/boms'
 import { fetchAllProductionDataRecords } from '@/api/productionData'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
-import ProductionDataView from '@/views/settings/ProductionDataView.vue'
+import RawMaterialManagementView from '@/views/products/RawMaterialManagementView.vue'
 import { bomCatalogCategories } from '@/components/products/materialSelection'
 import BomLineEditorDialog from '@/components/BomLineEditorDialog.vue'
 import BomPrintDocument from '@/components/boms/BomPrintDocument.vue'
@@ -80,14 +80,7 @@ import {
   tubeCalculations as calculateTubeCalculations,
   withFixedSections,
 } from './bomEditorHelpers'
-import type {
-  TubeCoatingColor,
-  TubeDiameter,
-  TubeMaterial,
-  TubeProductName,
-  TubeShape,
-  TubeThickness,
-} from '@/types/productionData'
+import type { TubeCoatingColor } from '@/types/productionData'
 import type { RawMaterialInformation, RawMaterialInput } from '@/types/rawMaterial'
 
 const route = useRoute()
@@ -129,7 +122,7 @@ const componentStructureMessage = computed(() => {
 // 新增明细没有 id，不进入此集合，删除它只会让它不被保存。
 const pendingDeletedLineIds = ref(new Set<string>())
 const activeSectionIndex = ref(0)
-const selectedLineIndex = ref(0)
+const selectedLineIndex = ref(-1)
 const quantityReason = ref('')
 const loading = ref(true)
 let bomLoadGeneration = 0
@@ -149,11 +142,6 @@ interface PendingBomSave {
 }
 const errorMessage = ref('')
 const tubeOptionsLoading = ref(false)
-const tubeShapes = ref<TubeShape[]>([])
-const tubeProductNames = ref<TubeProductName[]>([])
-const tubeMaterials = ref<TubeMaterial[]>([])
-const tubeDiameters = ref<TubeDiameter[]>([])
-const tubeThicknesses = ref<TubeThickness[]>([])
 const tubeCoatingColors = ref<TubeCoatingColor[]>([])
 const tableFullscreen = ref(false)
 const automaticallyPromptedBomId = ref('')
@@ -163,27 +151,24 @@ const productConfirmError = ref('')
 const productInfoVisible = ref(false)
 const editingCatalogMode = ref(false)
 const materialMaintenanceVisible = ref(false)
-const materialMaintenanceView = ref<InstanceType<typeof ProductionDataView>>()
+const materialMaintenanceView = ref<InstanceType<typeof RawMaterialManagementView>>()
 const materialMaintenanceCategory = ref('')
+const maintenanceCatalogId = ref<string>()
+const maintenanceCatalogName = ref<string>()
 const catalogRefreshKey = ref(0)
 async function beforeMaterialMaintenanceClose(done: () => void) {
   const view = materialMaintenanceView.value
-  if (!view || await view.canClose()) done()
+  if (!view || await view.canLeave()) done()
 }
 function openMaterialMaintenance() {
-  materialMaintenanceCategory.value = bomCatalogCategories[editingSection.value?.title || activeSection.value?.title || ''] || ''
+  const section = lineDrawerVisible.value ? editingSection.value : activeSection.value
+  const category = section && bomCatalogCategories[section.title]
+  if (!category) return
+  const line = lineDrawerVisible.value ? editingLineDraft.value : section.lines[selectedLineIndex.value]
+  materialMaintenanceCategory.value = category
+  maintenanceCatalogId.value = line?.material_catalog_id || undefined
+  maintenanceCatalogName.value = line?.part_name.trim() || undefined
   materialMaintenanceVisible.value = true
-}
-async function refreshAfterMaterialMaintenance() {
-  catalogRefreshKey.value++
-  if (editingCatalogMode.value || !editingLineDraft.value) return
-  const section = editingSection.value
-  if (section?.section_type === 'PROFILE' || section?.title === '五金件') await loadTubeOptions()
-  if (section?.title === '辅料类' || section?.title === '面料类') {
-    if (editorReferenceOptionsPromise) await editorReferenceOptionsPromise
-    editorReferenceOptions.value = null
-    await ensureEditorReferenceOptions()
-  }
 }
 function addCatalogLine() {
   if (!canEdit.value || !activeSection.value) return
@@ -400,6 +385,19 @@ const imageManagerZIndex = ref(0)
 const { nextZIndex } = useZIndex()
 
 const canEdit = computed(() => authStore.hasPermission('boms.change_bom'))
+const canEditCatalogAttributes = computed(() => authStore.hasPermission('material_catalog.change_materialcatalog')
+  || (authStore.hasPermission('material_catalog.view_materialcatalog') && authStore.hasPermission('products.add_rawmaterialinformation')))
+
+function updateCatalogDraftVersions(id: string, previousVersion: string, version: string) {
+  // 追加品名属性后，其他使用同一版本的草稿行仍然有效。已保存的快照保留原值。
+  for (const section of sections.value) {
+    for (const line of section.lines) {
+      if (line.material_catalog_id === id && line.material_selection?.catalog_version === previousVersion) {
+        line.material_selection.catalog_version = version
+      }
+    }
+  }
+}
 const canSync = computed(() => authStore.moduleCan('access_control.sync_bomquantity', 'boms.change_bom'))
 const canVerify = computed(() => authStore.hasPermission('boms.verify_bom') && bom.value?.status !== 'VERIFIED')
 const canCreateHardwareRawMaterial = computed(() => (
@@ -611,6 +609,8 @@ function syncCuttingValues(line: BomLineInput) {
 }
 
 function applyVersioned(result: { data: BomDetail; etag: string }) {
+  const selectedId = activeSection.value?.lines[selectedLineIndex.value]?.id
+  if (bom.value?.id !== result.data.id) selectedLineIndex.value = -1
   bom.value = result.data
   if (!quantityReason.value && result.data.quantity_difference_reason) {
     quantityReason.value = result.data.quantity_difference_reason
@@ -619,6 +619,9 @@ function applyVersioned(result: { data: BomDetail; etag: string }) {
   sections.value = withFixedSections(result.data.sections)
   pendingDeletedLineIds.value.clear()
   activeSectionIndex.value = Math.min(activeSectionIndex.value, Math.max(0, sections.value.length - 1))
+  if (selectedLineIndex.value >= 0 && selectedId) {
+    selectedLineIndex.value = activeSection.value?.lines.findIndex(line => line.id === selectedId) ?? -1
+  }
 }
 
 const productConfirmItem = computed<InquiryItem>(() => ({
@@ -680,25 +683,12 @@ async function confirmProductInformation({ item }: { item: InquiryItem }) {
   }
 }
 
-async function loadTubeOptions() {
+async function loadCoatingColors() {
   tubeOptionsLoading.value = true
   try {
-    const [shapes, productNames, materials, diameters, thicknesses, coatingColors] = await Promise.all([
-      fetchAllProductionDataRecords<TubeShape>('tube-shapes'),
-      fetchAllProductionDataRecords<TubeProductName>('tube-product-names'),
-      fetchAllProductionDataRecords<TubeMaterial>('tube-materials'),
-      fetchAllProductionDataRecords<TubeDiameter>('tube-diameters'),
-      fetchAllProductionDataRecords<TubeThickness>('tube-thicknesses'),
-      fetchAllProductionDataRecords<TubeCoatingColor>('tube-coating-colors'),
-    ])
-    tubeShapes.value = shapes
-    tubeProductNames.value = productNames
-    tubeMaterials.value = materials
-    tubeDiameters.value = diameters
-    tubeThicknesses.value = thicknesses
-    tubeCoatingColors.value = coatingColors
+    tubeCoatingColors.value = await fetchAllProductionDataRecords<TubeCoatingColor>('tube-coating-colors')
   } catch {
-    ElMessage.warning('管材维护数据加载失败，请检查后端服务后刷新页面。')
+    ElMessage.warning('喷塑颜色加载失败，请检查后端服务后刷新页面。')
   } finally {
     tubeOptionsLoading.value = false
   }
@@ -1334,10 +1324,13 @@ async function requestOrderQuantitySync(automatic = false) {
 
 function selectSection(index: number) {
   tableFullscreen.value = false
+  if (activeSectionIndex.value !== index) selectedLineIndex.value = -1
   activeSectionIndex.value = index
-  selectedLineIndex.value = 0
-  const selectedTitle = sections.value[index]?.title
-  if ((selectedTitle === '辅料类' || selectedTitle === '面料类') && sections.value[index]?.lines.some(line => line.id && !line.material_catalog_id)) void ensureEditorReferenceOptions()
+  const section = sections.value[index]
+  if (section?.lines.some(line => line.id && !line.material_catalog_id)) {
+    if (section.title === '辅料类' || section.title === '面料类') void ensureEditorReferenceOptions()
+    if (section.title === '五金件' && !tubeCoatingColors.value.length) void loadCoatingColors()
+  }
 }
 
 function selectNavigationGroup(indexes: number[]) {
@@ -1350,7 +1343,7 @@ function toggleTableFullscreen() {
 }
 
 function closeTableFullscreen(event: KeyboardEvent) {
-  if (event.key === 'Escape' && !lineDrawerVisible.value) tableFullscreen.value = false
+  if (event.key === 'Escape' && !lineDrawerVisible.value && !materialMaintenanceVisible.value) tableFullscreen.value = false
 }
 
 function normalizeTubeCutPieceCount(line: BomLineInput) {
@@ -1390,6 +1383,7 @@ function prepareEditingLine(index: number) {
     return false
   }
   editingSectionIndex.value = activeSectionIndex.value
+  selectedLineIndex.value = index
   editingLineIndex.value = index
   editingLineDraft.value = {
     ...line,
@@ -1558,7 +1552,7 @@ function openLineDrawer(index: number) {
   if (!canEdit.value || !activeSection.value) return
   if (!prepareEditingLine(index) || !editingLineDraft.value) return
   const line = activeSection.value.lines[index]
-  editingCatalogMode.value = Boolean(!line.id || line.material_catalog_id)
+  editingCatalogMode.value = activeSection.value.section_type === 'PROFILE' || Boolean(!line.id || line.material_catalog_id)
   if (activeSection.value.title === '裁剪明细') void ensureEditorReferenceOptions()
   initialDrawerDraftImageIds.value = (line.draft_images || []).map((image) => image.id)
   preserveDrawerDraftImagesOnClose.value = false
@@ -1569,7 +1563,6 @@ function openLineDrawer(index: number) {
   if (activeSection.value.title === '辅料类' || activeSection.value.title === '面料类') {
     if (!editingCatalogMode.value) void ensureEditorReferenceOptions()
   }
-  if (!editingCatalogMode.value && activeSection.value.section_type === 'PROFILE') void loadTubeOptions()
   editingLineIsNew.value = false
   lineDrawerVisible.value = true
 }
@@ -1786,6 +1779,7 @@ async function commitLineDrawer() {
     }
     Object.assign(targetLine, editingLineDraft.value)
   }
+  selectedLineIndex.value = editingLineIndex.value
   return { section: targetSection, lineIndex: editingLineIndex.value }
 }
 
@@ -1919,7 +1913,7 @@ async function saveAndEditNextLine() {
     initialDrawerDraftImageIds.value = (nextDraft.draft_images || []).map((image) => image.id)
     editingLineIsNew.value = !nextLine
     editingLineIndex.value = nextLineIndex
-    editingCatalogMode.value = Boolean(!nextDraft.id || nextDraft.material_catalog_id)
+    editingCatalogMode.value = committed.section.section_type === 'PROFILE' || Boolean(!nextDraft.id || nextDraft.material_catalog_id)
     if (!editingCatalogMode.value && (committed.section.title === '辅料类' || committed.section.title === '面料类')) void ensureEditorReferenceOptions()
     ElMessage.success(nextLine
       ? '当前行已应用，已进入下一条；完成后请点击顶部“保存草稿”。'
@@ -1948,13 +1942,14 @@ async function removeLine(index: number) {
       type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
     })
     const failedIds: string[] = []
+    const selectedLine = targetSection.lines[selectedLineIndex.value]
     for (const line of [...children, targetLine]) {
       if (!line.id) failedIds.push(...await cleanupDraftImages(line.draft_images || []))
       if (line.id) pendingDeletedLineIds.value.add(line.id)
       const currentIndex = targetSection.lines.indexOf(line)
       if (currentIndex >= 0) targetSection.lines.splice(currentIndex, 1)
     }
-    selectedLineIndex.value = Math.min(selectedLineIndex.value, Math.max(0, targetSection.lines.length - 1))
+    selectedLineIndex.value = selectedLine ? targetSection.lines.indexOf(selectedLine) : -1
     ElMessage.success(targetLine.id
       ? '该明细已标记删除，点击“保存草稿”后将从数据库删除。'
       : '新增明细已移除，保存时不会写入数据库。')
@@ -2218,7 +2213,7 @@ onBeforeUnmount(() => {
             <div><h2>{{ activeSection?.title || '用料明细' }}</h2><span>{{ activeSection?.lines.length || 0 }} 行 · {{ materialReferenceHint }}</span></div>
             <div v-if="canEdit && activeSection" class="material-actions">
               <ElButton type="primary" @click="addCatalogLine">添加材料</ElButton>
-              <ElButton @click="openMaterialMaintenance">维护配置</ElButton>
+              <ElButton v-if="bomCatalogCategories[activeSection.title]" @click="openMaterialMaintenance">维护配置</ElButton>
             </div>
           </header>
 
@@ -2229,7 +2224,11 @@ onBeforeUnmount(() => {
             <BomMaterialSectionTables
               v-if="isCuttingSection || activeSection.section_type === 'PROFILE' || isHardwareSection || isPlasticSection || isAuxiliarySection || isFabricSection || isPackagingSection || activeSection.lines.length"
               :active-section="activeSection"
+              :selected-line="activeSection.lines[selectedLineIndex]"
+              @select-line="line => selectedLineIndex = activeSection!.lines.indexOf(line)"
               :is-hardware-section="isHardwareSection"
+              :can-edit-catalog-attributes="canEditCatalogAttributes"
+              @catalog-attribute-added="updateCatalogDraftVersions"
               :catalog-refresh-key="catalogRefreshKey"
               :component-units="editorReferenceOptions?.component_units || []"
               :component-sources="componentSourceLines"
@@ -2276,7 +2275,7 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="tableFullscreen && canEdit && activeSection" class="fullscreen-table-actions">
               <ElButton type="primary" :icon="Plus" @click="addCatalogLine">添加材料</ElButton>
-              <ElButton @click="openMaterialMaintenance">维护配置</ElButton>
+              <ElButton v-if="bomCatalogCategories[activeSection.title]" @click="openMaterialMaintenance">维护配置</ElButton>
             </div>
           </div>
           <ElEmpty v-else description="固定用料分区加载失败，请刷新页面" :image-size="72" />
@@ -2313,6 +2312,8 @@ onBeforeUnmount(() => {
       >
         <BomLineEditorForm
           :catalog-mode="editingCatalogMode"
+          :can-edit-catalog-attributes="canEditCatalogAttributes"
+          @catalog-attribute-added="updateCatalogDraftVersions"
           :catalog-refresh-key="catalogRefreshKey"
           :component-units="editorReferenceOptions?.component_units || []"
           :change-component-type="requestComponentType"
@@ -2323,11 +2324,6 @@ onBeforeUnmount(() => {
           :editing-line-draft="editingLineDraft"
           :editor-reference-options-error="editorReferenceOptionsError"
           :ensure-editor-reference-options="ensureEditorReferenceOptions"
-          :tube-shapes="tubeShapes"
-          :tube-product-names="tubeProductNames"
-          :tube-materials="tubeMaterials"
-          :tube-diameters="tubeDiameters"
-          :tube-thicknesses="tubeThicknesses"
           :tube-coating-colors="tubeCoatingColors"
           :tube-options-loading="tubeOptionsLoading"
           :editing-line-calculations="editingLineCalculations"
@@ -2371,8 +2367,8 @@ onBeforeUnmount(() => {
         </template>
       </BomLineEditorDialog>
 
-      <AppWindowDialog v-model="materialMaintenanceVisible" title="生产维护" class="material-catalog-maintenance-dialog" :width="1100" height="80vh" fullscreen edge-to-edge destroy-on-close :close-on-click-modal="false" :before-close="beforeMaterialMaintenanceClose" @closed="refreshAfterMaterialMaintenance">
-        <ProductionDataView v-if="materialMaintenanceVisible" ref="materialMaintenanceView" :initial-category="materialMaintenanceCategory" embedded />
+      <AppWindowDialog v-model="materialMaintenanceVisible" title="品名维护" class="material-catalog-maintenance-dialog" :width="1100" height="80vh" fullscreen edge-to-edge destroy-on-close :close-on-click-modal="false" :before-close="beforeMaterialMaintenanceClose">
+        <RawMaterialManagementView v-if="materialMaintenanceVisible" ref="materialMaintenanceView" :fixed-category="materialMaintenanceCategory" :initial-catalog-id="maintenanceCatalogId" :initial-catalog-name="maintenanceCatalogName" from-bom @saved="catalogRefreshKey++" />
       </AppWindowDialog>
 
       <BomLineImageManager

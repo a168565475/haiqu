@@ -80,7 +80,7 @@ def inherit_cutting_fabric_attributes(line):
         for key in COLOR_FIELDS:
             snapshot.pop(key, None)
         source_snapshot = source.material_selection_snapshot or {}
-        if source_snapshot.get("product_color_id"):
+        if any(source_snapshot.get(key) for key in ("product_color_id", "color_card", "color_code")):
             snapshot.update({key: source_snapshot.get(key, "") for key in COLOR_FIELDS})
         snapshot["display_name"] = " / ".join([snapshot["name"], *attrs.values(), snapshot["unit_name"]])
         line.material_selection_snapshot = snapshot

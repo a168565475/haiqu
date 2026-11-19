@@ -33,8 +33,13 @@ type LegacyPipeValues = {
   sets: string | number
 } | null
 
+const emit = defineEmits<{
+  'catalog-attribute-added': [id: string, previousVersion: string, version: string]
+  'select-line': [line: BomLineInput]
+}>()
 const props = withDefaults(defineProps<{
   activeSection: BomSectionInput
+  selectedLine?: BomLineInput
   isHardwareSection: boolean
   isPlasticSection: boolean
   isAuxiliarySection: boolean
@@ -42,6 +47,7 @@ const props = withDefaults(defineProps<{
   isPackagingSection: boolean
   isCuttingSection: boolean
   orderQuantity: string | number
+  canEditCatalogAttributes?: boolean
   catalogRefreshKey?: number
   componentUnits?: Array<{ id: string; unit_name: string }>
   componentSources?: BomLineInput[]
@@ -82,6 +88,10 @@ const props = withDefaults(defineProps<{
   componentSources: () => [],
 })
 
+const rowSelection = {
+  onRowClick: (line: BomLineInput) => emit('select-line', line),
+  rowClassName: ({ row }: { row: BomLineInput }) => row === props.selectedLine ? 'current-row' : '',
+}
 const componentParts = computed(() => props.activeSection.lines.filter(line => line.component_kind === 'SEWN_PART'))
 const hasLegacyCutting = computed(() => props.activeSection.lines.some(line => !line.component_kind))
 function selectComponentSource(line: BomLineInput, key: string) {
@@ -161,7 +171,7 @@ const {
 </script>
 
 <template>
-  <ElTable v-if="activeSection.section_type === 'PROFILE'" class="erp-table-editor tube-table prototype-tube-table" :data="activeSection.lines" border empty-text="当前型材暂无用料，点击“添加材料”开始录入">
+  <ElTable v-if="activeSection.section_type === 'PROFILE'" class="erp-table-editor tube-table prototype-tube-table" v-bind="rowSelection" :data="activeSection.lines" border empty-text="当前型材暂无用料，点击“添加材料”开始录入">
                <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                  <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
                  <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click.stop="removeLine(scope.$index)" /></ElTooltip></div></div></template>
@@ -170,9 +180,7 @@ const {
                <ElTableColumn prop="material" label="材质" width="90" />
                 <ElTableColumn label="喷塑颜色" min-width="120">
                   <template #default="scope">
-                    <span v-if="scope.row.material_catalog_id">{{ scope.row.tube_coating_color || '—' }}</span><ElSelect v-else v-model="scope.row.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
-                      <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
-                    </ElSelect>
+                    <span>{{ scope.row.tube_coating_color || '—' }}</span>
                   </template>
                 </ElTableColumn>
                <ElTableColumn label="规格" min-width="118"><template #default="scope"><ElTooltip :content="scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}`" placement="top"><span class="profile-ellipsis-value">{{ scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}` }}</span></ElTooltip></template></ElTableColumn>
@@ -187,7 +195,7 @@ const {
                <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
                <slot name="trailing-columns" />
              </ElTable>
-            <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
+            <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header>
                   <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
@@ -231,7 +239,7 @@ const {
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isPlasticSection" class="erp-table-editor plastic-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前塑料件暂无数据，点击“选择数据”批量添加">
+            <ElTable v-else-if="isPlasticSection" class="erp-table-editor plastic-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前塑料件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header>
                   <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
@@ -263,7 +271,7 @@ const {
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isAuxiliarySection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor auxiliary-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前辅料暂无数据，点击“选择辅料”批量添加">
+            <ElTable v-else-if="isAuxiliarySection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor auxiliary-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前辅料暂无数据，点击“选择辅料”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header>
                   <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
@@ -306,7 +314,7 @@ const {
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isFabricSection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor fabric-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前面料暂无数据，点击“添加面料”开始录入">
+            <ElTable v-else-if="isFabricSection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor fabric-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前面料暂无数据，点击“添加面料”开始录入">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header>
                   <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip>
@@ -328,7 +336,7 @@ const {
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isPackagingSection" class="erp-table-editor packaging-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前包材暂无数据，点击“选择包材”批量添加">
+            <ElTable v-else-if="isPackagingSection" class="erp-table-editor packaging-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前包材暂无数据，点击“选择包材”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
                 <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
@@ -343,13 +351,13 @@ const {
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
             </ElTable>
-            <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前暂无部位或裁片，点击“添加材料”选择已有品名">
+            <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前暂无部位或裁片，点击“添加材料”选择已有品名">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
                 <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
                 <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
               </ElTableColumn>
               <ElTableColumn label="类型" width="110"><template #default="{ row }"><ElSelect :model-value="row.component_kind || ''" :disabled="!canEdit" placeholder="待设置" aria-label="类型" @change="changeComponentType?.(row, $event)"><ElOption label="部位" value="SEWN_PART" /><ElOption label="裁片" value="CUT_PIECE" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="品名" min-width="160"><template #default="{ row }"><BomCuttingCatalogSelect v-if="row.component_kind" :line="row" :refresh-key="catalogRefreshKey" :disabled="!canEdit" lazy /><template v-else-if="cuttingQuantities(row).mode !== 'legacy' && cuttingQuantities(row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ row.part_name || '—' }}</span></template></ElTableColumn>
+              <ElTableColumn label="品名" min-width="160"><template #default="{ row }"><BomCuttingCatalogSelect v-if="row.component_kind" :line="row" @focusin="emit('select-line', row)" :refresh-key="catalogRefreshKey" :disabled="!canEdit" :can-edit-catalog-attributes="canEditCatalogAttributes" @catalog-attribute-added="(id, previousVersion, version) => emit('catalog-attribute-added', id, previousVersion, version)" lazy /><template v-else-if="cuttingQuantities(row).mode !== 'legacy' && cuttingQuantities(row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ row.part_name || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="所属部位" min-width="150"><template #default="{ row }"><ElSelect v-if="row.component_kind === 'CUT_PIECE'" :model-value="row.parent_part_id || row.parent_part_client_key || ''" :disabled="!canEdit" placeholder="选择部位" aria-label="所属部位" @change="setComponentParent(row, $event, activeSection.lines)"><ElOption v-for="part in componentParts" :key="componentKey(part)" :value="componentKey(part)" :label="part.part_name || '未选择品名的部位'" /></ElSelect><span v-else>—</span></template></ElTableColumn>
               <ElTableColumn label="原料资料" min-width="260"><template #default="{ row }"><div class="component-source-cell" :title="row.component_kind ? componentSourceDetails(row) : undefined"><ElSelect v-if="row.component_kind" :model-value="row.fabric_source_line_id || row.fabric_source_client_key || ''" :disabled="!canEdit" filterable :clearable="row.component_kind === 'SEWN_PART'" value-on-clear="" :placeholder="row.component_kind === 'SEWN_PART' ? '选择归属面布' : '选择布料或棉'" :aria-label="row.component_kind === 'SEWN_PART' ? '归属面布' : '来源原料'" @change="selectComponentSource(row, $event)"><ElOption v-for="source in componentSources" :key="componentKey(source)" :value="componentKey(source)" :label="`${source.part_name} · ${source.specification}`" /></ElSelect><ElTooltip v-else :content="componentSourceDetails(row)" placement="top" effect="light"><span class="component-source-summary" tabindex="0">{{ componentMaterialValue(row, componentSources, 'material') }} / {{ componentMaterialValue(row, componentSources, 'color') }} / 门幅 {{ componentMaterialValue(row, componentSources, 'width') }}</span></ElTooltip></div></template></ElTableColumn>
               <ElTableColumn label="尺寸 / 规格" min-width="160"><template #default="{ row }"><ElInput v-model="row.specification" :disabled="!canEdit" maxlength="500" :placeholder="row.component_kind === 'SEWN_PART' ? '填写部位规格' : '必填，不能填 /'" :aria-label="row.component_kind === 'SEWN_PART' ? '部位规格' : row.component_kind ? '裁片尺寸或规格' : '裁剪规格'" :aria-required="row.component_kind !== 'SEWN_PART'" /></template></ElTableColumn>

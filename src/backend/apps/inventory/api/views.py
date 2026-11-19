@@ -1103,6 +1103,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             category__status=ReferenceStatus.ACTIVE,
             unit__archived_at__isnull=True,
             unit__status=ReferenceStatus.ACTIVE,
+            unit__catalog_owner__isnull=True,
         ).select_related("category", "unit", "color")
         category_id = request.query_params.get("category_id", "").strip()
         if category_id:

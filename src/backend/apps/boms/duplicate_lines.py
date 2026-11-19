@@ -30,7 +30,7 @@ def _material_key(line):
     if line.material_catalog_id:
         snapshot = line.material_selection_snapshot
         state = {key: snapshot.get(key) for key in ("attributes", "processing_state", "processing_stage", "completed_craft", "semi_kind")}
-        if snapshot.get("product_color_id"):
+        if any(snapshot.get(key) for key in ("product_color_id", "color_card", "color_code")):
             state.update({key: snapshot.get(key, "") for key in ("product_color_id", "color_card", "color_code", "color_name")})
         key = (str(line.material_catalog_id), json.dumps(state, ensure_ascii=False, sort_keys=True), line.unit)
         return (*key, line.length_value, spray_color_value(raw)) if line.section.section_type == "PROFILE" else key

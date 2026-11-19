@@ -86,6 +86,82 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('独立原料管理', () => {
+  it('从 BOM 打开当前品名，列表第一页未包含时也直接读取并选中', async () => {
+    const list = deferred<{ data: ReturnType<typeof detail>[]; meta: ReturnType<typeof meta> }>()
+    api.fetchMaterialCatalogs.mockReturnValueOnce(list.promise)
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', initialCatalogId: 'b', initialCatalogName: '铁管', fromBom: true } })
+    await flushPromises()
+    expect(api.fetchMaterialCatalog.mock.calls).toEqual([['b']])
+    expect(wrapper.get('main').attributes('data-catalog-id')).toBe('b')
+    list.resolve({ data: [detail()], meta: { ...meta(51), total_pages: 2 } })
+    await flushPromises()
+    expect(wrapper.get('button[data-catalog-id="b"]').attributes('aria-current')).toBe('true')
+    expect(wrapper.get('button[data-catalog-id="a"]').attributes('aria-current')).toBeUndefined()
+    expect(api.fetchMaterialCatalog.mock.calls).toEqual([['b']])
+  })
+
+  it('从 BOM 打开时没有当前品名，允许自己选，独立入口仍默认打开第一项', async () => {
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', fromBom: true } })
+    await flushPromises()
+    expect(api.fetchMaterialCatalog).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="save-catalog"]').exists()).toBe(false)
+    await wrapper.get('button[data-catalog-id="b"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('main').attributes('data-catalog-id')).toBe('b')
+    wrapper.unmount()
+    await open()
+    expect(wrapper.get('main').attributes('data-catalog-id')).toBe('a')
+  })
+
+  it('BOM 指定的品名属于其他分区时不打开其他档案，仍可手动选择', async () => {
+    api.fetchMaterialCatalog.mockResolvedValueOnce({ data: { ...detail('b'), category_key: 'PACKAGING' }, etag: '"b"' })
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', initialCatalogId: 'b', initialCatalogName: '铁管', fromBom: true } })
+    await flushPromises()
+    expect(wrapper.get('main [role="alert"]').text()).toContain('当前分区')
+    expect(wrapper.find('[data-testid="save-catalog"]').exists()).toBe(false)
+    expect(api.fetchMaterialCatalog.mock.calls).toEqual([['b']])
+    await wrapper.get('button[data-catalog-id="a"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('main').attributes('data-catalog-id')).toBe('a')
+  })
+
+  it('旧 BOM 没有档案 ID 时按同分区的完整品名定位，搜索有后续页', async () => {
+    const target = detail('b', '扶手管')
+    api.fetchMaterialCatalogs.mockImplementation(async query => ({
+      data: !query.q ? [detail()] : query.page === 1 ? [detail('similar', '前扶手管')] : [target],
+      meta: { ...meta(60), total_pages: 2 },
+    }))
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', fromBom: true, initialCatalogName: '扶手管' } })
+    await flushPromises()
+    expect(api.fetchMaterialCatalogs).toHaveBeenCalledWith(expect.objectContaining({ category: 'TUBE', q: '扶手管', page: 2 }))
+    expect(api.fetchMaterialCatalog.mock.calls).toEqual([['b']])
+    expect(wrapper.get('button[data-catalog-id="b"]').attributes('aria-current')).toBe('true')
+  })
+
+  it('旧 BOM 仅有相似名或别的分区同名时保留分区列表待选', async () => {
+    api.fetchMaterialCatalogs.mockImplementation(async query => ({
+      data: !query.q ? [detail()] : [detail('a', '左扶手管'), { ...detail('p', '扶手'), category_key: 'PACKAGING' }],
+      meta: { ...meta(70), total_pages: query.q ? 1 : 2 },
+    }))
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', fromBom: true, initialCatalogName: '扶手' } })
+    await flushPromises()
+    expect(api.fetchMaterialCatalog).not.toHaveBeenCalled()
+    expect(wrapper.find('button[data-catalog-id="a"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="save-catalog"]').exists()).toBe(false)
+  })
+
+  it('BOM 单位建议只列当前品名持有的单位，允许输入新单位', async () => {
+    wrapper = mount(RawMaterialManagementView, { props: { fixedCategory: 'TUBE', fromBom: true, initialCatalogId: 'a' } })
+    await flushPromises()
+    expect(api.fetchMaterialCatalogOptions).toHaveBeenCalledWith(false)
+    await row('unit').get('[data-action="add"]').trigger('click')
+    const select = row('unit').getComponent(MaterialCatalogSelect)
+    expect(select.props('options')).toEqual([{ value: '根', label: '根' }])
+    await select.setValue('捆')
+    await save()
+    expect(lastDraft().units).toContainEqual(expect.objectContaining({ unit_name: '捆' }))
+  })
+
   it('编辑已有属性保留原 ID，失焦不提交，顶部保存发送版本', async () => {
     await open()
     await row('color').get('[data-action="edit"]').trigger('click')
@@ -206,6 +282,12 @@ describe('独立原料管理', () => {
     respondToSave(catalog)
     await open()
     expect(row(t.field).get('.attribute-label').text()).toBe(t.label)
+    expect(api.fetchPublicMaterialOptions).not.toHaveBeenCalled()
+    await row('unit').get('[data-action="add"]').trigger('click')
+    const unitChooser = row('unit').getComponent(MaterialCatalogSelect)
+    expect(unitChooser.props('allowCreate')).toBe(true)
+    expect(unitChooser.props('options').map(unit => unit.label)).toEqual(['根', '公斤'])
+    await row('unit').get('[aria-label="取消添加"]').trigger('click')
     if (t.field === 'flow_unit') expect(wrapper.find('[data-field="SPRAY:flow_unit:"]').exists()).toBe(false)
     await draft(t.field, t.added); await save()
     expect(labels(t.field)).toEqual([t.value, t.added])
@@ -327,13 +409,14 @@ describe('独立原料管理', () => {
     expect(lastDraft().semi_warehouse_id).toBe('wh-semi')
   })
 
-  it('公共单位候选可输入新文字，服务器拒绝后保留草稿', async () => {
-    api.fetchPublicMaterialOptions.mockImplementation(async query => ({ ...query, fields: [], values: [], units: [{ unit_name: '公斤' }] }))
-    await open(); await draft('unit', '箱')
-    expect(row('unit').getComponent(MaterialCatalogSelect).props('options')).toEqual([{ value: '公斤', label: '公斤' }])
+  it('单位允许输入新品名专用单位，服务器拒绝后保留草稿', async () => {
+    await open(); await draft('unit', '捆')
+    const unitSelect = row('unit').getComponent(MaterialCatalogSelect)
+    expect(unitSelect.props('options')).toEqual([{ value: '根', label: '根' }, { value: '公斤', label: '公斤' }])
+    expect(unitSelect.props('allowCreate')).toBe(true)
     api.saveMaterialCatalog.mockRejectedValueOnce(new Error('单位保存失败'))
     await save()
-    expect(labels('unit')).toEqual(['根', '箱'])
+    expect(labels('unit')).toEqual(['根', '捆'])
     expect(wrapper.text()).toContain('单位保存失败')
   })
 

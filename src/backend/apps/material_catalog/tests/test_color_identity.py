@@ -85,14 +85,34 @@ class MaterialColorIdentityTests(APITestCase):
         before = (ProductColor.objects.count(), ProductionUnit.objects.count(), AuditLog.objects.count())
         with patch("apps.material_catalog.services.write_audit_log", side_effect=RuntimeError("color audit failed")):
             with self.assertRaisesRegex(RuntimeError, "color audit failed"):
-                self.save([new], units=[{"id": str(uuid4()), "scope": "BASE", "unit_name": "颜色回滚单位"}])
+                self.save([new], units=[{"id": str(uuid4()), "scope": "BASE", "unit_name": self.unit.unit_name}])
         self.assertEqual((ProductColor.objects.count(), ProductionUnit.objects.count(), AuditLog.objects.count()), before)
         self.assertFalse(self.catalog.attribute_values.exists())
         response = self.save([new])
         self.assertEqual(response.status_code, 200, response.data)
         saved = response.data["data"]["values"][0]
-        self.assertTrue(saved["product_color_id"])
+        self.assertIsNone(saved["product_color_id"])
+        self.assertEqual(ProductColor.objects.count(), before[0])
         self.assertEqual((saved["color_card"], saved["color_code"], saved["color_name"]), ("新卡", "N1", "新三字段红"))
+
+    def test_local_same_name_color_cards_remain_distinct_in_catalog_and_snapshots(self):
+        from apps.material_catalog.selectors import require_catalog_attribute
+        from apps.material_catalog.snapshots import build_material_snapshot
+
+        colors = [self.row(value="本地红", color_name="本地红", color_card=card, color_code="01")
+                  for card in ("专属卡甲", "专属卡乙")]
+        response = self.save(colors, units=[{"id": str(uuid4()), "scope": "BASE", "unit_name": self.unit.unit_name}])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(ProductColor.objects.filter(color_name="本地红").exists())
+        identities = []
+        for color in colors:
+            row = require_catalog_attribute(self.catalog, "BASE", "color", "本地红", color=color)
+            snapshot = build_material_snapshot(catalog=self.catalog, scope="BASE", processing_state="RAW",
+                attributes={"color": "本地红"}, unit_id=self.unit.pk, required_fields=["color"], color_option=row)
+            self.assertIsNone(snapshot["product_color_id"])
+            self.assertEqual(snapshot["color_card"], color["color_card"])
+            identities.append(material_identity_key(snapshot))
+        self.assertNotEqual(*identities)
 
     def test_edit_rebinds_usage_without_changing_global_color_and_requires_etag(self):
         first = self.save([self.row(self.first)])

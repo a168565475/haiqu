@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 from apps.audit.models import AuditLog
 from apps.material_catalog.models import MaterialCatalog
 from apps.products.models import RawMaterialInformation
-from apps.reference_data.models import MaterialAttributePublicValue, ProductionUnit
+from apps.reference_data.models import ProductionUnit
 from ..models import Bom, BomLine
 from . import test_material_flow_bom as fixtures
 
@@ -50,9 +50,8 @@ class HardwareWeightApiTests(TestCase):
         if size is not None:
             attributes["size"] = size
         for key, value in attributes.items():
-            MaterialAttributePublicValue.objects.get_or_create(
-                category_key="HARDWARE", template_key="HARDWARE", scope="BASE", field_key=key, value=value,
-            )
+            self.catalog.attribute_values.get_or_create(scope="BASE", field_key=key, value=value)
+        self.catalog.allowed_units.get_or_create(scope="BASE", unit=self.piece_unit)
         existing = BomLine.objects.filter(section__bom=self.bom, section__title="五金件").first()
         return {
             **({"id": str(existing.pk)} if existing else {}),
@@ -309,9 +308,8 @@ class HardwareWeightApiTests(TestCase):
         catalog = MaterialCatalog.objects.create(
             category_key="PLASTIC", template_key="PLASTIC", name="单重边界测试塑料件",
         )
-        MaterialAttributePublicValue.objects.get_or_create(
-            category_key="PLASTIC", template_key="PLASTIC", scope="BASE", field_key="specification", value="Φ5×30",
-        )
+        catalog.attribute_values.create(scope="BASE", field_key="specification", value="Φ5×30")
+        catalog.allowed_units.create(scope="BASE", unit=self.piece_unit)
         payload = {
             "part_name": catalog.name, "material_catalog_id": str(catalog.pk),
             "material_selection": {

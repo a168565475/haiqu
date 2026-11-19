@@ -6,7 +6,6 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
 from apps.material_catalog.definitions import TEMPLATES
 from apps.material_catalog.models import MaterialCatalog
-from apps.material_catalog.public_configuration import require_public_value
 from apps.reference_data.models import ProductionUnit
 
 
@@ -96,9 +95,8 @@ def apply_component_catalog_selection(line, data, *, old, request, persist, vers
             options = set(catalog.attribute_values.filter(scope="BASE", archived_at__isnull=True)
                           .values_list("field_key", "value"))
             for key, value in attrs.items():
-                # 自身尺寸和做法沿用公共候选；刷新目录不重新校验或清洗旧冻结属性。
                 if (key, value) not in options:
-                    require_public_value(catalog, "BASE", key, value, lock=persist)
+                    raise ValidationError({"attributes": f"“{value}”不是当前品名已维护的属性。"})
         # 实物流转单位属于当前 BOM，不借选品名扩写目录的 allowed_units。
         unit = ProductionUnit.objects.filter(unit_name=line.unit, status="ACTIVE", archived_at__isnull=True).first()
         if (unit is None or (selection.get("unit_id") and str(selection["unit_id"]) != str(unit.pk))

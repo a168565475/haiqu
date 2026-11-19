@@ -16,7 +16,8 @@ vi.mock('@/api/materialCatalog', () => ({
 vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: api.crafts }))
 const catalog: MaterialCatalog = {
   id: 'cutting-a', name: '床面', category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI',
-  updated_at: 'v2', spray_enabled: false, base_warehouse_id: null, semi_warehouse_id: null, values: [], units: [],
+  updated_at: 'v2', spray_enabled: false, base_warehouse_id: null, semi_warehouse_id: null, values: [{ id: 'own-size', scope: 'BASE', field_key: 'size', value: '50×60cm', parent_id: null }],
+  units: [{ id: 'allowed-set', scope: 'BASE', unit_id: 'set-unit', unit_name: '套' }, { id: 'allowed-pcs', scope: 'BASE', unit_id: 'pcs-unit', unit_name: 'PCS' }],
 }
 let wrapper: VueWrapper | undefined
 const popover = defineComponent({
@@ -71,7 +72,7 @@ describe('裁片普通品名下拉', () => {
     expect(line.part_name).toBe('床面')
   })
 
-  it.each(['SEWN_PART', 'CUT_PIECE'] as const)('新 %s 使用公共属性和 BOM 单位，保留物料资料且不请求工艺', async kind => {
+  it.each(['SEWN_PART', 'CUT_PIECE'] as const)('新 %s 使用本品名属性和 BOM 单位，保留物料资料且不请求工艺', async kind => {
     const line = createLine()
     Object.assign(line, { component_kind: kind, unit: kind === 'SEWN_PART' ? '个' : '套', notes: '保留', fabric_source_line_id: kind === 'CUT_PIECE' ? 'fabric' : null })
     wrapper = mount(BomCuttingCatalogSelect, { props: { line }, global: componentGlobal })
@@ -85,7 +86,7 @@ describe('裁片普通品名下拉', () => {
     await wrapper.get('.attribute-value input').setValue(true)
     expect(line.material_selection?.attributes).toEqual({ size: '50×60cm' })
     expect(line.fabric_source_line_id).toBe(kind === 'CUT_PIECE' ? 'fabric' : null)
-    expect(api.options).toHaveBeenCalledWith({ category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', scope: 'BASE' })
+    expect(api.options).not.toHaveBeenCalled()
     expect(api.crafts).not.toHaveBeenCalled()
     expect(wrapper.find('.craft-field').exists()).toBe(false)
   })
@@ -168,7 +169,7 @@ describe('裁片普通品名下拉', () => {
       completed_craft: { id: 'internal', craft_type: 'INTERNAL', code: 'CUTTING' },
       attributes: { material: '涤纶', width: '1.5', color: '蓝色', specification: '600D' } })
     expect(line.material_selection?.unit_name).toBeUndefined()
-    expect(api.options).toHaveBeenCalledWith({ category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', scope: 'BASE' })
+    expect(api.options).not.toHaveBeenCalled()
     expect(api.legacyOptions).not.toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('裁片单位不可用')
   })
@@ -225,7 +226,7 @@ describe('裁片普通品名下拉', () => {
   })
 
   it.each(['unit', 'craft', 'duplicate-craft'])('缺少或重复的默认配置 %s 不伪造 ID，也不修改草稿', async missing => {
-    if (missing === 'unit') api.options.mockResolvedValue({ units: [] })
+    if (missing === 'unit') api.detail.mockResolvedValue({ data: { ...catalog, units: [] } })
     else api.crafts.mockResolvedValue({ crafts: missing === 'craft' ? [] : [
       { id: 'one', craft_type: 'INTERNAL', code: 'CUTTING' }, { id: 'two', craft_type: 'INTERNAL', code: 'CUTTING' },
     ] })
@@ -241,8 +242,8 @@ describe('裁片普通品名下拉', () => {
   })
 
   it('默认配置请求期间切换编辑草稿，迟到结果不写入旧行或新行', async () => {
-    let resolveOptions!: (value: { units: { id: string; unit_name: string }[] }) => void
-    api.options.mockImplementation(() => new Promise(resolve => { resolveOptions = resolve }))
+    let resolveOptions!: (value: { crafts: [] }) => void
+    api.crafts.mockImplementation(() => new Promise(resolve => { resolveOptions = resolve }))
     const line = createLine()
     wrapper = mount(BomCuttingCatalogSelect, { props: { line } })
     await flushPromises()
@@ -250,7 +251,7 @@ describe('裁片普通品名下拉', () => {
     await flushPromises()
     const nextLine = createLine()
     await wrapper.setProps({ line: nextLine })
-    resolveOptions({ units: [{ id: 'set-unit', unit_name: '套' }] })
+    resolveOptions({ crafts: [] })
     await flushPromises()
     expect(line.material_catalog_id).toBeFalsy()
     expect(nextLine.material_catalog_id).toBeFalsy()

@@ -6,11 +6,13 @@ from uuid import UUID
 from rest_framework.exceptions import ValidationError
 
 from .definitions import SPRAY_FIELDS, TEMPLATES
-from .colors import COLOR_FIELDS, color_metadata, uses_product_color_identity
+from .colors import COLOR_FIELDS, catalog_color_metadata, color_metadata, uses_product_color_identity
 from .models import MaterialScope
+from .selectors import require_catalog_unit
 
 
-def build_material_snapshot(*, catalog, scope, processing_state, attributes, unit_id, required_fields, completed_craft=None, semi_kind=None, product_color=None):
+def build_material_snapshot(*, catalog, scope, processing_state, attributes, unit_id, required_fields, completed_craft=None,
+                            semi_kind=None, product_color=None, color_option=None, inherited_attributes=()):
     if catalog.archived_at is not None:
         raise ValidationError({"material_catalog_id": "原料品名已归档。"})
     if scope not in MaterialScope.values or (scope == MaterialScope.SPRAY and not catalog.spray_enabled):
@@ -32,20 +34,24 @@ def build_material_snapshot(*, catalog, scope, processing_state, attributes, uni
     if missing:
         raise ValidationError({"attributes": "缺少具体材料必要属性：" + "、".join(missing)})
     values = list(catalog.attribute_values.filter(archived_at__isnull=True))
-    if product_color is not None and (not uses_product_color_identity(catalog, scope)
-            or product_color.color_name != selected.get("color")):
+    metadata = catalog_color_metadata(color_option) if color_option else color_metadata(product_color) if product_color else {}
+    if metadata and (not uses_product_color_identity(catalog, scope)
+            or metadata["color_name"] != selected.get("color")):
         raise ValidationError({"product_color_id": "普通颜色与当前基础属性不匹配。"})
     shape = next((row for row in values if row.scope == MaterialScope.BASE and row.field_key == "shape" and row.value == selected.get("shape")), None)
     for key, value in selected.items():
+        if catalog.category_key == "FABRIC_SEMI" and key in inherited_attributes:
+            continue
+        if key == "color" and color_option is not None:
+            if not any(row.pk == color_option.pk and row.scope == fields[key] and row.field_key == key for row in values):
+                raise ValidationError({"color": "请选择当前品名的有效颜色。"})
+            continue
         if not any(row.scope == fields[key] and row.field_key == key and
                    (row.product_color_id == product_color.pk if key == "color" and product_color is not None
-                    else row.product_color_id is None and row.value == value) and
+                    else row.product_color_id is None and row.value == value and not row.color_card and not row.color_code) and
                    (key != "section_size" or (shape is not None and row.parent_id == shape.pk)) for row in values):
-            raise ValidationError({"attributes": f"{key}不是当前品名/形状的有效选项，请先在同一事务中补录。"})
-    option = catalog.allowed_units.filter(scope=scope, unit_id=unit_id, archived_at__isnull=True,
-                                          unit__status="ACTIVE", unit__archived_at__isnull=True).select_related("unit").first()
-    if option is None:
-        raise ValidationError({"unit_id": "请选择当前品名与属性组的有效单位。"})
+            raise ValidationError({"attributes": f"{key}不是当前品名/形状的有效选项，请在当前品名中补充后重选。"})
+    unit = require_catalog_unit(catalog, scope, unit_id=unit_id)
     if processing_state not in {"RAW", "PROCESSED"}:
         raise ValidationError({"processing_state": "请选择明确的原料或加工结果状态。"})
     if catalog.category_key == "FABRIC_SEMI" and processing_state != "PROCESSED":
@@ -67,23 +73,22 @@ def build_material_snapshot(*, catalog, scope, processing_state, attributes, uni
         craft = {"id": craft_id, "craft_type": completed_craft["craft_type"], "code": completed_craft["code"].strip()}
     elif completed_craft is not None or semi_kind is not None:
         raise ValidationError({"completed_craft": "原料不能伪造已完成工艺。"})
-    display_values = [" ".join(filter(None, (product_color.color_card, product_color.color_code, product_color.color_name)))
-                      if key == "color" and product_color is not None else value for key, value in selected.items()]
+    display_values = [" ".join(filter(None, (metadata["color_card"], metadata["color_code"], metadata["color_name"])))
+                      if key == "color" and metadata else value for key, value in selected.items()]
     return {
         "schema_version": 1, "catalog_id": str(catalog.pk), "catalog_version": catalog.updated_at.isoformat(),
         "category_key": catalog.category_key, "template_key": catalog.template_key, "name": catalog.name,
         "scope": scope, "processing_state": "PROCESSED" if processed else "RAW",
         "processing_stage": craft["code"] if craft else "RAW", "completed_craft": craft, "semi_kind": semi_kind,
-        "attributes": selected, "unit_id": str(option.unit_id), "unit_name": option.unit.unit_name,
-        "display_name": " / ".join([catalog.name, *display_values, option.unit.unit_name]),
-        **(color_metadata(product_color) if product_color is not None else {}),
+        "attributes": selected, "unit_id": str(unit.pk), "unit_name": unit.unit_name,
+        "display_name": " / ".join([catalog.name, *display_values, unit.unit_name]), **metadata,
     }
 
 
 def material_identity_key(snapshot):
     """仓库、库区、品质仍由库存层作为独立维度；来源与目录版本不参与材料身份。"""
     content = {key: snapshot[key] for key in ("catalog_id", "processing_state", "processing_stage", "completed_craft", "semi_kind", "attributes", "unit_id")}
-    if snapshot.get("product_color_id"):
+    if snapshot.get("product_color_id") or snapshot.get("color_card") or snapshot.get("color_code"):
         # 新颜色身份参与区分；旧快照没有此标识时仍使用原算法，不能重算改变旧库存身份。
         content.update({key: snapshot.get(key, "") for key in COLOR_FIELDS})
     encoded = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

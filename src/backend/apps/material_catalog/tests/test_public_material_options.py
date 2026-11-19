@@ -45,15 +45,16 @@ class PublicMaterialOptionsTests(APITestCase):
         return self.client.put(f"{ROOT}{self.catalog.pk}/", payload, format="json",
                                HTTP_IF_MATCH=etag or etag_for_instance(self.catalog))
 
-    def test_catalog_save_publishes_shared_candidates_without_copying_other_catalog(self):
+    def test_catalog_save_keeps_candidates_in_current_catalog(self):
         response = self.save(self.payload([self.value("specification", "公共规格-A"), self.value("color", "公共无卡颜色")]))
         self.assertEqual(response.status_code, 200, response.data)
         second = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name="另一五金")
         result = self.client.get(ROOT + "public-options/", {"category_key": "HARDWARE", "template_key": "HARDWARE", "scope": "BASE"})
         self.assertEqual(result.status_code, 200, result.data)
-        self.assertIn("公共规格-A", [row["value"] for row in result.data["data"]["values"]])
+        self.assertNotIn("公共规格-A", [row["value"] for row in result.data["data"]["values"]])
+        self.assertEqual(set(self.catalog.attribute_values.values_list("value", flat=True)), {"公共规格-A", "公共无卡颜色"})
         self.assertFalse(second.attribute_values.exists())
-        self.assertTrue(ProductColor.objects.filter(color_name="公共无卡颜色", color_card="", color_code="").exists())
+        self.assertFalse(ProductColor.objects.filter(color_name="公共无卡颜色", color_card="", color_code="").exists())
 
     def test_shape_dimensions_keep_relation_and_project_unbound_legacy_diameters(self):
         first = TubeShape.objects.create(shape_name="公共测试形状甲")
@@ -73,18 +74,19 @@ class PublicMaterialOptionsTests(APITestCase):
     def test_audit_failure_rolls_back_public_values_units_and_catalog(self):
         original_version = self.catalog.updated_at
         audit_count = AuditLog.objects.count()
-        payload = self.payload([self.value("specification", "必须回滚公共规格")], [{"id": str(uuid4()), "scope": "BASE", "unit_name": "回滚单位"}])
+        payload = self.payload([self.value("specification", "必须回滚公共规格")], [{"id": str(uuid4()), "scope": "BASE", "unit_name": "回滚测试单位"}])
         with patch("apps.material_catalog.services.write_audit_log", side_effect=RuntimeError("audit failed")):
             with self.assertRaisesRegex(RuntimeError, "audit failed"):
                 self.save(payload)
         self.catalog.refresh_from_db()
         self.assertEqual(self.catalog.updated_at, original_version)
         self.assertFalse(self.catalog.attribute_values.exists())
-        self.assertFalse(ProductionUnit.objects.filter(unit_name="回滚单位").exists())
+        self.assertFalse(self.catalog.allowed_units.exists())
+        self.assertFalse(ProductionUnit.all_objects.filter(unit_name="回滚测试单位").exists())
         self.assertFalse(MaterialAttributePublicValue.objects.filter(value="必须回滚公共规格").exists())
         self.assertEqual(AuditLog.objects.count(), audit_count)
 
-    def test_shape_rename_publishes_unchanged_dimension_under_new_shape(self):
+    def test_tube_draft_keeps_shape_and_dimension_in_this_catalog(self):
         self.catalog = MaterialCatalog.objects.create(category_key="TUBE", template_key="TUBE", name="形状改名管材")
         shape = self.value("shape", "改名前形状")
         size = self.value("section_size", "改名测试尺寸", parent_id=shape["id"])
@@ -94,18 +96,47 @@ class PublicMaterialOptionsTests(APITestCase):
         shape["value"] = "改名后形状"
         second = self.save(payload, etag=first["ETag"])
         self.assertEqual(second.status_code, 200, second.data)
-        self.assertTrue(TubeShapeDimension.objects.filter(
-            shape__shape_name="改名后形状", diameter__diameter_value="改名测试尺寸",
-        ).exists())
+        dimension = self.catalog.attribute_values.get(field_key="section_size")
+        self.assertEqual((dimension.parent.value, dimension.value), ("改名后形状", "改名测试尺寸"))
+        self.assertFalse(TubeShape.objects.filter(shape_name__in=["改名前形状", "改名后形状"]).exists())
+        self.assertFalse(TubeDiameter.objects.filter(diameter_value="改名测试尺寸").exists())
+        payload["units"] = [{"id": str(uuid4()), "scope": "BASE", "unit_name": "管材未维护单位"}]
+        saved = self.save(payload, etag=second["ETag"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(ProductionUnit.for_catalog(self.catalog).get(pk=saved.data["data"]["units"][0]["unit_id"]).catalog_owner, self.catalog)
+        self.assertFalse(ProductionUnit.objects.filter(unit_name="管材未维护单位").exists())
+
+    def test_tube_single_attribute_edits_and_spray_do_not_change_public_configuration(self):
+        self.catalog = MaterialCatalog.objects.create(category_key="TUBE", template_key="TUBE", name="上下脚")
+        url = f"{ROOT}{self.catalog.pk}/"
+        before = [public_options("TUBE", "TUBE", scope) for scope in ("BASE", "SPRAY")]
+        result = self.client.patch(url, {"spray_enabled": True}, format="json", HTTP_IF_MATCH=etag_for_instance(self.catalog))
+        self.assertEqual(result.status_code, 200, result.data)
+        for key, value, scope in (("shape", "专属截面", "BASE"), ("section_size", "专属截面尺寸", "BASE"),
+                                  ("material", "专属管材材质", "BASE"), ("color", "专属喷色", "SPRAY")):
+            parent = self.catalog.attribute_values.get(field_key="shape").pk if key == "section_size" else None
+            result = self.client.post(url + "values/", {"field_key": key, "value": value, "scope": scope, "parent_id": parent},
+                                      format="json", HTTP_IF_MATCH=result["ETag"])
+            self.assertEqual(result.status_code, 200, result.data)
+        shape = self.catalog.attribute_values.get(field_key="shape")
+        for value in ("/", "1" * 51):
+            invalid = self.client.post(url + "values/", {"field_key": "section_size", "value": value, "scope": "BASE", "parent_id": shape.pk},
+                                       format="json", HTTP_IF_MATCH=result["ETag"])
+            self.assertEqual(invalid.status_code, 400, invalid.data)
+        result = self.client.patch(f"{url}values/{shape.pk}/", {"value": "专属截面二"}, format="json", HTTP_IF_MATCH=result["ETag"])
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(self.catalog.attribute_values.get(field_key="section_size").parent.value, "专属截面二")
+        self.assertEqual([public_options("TUBE", "TUBE", scope) for scope in ("BASE", "SPRAY")], before)
 
     def test_inactive_public_value_is_not_revived_and_unchanged_catalog_can_save(self):
         public = MaterialAttributePublicValue.objects.create(category_key="HARDWARE", template_key="HARDWARE", scope="BASE", field_key="specification", value="已停用规格", status="INACTIVE")
         response = self.save(self.payload([self.value("specification", public.value)]))
-        self.assertEqual(response.status_code, 400, response.data)
-        stored = MaterialAttributeValue.objects.create(catalog=self.catalog, scope="BASE", field_key="specification", value=public.value)
+        self.assertEqual(response.status_code, 200, response.data)
+        stored = self.catalog.attribute_values.get(scope="BASE", field_key="specification", value=public.value)
         unit = ProductionUnit.objects.create(unit_code="PUB-INACTIVE", unit_name="停用历史单位", status="INACTIVE")
         allowed = MaterialAllowedUnit.objects.create(catalog=self.catalog, scope="BASE", unit=unit)
-        response = self.save(self.payload([self.value("specification", public.value, id=str(stored.pk))], [{"id": str(allowed.pk), "scope": "BASE", "unit_name": unit.unit_name}]))
+        response = self.save(self.payload([self.value("specification", public.value, id=str(stored.pk))],
+                             [{"id": str(allowed.pk), "scope": "BASE", "unit_name": unit.unit_name}]), etag=response["ETag"])
         self.assertEqual(response.status_code, 200, response.data)
         public.refresh_from_db()
         unit.refresh_from_db()

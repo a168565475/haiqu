@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from django.db import transaction
+from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -11,9 +12,9 @@ from apps.reference_data.models import ProductionUnit
 from apps.inventory.models import Warehouse
 
 from .definitions import SPRAY_FIELDS, TEMPLATES
-from .colors import COLOR_FIELDS, unchanged_color, uses_product_color_identity
+from .colors import color_identity, unchanged_color, uses_product_color_identity
 from .models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog, MaterialScope
-from .public_configuration import ensure_public_value
+from .public_configuration import SOURCES, _resolve_product_color, _validate_color_source, source_for
 from .selectors import catalog_detail
 
 
@@ -91,9 +92,37 @@ def update_catalog(*, catalog_id, data, request):
         setattr(catalog, field, warehouse_id)
     # 包含软删记录，避免重复开启时擅自恢复用户已经移除的默认颜色。
     if enabled and not catalog.attribute_values.filter(scope=MaterialScope.SPRAY).exists():
-        ensure_public_value(catalog, MaterialScope.SPRAY, "color", "无颜色", request=request)
         MaterialAttributeValue.objects.create(catalog=catalog, scope=MaterialScope.SPRAY, field_key="color", value="无颜色")
     return _finish_change(catalog, before, "CATALOG_CHANGED", request)
+
+
+def catalog_value_fields(catalog, scope, key, value, *, color=None, previous=None):
+    ordinary_color = uses_product_color_identity(catalog, scope, key)
+    _validate_color_source(ordinary_color, color)
+    fields = {"value": value, "product_color_id": None, "color_card": "", "color_code": ""}
+    if previous and previous.archived_at is None and (unchanged_color(previous, {**(color or {}), "value": value})
+            if ordinary_color else previous.value == value):
+        return {name: getattr(previous, name) for name in fields}
+    source = source_for(catalog, scope, key)
+    limit = 50 if key == "section_size" else 300
+    if source in SOURCES:
+        model, field, _ = SOURCES[source]
+        limit = model._meta.get_field(field).max_length
+    if not value.strip() or value.strip() in {"/", "-", "—"} or len(value) > limit:
+        raise ValidationError({"value": f"请填写实际属性值，最多允许{limit}字。"})
+    if ordinary_color:
+        if color and color.get("product_color_id"):
+            fields["product_color_id"] = _resolve_product_color(value, color, request=None, persist=False, create=False).pk
+        else:
+            identity = color_identity(value, color)
+            fields.update(color_card=identity["color_card"], color_code=identity["color_code"])
+    return fields
+
+
+def _value_lookup(fields):
+    if fields["product_color_id"]:
+        return {"product_color_id": fields["product_color_id"]}
+    return fields
 
 
 @transaction.atomic
@@ -112,22 +141,16 @@ def add_value(*, catalog_id, data, request):
     elif parent_id is not None:
         raise ValidationError({"parent_id": "只有截面尺寸可以关联截面形状。"})
     before = catalog_detail(catalog)
-    values = {"catalog": catalog, "scope": data["scope"], "field_key": data["field_key"], "value": data["value"], "parent_id": parent_id}
-    parent_value = catalog.attribute_values.get(pk=parent_id).value if parent_id else None
-    public = ensure_public_value(catalog, data["scope"], data["field_key"], data["value"], parent_value=parent_value, request=request, color=data)
-    if uses_product_color_identity(catalog, data["scope"], data["field_key"]):
-        values["product_color_id"] = public.pk
-        lookup = {key: value for key, value in values.items() if key != "value"}
-    else:
-        lookup = {**values, "product_color_id": None}
-    existing = MaterialAttributeValue.objects.filter(**lookup).first()
+    values = {"catalog": catalog, "scope": data["scope"], "field_key": data["field_key"], "parent_id": parent_id}
+    fields = catalog_value_fields(catalog, data["scope"], data["field_key"], data["value"], color=data)
+    existing = MaterialAttributeValue.objects.filter(**values, **_value_lookup(fields)).first()
     if existing is not None:
         if existing.archived_at is None:
             raise ValidationError({"value": "该属性值已存在。"})
         _restore(existing)
         action = "VALUE_RESTORED"
     else:
-        MaterialAttributeValue.objects.create(**values)
+        MaterialAttributeValue.objects.create(**values, **fields)
         action = "VALUE_ADDED"
     return _finish_change(catalog, before, action, request)
 
@@ -144,28 +167,18 @@ def update_value(*, catalog_id, value_id, value, request, color=None):
         pk=option.parent_id, scope=MaterialScope.BASE, field_key="shape", archived_at__isnull=True
     ).exists():
         raise ValidationError({"value": "该截面尺寸关联的形状已失效，请重新读取档案。"})
-    ordinary_color = uses_product_color_identity(catalog, option.scope, option.field_key)
-    if (ordinary_color and unchanged_color(option, {**(color or {}), "value": value})) or (
-            not ordinary_color and option.value == value and not any((color or {}).get(key) for key in COLOR_FIELDS)):
+    fields = catalog_value_fields(catalog, option.scope, option.field_key, value, color=color, previous=option)
+    if all(getattr(option, key) == field for key, field in fields.items()):
         return _snapshot_response(catalog)
-    public = ensure_public_value(catalog, option.scope, option.field_key, value,
-                                parent_value=option.parent.value if option.parent_id else None, request=request, color=color)
-    product_color_id = public.pk if ordinary_color else None
     lookup = {"catalog": catalog, "scope": option.scope, "field_key": option.field_key, "parent_id": option.parent_id,
-              "product_color_id": product_color_id}
-    if not product_color_id:
-        lookup["value"] = value
+              **_value_lookup(fields)}
     # 唯一约束包含已归档项；编辑不合并颜色身份，也不改写公共颜色记录。
     if MaterialAttributeValue.objects.filter(**lookup).exclude(pk=option.pk).exists():
         raise ValidationError({"value": "该属性值已存在（含已移除的记录），请使用其他值。"})
-    if option.field_key == "shape":
-        for dimension in option.dimensions.filter(archived_at__isnull=True):
-            ensure_public_value(catalog, dimension.scope, dimension.field_key, dimension.value,
-                                parent_value=value, request=request)
     before = catalog_detail(catalog)
-    option.value = value
-    option.product_color_id = product_color_id
-    option.save(update_fields=["value", "product_color", "updated_at"])
+    for key, field in fields.items():
+        setattr(option, key, field)
+    option.save(update_fields=[*fields, "updated_at"])
     return _finish_change(catalog, before, "VALUE_CHANGED", request)
 
 
@@ -185,7 +198,6 @@ def resolve_unit(data):
     if "unit_id" in data:
         unit = ProductionUnit.objects.filter(pk=data["unit_id"]).first()
     else:
-        # 公共表只复用内部标识；新单位仅关联当前品名，不共享候选。
         unit, _ = ProductionUnit.objects.get_or_create(
             unit_name=data["unit_name"], defaults={"unit_code": "MC" + uuid4().hex[:18]},
         )
@@ -194,24 +206,38 @@ def resolve_unit(data):
     return unit
 
 
-def _ensure_public_unit(catalog, scope, data, request):
-    if "unit_name" in data:
-        name = data["unit_name"]
+def resolve_catalog_unit(catalog, scope, data):
+    units = ProductionUnit.for_catalog(catalog)
+    if "unit_id" in data:
+        unit = units.filter(pk=data["unit_id"]).first()
     else:
-        name = ProductionUnit.objects.filter(pk=data["unit_id"]).values_list("unit_name", flat=True).first()
-        if name is None:
-            raise ValidationError({"unit_id": "单位不存在。"})
-    ensure_public_value(catalog, scope, "unit", name, request=request)
+        name = data["unit_name"]
+        candidates = units.filter(unit_name=name)
+        # 已有归档关联也保留原单位身份。例如品名建“捆”之后，单位管理又新增了同名公共单位。
+        unit = candidates.filter(material_catalog_options__catalog=catalog, material_catalog_options__scope=scope).order_by(
+            F("material_catalog_options__archived_at").desc(nulls_first=True), "id"
+        ).first()
+        if unit is None:
+            unit = candidates.filter(catalog_owner=catalog).first() or candidates.filter(catalog_owner=None).first()
+        if unit is None:
+            if name in {"/", "-", "—"}:
+                raise ValidationError({"unit_name": "请填写实际的计量单位名称。"})
+            unit = ProductionUnit.all_objects.create(catalog_owner=catalog, unit_name=name, unit_code="MC" + uuid4().hex[:18])
+    if unit is None or unit.status != "ACTIVE" or unit.archived_at is not None:
+        raise ValidationError({"unit_id": "单位不属于当前品名、已停用或已归档。"})
+    return unit
 
 
 @transaction.atomic
 def add_unit(*, catalog_id, data, request):
     catalog = _locked_catalog(catalog_id, request)
     _scope_fields(catalog, data["scope"])
-    _ensure_public_unit(catalog, data["scope"], data, request)
-    unit = resolve_unit(data)
+    unit = resolve_catalog_unit(catalog, data["scope"], data)
     before = catalog_detail(catalog)
     existing = MaterialAllowedUnit.objects.filter(catalog=catalog, scope=data["scope"], unit=unit).first()
+    if catalog.allowed_units.filter(scope=data["scope"], unit__unit_name=unit.unit_name,
+                                   archived_at__isnull=True).exclude(unit=unit).exists():
+        raise ValidationError({"unit_id": "该属性组已包含同名可用单位。"})
     if existing is not None:
         if existing.archived_at is None:
             raise ValidationError({"unit_id": "该属性组已包含此可用单位。"})
@@ -230,9 +256,8 @@ def update_unit(*, catalog_id, option_id, data, request):
     _scope_fields(catalog, option.scope)
     if data.get("unit_id") == option.unit_id or data.get("unit_name") == option.unit.unit_name:
         return _snapshot_response(catalog)
-    _ensure_public_unit(catalog, option.scope, data, request)
-    unit = resolve_unit(data)
-    if MaterialAllowedUnit.objects.filter(catalog=catalog, scope=option.scope, unit=unit).exclude(pk=option.pk).exists():
+    unit = resolve_catalog_unit(catalog, option.scope, data)
+    if MaterialAllowedUnit.objects.filter(catalog=catalog, scope=option.scope, unit__unit_name=unit.unit_name).exclude(pk=option.pk).exists():
         raise ValidationError({"unit_id": "该属性组已包含此单位（含已移除的记录），请选择其他单位。"})
     if option.unit_id == unit.pk:
         return _snapshot_response(catalog)

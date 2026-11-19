@@ -236,7 +236,7 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
         except (ValueError, TypeError, AttributeError):
             blockers.append(_blocker("PUBLIC_STOCK_IDENTITY_INVALID", "公共库存中存在无效的已完成工艺编号。"))
     crafts = Craft.objects.in_bulk(craft_ids)
-    units = ProductionUnit.objects.filter(pk__in=[item[2] for item in dimensions], status="ACTIVE", archived_at__isnull=True).in_bulk()
+    units = ProductionUnit.all_objects.filter(pk__in=[item[2] for item in dimensions], status="ACTIVE", archived_at__isnull=True).in_bulk()
     for item in existing:
         if item.unit_id not in units or item.completed_craft_id not in crafts:
             blockers.append(_blocker("SEMI_REQUIREMENT_CONTEXT_UNAVAILABLE", "已保存半成品需求的单位已停用，或已完成工艺不存在。", requirement_id=item.pk))
@@ -264,6 +264,8 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
             if kind != required_kind:
                 continue
         for craft, unit in grouped_dimensions[kind]:
+            if unit.catalog_owner_id and unit.catalog_owner_id != line.material_catalog_id:
+                continue
             if kind in {'CUT_PIECE', 'SEWN_PART'} and unit.unit_name != line.unit:
                 continue
             code = craft.outsourcing_code if craft.craft_type == 'EXTERNAL' else craft.plan_category

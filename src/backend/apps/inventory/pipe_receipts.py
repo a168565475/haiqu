@@ -25,6 +25,7 @@ def receipt_pipe_values(item, purchase_line=None, material=None):
                 material = RawMaterialInformation.objects.select_related('unit', 'category').filter(
                     pk=snapshot.get('raw_material_id'), item_type='MATERIAL', archived_at__isnull=True,
                     unit_id=snapshot.get('unit_id'), unit__status='ACTIVE', unit__archived_at__isnull=True,
+                    unit__catalog_owner__isnull=True,
                     category__status='ACTIVE', category__archived_at__isnull=True,
                 ).exclude(category__category_name='管材').first()
                 if material is None or purchase_line.source_unit_text not in {material.unit.unit_name, material.unit.unit_code}:
@@ -48,7 +49,7 @@ def receipt_pipe_values(item, purchase_line=None, material=None):
         snapshot = {'schema_version': 2, 'source': 'MANUAL', 'raw_material_id': str(material.pk)}
     if (material is None or material.archived_at or material.item_type != 'MATERIAL'
             or material.category.category_name != '管材' or material.unit.unit_name != '根'
-            or material.unit.status != 'ACTIVE' or material.unit.archived_at
+            or material.unit.status != 'ACTIVE' or material.unit.archived_at or material.unit.catalog_owner_id
             or material.category.status != 'ACTIVE' or material.category.archived_at):
         raise ValidationError({'items': '管材入库缺少有效的根制原料身份。'})
     snapshot = snapshot or {}

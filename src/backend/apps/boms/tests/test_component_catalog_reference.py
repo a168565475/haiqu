@@ -114,16 +114,19 @@ class ComponentCatalogReferenceTests(TestCase):
         self.client.force_authenticate(self.user.__class__.objects.get(pk=self.user.pk))
         self.assertEqual(self.save(self.payload()).status_code, 403)
 
-    def test_public_attributes_fill_part_details_without_creating_catalog_options(self):
+    def test_only_own_attributes_fill_part_details_without_creating_catalog_options(self):
         attrs = {"model": "椅面图号 A", "size": "成形 50*60cm"}
         for key, value in attrs.items():
             MaterialAttributePublicValue.objects.create(category_key="FABRIC_SEMI", template_key="FABRIC_SEMI",
                 scope="BASE", field_key=key, value=value)
-        before = (MaterialAllowedUnit.objects.count(), MaterialAttributeValue.objects.count(),
-                  MaterialAttributePublicValue.objects.count())
         rows = self.payload()
         parent = next(line for line in rows[0]["lines"] if line["component_kind"] == "SEWN_PART")
         self.bind(parent, self.part_catalog, attributes=attrs)
+        self.assertEqual(self.save(rows).status_code, 400)
+        for key, value in attrs.items():
+            self.part_catalog.attribute_values.create(scope="BASE", field_key=key, value=value)
+        before = (MaterialAllowedUnit.objects.count(), MaterialAttributeValue.objects.count(),
+                  MaterialAttributePublicValue.objects.count())
         response = self.save(rows)
         self.assertEqual(response.status_code, 200, response.data)
         part = BomLine.objects.get(section__bom=self.bom, component_kind="SEWN_PART")
@@ -196,19 +199,18 @@ class ComponentCatalogReferenceTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("来自关联原料", str(response.data))
 
-    def test_explicit_part_dimensions_win_and_inactive_public_attributes_roll_back(self):
-        option = MaterialAttributePublicValue.objects.create(category_key="FABRIC_SEMI", template_key="FABRIC_SEMI",
-            scope="BASE", field_key="size", value="档案尺寸")
+    def test_explicit_part_dimensions_win_and_archived_catalog_attributes_roll_back(self):
+        option = self.part_catalog.attribute_values.create(scope="BASE", field_key="size", value="档案尺寸")
         rows = self.payload()
         parent = next(line for line in rows[0]["lines"] if line["component_kind"] == "SEWN_PART")
         parent["specification"] = "本单成形尺寸"
         self.bind(parent, self.part_catalog, attributes={"size": option.value})
-        option.status = "INACTIVE"
+        option.archived_at = timezone.now()
         option.save()
         response = self.save(rows)
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(BomLine.objects.filter(section__bom=self.bom).exists())
-        option.status = "ACTIVE"
+        option.archived_at = None
         option.save()
         response = self.save(rows)
         self.assertEqual(response.status_code, 200, response.data)

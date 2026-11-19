@@ -3,12 +3,11 @@ import type { MaterialAttributeField, MaterialAttributeSnapshot } from '@/types/
 export interface MaterialAttributeSource {
   material_selection_snapshot?: import('@/types/materialCatalog').MaterialSelectionSnapshot | Record<string, never> | null
   material_attributes_snapshot?: MaterialAttributeSnapshot | null
-  section_type?: string | null
-  section_title?: string | null
-  section_type_snapshot?: string | null
-  section_title_snapshot?: string | null
+  material_name?: string | null
   part_name?: string | null
   material?: string | null
+  color?: string | null
+  product_color?: string | null
   specification?: string | null
   raw_material?: string | null
   part_name_snapshot?: string | null
@@ -52,10 +51,12 @@ export function materialAttributeFields(source: MaterialAttributeSource): Materi
   const material = text(source.material ?? source.material_snapshot)
   const specification = text(source.specification ?? source.specification_snapshot)
   const rawMaterial = text(source.raw_material ?? source.raw_material_snapshot)
+  const color = text(source.color) || text(source.product_color)
   const fields: MaterialAttributeField[] = []
   if (partName) fields.push({ key: 'part_name', label: '品名', value: partName })
   if (material) fields.push({ key: 'material', label: '材质', value: material })
   if (specification) fields.push({ key: 'specification', label: '规格', value: specification })
+  if (color) fields.push({ key: 'color', label: '颜色', value: color })
   if (rawMaterial && rawMaterial !== material && rawMaterial !== partName) {
     fields.push({ key: 'raw_material', label: '原材料', value: rawMaterial })
   }
@@ -68,14 +69,30 @@ export function materialAttributeText(source: MaterialAttributeSource): string {
 
 export function materialSpecificationValue(source: MaterialAttributeSource): string {
   const fields = materialAttributeFields(source)
-  const title = text(source.section_title ?? source.section_title_snapshot)
-  const sectionType = text(source.section_type ?? source.section_type_snapshot)
-  const preferredKey = title.includes('面料')
-    ? 'specification'
-    : (title.includes('型材') || title.includes('管材') || sectionType === 'PROFILE')
-      ? 'part_name'
-      : 'part_name'
-  return fields.find((field) => field.key === preferredKey)?.value
-    || fields.find((field) => field.key === 'part_name' || field.key === 'specification')?.value
-    || '—'
+  const selected = source.material_selection_snapshot
+  const attributes = selected?.schema_version === 1 ? selected.attributes : undefined
+  const names = new Set([source.material_name, source.part_name, source.part_name_snapshot,
+    fields.find(field => field.key === 'part_name')?.value].map(text))
+  const fieldValue = (key: string) => text(fields.find(field => field.key === key)?.value)
+  const isDisplayValue = (value: string) => Boolean(value && value !== '—' && value !== '-' && !names.has(value))
+  const isCutPiece = selected?.template_key === 'FABRIC_SEMI'
+  const specificationKeys = isCutPiece ? ['specification'] : ['section_size', 'fabric_spec', 'specification']
+  const explicit = specificationKeys.map(fieldValue).find(isDisplayValue)
+  if (explicit) return explicit
+
+  const saved = text(source.specification ?? source.specification_snapshot)
+  // BOM 会把目录尺寸、型号等拼进规格字段，缺独立规格时应按属性显示。
+  const projectionKeys = isCutPiece ? ['size'] : ['fabric_spec', 'specification', 'section_size', 'size', 'model', 'width']
+  const projection = projectionKeys.map(key => text(attributes?.[key])).filter(Boolean).join(' / ')
+  if (isDisplayValue(saved) && saved !== projection) return saved
+
+  const fallbackKeys = [
+    ['size', '尺寸'], ['tube_size', '适配管材尺寸'], ['diameter', '直径'], ['length', '长度'],
+    ['width', '宽度'], ['fabric_width', '门幅'], ['thickness', '厚度'], ['model', '型号'], ['material', '材质'],
+  ] as const
+  const fallback = fallbackKeys.flatMap(([key, label]) => {
+    const value = fieldValue(key) || (key === 'material' && !attributes ? text(source.material ?? source.material_snapshot) : '')
+    return isDisplayValue(value) ? [`${label} ${value}`] : []
+  })
+  return fallback.join(' / ') || '—'
 }

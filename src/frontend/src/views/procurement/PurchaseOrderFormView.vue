@@ -158,7 +158,7 @@ function apiErrorMessage(error: unknown, fallback: string): string {
     : ''
   if (response?.status === 401) return '登录状态已失效，请刷新页面或重新登录。'
   if (response?.status === 403) return '当前账号没有新建采购订单的权限。'
-  if (response?.status === 412) return '总单已有更新，输入已保留。请重新读取总单版本后核对并重试。'
+  if (response?.status === 412) return '采购需求已有更新，输入已保留。请重新读取采购需求版本后核对并重试。'
   if (response?.status === 409) return response.data?.error?.message || response.data?.detail || '采购来源已变化，请重新读取采购需求。'
   return firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
 }
@@ -623,7 +623,7 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
 
 function validateDraft(): string {
   if (isBatchMode.value) {
-    if (!canWriteLines.value || !groupEtag.value) return '总单不可用或版本信息缺失，请重新读取。'
+    if (!canWriteLines.value || !groupEtag.value) return '采购需求不可用或版本信息缺失，请重新读取。'
     // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
     for (const [index, line] of lines.value.entries()) {
        const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
@@ -759,7 +759,7 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
     const message = apiErrorMessage(error, '采购订单草稿保存失败，请稍后重试。')
     if (isBatchMode.value) {
       const status = (error as { response?: { status?: number } })?.response?.status
-      batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回总单核对是否已创建批次。'
+      batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回采购需求核对是否已创建批次。'
     }
     ElMessage.error(message)
   } finally {
@@ -872,7 +872,7 @@ async function goToDetails(): Promise<void> {
     try {
       const result = await createPurchaseGroup({ production_task_id: sourceId, bom_id: selectedBomId.value, source_revision: source.value!.source_revision })
       await router.push({ name: 'purchase-batch-create', params: { groupId: result.data.id } })
-    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购总单失败，请重新读取来源。')) }
+    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购需求失败，请重新读取来源。')) }
     finally { saving.value = false }
     return
   }
@@ -964,9 +964,9 @@ async function loadGroup(preserveInput = false): Promise<void> {
       batchType.value = 'NORMAL'
     }
     batchConflict.value = ''
-    sourceError.value = result.data.progress.status === 'UNKNOWN' ? '总单来源待核对，暂不能创建批次。' : ''
+    sourceError.value = result.data.progress.status === 'UNKNOWN' ? '采购需求来源待核对，暂不能创建批次。' : ''
   } catch (error) {
-    if (current === sourceRequestId) batchConflict.value = apiErrorMessage(error, '采购总单读取失败。')
+    if (current === sourceRequestId) batchConflict.value = apiErrorMessage(error, '采购需求读取失败。')
   } finally { if (current === sourceRequestId) sourceLoading.value = false }
 }
 
@@ -976,8 +976,8 @@ async function openExistingGroup(): Promise<void> {
   try {
     const id = blocker.existing_purchase_group_id || (blocker.existing_purchase_order_id ? (await fetchVersionedPurchaseOrder(blocker.existing_purchase_order_id)).data.purchase_group_id : null)
     if (id) await router.push({ name: 'purchase-group-detail', params: { id } })
-    else ElMessage.warning('该来源没有可读取的总单归属，请联系管理员核对。')
-  } catch (error) { ElMessage.error(apiErrorMessage(error, '总单归属读取失败。')) }
+    else ElMessage.warning('该来源没有可读取的采购需求归属，请联系管理员核对。')
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '采购需求归属读取失败。')) }
 }
 
 watch(() => route.fullPath, () => {
@@ -1006,21 +1006,21 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 <template>
   <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
     <div v-if="!canAdd" class="state-page">
-      <h1>无权新建采购订单</h1>
+      <h1>无权新建采购需求</h1>
       <p>请联系管理员开通“采购订单新增”权限后重试。</p>
-      <ElButton @click="back">返回采购订单列表</ElButton>
+      <ElButton @click="back">返回采购需求列表</ElButton>
     </div>
 
     <template v-else>
       <header class="page-heading">
         <div>
           
-          <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购订单' }}</h1>
-          <p>{{ isBatchMode ? `${group?.group_number || '采购总单'} · 默认带入剩余采购量，可修改；空白或 0 不计入，可超过建议量` : isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
+          <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购需求' }}</h1>
+          <p>{{ isBatchMode ? `${group?.group_number || '采购需求'} · 默认带入剩余采购量，可修改；空白或 0 不计入，可超过建议量` : isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
         </div>
         <div class="page-action-panel">
           <div class="page-actions">
-            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回总单' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
+            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回采购需求' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
             <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">下一步：填写明细<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
             <ElButton v-if="isDetailStep" type="primary" plain :loading="saving" :disabled="saving" @click="saveDraft">保存草稿</ElButton>
           </div>
@@ -1034,8 +1034,8 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         <ElButton link :disabled="sourceLoading || optionsLoading" @click="initializePage">重新读取来源</ElButton>
       </ElAlert>
       <ElAlert v-if="isBatchMode && (batchConflict || sourceError)" type="warning" :title="batchConflict || sourceError" :closable="false" show-icon>
-        <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取总单版本（保留输入）</ElButton>
-        <ElButton link @click="back">查看总单已有批次</ElButton>
+        <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取采购需求版本（保留输入）</ElButton>
+        <ElButton link @click="back">查看采购需求已有批次</ElButton>
       </ElAlert>
       <div v-if="isBatchMode" class="batch-type-field">
         <span>批次类型</span><ElRadioGroup v-model="batchType" :disabled="saving" aria-label="批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
@@ -1119,7 +1119,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
               {{ sourceError || (selectedBom ? `当前选择：第 ${selectedBom.product_line_number} 行 · ${selectedBom.product_color || selectedBom.product_name}` : '请选择本次采购的产品 BOM') }}
               <template v-if="selectedBom && !source?.can_create && !sourceError"> · {{ source?.blockers?.[0]?.message || '当前仅可预览，不能采购' }}</template>
             </p>
-            <ElButton v-if="existingSourceBlocker" link type="primary" @click="openExistingGroup">进入已有采购总单</ElButton>
+            <ElButton v-if="existingSourceBlocker" link type="primary" @click="openExistingGroup">进入已有采购需求</ElButton>
           </section>
           <div v-else class="sample-source-summary">
             <strong>{{ source?.sample_request?.summary || '打样采购需求' }}</strong>
@@ -1192,14 +1192,11 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           <ElTableColumn v-if="isSampleSource" label="材质" width="118" show-overflow-tooltip>
             <template #default="{ row }">{{ row.material || row.raw_material || '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-if="isSampleSource" label="规格" width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ row.specification || '—' }}</span></ElTooltip></template>
+          <ElTableColumn label="规格" width="220">
+            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="颜色" width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.product_color || '—' }}</template>
-          </ElTableColumn>
-          <ElTableColumn v-if="!isSampleSource" label="规格" width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="需求数量" width="104">
              <template #default="{ row }"><span v-if="isWeightLine(row)">见打样需求</span><template v-else>{{ formatSuggestedQuantity(row.sample_demand_quantity) }} {{ row.sample_demand_unit || (isPipePurchaseLine(row) ? '米' : row.source_unit_text) }}</template></template>

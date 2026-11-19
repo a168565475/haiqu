@@ -1721,7 +1721,7 @@ def delete_bom(*, bom, actor_employee, request):
     if PurchaseGroup.objects.filter(
         Q(source_bom_id_snapshot=locked.pk) | Q(lines__source_bom_line_id_snapshot__in=line_ids)
     ).exists():
-        raise Conflict("该 BOM 已被采购总单引用，无法删除。")
+        raise Conflict("该 BOM 已被采购需求引用，无法删除。")
     if PurchaseOrderLine.objects.filter(source_bom_line_id_snapshot__in=line_ids).exists():
         raise Conflict("该 BOM 已被采购明细引用，无法删除。")
 

@@ -53,11 +53,11 @@ def complete_purchase_group(*, group_id, remark, allowed_task_ids, actor_employe
         pk=group_id, production_task_id__in=allowed_task_ids, archived_at__isnull=True,
     ).values_list("production_task_id", flat=True).first()
     if task_id is None:
-        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+        raise NotFound("采购需求不存在或不在当前账号的数据范围内。")
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
     group = PurchaseGroup.objects.select_for_update().filter(pk=group_id, archived_at__isnull=True).first()
     if task.archived_at or group is None:
-        raise NotFound("采购总单不存在、已删除或生产订单已归档。")
+        raise NotFound("采购需求不存在、已删除或生产订单已归档。")
     require_matching_etag(request, group)
     # 入库先锁采购单；锁完当前所有批次后重新读取流程，不能依赖页面预取或总单版本代替重核。
     list(PurchaseOrder.objects.select_for_update().filter(
@@ -91,14 +91,14 @@ def delete_purchase_group(*, group_id, allowed_task_ids, actor_employee, request
         pk=group_id, production_task_id__in=allowed_task_ids, archived_at__isnull=True,
     ).values_list("production_task_id", flat=True).first()
     if task_id is None:
-        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+        raise NotFound("采购需求不存在或不在当前账号的数据范围内。")
     # 与新建总单、批次及确认采购统一锁顺序；等待期间对象可能已被删除。
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
     group = PurchaseGroup.objects.select_for_update().filter(
         pk=group_id, production_task_id__in=allowed_task_ids, archived_at__isnull=True,
     ).first()
     if group is None or task.archived_at:
-        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+        raise NotFound("采购需求不存在或不在当前账号的数据范围内。")
     require_matching_etag(request, group)
     batches = list(PurchaseOrder.objects.select_for_update().filter(purchase_group=group).order_by("id"))
     batch_ids = [batch.pk for batch in batches]
@@ -116,7 +116,7 @@ def delete_purchase_group(*, group_id, allowed_task_ids, actor_employee, request
         PurchaseGroupLine.objects.filter(purchase_group=group).delete()
         group.delete()
     except ProtectedError as error:
-        raise Conflict("采购总单已有其他业务记录引用，不能删除；请刷新后核对。") from error
+        raise Conflict("采购需求已有其他业务记录引用，不能删除；请刷新后核对。") from error
     write_audit_log(
         object_type="PURCHASE_GROUP", object_id=group_id, action="DELETED",
         context_type="PRODUCTION_TASK", context_id=task_id, actor_employee=actor_employee,
@@ -220,15 +220,15 @@ def attach_purchase_order_group(order):
     if existing is not None:
         if (issues or existing.compatibility_issues or existing.batches.exists()
                 or existing.source_bom_id_snapshot not in bom_ids or existing.source_revision != order.source_revision):
-            raise Conflict("该产品已有采购总单，不能重建不同来源的采购单。")
+            raise Conflict("该产品已有采购需求，不能重建不同来源的采购单。")
         saved_lines = {line.source_bom_line_id_snapshot: line for line in existing.lines.all()}
         if set(saved_lines) != {line.source_bom_line_id_snapshot for line in lines}:
-            raise Conflict("原采购总单材料范围已变化，请沿用总单快照新增批次。")
+            raise Conflict("原采购需求材料范围已变化，请沿用采购需求快照新增批次。")
         for line in lines:
             saved = saved_lines[line.source_bom_line_id_snapshot]
             snapshot = _json_value({field: getattr(line, field) for field in SOURCE_FIELDS})
             if saved.compatibility_issues or any(snapshot.get(key) != saved.source_snapshot.get(key) for key in SOURCE_FIELDS):
-                raise Conflict("原采购总单来源快照已变化，请沿用总单快照新增批次。")
+                raise Conflict("原采购需求来源快照已变化，请沿用采购需求快照新增批次。")
             line.purchase_group_line = saved
             line.save(update_fields=["purchase_group_line"])
         order.purchase_group = existing
@@ -273,7 +273,7 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
     ).first()
     if existing is not None:
         if existing.source_revision != validated_data["source_revision"]:
-            raise Conflict("该产品已保存采购总单，请沿用总单快照新增批次。")
+            raise Conflict("该产品已保存采购需求，请沿用采购需求快照新增批次。")
         return existing
     source = evaluate_purchase_source(
         production_tasks_with_purchase_sources(ProductionTask.objects.filter(pk=task.pk)).get(),
@@ -320,17 +320,17 @@ def validate_group_line_source(line):
     """分批采用已保存的总单身份；BOM版本变化不能改写历史采购来源。"""
     source = line.purchase_group_line
     if source.purchase_group_id != line.purchase_order.purchase_group_id:
-        raise Conflict("采购批次明细不属于当前总单。")
+        raise Conflict("采购批次明细不属于当前采购需求。")
     if source.compatibility_issues:
-        raise Conflict("采购总单来源存在待核对项，不能沿用未知来源。")
+        raise Conflict("采购需求来源存在待核对项，不能沿用未知来源。")
     if line.source_unit_text != source.source_unit_text or line.required_quantity != source.required_quantity:
-        raise Conflict("采购批次单位或建议量与保存的总单快照不一致。")
+        raise Conflict("采购批次单位或建议量与保存的采购需求快照不一致。")
     if line.calculation_snapshot != source.source_snapshot.get("calculation_snapshot", {}):
-        raise Conflict("采购批次材料身份或计算参数与总单快照不一致。")
+        raise Conflict("采购批次材料身份或计算参数与采购需求快照不一致。")
     if line.material_catalog_id:
         purchase_catalog_selection(line)
         if str(line.material_catalog_id) != str(source.source_snapshot.get("material_catalog_id")) or line.material_selection_snapshot != source.source_snapshot.get("material_selection_snapshot"):
-            raise Conflict("采购批次材料与总单保存内容不一致。")
+            raise Conflict("采购批次材料与采购需求保存内容不一致。")
         return
     material = resolve_purchase_material(line)
     if line.section_type_snapshot == "PROFILE" and (
@@ -345,14 +345,14 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     task_id = PurchaseGroup.objects.filter(pk=group_id, production_task_id__in=allowed_task_ids,
                                            archived_at__isnull=True).values_list("production_task_id", flat=True).first()
     if task_id is None:
-        raise NotFound("采购总单不存在或不在当前账号的数据范围内。")
+        raise NotFound("采购需求不存在或不在当前账号的数据范围内。")
     # 与原采购编辑保持任务→总单→明细的锁顺序；批次序号和幂等键在同一事务产生。
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
     if task.archived_at:
         raise NotFound("生产订单已归档。")
     group = PurchaseGroup.objects.select_for_update().filter(pk=group_id, archived_at__isnull=True).first()
     if group is None:
-        raise NotFound("采购总单不存在或已删除，请重新选择。")
+        raise NotFound("采购需求不存在或已删除，请重新选择。")
     fingerprint = hashlib.sha256(json.dumps(validated_data, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
     existing = group.batches.filter(batch_request_id=validated_data["request_id"]).first()
     if existing:
@@ -364,13 +364,13 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     if task.status not in PURCHASABLE_TASK_STATUSES:
         raise Conflict("生产任务当前状态不允许新增采购批次。")
     if group.compatibility_issues:
-        raise Conflict("采购总单来源归属存在待核对项，不能新增批次。")
+        raise Conflict("采购需求来源归属存在待核对项，不能新增批次。")
     require_matching_etag(request, group)
     source_lines = {str(line.pk): line for line in group.lines.select_for_update().order_by("id")}
     inputs = validated_data["lines"]
     ids = [str(item["purchase_group_line_id"]) for item in inputs]
     if len(ids) != len(set(ids)) or not set(ids).issubset(source_lines):
-        raise ValidationError({"lines": "批次材料必须属于当前总单，且不能重复。"})
+        raise ValidationError({"lines": "批次材料必须属于当前采购需求，且不能重复。"})
     if not inputs:
         raise ValidationError({"lines": "采购批次至少选择一项材料。"})
     for identifier in ids:
@@ -380,14 +380,14 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
             continue
         calculation = snapshot.get("calculation_snapshot") or {}
         if source.source_unit_text != "KG" or not isinstance(calculation, dict) or calculation.get("measurement_unit") != "kg":
-            raise Conflict("旧米制管材总单不能新建采购批次，请先补齐 BOM 长料单重并建立重量采购来源。")
+            raise Conflict("旧米制管材采购需求不能新建采购批次，请先补齐 BOM 长料单重并建立重量采购来源。")
         try:
             weight = decimal_quantity(snapshot.get("raw_bar_weight_kg"), "raw_bar_weight_kg")
             saved_weight = decimal_quantity(calculation.get("raw_bar_weight_kg"), "raw_bar_weight_kg")
         except MaterialFlowValueError as error:
-            raise Conflict("管材总单缺少有效长料单重，不能新建采购批次。") from error
+            raise Conflict("管材采购需求缺少有效长料单重，不能新建采购批次。") from error
         if weight != saved_weight:
-            raise Conflict("管材总单长料单重与保存的计算依据不一致，请先核对来源。")
+            raise Conflict("管材采购需求长料单重与保存的计算依据不一致，请先核对来源。")
     lock_bom_line_material_identities([], extra_raw_material_ids=[
         source_lines[key].source_snapshot.get("calculation_snapshot", {}).get("raw_material_id") for key in ids
     ])

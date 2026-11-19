@@ -755,7 +755,7 @@ def evaluate_purchase_source(task, bom_id=None):
             )
             if not can_reconnect:
                 bom_blockers.append(_blocker(
-                    "PURCHASE_GROUP_EXISTS", "该产品已有采购总单，请在总单中新增批次。", product=product, bom=latest_bom,
+                    "PURCHASE_GROUP_EXISTS", "该产品已有采购需求，请在该需求中新增批次。", product=product, bom=latest_bom,
                     existing_purchase_group_id=str(group.pk), existing_purchase_group_number=group.group_number,
                 ))
         unavailable_blockers.extend(bom_blockers)
@@ -1192,7 +1192,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         order.is_mailed = validated_data["is_mailed"]
     if "batch_type" in validated_data:
         if not order.purchase_group_id or order.source_type != "PRODUCTION":
-            raise ValidationError({"batch_type": "只有生产采购总单的批次可以设置采购类型。"})
+            raise ValidationError({"batch_type": "只有生产采购需求的批次可以设置采购类型。"})
         order.batch_type = validated_data["batch_type"]
     order.total_amount = (
         _money(sum(amounts, Decimal("0")))

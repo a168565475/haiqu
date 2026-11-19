@@ -13,7 +13,7 @@ vi.mock('@/api/purchaseTracking', () => ({ fetchPurchaseTrackingArrivals: vi.fn(
 
 const common = (): PurchaseTrackingRow => ({ row_key: 'arrival:line-1', production_task_id: 'task-1', task_number: 'SC-1', product_line_id: 'product-1', product_name: '测试产品', material_name: '管材', specification: '20×20', unit: '米', purchase_group_id: 'group-1', source_bom_line_id: 'bom-line-1', source_reliable: true, verification_notes: [], is_history: false, risks: [{ code: 'OVERDUE', label: '逾期2天', level: 'danger', rank: 30 }], actions: [{ kind: 'view_order', label: '查看批次', path: '/purchase-orders/order-1/details' }], action_blocked_reason: '', evaluated_at: '2026-11-05T01:00:00Z' })
 const arrival = (overrides: Partial<PurchaseTrackingArrival> = {}): PurchaseTrackingArrival => ({ ...common(), material_selection_snapshot: {}, material_attributes_snapshot: {}, part_name: '', material: '', raw_material: '', purchase_order_id: 'order-1', purchase_order_line_id: 'line-1', purchase_order_no: 'CG-1', batch_number: 1, publication_status: '已确认 · 未发布', supplier_name: '测试供应商', ordered_quantity: '600.0000', received_quantity: '360.0000', accepted_quantity: '280.0000', pending_quality_quantity: '80.0000', unreceived_quantity: '240.0000', return_quantity: '0.0000', return_pending: false, delivery_date: '2026-11-03', days_remaining: -2, ordered_root_count: null, received_root_count: null, unreceived_root_count: null, root_count_note: '', ...overrides })
-const coverage = (overrides: Partial<PurchaseTrackingCoverage> = {}): PurchaseTrackingCoverage => ({ ...common(), bom_created_at: null, bom_confirmed_at: null, bom_purchase_due_at: null, latest_purchase_date: null, purchase_days_remaining: null, material_category_key: null, order_delivery_date: null, material_attributes_snapshot: {}, material_selection_snapshot: {}, part_name: '', material: '', raw_material: '', row_key: 'coverage:product-1:bom-line-1', required_quantity: '2000.0000', purchased_quantity: '0.0000', remaining_quantity: '2000.0000', scheduled: true, material_inbound_date: '2026-11-06', group_status: '总单未建', purchase_group_id: null, required_root_count: null, purchased_root_count: null, remaining_root_count: null, root_count_note: '', risks: [{ code: 'SCHEDULED_UNPURCHASED', label: '已排产未采购', level: 'danger', rank: 30 }], actions: [], action_blocked_reason: '当前账号仅有查看权限。', ...overrides })
+const coverage = (overrides: Partial<PurchaseTrackingCoverage> = {}): PurchaseTrackingCoverage => ({ ...common(), bom_created_at: null, bom_confirmed_at: null, bom_purchase_due_at: null, latest_purchase_date: null, purchase_days_remaining: null, material_category_key: null, order_delivery_date: null, material_attributes_snapshot: {}, material_selection_snapshot: {}, part_name: '', material: '', raw_material: '', row_key: 'coverage:product-1:bom-line-1', required_quantity: '2000.0000', purchased_quantity: '0.0000', remaining_quantity: '2000.0000', scheduled: true, material_inbound_date: '2026-11-06', group_status: '需求未建', purchase_group_id: null, required_root_count: null, purchased_root_count: null, remaining_root_count: null, root_count_note: '', risks: [{ code: 'SCHEDULED_UNPURCHASED', label: '已排产未采购', level: 'danger', rank: 30 }], actions: [], action_blocked_reason: '当前账号仅有查看权限。', ...overrides })
 const page = <T,>(rows: T[], total = rows.length, current = 1) => ({ data: rows, meta: { page: current, page_size: 20, total, total_pages: Math.ceil(total / 20) } })
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
 let wrapper: VueWrapper | undefined
@@ -165,7 +165,7 @@ describe('采购跟踪与采购提醒独立列表', () => {
     expect(wrapper!.get('h1').text()).toBe('采购提醒')
     expect(wrapper!.find('[data-tab]').exists()).toBe(false)
     expect(wrapper!.get('thead').text()).toContain('待采购')
-    expect(wrapper!.get('tbody').text()).toContain('总单未建')
+    expect(wrapper!.get('tbody').text()).toContain('需求未建')
     expect(api.fetchPurchaseTrackingCoverage).toHaveBeenCalled()
     expect(api.fetchPurchaseTrackingArrivals).not.toHaveBeenCalled()
   })
@@ -457,7 +457,7 @@ describe('采购跟踪与采购提醒独立列表', () => {
     await flushPromises()
     pending.resolve(page([arrival({ material_name: '迟到的旧材料' })]))
     await flushPromises()
-    expect(wrapper!.get('tbody').text()).toContain('总单未建')
+    expect(wrapper!.get('tbody').text()).toContain('需求未建')
     expect(wrapper!.get('tbody').text()).not.toContain('迟到的旧材料')
   })
 

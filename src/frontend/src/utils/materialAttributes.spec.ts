@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { materialAttributeFields } from './materialAttributes'
+import { materialAttributeFields, materialSpecificationValue } from './materialAttributes'
 
 describe('采购物料属性展示', () => {
   it('普通颜色快照按色卡色号颜色展示，不输出内部颜色ID', () => {
@@ -31,5 +31,37 @@ describe('采购物料属性展示', () => {
     })
 
     expect(fields).toEqual([{ key: 'specification', label: '规格', value: 'Φ22' }])
+  })
+})
+
+describe('采购物料规格列', () => {
+  it.each([
+    ['TUBE', { section_size: '20×20', thickness: '1.5', material: 'Q235' }, '20×20'],
+    ['FABRIC', { fabric_spec: '600D', width: '150 cm', material: '涤纶' }, '600D'],
+    ['HARDWARE', { specification: 'M6', size: '30 mm', material: '钢' }, 'M6'],
+  ])('有目录规格时只显示 %s 的规格', (template_key, attributes, expected) => {
+    const snapshot = { schema_version: 1, name: '材料名称', template_key, attributes }
+    expect(materialSpecificationValue({ part_name: snapshot.name, specification: '旧投影', material_selection_snapshot: snapshot as never })).toBe(expected)
+  })
+
+  it('目录没有明确规格时，用尺寸和材质代替 BOM 拼出的规格', () => {
+    const snapshot = { schema_version: 1, name: '连接件', template_key: 'PLASTIC',
+      attributes: { size: '30×20 mm', material: '尼龙' } }
+    expect(materialSpecificationValue({ specification: '30×20 mm', material_selection_snapshot: snapshot as never })).toBe('尺寸 30×20 mm / 材质 尼龙')
+  })
+
+  it('保留与品名不同的旧单规格和目录未投影的独立规格', () => {
+    const snapshot = { schema_version: 1, name: '扣件', template_key: 'HARDWARE', attributes: { material: '不锈钢' } }
+    expect(materialSpecificationValue({ part_name_snapshot: '扣件', specification_snapshot: 'M8×12', material_snapshot: '不锈钢' })).toBe('M8×12')
+    expect(materialSpecificationValue({ specification: 'M8×12', material_selection_snapshot: snapshot as never })).toBe('M8×12')
+  })
+
+  it('排除同名的历史规格，再用历史尺寸和材质', () => {
+    const source = { part_name_snapshot: '扣件', specification_snapshot: ' 扣件 ', material_snapshot: '尼龙',
+      material_attributes_snapshot: { fields: [
+        { key: 'specification', label: '规格', value: '扣件' }, { key: 'size', label: '尺寸', value: '30 mm' },
+      ] } }
+    expect(materialSpecificationValue(source)).toBe('尺寸 30 mm / 材质 尼龙')
+    expect(materialSpecificationValue({ material_name: '扣件', specification: '扣件' })).toBe('—')
   })
 })

@@ -41,7 +41,7 @@ export async function createPurchaseGroup(payload: PurchaseGroupInput): Promise<
 }
 
 export async function deletePurchaseGroup(id: string, etag: string): Promise<void> {
-  if (!etag) throw new Error('采购总单版本信息缺失，请刷新后重试。')
+  if (!etag) throw new Error('采购需求版本信息缺失，请刷新后重试。')
   await apiClient.delete(`${basePath}${id}/`, { headers: { 'If-Match': etag } })
 }
 

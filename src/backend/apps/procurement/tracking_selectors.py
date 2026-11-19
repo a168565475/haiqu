@@ -481,7 +481,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
             bom = boms.get(product.tracking_bom_id)
             product_notes = []
             if task.pk in unresolved_product_tasks:
-                product_notes.append('历史总单或采购明细的产品归属无法核实，不能当作未采购')
+                product_notes.append('历史采购需求或采购明细的产品归属无法核实，不能当作未采购')
             if task.status == 'PAUSED' and not task.accepted_by_employee_id and not task.started_at:
                 product_notes.append('历史暂停任务的已接单来源待核对')
             if bom is None:
@@ -493,9 +493,9 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
             associated = group_map.get((task.pk, product.pk), [])
             group = associated[0] if len(associated) == 1 else None
             if len(associated) > 1 or group_map.get((task.pk, None)):
-                product_notes.append('采购总单产品归属不唯一')
+                product_notes.append('采购需求产品归属不唯一')
             if group and group.compatibility_issues:
-                product_notes.append('采购总单来源存在历史待核对项')
+                product_notes.append('采购需求来源存在历史待核对项')
             current = {}
             if bom:
                 for section in bom.sections.all():
@@ -511,7 +511,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                 product_notes.append('历史采购无法核实BOM需求行归属，不能当作未采购')
             if group and set(current) != {str(line.source_bom_line_id_snapshot) for line in source_lines}:
                 rows.append(_unknown_product_row(task, product, group, bom, scheduled, schedules, history,
-                    product_notes + ['当前BOM行集合与冻结总单不同，需核对增补或跨版本来源'], evaluated_at,
+                    product_notes + ['当前BOM行集合与冻结采购需求不同，需核对增补或跨版本来源'], evaluated_at,
                     changed=bool(bom and bom.status == 'VERIFIED')))
                 continue
             if not group and product_notes:
@@ -578,7 +578,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                     required_quantity=quantity_text(required), purchased_quantity=quantity_text(purchased) if reliable else None,
                     remaining_quantity=quantity_text(remaining), scheduled=scheduled,
                     material_inbound_date=schedules[product.pk]['material_inbound_date'].isoformat() if scheduled else None,
-                    group_status=('人工完成总单' if group.manual_completed_at else '已建总单') if group else '总单未建',
+                    group_status=('人工完成需求' if group.manual_completed_at else '已建需求') if group else '需求未建',
                     required_root_count=str(required_roots) if is_pipe and root_valid else None,
                     purchased_root_count=quantity_text(purchased_roots) if is_pipe and root_valid and reliable else None,
                     remaining_root_count=quantity_text(max(Decimal(required_roots)-purchased_roots, Decimal('0')))
@@ -615,7 +615,7 @@ def _apply_coverage_timing(row, bom, now, policy):
 
 def _coverage_actions(row, task, group, bom, reliable, remaining):
     if group and not task.archived_at:
-        row['actions'].append({'kind': 'view_group', 'label': '查看总单', 'path': f'/purchase-groups/{group.pk}'})
+        row['actions'].append({'kind': 'view_group', 'label': '查看需求', 'path': f'/purchase-groups/{group.pk}'})
     if bom and not reliable and not task.archived_at:
         row['actions'].append({'kind': 'view_bom', 'label': '查看BOM', 'path': f'/boms/{bom.pk}/preview'})
     if task.archived_at or task.status not in {'READY', 'IN_PRODUCTION'}:
@@ -626,7 +626,7 @@ def _coverage_actions(row, task, group, bom, reliable, remaining):
         if group:
             row['actions'].append({'kind': 'create_batch', 'label': '新增批次', 'path': f'/purchase-groups/{group.pk}/batches/new'})
         else:
-            row['actions'].append({'kind': 'create_group', 'label': '创建总单',
+            row['actions'].append({'kind': 'create_group', 'label': '创建需求',
                 'path': f'/purchase-orders/new?production_task_id={task.pk}&bom_id={bom.pk}'})
 
 

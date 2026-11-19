@@ -51,7 +51,7 @@ async function load(): Promise<void> {
     if (version !== requestVersion) return
     rows.value = []
     total.value = 0
-    errorMessage.value = (error as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message || '采购总单加载失败，请重试。'
+    errorMessage.value = (error as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message || '采购需求加载失败，请重试。'
   } finally {
     if (version === requestVersion) loading.value = false
   }
@@ -69,12 +69,12 @@ onBeforeUnmount(() => { requestVersion++ })
 <template>
   <section class="group-list" data-testid="purchase-group-list">
     <div class="group-toolbar">
-      <ElSelect v-model="taskId" filterable clearable placeholder="全部生产订单" aria-label="总单生产订单筛选" @change="search">
+      <ElSelect v-model="taskId" filterable clearable placeholder="全部生产订单" aria-label="采购需求按生产订单筛选" @change="search">
         <ElOption v-for="task in tasks" :key="task.id" :value="task.id" :label="`${task.task_number} · ${task.order_number}`" />
       </ElSelect>
       <ElButton @click="load">刷新</ElButton>
-      <span>共 {{ total }} 张总单</span>
-      <ElButton v-if="canAdd" type="primary" @click="router.push({ name: 'purchase-order-create' })">新建采购总单</ElButton>
+      <span>共 {{ total }} 条采购需求</span>
+      <ElButton v-if="canAdd" type="primary" @click="router.push({ name: 'purchase-order-create' })">新建采购需求</ElButton>
     </div>
     <ElAlert v-if="optionsError" type="warning" :title="optionsError" :closable="false"><ElButton link @click="loadOptions">重试选项</ElButton></ElAlert>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" :closable="false"><ElButton link @click="load">重新加载</ElButton></ElAlert>
@@ -85,7 +85,7 @@ onBeforeUnmount(() => { requestVersion++ })
           <col style="width: 170px"><col style="width: 110px"><col style="width: 100px"><col style="width: 115px">
           <col style="width: 170px"><col style="width: 130px"><col style="width: 65px"><col style="width: 110px"><col style="width: 110px">
         </colgroup>
-        <thead><tr><th>采购总单</th><th>来源订单</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th>采购需求</th><th>来源订单</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th>操作</th></tr></thead>
         <tbody><tr v-for="{ row, totalPercent } in displayRows" :key="row.id">
           <td><strong>{{ row.group_number }}</strong></td>
           <td>{{ row.production_task_number_snapshot }}</td>
@@ -99,7 +99,7 @@ onBeforeUnmount(() => { requestVersion++ })
           <td>{{ row.progress.satisfied_line_count }} / {{ row.progress.line_count }} 项达标</td><td>{{ row.batches.length }}</td>
             <td>{{ statusLabels[row.display_status ?? row.progress.status] }}</td>
           <td><ElButton link type="primary" @click="router.push({ name: 'purchase-group-detail', params: { id: row.id } })">查看明细</ElButton></td>
-        </tr><tr v-if="!loading && !rows.length"><td colspan="13" class="empty">{{ errorMessage ? '未能加载总单' : '暂无采购总单' }}</td></tr></tbody>
+        </tr><tr v-if="!loading && !rows.length"><td colspan="13" class="empty">{{ errorMessage ? '未能加载采购需求' : '暂无采购需求' }}</td></tr></tbody>
       </table>
     </div>
     <ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="search" />

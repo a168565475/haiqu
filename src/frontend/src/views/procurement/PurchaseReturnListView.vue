@@ -6,9 +6,10 @@ import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { advancePurchaseReturn, fetchPurchaseReturn, fetchPurchaseReturns, fetchReturnOptions } from '@/api/purchaseReturns'
 import { useAuthStore } from '@/stores/auth'
+import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import PurchaseReturnConfirmDialog from '@/components/procurement/PurchaseReturnConfirmDialog.vue'
 import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
-import { materialSpecificationValue } from '@/utils/materialAttributes'
+import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery } from '@/types/purchaseReturn'
 
 const auth = useAuthStore()
@@ -26,7 +27,7 @@ const canAdvance = (row: PurchaseReturn) => {
 }
 const purchaseOrderId = computed(() => typeof route.query.purchase_order_id === 'string' ? route.query.purchase_order_id : '')
 const returnFrom = computed(() => route.query.from === 'inbound' ? 'inbound' : route.query.from === 'orders' ? 'orders' : '')
-const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : '返回采购订单')
+const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : '返回采购需求')
 const filters = reactive({ q: '', supplier: '', status: '' as ReturnOrderStatus | '' })
 const rows = ref<PurchaseReturn[]>([])
 const options = ref<ReturnOptions>({ suppliers: [] })
@@ -55,10 +56,10 @@ function time(value: string | null): string {
   const date = new Date(value)
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date) : '—'
 }
-function materialField(row: PurchaseReturn, field: 'specification' | 'color' | 'material'): string {
+function materialField(row: PurchaseReturn, field: 'color' | 'material'): string {
   return row.lines.map(line => {
     if (line.material_selection_snapshot?.schema_version === 1) {
-      return field === 'specification' ? materialSpecificationValue(line) : line.material_selection_snapshot.attributes[field] || '—'
+      return line.material_selection_snapshot.attributes[field] || '—'
     }
     return line[field]?.trim() || '—'
   }).join('、') || '—'
@@ -181,7 +182,15 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
           <ElTableColumn label="采购单号" width="160" prop="order_number" show-overflow-tooltip><template #default="{ row }">{{ row.order_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="入库单号" width="160" prop="inbound_number" show-overflow-tooltip><template #default="{ row }">{{ row.inbound_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="生产任务单号" width="160" prop="production_task_number" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'specification') }}</template></ElTableColumn>
+          <ElTableColumn label="品名" min-width="148">
+            <template #default="{ row }">
+              <template v-for="(line, index) in row.lines" :key="line.id">
+                <template v-if="index">、</template><BomAttributesTooltip :fields="materialAttributeFields(line)">{{ line.part_name || line.material || '—' }}</BomAttributesTooltip>
+              </template>
+              <span v-if="!row.lines.length">—</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ row.lines.map(materialSpecificationValue).join('、') || '—' }}</template></ElTableColumn>
           <ElTableColumn label="颜色" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'color') }}</template></ElTableColumn>
           <ElTableColumn label="材质" min-width="100" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'material') }}</template></ElTableColumn>
           <ElTableColumn label="供应商" min-width="210"><template #default="{ row }"><SupplierAmountPopover :suppliers="[{ supplier_name: row.supplier_name || '—', total_amount: row.return_amount }]" :currency="row.currency_code" amount-title="本次退货金额" /></template></ElTableColumn>

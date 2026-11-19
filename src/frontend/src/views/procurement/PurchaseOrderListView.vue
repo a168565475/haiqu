@@ -342,7 +342,7 @@ async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
       row.purchase_group_id
-        ? `确定删除采购批次 ${row.order_number} 吗？系统将校验关联采购表及下游记录；删除后可在原总单中追加新批次。`
+        ? `确定删除采购批次 ${row.order_number} 吗？系统将校验关联采购表及下游记录；删除后可在原采购需求中追加新批次。`
         : `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及归档文件也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
       '删除采购订单',
       {
@@ -384,7 +384,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
     <section v-glass-spotlight class="erp-list-filter">
     <header class="page-heading erp-list-heading">
       <div class="page-heading__title">
-        <h1>{{ showingGroups ? '采购总单' : '采购订单' }}</h1>
+        <h1>{{ showingGroups ? '采购需求' : '采购订单' }}</h1>
         <span v-if="canView && !showingGroups" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
       </div>
       <div v-if="(canView && showingGroups) || (canViewSuppliers && !canView)" class="page-heading__actions">

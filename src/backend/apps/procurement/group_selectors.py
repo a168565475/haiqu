@@ -49,13 +49,13 @@ def purchase_groups_with_context(queryset=None):
 
 def purchase_group_deletion_summary(group):
     if group.manual_completed_at:
-        reason = "采购总单已完成，不能删除。"
+        reason = "采购需求已完成，不能删除。"
     elif group.delete_has_purchase:
-        reason = "已有确认采购或已完成的批次，不能删除总单。"
+        reason = "已有确认采购或已完成的批次，不能删除采购需求。"
     elif group.delete_has_documents:
-        reason = "已有关联供应商采购表、入库、退货或其他后续记录，不能删除总单。"
+        reason = "已有关联供应商采购表、入库、退货或其他后续记录，不能删除采购需求。"
     elif group.delete_has_foreign_lines:
-        reason = "总单材料被其他采购批次引用，请先核对关联记录。"
+        reason = "采购需求材料被其他采购批次引用，请先核对关联记录。"
     else:
         reason = ""
     return {"can_delete": not reason, "blocked_reason": reason}
@@ -228,10 +228,10 @@ def purchase_group_progress(group):
 
 def purchase_group_completion_summary(group):
     if group.manual_completed_at:
-        return {"can_complete": False, "blocked_reason": "采购总单已手动完成。"}
+        return {"can_complete": False, "blocked_reason": "采购需求已手动完成。"}
     progress = purchase_group_progress(group)
     if progress["status"] == "UNKNOWN":
-        return {"can_complete": False, "blocked_reason": "采购总单来源或数量存在待核对项，请先核对。"}
+        return {"can_complete": False, "blocked_reason": "采购需求来源或数量存在待核对项，请先核对。"}
     has_inbound = False
     for batch in group.batches.all():
         for line in batch.lines.all():
@@ -256,5 +256,5 @@ def purchase_group_completion_summary(group):
                     if return_line.return_order.status != PurchaseReturnStatus.COMPLETED:
                         return {"can_complete": False, "blocked_reason": "请先在退货明细中完成全部退货。"}
     if not has_inbound:
-        return {"can_complete": False, "blocked_reason": "至少需要完成一批到货流程后才能完成采购总单。"}
+        return {"can_complete": False, "blocked_reason": "至少需要完成一批到货流程后才能完成采购需求。"}
     return {"can_complete": True, "blocked_reason": ""}

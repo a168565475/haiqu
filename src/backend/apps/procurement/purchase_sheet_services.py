@@ -249,7 +249,7 @@ def _purchase_request_content(purchase_request, supplier, allocations, template_
     for allocation in allocations:
         request_line = allocation.purchase_request_line
         if request_line.bom_line and request_line.bom_line.section.section_type == 'PROFILE':
-            raise Conflict('旧管材采购申请不能生成供应商表，请先从采购汇总单建立根米采购。')
+            raise Conflict('旧管材采购申请不能生成供应商表，请先从采购需求建立根米采购。')
         content_lines.append(
             {
                 # 兼容既有采购表编辑器；新链路中该字段保存采购分配行 ID。
@@ -612,7 +612,7 @@ def generate_supplier_purchase_sheets(*, order_id, assignments, allowed_task_ids
     if order is None:
         raise NotFound("采购单不存在或不在当前账号的数据范围内。")
     if order.status != PurchaseOrderStatus.SUBMITTED:
-        raise Conflict("请先确认采购汇总单，再生成供应商采购表。")
+        raise Conflict("请先确认采购订单，再生成供应商采购表。")
     lines = list(order.lines.all())
     supplier_ids = {line.supplier_id for line in lines if line.supplier_id}
     if not supplier_ids or len(supplier_ids) != len({line.supplier_id for line in lines}):

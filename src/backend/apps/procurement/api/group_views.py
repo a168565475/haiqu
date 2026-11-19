@@ -76,9 +76,9 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         responses={
             204: None,
             403: OpenApiResponse(description="无删除权限、员工无效或 CSRF 校验失败。"),
-            404: OpenApiResponse(description="总单不存在或不在当前账号的数据范围内。"),
+            404: OpenApiResponse(description="采购需求不存在或不在当前账号的数据范围内。"),
             409: OpenApiResponse(description="已有确认采购或后续业务记录，不能删除。"),
-            412: OpenApiResponse(description="总单版本已变化，请重新读取并确认。"),
+            412: OpenApiResponse(description="采购需求版本已变化，请重新读取并确认。"),
             428: OpenApiResponse(description="缺少 If-Match 版本标识。"),
         },
     )

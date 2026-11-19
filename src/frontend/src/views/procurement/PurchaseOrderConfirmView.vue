@@ -227,12 +227,6 @@ function materialTitle(line: PurchaseOrderDetail['lines'][number]): string {
   return line.part_name || line.material || line.raw_material || '未命名物料'
 }
 
-function materialDetail(line: PurchaseOrderDetail['lines'][number]): string {
-  const values = [line.material, line.raw_material, line.specification]
-  if (order.value?.source_type === 'SAMPLE') values.push(line.product_color)
-  return [...new Set(values.filter(Boolean))].join(' · ') || '规格未填写'
-}
-
 function handleLineMouseEnter(line: PurchaseOrderDetail['lines'][number]): void {
   hoveredLineId.value = line.id
 }
@@ -373,7 +367,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
   <section v-loading="loading" class="confirm-page erp-glass-form">
     <header class="page-heading">
       <div><h1>确认采购订单</h1><p>核对供应商、交期、数量及单价</p></div>
-      <div><ElButton class="back-button" @click="backToList"><img :src="backIcon" alt="" class="purchase-icon" />返回{{ canReturnToGroup ? '采购总单' : '列表' }}</ElButton></div>
+      <div><ElButton class="back-button" @click="backToList"><img :src="backIcon" alt="" class="purchase-icon" />返回{{ canReturnToGroup ? '采购需求' : '列表' }}</ElButton></div>
     </header>
     <section v-if="loadError" class="load-error" role="alert"><ElAlert type="error" :title="loadError" :closable="false" show-icon /><ElButton @click="load">重新加载</ElButton></section>
     <template v-else-if="order">
@@ -402,10 +396,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
           <ElTableColumn label="物料信息" min-width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
           </ElTableColumn>
-          <ElTableColumn v-if="order.source_type === 'SAMPLE'" label="材质规格" min-width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialDetail(row) }}</span></ElTooltip></template>
-          </ElTableColumn>
-          <ElTableColumn v-else label="规格" min-width="220">
+          <ElTableColumn label="规格" min-width="220">
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn label="建议采购量" min-width="180" align="right" header-align="left">

@@ -36,6 +36,8 @@ from apps.sales_orders.presentation import specification_display
 from ..source_access import purchase_order_access
 from ..sample_purchase_services import sample_procurement_sources, sample_source
 from ..models import (
+    PurchaseGroup,
+    PurchaseGroupBomSource,
     PurchaseContractTemplate,
     PurchaseContractTemplateStatus,
     PurchaseOrder,
@@ -720,7 +722,18 @@ class PurchaseOrderViewSet(
             ).only(
                 "id", "product_line_id", "version_number", "status", "order_quantity", "line_count",
             ).order_by("-version_number", "-id")
-            product_options = ProductionTaskProduct.objects.only(
+            existing_demands = PurchaseGroup.objects.filter(
+                production_task_id=OuterRef("production_task_id"), product_line_id_snapshot=OuterRef("pk"),
+                archived_at__isnull=True, source_bom_id_snapshot__isnull=False,
+                manual_completed_at__isnull=True, compatibility_issues=[], combined_into_sources__isnull=True,
+            )
+            combined = PurchaseGroupBomSource.objects.filter(
+                product_line_id_snapshot=OuterRef("pk"), purchase_group__production_task_id=OuterRef("production_task_id"),
+                purchase_group__archived_at__isnull=True, purchase_group__product_line_id_snapshot__isnull=True,
+            )
+            product_options = ProductionTaskProduct.objects.annotate(
+                has_combinable_demand=Exists(existing_demands), already_combined=Exists(combined),
+            ).only(
                 "id", "production_task_id", "quantity",
             ).prefetch_related(
                 Prefetch("boms", queryset=bom_options, to_attr="purchase_source_boms"),
@@ -759,11 +772,15 @@ class PurchaseOrderViewSet(
                 stale_bom_count = 0
                 empty_bom_count = 0
                 purchased_product_count = 0
+                combinable_product_count = 0
                 for product in products:
-                    if product.pk in existing_by_product:
+                    latest_bom = (getattr(product, "purchase_source_boms", []) or [None])[0]
+                    if (product.has_combinable_demand and not product.already_combined and latest_bom
+                            and latest_bom.status == BomStatus.VERIFIED):
+                        combinable_product_count += 1
+                    if product.pk in existing_by_product or product.already_combined:
                         purchased_product_count += 1
                         continue
-                    latest_bom = (getattr(product, "purchase_source_boms", []) or [None])[0]
                     if latest_bom is None:
                         missing_bom_count += 1
                     elif latest_bom.status != BomStatus.VERIFIED:
@@ -774,7 +791,7 @@ class PurchaseOrderViewSet(
                         empty_bom_count += 1
                     else:
                         verified_bom_count += 1
-                if task.purchase_product_count and verified_bom_count == 0:
+                if task.purchase_product_count and verified_bom_count == 0 and combinable_product_count < 2:
                     if purchased_product_count == task.purchase_product_count:
                         blockers.append({
                             "code": "PURCHASE_ORDER_EXISTS",
@@ -800,7 +817,9 @@ class PurchaseOrderViewSet(
                             "code": "BOM_MISSING",
                             "message": "该订单没有已确认的有效 BOM。",
                         })
-                if task.purchase_product_count and purchased_product_count == task.purchase_product_count:
+                if combinable_product_count >= 2 and not blockers:
+                    source_status_display = "可合并采购"
+                elif task.purchase_product_count and purchased_product_count == task.purchase_product_count:
                     source_status_display = "已建采购单"
                 elif task.status not in {"READY", "IN_PRODUCTION"}:
                     source_status_display = task.get_status_display()
@@ -816,6 +835,7 @@ class PurchaseOrderViewSet(
                     **self._task_payload(task),
                     "product_count": task.purchase_product_count,
                     "remaining_product_count": task.purchase_product_count - purchased_product_count,
+                    "combinable_product_count": combinable_product_count,
                     "can_create": not blockers,
                     "blockers": blockers,
                     "source_status_display": source_status_display,

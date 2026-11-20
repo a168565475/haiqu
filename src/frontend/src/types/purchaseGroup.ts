@@ -4,6 +4,15 @@ import type { PageMeta } from './referenceData'
 export type PurchaseGroupStatus = 'PENDING' | 'PURCHASING' | 'COMPLETED' | 'UNKNOWN'
 
 export interface PurchaseGroupSourceSnapshot {
+  source_contributions?: {
+    bom_id: string
+    bom_line_id: string
+    product_line_id: string
+    product_name: string
+    product_color: string
+    required_quantity: string
+    source_unit_text: string
+  }[]
   material_catalog_id?: string | null
   material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   bom_id: string | null
@@ -45,6 +54,8 @@ export interface PurchaseGroupProgressLine {
   source_unit_text: string
   source_snapshot: PurchaseGroupSourceSnapshot
   purchased_quantity: string | null
+  planned_purchase_quantity?: string | null
+  remaining_purchase_quantity?: string | null
   accepted_quantity: string | null
   in_progress_quantity?: string | null
   purchased_bar_count?: string | null
@@ -98,6 +109,8 @@ export interface PurchaseGroup {
   sales_order_number_snapshot: string
   customer_name_snapshot: string
   product?: PurchaseGroupProduct | null
+  products?: PurchaseGroupProduct[]
+  combined_into_group_id?: string | null
   order_delivery_date?: string | null
   source_revision: string
   compatibility_issues: string[]
@@ -133,11 +146,11 @@ export interface VersionedPurchaseGroup {
   etag: string
 }
 
-export interface PurchaseGroupInput {
-  production_task_id: string
+export interface PurchaseGroupBomInput {
   bom_id: string
   source_revision: string
 }
+export type PurchaseGroupInput = { production_task_id: string } & (PurchaseGroupBomInput | { sources: PurchaseGroupBomInput[] })
 
 export interface PurchaseBatchLineInput {
   set_pricing?: PurchaseSetPricing | null

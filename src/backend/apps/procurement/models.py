@@ -203,6 +203,20 @@ class PurchaseGroup(ArchivableModel):
         ordering = ["-created_at", "-id"]
 
 
+class PurchaseGroupBomSource(TimeStampedModel):
+    purchase_group = models.ForeignKey(PurchaseGroup, on_delete=models.CASCADE, related_name="bom_sources")
+    previous_group = models.ForeignKey(PurchaseGroup, null=True, blank=True, on_delete=models.PROTECT, related_name="combined_into_sources")
+    bom_id_snapshot = models.UUIDField(db_index=True)
+    product_line_id_snapshot = models.UUIDField(db_index=True)
+    source_revision = models.CharField(max_length=64)
+
+    class Meta:
+        db_table = "procurement_purchase_group_bom_source"
+        constraints = [
+            models.UniqueConstraint(fields=["purchase_group", "product_line_id_snapshot"], name="purchase_group_product_source_uniq"),
+        ]
+
+
 class PurchaseGroupLine(TimeStampedModel):
     purchase_group = models.ForeignKey(PurchaseGroup, on_delete=models.PROTECT, related_name="lines")
     line_number = models.PositiveIntegerField()

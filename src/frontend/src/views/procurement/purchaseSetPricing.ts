@@ -1,4 +1,5 @@
 import type { PurchaseOrderSourceLine, PurchaseSetPricing } from '@/types/purchaseOrder'
+import type { PurchaseGroup } from '@/types/purchaseGroup'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { formatScaled, scaledProduct } from './purchaseAmounts'
 
@@ -15,6 +16,18 @@ export interface SetPricingChange {
   members: string[]
   supplierId: string | null
   deliveryDate: string
+}
+
+export function orderSetQuantity(group: PurchaseGroup | null): string {
+  const products = group?.products?.length ? group.products : group?.product ? [group.product] : []
+  let total = 0
+  for (const product of products) {
+    const quantity = compactDecimal(product.order_quantity, '')
+    if (!/^[1-9]\d{0,13}$/.test(quantity)) return ''
+    total += Number(quantity)
+    if (total >= 1e14) return ''
+  }
+  return total ? String(total) : ''
 }
 
 export function applySetPricing(lines: SetPricingLine[], change: SetPricingChange) {

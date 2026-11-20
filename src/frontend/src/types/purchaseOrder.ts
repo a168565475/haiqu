@@ -49,6 +49,7 @@ export interface PurchaseOrderProductionTaskOption {
   customer_name: string
   product_count: number
   remaining_product_count?: number
+  combinable_product_count?: number
   delivery_date: string
   status: string
   status_display: string
@@ -192,6 +193,10 @@ export interface PurchaseOrderSourceBlocker {
 }
 
 export interface PurchaseOrderBomOption {
+  source_revision?: string
+  existing_purchase_group_id?: string | null
+  can_combine?: boolean
+  combine_source_revision?: string
   product_line_id: string
   product_line_number: number
   product_number: string

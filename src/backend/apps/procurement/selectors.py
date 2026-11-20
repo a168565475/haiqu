@@ -8,6 +8,17 @@ from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from .models import PurchaseAllocationStatus, PurchaseOrder, PurchaseOrderLine, Supplier
 
 
+def purchase_line_products(line):
+    """读取下单时的成品来源，一条共用原料可能属于多款成品。"""
+    sources = (line.calculation_snapshot or {}).get("group_source_contributions")
+    if sources:
+        for item in sources:
+            yield (item["product_line_id"], item["bom_id"], item["product_name"], item["product_specification"])
+    else:
+        yield (str(line.product_line_id_snapshot or ""), str(line.bom_id or ""), line.product_name_snapshot,
+               line.product_specification_snapshot)
+
+
 def active_suppliers():
     return Supplier.objects.filter(archived_at__isnull=True)
 

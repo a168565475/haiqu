@@ -10,10 +10,27 @@ from ..models import PurchaseBatchType, PurchaseGroup, PurchaseOrderStatus
 from .serializers import PurchaseOrderUpdateLineSerializer
 
 
-class PurchaseGroupCreateSerializer(serializers.Serializer):
-    production_task_id = serializers.UUIDField()
+class PurchaseGroupBomInputSerializer(serializers.Serializer):
     bom_id = serializers.UUIDField()
     source_revision = serializers.RegexField(regex=r"^[0-9a-f]{64}$", max_length=64)
+
+
+class PurchaseGroupCreateSerializer(serializers.Serializer):
+    production_task_id = serializers.UUIDField()
+    bom_id = serializers.UUIDField(required=False)
+    source_revision = serializers.RegexField(regex=r"^[0-9a-f]{64}$", max_length=64, required=False)
+    sources = PurchaseGroupBomInputSerializer(many=True, allow_empty=False, required=False)
+
+    def validate(self, attrs):
+        if "sources" in attrs:
+            if "bom_id" in attrs or "source_revision" in attrs:
+                raise serializers.ValidationError({"sources": "请仅使用一种 BOM 来源填写方式。"})
+            ids = [entry["bom_id"] for entry in attrs["sources"]]
+            if len(set(ids)) != len(ids):
+                raise serializers.ValidationError({"sources": "同一份 BOM 不能重复选择。"})
+        elif "bom_id" not in attrs or "source_revision" not in attrs:
+            raise serializers.ValidationError({"sources": "请选择产品 BOM，并重新读取对应的来源版本。"})
+        return attrs
 
 
 class PurchaseGroupCompleteSerializer(serializers.Serializer):
@@ -75,6 +92,8 @@ class PurchaseGroupProgressLineSerializer(serializers.Serializer):
     source_unit_text = serializers.CharField()
     source_snapshot = serializers.JSONField()
     purchased_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True)
+    planned_purchase_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True, read_only=True)
+    remaining_purchase_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True, read_only=True)
     accepted_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True)
     purchased_bar_count = serializers.DecimalField(max_digits=30, decimal_places=0, allow_null=True, read_only=True)
     accepted_bar_count = serializers.DecimalField(max_digits=30, decimal_places=0, allow_null=True, read_only=True)
@@ -83,6 +102,19 @@ class PurchaseGroupProgressLineSerializer(serializers.Serializer):
     progress_percent = serializers.DecimalField(max_digits=38, decimal_places=4, allow_null=True)
     is_satisfied = serializers.BooleanField()
     compatibility_issues = serializers.ListField(child=serializers.CharField())
+
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        snapshot = result["source_snapshot"]
+        if snapshot.get("source_contributions"):
+            result["source_snapshot"] = {
+                **{key: value for key, value in snapshot.items() if key != "external_source_snapshots"},
+                "source_contributions": [
+                    {key: value for key, value in row.items() if key != "source_snapshot"}
+                    for row in snapshot["source_contributions"]
+                ],
+            }
+        return result
 
 
 class PurchaseGroupProgressSerializer(serializers.Serializer):
@@ -122,6 +154,8 @@ class PurchaseGroupProductSerializer(serializers.Serializer):
 
 class PurchaseGroupSerializer(serializers.ModelSerializer):
     product = serializers.SerializerMethodField()
+    products = serializers.SerializerMethodField()
+    combined_into_group_id = serializers.SerializerMethodField()
     order_delivery_date = serializers.DateField(source="production_task.delivery_date", read_only=True, allow_null=True)
     progress = serializers.SerializerMethodField()
     batches = PurchaseBatchSummarySerializer(many=True, read_only=True)
@@ -136,30 +170,52 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
         model = PurchaseGroup
         fields = ["id", "group_number", "production_task_id", "product_line_id_snapshot", "source_bom_id_snapshot",
                   "production_task_number_snapshot", "sales_order_number_snapshot", "customer_name_snapshot",
-                  "source_revision", "compatibility_issues", "product", "order_delivery_date",
+                  "source_revision", "compatibility_issues", "product", "products", "combined_into_group_id", "order_delivery_date",
                   "progress", "batches", "display_status", "completion", "deletion", "manual_completed_at",
                   "manual_completed_by_name", "manual_completion_remark", "created_at", "updated_at"]
         read_only_fields = fields
 
     @extend_schema_field(PurchaseGroupProgressSerializer)
     def get_progress(self, instance):
-        return PurchaseGroupProgressSerializer(purchase_group_progress(instance)).data
+        return PurchaseGroupProgressSerializer(self._progress(instance)).data
+
+    def _progress(self, instance):
+        # 列表逐单序列化，仅复用当前单据的计算结果。
+        if getattr(self, "_progress_group", None) is not instance:
+            self._current_progress = purchase_group_progress(instance)
+            self._progress_group = instance
+        return self._current_progress
 
     @extend_schema_field(serializers.ChoiceField(choices=["PENDING", "PURCHASING", "COMPLETED", "UNKNOWN"]))
     def get_display_status(self, instance):
-        return "COMPLETED" if instance.manual_completed_at else purchase_group_progress(instance)["status"]
+        return "COMPLETED" if instance.manual_completed_at else self._progress(instance)["status"]
 
     @extend_schema_field(PurchaseGroupCompletionSerializer)
     def get_completion(self, instance):
-        return purchase_group_completion_summary(instance)
+        return purchase_group_completion_summary(instance, progress=self._progress(instance))
 
     @extend_schema_field(PurchaseGroupDeletionSerializer)
     def get_deletion(self, instance):
         return purchase_group_deletion_summary(instance)
 
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_combined_into_group_id(self, instance):
+        return next((link.purchase_group_id for link in instance.combined_into_sources.all()), None)
+
     @extend_schema_field(PurchaseGroupProductSerializer(allow_null=True))
     def get_product(self, instance):
-        product_id = instance.product_line_id_snapshot
+        return self._product(instance, instance.product_line_id_snapshot)
+
+    @extend_schema_field(PurchaseGroupProductSerializer(many=True))
+    def get_products(self, instance):
+        if instance.product_line_id_snapshot is not None:
+            product = self.get_product(instance)
+            return [product] if product else []
+        selected = {source.product_line_id_snapshot for source in instance.bom_sources.all()}
+        return [self._product(instance, product.pk) for product in instance.production_task.purchase_group_products
+                if product.pk in selected]
+
+    def _product(self, instance, product_id):
         if product_id is None:
             return None
         # 仅使用本任务预取的订单产品快照，不能按第一产品或当前产品主档补历史。

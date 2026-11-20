@@ -87,14 +87,18 @@ def credit_catalog_inbound(*, line, actor_employee):
     if not MaterialInbound.objects.select_for_update().filter(pk=line.inbound_id, status="CONFIRMED").exists():
         raise ValidationError({"items": "入库尚未确认，不能记入可用库存。"})
     purchase = line.purchase_order_line
+    contributions = (purchase.calculation_snapshot or {}).get("group_source_contributions", []) if purchase else []
+    shared_product = len({row["product_line_id"] for row in contributions}) > 1
     pipe_weight_mode = line.measurement_kind == "PIPE" and line.source_unit_text_snapshot == "KG"
     return credit_public_stock(identity=identity, zone=line.zone, quantity=line.accepted_bar_count if line.measurement_kind == "PIPE" else line.accepted_quantity,
         source_type="MATERIAL_INBOUND", source_id=line.inbound_id, source_line_id=line.pk,
         actor_employee=actor_employee, production_task=purchase.purchase_order.production_task_id if purchase else None,
-        product_line=purchase.product_line_id_snapshot if purchase else None, bom_line=purchase.bom_line_id if purchase else None,
+        product_line=purchase.product_line_id_snapshot if purchase and not shared_product else None,
+        bom_line=purchase.bom_line_id if purchase and len(contributions) <= 1 else None,
         bar_weight_kg=line.bar_weight_kg if pipe_weight_mode else None,
         weight_quantity=line.accepted_weight_kg if pipe_weight_mode or is_hardware_weight(line) else None,
         snapshot={"material_selection_snapshot": line.material_selection_snapshot, "inbound_number": line.inbound.inbound_number,
+                  **({"group_source_contributions": contributions} if contributions else {}),
                   "purchase_order_number": line.purchase_order_number_snapshot,
                   "unit_name": line.material_selection_snapshot["unit_name"] if is_hardware_weight(line) else line.source_unit_text_snapshot,
                   **({"purchase_unit": line.source_unit_text_snapshot, "accepted_weight_kg": str(line.accepted_weight_kg),

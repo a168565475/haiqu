@@ -9,6 +9,7 @@ import rightIcon from '@/assets/procurement/create-right.svg'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
+import { fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import {
   confirmVersionedPurchaseOrder,
   fetchPurchaseOrderSupplierOptions,
@@ -20,7 +21,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import { isHardwareWeightLine } from './purchaseWeight'
 import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
 import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
-import { applySetPricing, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { applySetPricing, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 import { formatScaled, scaledProduct } from './purchaseAmounts'
 
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
@@ -36,11 +37,28 @@ const loadError = ref('')
 const actionError = ref('')
 const order = ref<PurchaseOrderDetail | null>(null)
 const editingSetId = ref('')
+const defaultSetQuantity = ref<string | null>(null)
 const setCandidates = computed(() => editingSetId.value && order.value ? order.value.lines.map(line => {
   const quantityText = line.raw_bar_length_m && !isWeightLine(line) ? pipePurchaseMeters(line) : line.actual_purchase_quantity || ''
   return { ...line, quantityText, eligible: Number(quantityText) > 0 }
 }) : [])
 const setSource = computed(() => setCandidates.value.find(line => line.purchase_group_line_id === editingSetId.value))
+async function openSet(line: PurchaseOrderDetail['lines'][number]) {
+  const groupId = order.value?.purchase_group_id
+  if (!groupId || !line.purchase_group_line_id) return
+  if (!line.set_pricing && defaultSetQuantity.value === null) {
+    const requestId = orderRequestId
+    try {
+      const { data } = await fetchVersionedPurchaseGroup(groupId)
+      if (requestId !== orderRequestId) return
+      defaultSetQuantity.value = orderSetQuantity(data)
+    } catch (error) {
+      if (requestId !== orderRequestId) return
+      ElMessage.warning(apiErrorMessage(error, '订单数量读取失败，请手填采购套数。'))
+    }
+  }
+  editingSetId.value = line.purchase_group_line_id
+}
 function saveSet(change: SetPricingChange) {
   if (order.value) applySetPricing(order.value.lines, change)
   editingSetId.value = ''
@@ -216,6 +234,7 @@ async function loadOrder(): Promise<void> {
   loadError.value = ''
   actionError.value = ''
   editingSetId.value = ''
+  defaultSetQuantity.value = null
   order.value = null
   etag.value = ''
   try {
@@ -472,7 +491,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
             <template #default="{ row }">
               <PurchaseSetPriceCell :line="row" :unit="purchasePriceUnit(row)" :label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price"
                 :allow-set="Boolean(order.purchase_group_id && row.purchase_group_line_id && order.status === 'DRAFT')"
-                :disabled="!canEdit || Boolean(row.set_pricing && order.status !== 'DRAFT')" @input="row.unit_price = $event" @edit-set="editingSetId = row.purchase_group_line_id" />
+                :disabled="!canEdit || Boolean(row.set_pricing && order.status !== 'DRAFT')" @input="row.unit_price = $event" @edit-set="openSet(row)" />
               <small v-if="row.calculation_snapshot?.set_pricing_review && !row.set_pricing && !Number(row.unit_price)">外供调整，请重选按套或填写单价</small>
             </template>
           </ElTableColumn>
@@ -495,7 +514,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
       </footer>
     </template>
     <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates" :suppliers="options?.suppliers || []"
-      @close="editingSetId = ''" @apply="saveSet" />
+      :default-quantity="defaultSetQuantity || ''" @close="editingSetId = ''" @apply="saveSet" />
   </section>
 </template>
 

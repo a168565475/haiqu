@@ -4,7 +4,7 @@ from threading import Barrier
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.test import TransactionTestCase
 from rest_framework.test import APIClient
 
@@ -39,7 +39,7 @@ class PurchaseGroupConcurrencyTests(TransactionTestCase):
                                        format="json", HTTP_IF_MATCH=etag)
                 return response.status_code, response.data
             finally:
-                close_old_connections()
+                connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(create, payload) for payload in payloads]

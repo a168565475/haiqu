@@ -3,6 +3,8 @@ from apps.material_catalog.saved_selection import validate_saved_material
 """生产采购总单：冻结来源，原 PurchaseOrder 继续承担批次履约。"""
 import hashlib
 import json
+from collections import defaultdict
+from copy import copy
 from decimal import Decimal
 from uuid import UUID
 
@@ -13,7 +15,7 @@ from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
-from apps.boms.models import Bom, BomLine
+from apps.boms.models import Bom, BomLine, BomStatus
 from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
@@ -24,8 +26,9 @@ from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import Currency, ReferenceStatus
 
 from .material_receipt_identity import build_purchase_material_snapshot, resolve_purchase_material
-from .group_selectors import purchase_group_completion_summary, purchase_group_deletion_summary, purchase_groups_with_context
-from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
+from .group_selectors import purchase_group_completion_summary, purchase_group_deletion_summary, purchase_group_progress, purchase_groups_with_context
+from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
+from .multi_bom_sources import matches_combined_source, merge_purchase_snapshots, purchase_merge_key
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
 from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
 from .set_pricing import apply_set_pricing, material_calculation_snapshot, validate_set_members
@@ -258,6 +261,81 @@ def attach_purchase_order_group(order):
     return group
 
 
+def _selected_group_sources(task, revisions):
+    groups = list(PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True).prefetch_related("bom_sources"))
+    product_for_bom = {str(p.purchase_source_boms[0].pk): p.pk for p in task.purchase_source_products if p.purchase_source_boms}
+    single_groups = defaultdict(list)
+    combined_groups = []
+    for group in groups:
+        if group.product_line_id_snapshot:
+            if group.source_bom_id_snapshot:
+                product_for_bom[str(group.source_bom_id_snapshot)] = group.product_line_id_snapshot
+            single_groups[group.product_line_id_snapshot].append(group)
+        else:
+            members = {row.product_line_id_snapshot: row for row in group.bom_sources.all()}
+            product_for_bom.update({str(row.bom_id_snapshot): pk for pk, row in members.items()})
+            combined_groups.append((group, members))
+    if revisions.keys() - product_for_bom.keys():
+        raise ValidationError({"bom_id": "所选 BOM 不属于该生产订单，或不是当前可用的采购来源。"})
+    requested = {product_for_bom[bom_id]: (bom_id, revision) for bom_id, revision in revisions.items()}
+    if len(requested) != len(revisions):
+        raise ValidationError({"sources": "同一产品只能选择一份采购来源。"})
+    for group, members in combined_groups:
+        if not requested.keys() & members.keys():
+            continue
+        if requested.keys() == members.keys() and all(revision == members[pk].source_revision for pk, (_, revision) in requested.items()):
+            return group, []
+        raise Conflict(f"所选产品已在合并采购需求 {group.group_number} 中，请在该需求中新增批次。")
+    selected = []
+    for product in task.purchase_source_products:
+        if product.pk not in requested:
+            continue
+        bom_id, revision = requested[product.pk]
+        previous_groups = single_groups[product.pk]
+        if len(previous_groups) > 1:
+            raise Conflict("同一产品存在多份采购需求，请先核对原需求归属。")
+        previous = previous_groups[0] if previous_groups else None
+        if previous:
+            if not previous.source_bom_id_snapshot:
+                raise Conflict("已有采购需求缺少已保存的 BOM 归属，请核对原需求。")
+            if revision != previous.source_revision:
+                raise Conflict("该产品已保存采购需求，请重新读取原需求。")
+            if len(requested) == 1:
+                return previous, []
+            if not product.purchase_source_boms or product.purchase_source_boms[0].status != BomStatus.VERIFIED:
+                raise Conflict("请先确认所选产品的最新 BOM，再合并采购需求。")
+            bom_id = str(previous.source_bom_id_snapshot)
+        selected.append((product, bom_id, revision, previous))
+    if len(selected) != len(requested):
+        raise Conflict("采购来源的产品已不存在，请核对原采购需求。")
+    return None, selected
+
+
+def _previous_group_snapshots(group, product, components):
+    group = purchase_groups_with_context().get(pk=group.pk)
+    progress = purchase_group_progress(group)
+    if group.manual_completed_at or progress["status"] == "UNKNOWN" or not progress["lines"]:
+        raise Conflict(f"采购需求 {group.group_number} 已手动完成或缺少可核实的采购明细。")
+    snapshots = []
+    for row in progress["lines"]:
+        snapshot = dict(row["source_snapshot"])
+        if (not snapshot.get("bom_id") or not row["source_bom_line_id_snapshot"]
+                or row["product_line_id_snapshot"] != product.pk or source_issues(snapshot)):
+            raise Conflict(f"采购需求 {group.group_number} 第 {row['line_number']} 行的原 BOM 或物料身份待核对，无法合并。")
+        snapshot.update(bom_line_id=str(row["source_bom_line_id_snapshot"]),
+                        previous_group_line_id=str(row["id"]), required_quantity=format(row["required_quantity"], "f"))
+        snapshot.setdefault("material_selection_snapshot", {})
+        snapshot["material_attributes_snapshot"] = snapshot.get("material_attributes_snapshot") or {}
+        snapshot.setdefault("component_identity", components.get(row["source_bom_line_id_snapshot"]))
+        snapshot.setdefault("product_color", product.color_name_snapshot)
+        if not (snapshot.get("material_attributes_snapshot") or {}).get("fields") and not snapshot["material_selection_snapshot"]:
+            raise Conflict(f"采购需求 {group.group_number} 第 {row['line_number']} 行缺少冻结的物料属性，无法核对合并。")
+        if snapshot["section_type_snapshot"] == "PROFILE" and snapshot["source_unit_text"] != "KG":
+            raise Conflict(f"采购需求 {group.group_number} 仍是旧米制管材，请核对重量采购来源。")
+        snapshots.append(snapshot)
+    return snapshots
+
+
 @transaction.atomic
 def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, request=None):
     task = ProductionTask.objects.select_for_update().filter(
@@ -269,38 +347,57 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
     list(Bom.objects.select_for_update().filter(production_task=task).order_by("id"))
     bom_lines = list(BomLine.objects.select_for_update().filter(section__bom__production_task=task).order_by("id"))
     lock_bom_line_material_identities(bom_lines)
-    existing = PurchaseGroup.objects.filter(
-        production_task=task, source_bom_id_snapshot=validated_data["bom_id"], archived_at__isnull=True,
-    ).first()
-    if existing is not None:
-        if existing.source_revision != validated_data["source_revision"]:
-            raise Conflict("该产品已保存采购需求，请沿用采购需求快照新增批次。")
+    entries = validated_data.get("sources") or [validated_data]
+    revisions = {str(entry["bom_id"]): entry["source_revision"] for entry in entries}
+    task = production_tasks_with_purchase_sources(ProductionTask.objects.filter(pk=task.pk)).get()
+    existing, selected = _selected_group_sources(task, revisions)
+    if existing:
         return existing
-    source = evaluate_purchase_source(
-        production_tasks_with_purchase_sources(ProductionTask.objects.filter(pk=task.pk)).get(),
-        bom_id=validated_data["bom_id"],
-    )
-    if not source["can_create"]:
-        raise PurchaseSourceUnavailable(source["blockers"])
-    if source["source_revision"] != validated_data["source_revision"]:
-        raise PurchaseSourceChanged(source["source_revision"])
+    if all(previous for _, _, _, previous in selected) and task.status not in PURCHASABLE_TASK_STATUSES:
+        raise Conflict("生产任务当前状态不允许新建采购需求。")
+    snapshots = []
+    components = {line.pk: str(line.component_identity) for line in bom_lines}
+    for product, bom_id, revision, previous in selected:
+        if previous:
+            snapshots.extend(_previous_group_snapshots(previous, product, components))
+            continue
+        product_source = copy(task)
+        product_source.purchase_source_products = [product]
+        source = evaluate_purchase_source(product_source, bom_id=bom_id)
+        if not source["can_create"]:
+            raise PurchaseSourceUnavailable(source["blockers"])
+        if revision != source["source_revision"]:
+            raise PurchaseSourceChanged(source["source_revision"])
+        snapshots.extend(bom_group_line_snapshot(item) for item in source["lines"])
+    combined = len(selected) > 1
     group = PurchaseGroup.objects.create(
         group_number="CGZD" + next_purchase_order_number()[4:], production_task=task,
-        product_line_id_snapshot=source["lines"][0]["product_line_id"],
-        source_bom_id_snapshot=validated_data["bom_id"],
+        product_line_id_snapshot=None if combined else selected[0][0].pk,
+        source_bom_id_snapshot=None if combined else selected[0][1],
         production_task_number_snapshot=task.task_number, sales_order_number_snapshot=task.order_number,
         customer_name_snapshot=task.customer_account.account_name if task.customer_account_id else "",
-        source_revision=source["source_revision"], created_by_employee=actor_employee,
+        source_revision=(hashlib.sha256(json.dumps(revisions, sort_keys=True).encode()).hexdigest()
+                         if combined else selected[0][2]), created_by_employee=actor_employee,
     )
-    for number, item in enumerate(source["lines"], 1):
-        save_bom_group_line(group, number, item)
+    PurchaseGroupBomSource.objects.bulk_create([
+        PurchaseGroupBomSource(purchase_group=group, product_line_id_snapshot=product.pk,
+                               bom_id_snapshot=bom_id, source_revision=revision, previous_group=previous)
+        for product, bom_id, revision, previous in selected
+    ])
+    if combined:
+        materials = defaultdict(list)
+        for snapshot in snapshots:
+            materials[purchase_merge_key(snapshot)].append(snapshot)
+        snapshots = [merge_purchase_snapshots(rows) for rows in materials.values()]
+    for number, snapshot in enumerate(snapshots, 1):
+        _save_bom_snapshot(group, number, snapshot)
     write_audit_log(object_type="PURCHASE_GROUP", object_id=group.pk, context_type="PRODUCTION_TASK",
                     context_id=task.pk, action="CREATED", actor_employee=actor_employee,
                     after_data={"group_number": group.group_number, "source_revision": group.source_revision}, request=request)
     return group
 
 
-def save_bom_group_line(group, number, item):
+def bom_group_line_snapshot(item):
     snapshot = {key: item[key] for key in (
         "material_catalog_id", "material_selection_snapshot",
         "source_bom_line_id_snapshot", "required_quantity", "source_quantity_field", "source_quantity_text",
@@ -318,9 +415,19 @@ def save_bom_group_line(group, number, item):
     else:
         calculation = item.get("calculation_snapshot") or build_purchase_material_snapshot(item["_bom_line"])
     snapshot["calculation_snapshot"] = calculation
-    line = _save_group_line(group, number, _json_value(snapshot))
+    snapshot.update(component_identity=str(item["_bom_line"].component_identity), product_color=item["product_color"])
+    return _json_value(snapshot)
+
+
+def _save_bom_snapshot(group, number, snapshot):
+    line = _save_group_line(group, number, snapshot)
     if line.compatibility_issues:
         raise ValidationError({"lines": f"第{number}行来源建议量、单位或材料身份不完整，请先核对BOM。"})
+    return line
+
+
+def save_bom_group_line(group, number, item):
+    return _save_bom_snapshot(group, number, bom_group_line_snapshot(item))
 
 
 def validate_group_line_source(line):
@@ -330,13 +437,18 @@ def validate_group_line_source(line):
         raise Conflict("采购批次明细不属于当前采购需求。")
     if source.compatibility_issues:
         raise Conflict("采购需求来源存在待核对项，不能沿用未知来源。")
-    if line.source_unit_text != source.source_unit_text or line.required_quantity != source.required_quantity:
-        raise Conflict("采购批次单位或建议量与保存的采购需求快照不一致。")
-    if material_calculation_snapshot(line.calculation_snapshot) != source.source_snapshot.get("calculation_snapshot", {}):
-        raise Conflict("采购批次材料身份或计算参数与采购需求快照不一致。")
+    combined = bool(line.calculation_snapshot.get("group_source_contributions"))
+    if combined:
+        if not matches_combined_source(line, source):
+            raise Conflict("合并采购的物料、单位或建议量与保存的来源不一致。")
+    else:
+        if line.source_unit_text != source.source_unit_text or line.required_quantity != source.required_quantity:
+            raise Conflict("采购批次单位或建议量与保存的采购需求快照不一致。")
+        if material_calculation_snapshot(line.calculation_snapshot) != source.source_snapshot.get("calculation_snapshot", {}):
+            raise Conflict("采购批次材料身份或计算参数与采购需求快照不一致。")
     if line.material_catalog_id:
         purchase_catalog_selection(line)
-        if str(line.material_catalog_id) != str(source.source_snapshot.get("material_catalog_id")) or line.material_selection_snapshot != source.source_snapshot.get("material_selection_snapshot"):
+        if not combined and (str(line.material_catalog_id) != str(source.source_snapshot.get("material_catalog_id")) or line.material_selection_snapshot != source.source_snapshot.get("material_selection_snapshot")):
             raise Conflict("采购批次材料与采购需求保存内容不一致。")
         return
     material = resolve_purchase_material(line)
@@ -368,6 +480,9 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         if existing.archived_at:
             raise Conflict("该请求创建的采购批次已归档，请使用新的请求编号。")
         return purchase_orders_with_context().get(pk=existing.pk), False
+    destination = group.combined_into_sources.filter(purchase_group__archived_at__isnull=True).select_related("purchase_group").first()
+    if destination:
+        raise Conflict(f"该产品已合并采购，请在采购需求 {destination.purchase_group.group_number} 中新增批次。")
     if task.status not in PURCHASABLE_TASK_STATUSES:
         raise Conflict("生产任务当前状态不允许新增采购批次。")
     if group.compatibility_issues:
@@ -453,6 +568,10 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         # Decimal/UUID字段在JSON中为字符串，加载模型字段转换后进行一致性校验。
         line.required_quantity = source.required_quantity
         validate_group_line_source(line)
+        if contributions := source.source_snapshot.get("source_contributions"):
+            line.calculation_snapshot = {**line.calculation_snapshot, "group_source_contributions": [
+                {key: value for key, value in row.items() if key != "source_snapshot"} for row in contributions
+            ]}
         apply_set_pricing(line, item)
         line.save()
         created_lines.append(line)

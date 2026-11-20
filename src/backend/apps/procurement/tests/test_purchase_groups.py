@@ -477,7 +477,12 @@ class PurchaseGroupApiTests(APITestCase):
         after = self.detail()
         self.assertNotEqual(before["ETag"], after["ETag"])
         self.assertEqual(after.data["data"]["batches"], [])
-        self.assertEqual(after.data["data"]["progress"]["lines"], before.data["data"]["progress"]["lines"])
+        original, = before.data["data"]["progress"]["lines"]
+        self.assertEqual((original["planned_purchase_quantity"], original["remaining_purchase_quantity"]),
+                         ("20.0000", "80.0000"))
+        self.assertEqual(after.data["data"]["progress"]["lines"], [
+            {**original, "planned_purchase_quantity": "0.0000", "remaining_purchase_quantity": "100.0000"},
+        ])
         stale = self.client.post(f"/api/v1/purchase-groups/{self.group_id}/batches/", self.batch_payload(),
             format="json", HTTP_IF_MATCH=before["ETag"])
         self.assertEqual(stale.status_code, 412, stale.data)
@@ -499,7 +504,7 @@ class PurchaseGroupApiTests(APITestCase):
         self.assertIn("PURCHASE_GROUP_EXISTS", [row["code"] for row in changed["blockers"]])
         refused = self.client.post("/api/v1/purchase-orders/", payload, format="json")
         self.assertEqual(refused.status_code, 409, refused.data)
-        self.assertEqual(self.detail().data["data"]["progress"]["lines"], before.data["data"]["progress"]["lines"])
+        self.assertEqual(self.detail().data["data"]["progress"]["lines"], after.data["data"]["progress"]["lines"])
         self.batch("30")
 
     def test_legacy_complete_entry_reuses_empty_group(self):

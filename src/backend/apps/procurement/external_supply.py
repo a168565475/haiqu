@@ -1,4 +1,5 @@
 """确认 BOM 后，只同步本 BOM 的采购/外供选择，保留已确认单据的履约记录。"""
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.db.models import Q
@@ -6,13 +7,18 @@ from django.db.models import Q
 from apps.boms.models import Bom, BomLine
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
-from .group_services import save_bom_group_line
-from .models import PurchaseGroup, PurchaseOrder, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus
+from .group_services import _save_bom_snapshot, bom_group_line_snapshot, save_bom_group_line
+from .multi_bom_sources import merge_purchase_snapshots, purchase_merge_key
+from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus
 from .services import _is_purchasable_bom_section, _source_line
 
 
-def _remove_external_draft_lines(order, lines, external_ids):
-    removed = [line for line in lines if line.source_bom_line_id_snapshot in external_ids or line.bom_line_id in external_ids]
+def _remove_external_draft_lines(order, lines, external_ids, external_group_lines):
+    removed = [
+        line for line in lines if line.purchase_group_line_id in external_group_lines
+        or (not (line.calculation_snapshot or {}).get("group_source_contributions")
+            and (line.source_bom_line_id_snapshot in external_ids or line.bom_line_id in external_ids))
+    ]
     if not removed:
         return []
     removed_ids = {line.pk for line in removed}
@@ -38,6 +44,80 @@ def _remove_external_draft_lines(order, lines, external_ids):
     order.total_amount = sum(amounts, Decimal("0")) if amounts and None not in amounts else None
     order.save(update_fields=["total_amount", "updated_at"])
     return removed_ids
+
+
+@dataclass
+class _CombinedMaterial:
+    row: PurchaseGroupLine | None = None
+    active: list[dict] = field(default_factory=list)
+    external: list[dict] = field(default_factory=list)
+    changed: bool = False
+
+
+def _sync_combined_group(group, bom, choices, previous_group_id):
+    rows = list(group.lines.select_for_update().order_by("line_number"))
+    by_material, by_bom_line, by_component = {}, {}, {}
+    for row in rows:
+        saved = row.source_snapshot
+        active = [c["source_snapshot"] for c in saved["source_contributions"]]
+        external = list(saved.get("external_source_snapshots", []))
+        state = _CombinedMaterial(row, active, external)
+        by_material[purchase_merge_key(saved)] = state
+        for snapshot in active + external:
+            if snapshot["product_line_id_snapshot"] == str(bom.product_line_id):
+                by_bom_line[snapshot["bom_line_id"]] = (state, snapshot)
+                if component := snapshot.get("component_identity"):
+                    by_component[component] = (state, snapshot)
+    previous_lines = {}
+    if previous_group_id:
+        previous_lines = dict(PurchaseGroupLine.objects.filter(purchase_group_id=previous_group_id).values_list("source_bom_line_id_snapshot", "pk"))
+    changed_ids = []
+    for pk, line in choices.items():
+        match = by_bom_line.get(str(pk)) or by_component.get(str(line.component_identity))
+        if match:
+            state, snapshot = match
+            if (snapshot in state.active) == line.purchase_required:
+                continue
+            if line.purchase_required:
+                state.external.remove(snapshot)
+                state.active.append(snapshot)
+            else:
+                state.active.remove(snapshot)
+                state.external.append(snapshot)
+        elif line.purchase_required:
+            snapshot = bom_group_line_snapshot(_source_line(bom, line.section, line, bom.product_line))
+            if pk in previous_lines:
+                snapshot["previous_group_line_id"] = str(previous_lines[pk])
+            key = purchase_merge_key(snapshot)
+            state = by_material.get(key)
+            if state is None:
+                by_material[key] = state = _CombinedMaterial()
+            state.active.append(snapshot)
+        else:
+            continue
+        changed_ids.append(str(pk))
+        state.changed = True
+    next_number = max((row.line_number for row in rows), default=0)
+    for state in by_material.values():
+        if not state.changed:
+            continue
+        row, active, external = state.row, state.active, state.external
+        saved = merge_purchase_snapshots(active) if active else {
+            **row.source_snapshot, "source_contributions": [], "purchase_required": False,
+        }
+        saved["external_source_snapshots"] = external
+        saved["previous_group_line_ids"] = [s["previous_group_line_id"] for s in active + external if s.get("previous_group_line_id")]
+        if row:
+            row.source_snapshot = saved
+            row.required_quantity = Decimal(saved["required_quantity"])
+            row.source_bom_line_id_snapshot = saved["source_bom_line_id_snapshot"]
+            row.product_line_id_snapshot = saved["product_line_id_snapshot"]
+            row.save(update_fields=["source_snapshot", "required_quantity", "source_bom_line_id_snapshot",
+                                    "product_line_id_snapshot", "updated_at"])
+        else:
+            next_number += 1
+            _save_bom_snapshot(group, next_number, saved)
+    return changed_ids
 
 
 def sync_external_supply(bom, bom_lines, *, actor_employee, request):
@@ -93,18 +173,36 @@ def sync_external_supply(bom, bom_lines, *, actor_employee, request):
             write_audit_log(object_type="PURCHASE_GROUP", object_id=group.pk, action="BOM_PURCHASE_SCOPE_UPDATED",
                             context_type="PRODUCTION_TASK", context_id=bom.production_task_id, actor_employee=actor_employee,
                             after_data={"bom_id": str(bom.pk), "changed_bom_line_ids": changed}, request=request)
+    combined_groups = PurchaseGroup.objects.select_for_update().filter(
+        production_task_id=bom.production_task_id, archived_at__isnull=True, product_line_id_snapshot__isnull=True,
+        bom_sources__product_line_id_snapshot=bom.product_line_id,
+    ).order_by("pk")
+    external_group_lines = set()
+    for combined in combined_groups:
+        previous = combined.bom_sources.get(product_line_id_snapshot=bom.product_line_id)
+        changed = _sync_combined_group(combined, bom, choices, previous.previous_group_id)
+        if changed:
+            combined.save(update_fields=["updated_at"])
+            write_audit_log(object_type="PURCHASE_GROUP", object_id=combined.pk, action="BOM_PURCHASE_SCOPE_UPDATED",
+                            context_type="PRODUCTION_TASK", context_id=bom.production_task_id, actor_employee=actor_employee,
+                            after_data={"bom_id": str(bom.pk), "changed_bom_line_ids": changed}, request=request)
+        if external_ids:
+            external_group_lines.update(combined.lines.filter(source_snapshot__purchase_required=False).values_list("pk", flat=True))
     if not external_ids:
         return
     orders = PurchaseOrder.objects.select_for_update().filter(
         production_task_id=bom.production_task_id, status=PurchaseOrderStatus.DRAFT, archived_at__isnull=True,
         pk__in=PurchaseOrder.objects.filter(
             Q(lines__source_bom_line_id_snapshot__in=external_ids) | Q(lines__bom_line_id__in=external_ids)
+            | Q(lines__purchase_group_line_id__in=external_group_lines)
         ).values("pk"),
     ).exclude(supplier_purchase_sheets__isnull=False).exclude(material_inbounds__isnull=False).exclude(
         returns__isnull=False,
     ).order_by("pk")
     for order in orders:
-        removed = _remove_external_draft_lines(order, list(order.lines.select_for_update()), external_ids)
+        removed = _remove_external_draft_lines(order, list(order.lines.select_for_update()), external_ids, external_group_lines)
+        if not removed:
+            continue
         write_audit_log(object_type="PURCHASE_ORDER", object_id=order.pk, action="DRAFT_EXTERNAL_LINES_REMOVED",
                         context_type="PRODUCTION_TASK", context_id=bom.production_task_id, actor_employee=actor_employee,
                         after_data={"bom_id": str(bom.pk), "removed_line_ids": [str(pk) for pk in removed]}, request=request)

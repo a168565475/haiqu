@@ -8,6 +8,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -715,11 +716,18 @@ def evaluate_purchase_source(task, bom_id=None):
         orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task))
     existing_by_product = purchase_orders_by_product(orders)
     from .models import PurchaseGroup
-    existing_groups = {
-        group.product_line_id_snapshot: group for group in PurchaseGroup.objects.filter(
-            production_task=task, archived_at__isnull=True,
-        )
-    }
+    existing_groups = {}
+    groups = PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True).prefetch_related(
+        "bom_sources", "combined_into_sources",
+    )
+    for group in groups:
+        if group.combined_into_sources.all():
+            continue
+        if group.product_line_id_snapshot:
+            existing_groups[group.product_line_id_snapshot] = group
+        else:
+            for membership in group.bom_sources.all():
+                existing_groups[membership.product_line_id_snapshot] = group
     if None in existing_by_product:
         global_blockers.append(
             _blocker(
@@ -765,6 +773,16 @@ def evaluate_purchase_source(task, bom_id=None):
                 ))
         unavailable_blockers.extend(bom_blockers)
         option = _bom_option(product, latest_bom, bom_blockers, len(bom_lines), global_blockers)
+        if option["can_create"]:
+            option["source_revision"] = _purchase_source_revision(task, [product])
+        group = existing_groups.get(product.pk)
+        if group:
+            option["existing_purchase_group_id"] = str(group.pk)
+            if (not global_blockers and latest_bom and latest_bom.status == BomStatus.VERIFIED
+                    and group.product_line_id_snapshot == product.pk and group.source_bom_id_snapshot
+                    and not group.manual_completed_at and not group.compatibility_issues):
+                option["can_combine"] = True
+                option["combine_source_revision"] = group.source_revision
         bom_options.append(option)
         if latest_bom is not None:
             source_by_bom_id[str(latest_bom.pk)] = (bom_blockers, bom_lines)
@@ -805,7 +823,8 @@ def evaluate_purchase_source(task, bom_id=None):
         "bom_options": bom_options,
         "selected_bom_id": selected_bom_id,
         "requires_bom_selection": requires_bom_selection,
-        "has_creatable_bom": any(option["can_create"] for option in bom_options),
+        "has_creatable_bom": (any(option["can_create"] for option in bom_options) or
+                              sum(bool(option.get("can_combine")) for option in bom_options) >= 2),
         "existing_purchase_order_id": str(existing.pk) if existing else None,
         "existing_purchase_order_number": existing.order_number if existing else None,
         "product_count": len(products),
@@ -825,6 +844,13 @@ def public_purchase_source(task, bom_id=None):
             public_lines.append(public_line)
         result[field_name] = public_lines
     return result
+
+
+def refresh_batch_demand_version(group_id):
+    if group_id:
+        from .models import PurchaseGroup, PurchaseGroupBomSource
+        combined_ids = PurchaseGroupBomSource.objects.filter(previous_group_id=group_id).values("purchase_group_id")
+        PurchaseGroup.objects.filter(Q(pk=group_id) | Q(pk__in=combined_ids)).update(updated_at=timezone.now())
 
 
 def _money(value):
@@ -1212,6 +1238,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         if errors:
             raise ValidationError({"lines": errors})
     order.save(update_fields=["is_mailed", "batch_type", "total_amount", "updated_at"])
+    refresh_batch_demand_version(order.purchase_group_id)
     updated = purchase_orders_with_context().get(pk=order.pk)
     write_audit_log(
         object_type="PURCHASE_ORDER",
@@ -1318,7 +1345,7 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
         SupplierPurchaseSheet.objects.filter(pk__in=[sheet.pk for sheet in sheets]).update(
             archived_at=now, archived_by_employee=actor_employee, archive_reason="采购批次已删除", updated_at=now,
         )
-        order.purchase_group.save(update_fields=["updated_at"])
+        refresh_batch_demand_version(order.purchase_group_id)
         write_audit_log(object_type="PURCHASE_ORDER", object_id=order.pk, **purchase_order_audit_context(order),
                         action="ARCHIVED", actor_employee=actor_employee, before_data=before, request=request)
         return
@@ -1393,9 +1420,7 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
     from apps.samples.models import SampleMaterialPurchaseSource
     SampleMaterialPurchaseSource.objects.filter(purchase_order_line__purchase_order=order).delete()
     order.delete()
-    if order.purchase_group_id:
-        from .models import PurchaseGroup
-        PurchaseGroup.objects.filter(pk=order.purchase_group_id).update(updated_at=timezone.now())
+    refresh_batch_demand_version(order.purchase_group_id)
     write_audit_log(
         object_type="PURCHASE_ORDER",
         object_id=order_id_value,

@@ -429,7 +429,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
       <p>请联系管理员开通“采购订单查看”权限后重试。</p>
     </div>
 
-    <PurchaseGroupList v-else-if="showingGroups" :can-add="canAdd" />
+    <PurchaseGroupList v-else-if="showingGroups" :can-add="canAdd" :can-delete="canDelete" />
     <template v-else>
       <ElAlert v-if="listError" class="load-error" type="error" :title="listError" :closable="false" show-icon>
         <ElButton link @click="loadList">重新加载</ElButton>

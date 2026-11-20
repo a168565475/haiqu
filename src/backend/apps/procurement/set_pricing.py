@@ -8,7 +8,8 @@ def line_set_pricing(line):
 
 
 def material_calculation_snapshot(snapshot):
-    return {key: value for key, value in snapshot.items() if key not in ("set_pricing", "set_pricing_review")}
+    return {key: value for key, value in snapshot.items()
+            if key not in ("set_pricing", "set_pricing_review", "group_source_contributions")}
 
 
 def apply_set_pricing(line, submitted):

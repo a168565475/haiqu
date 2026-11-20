@@ -15,6 +15,7 @@ from apps.procurement.models import (
     PurchaseReturnLine,
     PurchaseReturnStatus,
 )
+from apps.procurement.selectors import purchase_line_products
 from apps.boms.models import Bom
 from apps.sales_orders.presentation import specification_display
 from apps.samples.models import SampleItem
@@ -473,19 +474,19 @@ def procurement_inbound_product_summaries(orders):
         )
         for order in orders
     }
-    production_lines = [
-        line for order in orders if order.source_type == "PRODUCTION"
-        for line in lines_by_order[order.pk]
-    ]
+    sources = {
+        order.pk: [source for line in lines_by_order[order.pk] for source in purchase_line_products(line)]
+        for order in orders if order.source_type == "PRODUCTION"
+    }
     products = {
-        (product.pk, product.production_task_id): product
+        (str(product.pk), product.production_task_id): product
         for product in ProductionTaskProduct.objects.filter(
-            pk__in={line.product_line_id_snapshot for line in production_lines if line.product_line_id_snapshot},
+            pk__in={item[0] for rows in sources.values() for item in rows if item[0]},
         ).only("id", "production_task_id", "item_number_snapshot", "material_snapshot", "color_name_snapshot")
     }
     boms = {
-        bom.pk: bom
-        for bom in Bom.objects.filter(pk__in={line.bom_id for line in production_lines if line.bom_id}).only(
+        str(bom.pk): bom
+        for bom in Bom.objects.filter(pk__in={item[1] for rows in sources.values() for item in rows if item[1]}).only(
             "id", "production_task_id", "product_line_id", "item_number_snapshot",
             "material_snapshot", "product_color_name_snapshot",
         )
@@ -512,18 +513,18 @@ def procurement_inbound_product_summaries(orders):
             result[order.pk] = sample_products.get(order.sample_procurement_request_id, [])
             continue
         summary, seen = [], set()
-        for line in lines_by_order[order.pk]:
-            product = products.get((line.product_line_id_snapshot, order.production_task_id))
+        for product_id, bom_id, name, specification in sources[order.pk]:
+            product = products.get((product_id, order.production_task_id))
             if not product or product.pk in seen:
                 continue
             seen.add(product.pk)
-            bom = boms.get(line.bom_id)
+            bom = boms.get(bom_id)
             if bom and (bom.product_line_id != product.pk or bom.production_task_id != order.production_task_id):
                 bom = None
             source = bom or product
             # 采购行 material_snapshot 是原料材质，不能作为成品材质。
             summary.append(_inbound_product_summary(
-                product.pk, line.product_name_snapshot, line.product_specification_snapshot,
+                product.pk, name, specification,
                 source.item_number_snapshot,
                 bom.product_color_name_snapshot if bom else product.color_name_snapshot,
                 source.material_snapshot,

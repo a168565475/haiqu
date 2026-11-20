@@ -184,13 +184,23 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
             raise ValidationError({"settlement_mode": "铆钉、垫片已按采购重量计价，请选择普通结算模板。"})
         weight_pipe = pipe_fields.get('measurement_kind') == 'PIPE_WEIGHT'
         price_quantity = (line.actual_purchase_weight_kg if weight_pipe else line.actual_purchase_meters) if pipe_fields and line.material_catalog_id else line.actual_purchase_quantity
+        product_name = line.product_name_snapshot
+        product_specification = line.product_specification_snapshot
+        sources = (line.calculation_snapshot or {}).get("group_source_contributions", [])
+        product_count = len({item["product_line_id"] for item in sources})
+        if product_count > 1:
+            names = dict.fromkeys(" ".join(filter(None, [item["product_name"], item["product_color"]])) for item in sources)
+            label = " / ".join(names)
+            product_name = label if len(label) <= 200 else f"共 {product_count} 款产品"
+            if len({item["product_specification"] for item in sources}) > 1:
+                product_specification = "多种规格"
         content_lines.append(
             {
                 **pipe_fields,
                 **hardware_fields,
                 "source_purchase_order_line_id": str(line.pk),
-                "product_name": line.product_name_snapshot,
-                "product_specification": line.product_specification_snapshot,
+                "product_name": product_name,
+                "product_specification": product_specification,
                 "part_name": line.part_name_snapshot,
                 "specification": line.specification_snapshot,
                 "material": line.raw_material_snapshot if order.source_type == "SAMPLE" else line.material_snapshot,

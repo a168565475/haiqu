@@ -4,10 +4,12 @@ from django.contrib.auth.management import create_permissions
 from django.contrib.auth.models import Permission
 
 from apps.products.models import ProductInformation, RawMaterialInformation
+from apps.procurement.tracking_models import PurchaseTrackingPolicy
 from apps.reference_data.models import Currency, ProductCategory, ProductItem, ProductionUnit
 
 
 def ensure_group_test_reference_data():
+    PurchaseTrackingPolicy.objects.get_or_create(key="default")
     if not Permission.objects.filter(content_type__app_label="procurement", codename="view_purchaseorder").exists():
         for label in ("procurement", "inventory", "production_tasks", "access_control"):
             create_permissions(apps.get_app_config(label), verbosity=0)

@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from apps.sales_orders.presentation import specification_display
 
+from ..selectors import purchase_line_products
 from ..models import (
     PurchaseContractTemplate,
     PurchaseContractTemplateStatus,
@@ -465,11 +466,12 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
                 return []
             return sample_purchase_products(instance.sample_procurement_request.material_request.sample_request)
         products = getattr(instance.production_task, "purchase_order_products", [])
-        products_by_id = {product.pk: product for product in products}
+        products_by_id = {str(product.pk): product for product in products}
         result = []
         seen = set()
-        for line in self._lines(instance):
-            product_line_id = line.product_line_id_snapshot
+        for product_line_id, _, name, specification in (
+            source for line in self._lines(instance) for source in purchase_line_products(line)
+        ):
             if product_line_id in seen:
                 continue
             seen.add(product_line_id)
@@ -477,9 +479,9 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             result.append(
                 {
                     "product_line_id": str(product_line_id),
-                    "product_name": line.product_name_snapshot,
+                    "product_name": name,
                     "specification": specification_display(SimpleNamespace(
-                        specification_snapshot=line.product_specification_snapshot,
+                        specification_snapshot=specification,
                         color_snapshot=product.color_name_snapshot if product else "",
                         material_snapshot=product.material_snapshot if product else "",
                     )),

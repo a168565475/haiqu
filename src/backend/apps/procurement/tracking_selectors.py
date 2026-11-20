@@ -12,6 +12,7 @@ from apps.boms.material_flow_calculations import MaterialFlowValueError, pipe_pl
 from apps.boms.models import Bom, BomLine, BomSection
 from apps.inventory.models import MaterialInboundLine
 from apps.material_catalog.saved_selection import validate_saved_material
+from apps.material_catalog.snapshots import material_identity_key
 from apps.production_scheduling.models import ProductionScheduleProduct
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, REFERENCE_MAPPING_MODELS
@@ -276,7 +277,11 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
             history = bool(order.archived_at or order.status == 'COMPLETED')
             if history and not include_history and not return_pending:
                 continue
-            row = _common(order.production_task, line.product_line_id_snapshot, line.product_name_snapshot,
+            contributions = line.calculation_snapshot.get('group_source_contributions', []) if isinstance(line.calculation_snapshot, dict) else []
+            names = {item['product_line_id']: ' '.join(filter(None, (item['product_name'], item.get('product_color'))))
+                     for item in contributions}
+            row = _common(order.production_task, None if len(names) > 1 else line.product_line_id_snapshot,
+                ' / '.join(names.values()) or line.product_name_snapshot,
                 line.part_name_snapshot or line.material_snapshot or line.raw_material_snapshot, line.specification_snapshot,
                 line.source_unit_text, order.purchase_group_id, line.source_bom_line_id_snapshot, str(line.pk), evaluated_at)
             statuses = publications.get((order.pk, line.supplier_id), [])
@@ -428,6 +433,151 @@ def _coverage_details(task, bom, snapshot=None):
     }
 
 
+def _coverage_material_row(task, group, bom, snapshot, *, product_id, product_name, source_id, row_key, required,
+        purchases, materials, notes, changed, history, scheduled, inbound_date, evaluated_at):
+    purchased, purchased_roots = Decimal('0'), Decimal('0')
+    required_roots = root_count_value(snapshot.get('suggested_bar_count'))
+    is_weight = snapshot.get('source_unit_text') == 'KG' and snapshot.get('section_type_snapshot') == 'PROFILE'
+    root_valid = (decimal_value(snapshot.get('raw_bar_weight_kg')) not in (None, Decimal('0')) if is_weight
+                  else decimal_value(snapshot.get('raw_bar_length_m')) not in (None, Decimal('0'))) and required_roots is not None
+    for line, expected_identity, valid_source in purchases:
+        line_identity, line_notes = _identity(_snapshot(line), materials)
+        quantity = decimal_value(line.actual_purchase_quantity)
+        matched = line_identity == expected_identity
+        if not matched and snapshot.get('source_contributions') and line_identity and expected_identity:
+            if line_identity[0] == expected_identity[0] == 'catalog':
+                matched = material_identity_key(line_identity[2]) == material_identity_key(expected_identity[2])
+        if (line_notes or not matched or line.source_unit_text != snapshot.get('source_unit_text')
+                or quantity is None or not valid_source):
+            notes.append('采购批次来源身份、单位或数量与需求不一致')
+            continue
+        purchased += quantity
+        if line.actual_bar_count is None or (is_weight and decimal_value(line.raw_bar_weight_kg) != decimal_value(snapshot.get('raw_bar_weight_kg'))) or (not is_weight and decimal_value(line.raw_bar_length_m) != decimal_value(snapshot.get('raw_bar_length_m'))):
+            root_valid = False
+        else:
+            purchased_roots += line.actual_bar_count
+    is_pipe = _classification(snapshot)
+    root_note = ''
+    if is_pipe and not root_valid:
+        root_note = '根数或每根重量依据缺失，保留采购量并标记根数待核对'
+        notes.append(root_note)
+    reliable = not notes
+    remaining = max(required - purchased, Decimal('0')) if reliable and required is not None else None
+    row = _common(task, product_id, product_name,
+        snapshot.get('part_name_snapshot') or snapshot.get('material_snapshot') or snapshot.get('raw_material_snapshot') or '需求材料',
+        snapshot.get('specification_snapshot', ''), snapshot.get('source_unit_text'), group.pk if group else None,
+        source_id, row_key, evaluated_at)
+    row.update(**_coverage_details(task, bom, snapshot),
+        source_reliable=reliable, verification_notes=list(dict.fromkeys(notes)), is_history=history,
+        required_quantity=quantity_text(required), purchased_quantity=quantity_text(purchased) if reliable else None,
+        remaining_quantity=quantity_text(remaining), scheduled=scheduled,
+        material_inbound_date=inbound_date.isoformat() if inbound_date else None,
+        group_status=('人工完成需求' if group.manual_completed_at else '已建需求') if group else '需求未建',
+        required_root_count=str(required_roots) if is_pipe and root_valid else None,
+        purchased_root_count=quantity_text(purchased_roots) if is_pipe and root_valid and reliable else None,
+        remaining_root_count=quantity_text(max(Decimal(required_roots)-purchased_roots, Decimal('0')))
+            if is_pipe and root_valid and reliable else None, root_count_note=root_note,
+        risks=coverage_risks(required=required, purchased=purchased, scheduled=scheduled, reliable=reliable,
+                             changed=changed, history=history))
+    _coverage_actions(row, task, group, bom, reliable, remaining)
+    return row
+
+
+def _combined_coverage_rows(task, group, products, boms, purchases_by_source, previous_lines, materials, schedules, evaluated_at,
+                            unknown_task, policy, now):
+    """一条合并物料只计算一次采购量，逐份 BOM 核对原始用量及其变更。"""
+    members = {item.product_line_id_snapshot: item for item in group.bom_sources.all()}
+    current = {}
+    product_notes = defaultdict(list)
+    for pk in members:
+        product = products.get(pk)
+        bom = boms.get(product.tracking_bom_id) if product else None
+        if not bom or bom.status != 'VERIFIED' or bom.order_quantity != product.quantity:
+            product_notes[pk].append('最新BOM缺失、尚未确认或与任务产品数量不一致')
+        if bom:
+            current[pk] = {str(line.component_identity): _bom_snapshot(line, bom, materials)
+                for section in bom.sections.all() if _is_purchasable_bom_section(section)
+                for line in section.lines.all() if line.purchase_required}
+    frozen_components = defaultdict(set)
+    for source in group.lines.all():
+        for item in source.source_snapshot.get('source_contributions', []):
+            if item['source_snapshot'].get('purchase_required') is not False:
+                frozen_components[_uuid(item['product_line_id'])].add(item['component_identity'])
+    for pk in members:
+        if set(current.get(pk, {})) != frozen_components[pk]:
+            product_notes[pk].append('当前BOM行集合与冻结采购需求不同，需核对增补或跨版本来源')
+    rows = []
+    history = bool(task.archived_at or task.status in TERMINAL_TASK_STATUSES)
+    for source in group.lines.all():
+        snapshot = source.source_snapshot
+        if snapshot.get('purchase_required') is False:
+            continue
+        items = snapshot.get('source_contributions', [])
+        identity, notes = _identity(snapshot, materials)
+        if unknown_task:
+            notes.append('历史采购明细的产品归属无法核实')
+        if group.compatibility_issues or source.compatibility_issues or not items:
+            notes.append('冻结来源行待核对')
+        if task.status == 'PAUSED' and not task.accepted_by_employee_id and not task.started_at:
+            notes.append('历史暂停任务的已接单来源待核对')
+        origins = {source.pk: (group.pk, identity)}
+        product_names = {}
+        changed = False
+        for item in items:
+            pk = _uuid(item['product_line_id'])
+            original = item['source_snapshot']
+            original_identity, original_notes = _identity(original, materials)
+            previous_line_id = _uuid(item.get('previous_group_line_id'))
+            if previous_line_id and pk in members:
+                origins[previous_line_id] = (members[pk].previous_group_id, original_identity)
+            if original.get('purchase_required') is False:
+                continue
+            product_names[pk] = ' '.join(filter(None, (item['product_name'], item.get('product_color'))))
+            notes.extend(original_notes)
+            notes.extend(product_notes[pk])
+            present = current.get(pk, {}).get(item['component_identity'])
+            if present:
+                notes.extend(present[2])
+            if product_notes[pk] or not present or _semantic(original, original_identity) != _semantic(present[0], present[1]):
+                changed = True
+                notes.append('当前BOM的材料、数量、单位或管材参数已改变')
+        for key in snapshot.get('previous_group_line_ids', []):
+            old = previous_lines.get(_uuid(key))
+            if old:
+                old_identity, old_notes = _identity(old.source_snapshot, materials)
+                notes.extend(old_notes)
+                origins[old.pk] = (old.purchase_group_id, old_identity)
+            else:
+                notes.append('原采购需求行待核对')
+        candidates = [boms[products[pk].tracking_bom_id] for pk in product_names
+                      if pk in products and products[pk].tracking_bom_id in boms]
+        # 共用料按涉及产品中最早的已知需求日期检查，缺失的确认时间仍须显示待核对。
+        bom = min(candidates, key=lambda obj: (obj.confirmed_at is not None, obj.confirmed_at, obj.pk), default=None)
+        dates = [schedules[pk]['material_inbound_date'] for pk in product_names if not history and pk in schedules]
+        purchases = [(line, expected_identity, line.purchase_order.purchase_group_id == group_id)
+                     for source_id, (group_id, expected_identity) in origins.items()
+                     for line in purchases_by_source[source_id]]
+        row = _coverage_material_row(task, group, bom, snapshot,
+            product_id=next(iter(product_names)) if len(product_names) == 1 else None,
+            product_name=' / '.join(product_names.values()), source_id=source.source_bom_line_id_snapshot,
+            row_key=f'{task.pk}:{group.pk}:{source.pk}', required=source.required_quantity,
+            purchases=purchases, materials=materials, notes=notes, changed=changed, history=history,
+            scheduled=bool(dates), inbound_date=min(dates) if dates and None not in dates else None, evaluated_at=evaluated_at)
+        if policy is not None:
+            _apply_coverage_timing(row, bom, now, policy)
+        rows.append(row)
+    for pk in members:
+        if not frozen_components[pk] and current.get(pk):
+            product = products[pk]
+            bom = boms.get(product.tracking_bom_id)
+            row = _unknown_product_row(task, product, group, bom, not history and pk in schedules,
+                schedules, history, product_notes[pk], evaluated_at, changed=True)
+            if policy is not None:
+                _apply_coverage_timing(row, bom, now, policy)
+            rows.append(row)
+    return rows
+
+
 def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False):
     now = now or datetime.now(BEIJING)
     evaluated_at = now.isoformat()
@@ -450,11 +600,18 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                      if _is_purchasable_bom_section(section) for line in section.lines.all() if line.purchase_required]
     groups = list(PurchaseGroup.objects.filter(production_task_id__in=tasks, archived_at__isnull=True)
         .only('id', 'production_task_id', 'product_line_id_snapshot', 'compatibility_issues', 'manual_completed_at')
-        .prefetch_related(Prefetch('lines', queryset=PurchaseGroupLine.objects.only('id', 'purchase_group_id',
+        .prefetch_related('bom_sources', Prefetch('lines', queryset=PurchaseGroupLine.objects.only('id', 'purchase_group_id',
             'source_bom_line_id_snapshot', 'product_line_id_snapshot', 'required_quantity', 'source_snapshot', 'compatibility_issues'))))
+    combined_groups = [group for group in groups if not group.product_line_id_snapshot and group.bom_sources.all()]
+    combined_ids = {group.pk for group in combined_groups}
+    combined_products = {item.product_line_id_snapshot for group in combined_groups for item in group.bom_sources.all()}
+    prior_ids = {item.previous_group_id for group in combined_groups for item in group.bom_sources.all() if item.previous_group_id}
+    previous_lines = {line.pk: line for group in groups if group.pk in prior_ids for line in group.lines.all()}
     group_map = defaultdict(list)
     revised_source_ids = []
     for group in groups:
+        if group.pk in combined_ids or group.pk in prior_ids:
+            continue
         group_map[(group.production_task_id, group.product_line_id_snapshot)].append(group)
         if any(isinstance(row.source_snapshot, dict) and 'purchase_required' in row.source_snapshot
                for row in group.lines.all()):
@@ -467,10 +624,12 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
         purchase_order__status__in=VALID_PURCHASE_STATUSES).select_related('purchase_order')
         .only(*LINE_IDENTITY_FIELDS, 'purchase_order__production_task_id', 'purchase_order__purchase_group_id').order_by('id'))
     purchase_map = defaultdict(list)
+    purchases_by_source = defaultdict(list)
     for line in purchase_lines:
         purchase_map[(line.purchase_order.production_task_id, line.product_line_id_snapshot)].append(line)
+        purchases_by_source[line.purchase_group_line_id].append(line)
     unresolved_product_tasks = {group.production_task_id for group in groups
-        if group.product_line_id_snapshot not in product_ids_by_task[group.production_task_id]}
+        if group.pk not in combined_ids and group.product_line_id_snapshot not in product_ids_by_task[group.production_task_id]}
     unresolved_product_tasks.update(line.purchase_order.production_task_id for line in purchase_lines
         if line.product_line_id_snapshot not in product_ids_by_task[line.purchase_order.production_task_id])
     frozen = [line.source_snapshot for group in groups for line in group.lines.all()]
@@ -482,6 +641,8 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
     with localcontext() as context:
         context.prec = 64
         for product in products:
+            if product.pk in combined_products:
+                continue
             task = tasks[product.production_task_id]
             history = bool(task.archived_at or task.status in TERMINAL_TASK_STATUSES)
             scheduled = not history and product.pk in schedules
@@ -557,58 +718,28 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                         notes.append('当前BOM的材料、数量、单位或管材参数已改变')
                 if frozen_line and frozen_line.compatibility_issues:
                     notes.append('冻结来源行待核对')
-                purchased, purchased_roots = Decimal('0'), Decimal('0')
-                required_roots = root_count_value(snapshot.get('suggested_bar_count'))
-                is_weight = snapshot.get('source_unit_text') == 'KG' and snapshot.get('section_type_snapshot') == 'PROFILE'
-                root_valid = (decimal_value(snapshot.get('raw_bar_weight_kg')) not in (None, Decimal('0')) if is_weight
-                              else decimal_value(snapshot.get('raw_bar_length_m')) not in (None, Decimal('0'))) and required_roots is not None
-                for line in purchase_map.get((task.pk, product.pk), []):
-                    if str(line.source_bom_line_id_snapshot) != source_id:
-                        continue
-                    line_identity, line_notes = _identity(_snapshot(line), materials)
-                    quantity = decimal_value(line.actual_purchase_quantity)
-                    if (line_notes or line_identity != identity or line.source_unit_text != snapshot.get('source_unit_text')
-                            or quantity is None or group and (line.purchase_order.purchase_group_id != group.pk
-                            or line.purchase_group_line_id != frozen_line.pk)):
-                        notes.append('采购批次来源身份、单位或数量与需求不一致')
-                        continue
-                    purchased += quantity
-                    if line.actual_bar_count is None or (is_weight and decimal_value(line.raw_bar_weight_kg) != decimal_value(snapshot.get('raw_bar_weight_kg'))) or (not is_weight and decimal_value(line.raw_bar_length_m) != decimal_value(snapshot.get('raw_bar_length_m'))):
-                        root_valid = False
-                    else:
-                        purchased_roots += line.actual_bar_count
                 if purchase_map.get((task.pk, None)):
                     notes.append('历史采购无法核实产品归属，不能当作未采购')
-                is_pipe = _classification(snapshot)
-                root_note = ''
-                if is_pipe and not root_valid:
-                    root_note = '根数或每根重量依据缺失，保留采购量并标记根数待核对'
-                    notes.append(root_note)
-                reliable = not notes
-                remaining = max(required - purchased, Decimal('0')) if reliable and required is not None else None
-                row = _common(task, product.pk, product.product_name_snapshot,
-                    snapshot.get('part_name_snapshot') or snapshot.get('material_snapshot') or snapshot.get('raw_material_snapshot') or '需求材料',
-                    snapshot.get('specification_snapshot', ''), snapshot.get('source_unit_text'), group.pk if group else None,
-                    source_id, f'{task.pk}:{product.pk}:{source_id}', evaluated_at)
-                row.update(**_coverage_details(task, bom, snapshot),
-                    source_reliable=reliable, verification_notes=list(dict.fromkeys(notes)), is_history=history,
-                    required_quantity=quantity_text(required), purchased_quantity=quantity_text(purchased) if reliable else None,
-                    remaining_quantity=quantity_text(remaining), scheduled=scheduled,
-                    material_inbound_date=schedules[product.pk]['material_inbound_date'].isoformat() if scheduled else None,
-                    group_status=('人工完成需求' if group.manual_completed_at else '已建需求') if group else '需求未建',
-                    required_root_count=str(required_roots) if is_pipe and root_valid else None,
-                    purchased_root_count=quantity_text(purchased_roots) if is_pipe and root_valid and reliable else None,
-                    remaining_root_count=quantity_text(max(Decimal(required_roots)-purchased_roots, Decimal('0')))
-                        if is_pipe and root_valid and reliable else None, root_count_note=root_note,
-                    risks=coverage_risks(required=required, purchased=purchased, scheduled=scheduled, reliable=reliable,
-                                         changed=changed, history=history))
-                _coverage_actions(row, task, group, bom, reliable, remaining)
-                rows.append(row)
+                purchases = [(line, identity, not group or (line.purchase_order.purchase_group_id == group.pk
+                    and line.purchase_group_line_id == frozen_line.pk)) for line in purchase_map.get((task.pk, product.pk), [])
+                    if str(line.source_bom_line_id_snapshot) == source_id]
+                rows.append(_coverage_material_row(task, group, bom, snapshot,
+                    product_id=product.pk, product_name=product.product_name_snapshot, source_id=source_id,
+                    row_key=f'{task.pk}:{product.pk}:{source_id}', required=required, purchases=purchases,
+                    materials=materials, notes=notes, changed=changed, history=history, scheduled=scheduled,
+                    inbound_date=schedules[product.pk]['material_inbound_date'] if scheduled else None, evaluated_at=evaluated_at))
     if policy is not None:
         boms_by_product = {bom.product_line_id: bom for bom in boms.values()}
         for row in rows:
             bom = boms_by_product.get(_uuid(row['product_line_id']))
             _apply_coverage_timing(row, bom, now, policy)
+    products_by_id = {product.pk: product for product in products}
+    with localcontext() as context:
+        context.prec = 64
+        for group in combined_groups:
+            rows.extend(_combined_coverage_rows(tasks[group.production_task_id], group, products_by_id, boms,
+                purchases_by_source, previous_lines, materials, schedules, evaluated_at, group.production_task_id in unresolved_product_tasks,
+                policy, now))
     return rows
 
 

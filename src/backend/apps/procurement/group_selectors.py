@@ -7,8 +7,9 @@ from apps.inventory.models import MaterialInboundLine, MaterialInboundStatus
 from apps.production_tasks.models import ProductionTaskProduct
 
 from .catalog_materials import is_weight_purchase, purchase_catalog_selection
+from .multi_bom_sources import matches_combined_source
 from .models import (
-    PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus,
+    PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus,
     PurchaseReturnLine, PurchaseReturnStatus,
 )
 
@@ -30,7 +31,9 @@ def purchase_groups_with_context(queryset=None):
             purchase_group_line__purchase_group_id=OuterRef("pk"),
         ).exclude(purchase_order__purchase_group_id=OuterRef("pk"))),
     )
-    batch_lines = PurchaseOrderLine.objects.select_related("purchase_order").prefetch_related("material_inbound_lines__inbound")
+    batch_lines = PurchaseOrderLine.objects.select_related("purchase_order").prefetch_related(Prefetch(
+        "material_inbound_lines", queryset=MaterialInboundLine.objects.select_related("inbound", "purchase_return_line__return_order"),
+    ))
     display_lines = PurchaseOrderLine.objects.prefetch_related(Prefetch(
         "material_inbound_lines",
         queryset=MaterialInboundLine.objects.select_related("inbound", "purchase_return_line__return_order"),
@@ -39,16 +42,22 @@ def purchase_groups_with_context(queryset=None):
         "id", "production_task_id", "product_name_snapshot", "specification_snapshot", "material_snapshot",
         "color_card_snapshot", "color_name_snapshot", "color_code_snapshot", "quantity", "unit_id", "unit__unit_name",
     )
+    source_lines = PurchaseGroupLine.objects.prefetch_related(Prefetch("batch_lines", queryset=batch_lines))
     return queryset.select_related("production_task", "manual_completed_by_employee").prefetch_related(
+        Prefetch("bom_sources", queryset=PurchaseGroupBomSource.objects.select_related("previous_group").prefetch_related(
+            Prefetch("previous_group__lines", queryset=source_lines))),
+        "combined_into_sources",
         Prefetch("production_task__products", queryset=products, to_attr="purchase_group_products"),
-        Prefetch("lines", queryset=PurchaseGroupLine.objects.prefetch_related(Prefetch("batch_lines", queryset=batch_lines))),
+        Prefetch("lines", queryset=source_lines),
         Prefetch("batches", queryset=PurchaseOrder.objects.filter(archived_at__isnull=True)
                  .prefetch_related(Prefetch("lines", queryset=display_lines)).order_by("batch_number", "id")),
     )
 
 
 def purchase_group_deletion_summary(group):
-    if group.manual_completed_at:
+    if group.combined_into_sources.all():
+        reason = "本需求已并入合并采购，需保留原单据供追溯。"
+    elif group.manual_completed_at:
         reason = "采购需求已完成，不能删除。"
     elif group.delete_has_purchase:
         reason = "已有确认采购或已完成的批次，不能删除采购需求。"
@@ -124,10 +133,19 @@ def purchase_batch_display_status(order):
     return PurchaseOrderStatus.COMPLETED
 
 
+def previous_group_lines(group):
+    if not any(isinstance(line.source_snapshot, dict) and "source_contributions" in line.source_snapshot
+               for line in group.lines.all()):
+        return {}
+    return {str(line.pk): line for membership in group.bom_sources.all() if membership.previous_group_id
+            for line in membership.previous_group.lines.all()}
+
+
 def purchase_group_progress(group):
     lines = []
     external_supply_line_ids = []
     valid_statuses = {PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED}
+    previous_lines = previous_group_lines(group)
     for source in group.lines.all():
         issues = list(source.compatibility_issues)
         snapshot = source.source_snapshot
@@ -141,7 +159,7 @@ def purchase_group_progress(group):
         if not isinstance(calculation, dict):
             issues.append("MATERIAL_SNAPSHOT_INVALID")
             calculation = {}
-        purchased, accepted = Decimal("0"), Decimal("0")
+        purchased, accepted, planned = Decimal("0"), Decimal("0"), Decimal("0")
         is_pipe = snapshot.get("section_type_snapshot") == "PROFILE"
         is_weight = source.source_unit_text == "KG" and (is_pipe or
             calculation.get("measurement_kind") == "HARDWARE_WEIGHT")
@@ -150,9 +168,22 @@ def purchase_group_progress(group):
         in_progress = Decimal("0")
         in_progress_bars = 0 if is_pipe else None
         material_id = str(calculation.get("raw_material_id") or "")
-        for line in source.batch_lines.all():
+        related_sources = [source]
+        inherited_ids = {item["previous_group_line_id"] for item in snapshot.get("source_contributions", [])
+                         if item.get("previous_group_line_id")}
+        inherited_ids.update(snapshot.get("previous_group_line_ids", []))
+        if inherited_ids - previous_lines.keys():
+            issues.append("BATCH_SOURCE_MISMATCH")
+        related_sources.extend(previous_lines[key] for key in inherited_ids if key in previous_lines)
+        for origin, line in ((origin, line) for origin in related_sources for line in origin.batch_lines.all()):
             order = line.purchase_order
-            if order.archived_at or order.status not in valid_statuses:
+            if order.archived_at:
+                continue
+            if order.status == PurchaseOrderStatus.DRAFT:
+                if line.source_unit_text == source.source_unit_text:
+                    planned += line.actual_purchase_quantity or Decimal("0")
+                continue
+            if order.status not in valid_statuses:
                 continue
             if not isinstance(line.calculation_snapshot, dict):
                 issues.append("MATERIAL_SNAPSHOT_INVALID")
@@ -160,9 +191,11 @@ def purchase_group_progress(group):
             batch_material_id = str(line.calculation_snapshot.get("raw_material_id") or "")
             if "raw_material_id" not in line.calculation_snapshot and not order.batch_request_id and line.raw_material_snapshot == snapshot.get("raw_material_snapshot"):
                 batch_material_id = material_id
-            if (order.purchase_group_id != group.pk or line.source_unit_text != source.source_unit_text
-                    or line.required_quantity != source.required_quantity
-                    or line.source_bom_line_id_snapshot != source.source_bom_line_id_snapshot
+            frozen_match = (line.required_quantity == origin.required_quantity
+                            and line.source_bom_line_id_snapshot == origin.source_bom_line_id_snapshot)
+            if (order.purchase_group_id != (group.pk if origin is source else origin.purchase_group_id)
+                    or line.source_unit_text != source.source_unit_text
+                    or not (frozen_match or matches_combined_source(line, origin))
                     or batch_material_id != material_id):
                 issues.append("BATCH_SOURCE_MISMATCH")
                 continue
@@ -170,6 +203,7 @@ def purchase_group_progress(group):
                 issues.append("PURCHASE_QUANTITY_INVALID")
                 continue
             purchased += line.actual_purchase_quantity
+            planned += line.actual_purchase_quantity
             if is_pipe and purchased_bars is not None:
                 purchased_bars = None if line.actual_bar_count is None else purchased_bars + line.actual_bar_count
             is_active = order.status in {PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING}
@@ -218,6 +252,8 @@ def purchase_group_progress(group):
             "required_quantity": source.required_quantity, "source_unit_text": source.source_unit_text,
             "source_snapshot": snapshot,
             "purchased_quantity": None if issues else purchased,
+            "planned_purchase_quantity": None if issues else planned,
+            "remaining_purchase_quantity": None if issues else max(source.required_quantity - planned, Decimal("0")),
             "accepted_quantity": None if issues else accepted,
             "purchased_bar_count": None if issues else purchased_bars,
             "accepted_bar_count": None if issues else accepted_bars,
@@ -239,15 +275,20 @@ def purchase_group_progress(group):
             "lines": lines, "external_supply_line_ids": external_supply_line_ids}
 
 
-def purchase_group_completion_summary(group):
+def purchase_group_completion_summary(group, *, progress=None):
     if group.manual_completed_at:
         return {"can_complete": False, "blocked_reason": "采购需求已手动完成。"}
-    progress = purchase_group_progress(group)
+    if progress is None:
+        progress = purchase_group_progress(group)
     if progress["status"] == "UNKNOWN":
         return {"can_complete": False, "blocked_reason": "采购需求来源或数量存在待核对项，请先核对。"}
     has_inbound = False
-    for batch in group.batches.all():
-        for line in batch.lines.all():
+    batch_items = [(batch, list(batch.lines.all())) for batch in group.batches.all()]
+    for source in previous_group_lines(group).values():
+        batch_items.extend((line.purchase_order, [line]) for line in source.batch_lines.all()
+                           if not line.purchase_order.archived_at)
+    for batch, items in batch_items:
+        for line in items:
             for inbound_line in line.material_inbound_lines.all():
                 if inbound_line.inbound.purchase_order_id != batch.pk:
                     return {"can_complete": False, "blocked_reason": "入库记录与采购批次归属不匹配，请先核对。"}

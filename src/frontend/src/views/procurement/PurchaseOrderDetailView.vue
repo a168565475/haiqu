@@ -10,6 +10,7 @@ import { usePageTabsStore } from '@/stores/pageTabs'
 import type { PurchaseOrderReadDetail } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue, type MaterialAttributeSource } from '@/utils/materialAttributes'
 import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
+import { setPriceText } from './purchaseSetPricing'
 import { isHardwareWeightLine, isKilogramUnit } from './purchaseWeight'
 import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 
@@ -141,7 +142,7 @@ const rows = computed<RecordRow[]>(() => {
   if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line,
     cells: {
     index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: purchaseQuantityText(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count),
-    price: `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: formatMoney(line.amount), received: purchaseQuantityText(quantityValue(line, 'received', line.received_quantity), line.source_unit_text, line.raw_bar_length_m, line.received_bar_count),
+    price: setPriceText(line) || `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id ? '—' : formatMoney(line.amount), received: purchaseQuantityText(quantityValue(line, 'received', line.received_quantity), line.source_unit_text, line.raw_bar_length_m, line.received_bar_count),
     accepted: purchaseQuantityText(quantityValue(line, 'accepted', line.accepted_quantity), line.source_unit_text, line.raw_bar_length_m, line.accepted_bar_count), returned: purchaseQuantityText(quantityValue(line, 'return', line.return_quantity), line.source_unit_text, line.raw_bar_length_m, line.return_bar_count),
   } }))
   if (activeTab.value === 'inbounds') {

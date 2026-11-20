@@ -5,6 +5,7 @@ from apps.inventory.public_stock_cutover import stock_write_transaction
 from .pipe_receipts import receipt_pipe_values, quality_pipe_quantities
 from apps.organizations.selectors import active_department_employees
 from apps.procurement.pipe_purchase import pipe_meters
+from apps.procurement.set_pricing import material_calculation_snapshot
 from collections import defaultdict
 from decimal import Decimal, ROUND_FLOOR
 
@@ -661,9 +662,12 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         if line_id in expected_values and expected_values[line_id] != expected:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
-        item['_pipe_values'] = (catalog_receipt_values(purchase_line=line, item=item) if line.material_catalog_id
-                                else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode))
-        pipe_material = item['_pipe_values'].get('raw_material_information')
+        receipt_values = (catalog_receipt_values(purchase_line=line, item=item) if line.material_catalog_id
+                          else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode))
+        if "calculation_snapshot" in receipt_values:
+            receipt_values["calculation_snapshot"] = material_calculation_snapshot(receipt_values["calculation_snapshot"])
+        item['_pipe_values'] = receipt_values
+        pipe_material = receipt_values.get('raw_material_information')
         if pipe_material is not None and pipe_material.pk != purchase_materials[line.pk].pk:
             raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
         if item.get('received_quantity') is None:

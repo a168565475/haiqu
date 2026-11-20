@@ -229,7 +229,14 @@ export interface PurchaseOrderSource {
   existing_purchase_order_number?: string
 }
 
+export interface PurchaseSetPricing {
+  anchor_id: string
+  quantity: number
+  unit_price: string
+}
+
 export interface PurchaseOrderLineInput {
+  set_pricing?: PurchaseSetPricing | null
   /** 管材采购时由采购员填写的单根长度（米）；生产 BOM 的既有管材规则仍由来源快照提供。 */
   raw_bar_length_m?: string | null
   actual_bar_count?: number | string | null
@@ -400,6 +407,10 @@ export interface PurchaseSheetParty {
 }
 
 export interface SupplierPurchaseSheetLine {
+  set_pricing?: PurchaseSetPricing | null
+  is_set_anchor?: boolean
+  physical_quantity?: string
+  physical_unit?: string
   calculation_snapshot?: Record<string, unknown>
   measurement_kind?: string
   raw_bar_length_m?: string

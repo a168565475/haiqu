@@ -41,6 +41,7 @@ from .selectors import (
     purchase_orders_by_product, purchase_orders_with_product_ids,
 )
 from .source_access import purchase_order_access
+from .set_pricing import apply_set_pricing, line_set_pricing, validate_set_members
 
 
 MONEY_QUANT = Decimal("0.0001")
@@ -490,6 +491,8 @@ def _purchase_source_revision(task, products):
                 if not _is_purchasable_bom_section(section):
                     continue
                 for line in section.lines.all():
+                    if not line.purchase_required:
+                        continue
                     line_revisions.append(
                         {
                             "section_id": str(section.pk),
@@ -597,6 +600,8 @@ def _bom_source_details(product, bom):
             if not _is_purchasable_bom_section(section):
                 continue
             for line in section.lines.all():
+                if not line.purchase_required:
+                    continue
                 source_line = _source_line(bom, section, line, product)
                 source_lines.append(source_line)
                 if line.material_catalog_id:
@@ -1052,6 +1057,7 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
 
 
 def _purchase_order_confirmation_errors(order, lines):
+    validate_set_members(lines)
     errors = []
     for line in lines:
         validate_pipe_purchase_source(line)
@@ -1074,7 +1080,7 @@ def _purchase_order_confirmation_errors(order, lines):
             errors.append(f"第 {line.line_number} 行缺少供应商")
         if line.delivery_date is None:
             errors.append(f"第 {line.line_number} 行缺少采购交期")
-        if line.unit_price is None or line.unit_price < 0:
+        if not line_set_pricing(line) and (line.unit_price is None or line.unit_price < 0):
             errors.append(f"第 {line.line_number} 行缺少有效采购单价")
         if line.amount is None:
             errors.append(f"第 {line.line_number} 行缺少采购金额")
@@ -1172,6 +1178,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         line.actual_purchase_quantity = quantity
         line.unit_price = unit_price
         line.amount = amount
+        apply_set_pricing(line, submitted)
         line.save(update_fields=[
             *reset_source_fields,
             *PIPE_PURCHASE_FIELDS,
@@ -1186,8 +1193,9 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
             "amount",
             "updated_at",
         ])
-        amounts.append(amount)
+        amounts.append(line.amount)
 
+    validate_set_members(lines)
     if "is_mailed" in validated_data:
         order.is_mailed = validated_data["is_mailed"]
     if "batch_type" in validated_data:

@@ -216,7 +216,14 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
         return value
 
 
+class PurchaseSetPricingSerializer(serializers.Serializer):
+    anchor_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1, max_value=99999999999999)
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+
+
 class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
+    set_pricing = PurchaseSetPricingSerializer(required=False, allow_null=True)
     actual_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False, allow_null=True, default=None)
     raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
     raw_bar_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True)
@@ -262,6 +269,7 @@ class PurchaseOrderUpdateSerializer(serializers.Serializer):
 
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
+    set_pricing = PurchaseSetPricingSerializer(source="calculation_snapshot.set_pricing", read_only=True, default=None)
     sample_line_key = serializers.UUIDField(source="sample_material_source.line_key", read_only=True, allow_null=True, default=None)
     sample_demand_unit = serializers.SerializerMethodField()
     color = serializers.CharField(source="color_snapshot", read_only=True)
@@ -298,6 +306,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         fields = [
             "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "sample_demand_unit", "color",
             "purchase_group_line_id",
+            "set_pricing",
             "id",
             "line_number",
             "bom_id",

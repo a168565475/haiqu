@@ -43,6 +43,8 @@ class PurchaseGroupFilterOptionsSerializer(serializers.Serializer):
 class PurchaseBatchLineSerializer(PurchaseOrderUpdateLineSerializer):
     id = None
     purchase_group_line_id = serializers.UUIDField()
+    actual_purchase_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=0,
+                                                        required=False, allow_null=True, default=None)
 
 
 class PurchaseBatchCreateSerializer(serializers.Serializer):
@@ -57,6 +59,8 @@ class PurchaseBatchCreateSerializer(serializers.Serializer):
         if len(keys) != len(set(keys)):
             raise serializers.ValidationError("同一材料不能在一个批次中重复。")
         for line in lines:
+            if not line.get("set_pricing") and line.get("unit_price") == 0:
+                continue
             if line.get("actual_bar_count") is None and line.get("actual_purchase_quantity") is None:
                 raise serializers.ValidationError("所选材料必须填写实际采购数量或管材根数。")
         return lines
@@ -86,6 +90,7 @@ class PurchaseGroupProgressSerializer(serializers.Serializer):
     satisfied_line_count = serializers.IntegerField()
     line_count = serializers.IntegerField()
     lines = PurchaseGroupProgressLineSerializer(many=True)
+    external_supply_line_ids = serializers.ListField(child=serializers.UUIDField(), read_only=True)
 
 
 class PurchaseBatchSummarySerializer(serializers.Serializer):

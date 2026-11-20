@@ -28,6 +28,7 @@ from .group_selectors import purchase_group_completion_summary, purchase_group_d
 from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
 from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
+from .set_pricing import apply_set_pricing, material_calculation_snapshot, validate_set_members
 from .services import (
     PURCHASABLE_TASK_STATUSES, PurchaseSourceChanged, PurchaseSourceUnavailable, _money, evaluate_purchase_source,
     _validate_hardware_actual_weight, is_hardware_weight_snapshot, next_purchase_order_number, purchase_order_snapshot,
@@ -292,28 +293,34 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
         source_revision=source["source_revision"], created_by_employee=actor_employee,
     )
     for number, item in enumerate(source["lines"], 1):
-        snapshot = {key: item[key] for key in (
-            "material_catalog_id", "material_selection_snapshot",
-            "source_bom_line_id_snapshot", "required_quantity", "source_quantity_field", "source_quantity_text",
-            "source_unit_text", "quantity_parse_status", "material_attributes_snapshot",
-        )}
-        for key in ("bom_number", "product_number", "product_code", "product_name", "product_specification",
-                    "section_type", "section_title", "category", "material", "part_name", "specification", "raw_material"):
-            snapshot[key + "_snapshot"] = item[key]
-        snapshot.update(bom_id=item["bom_id"], bom_line_id=item["bom_line_id"], product_line_id_snapshot=item["product_line_id"])
-        if item["section_type"] == "PROFILE":
-            calculation = pipe_source_snapshot(item["_bom_line"])
-            snapshot.update({key: calculation[key] for key in ("raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters", "suggested_purchase_weight_kg") if key in calculation})
-        else:
-            calculation = item.get("calculation_snapshot") or build_purchase_material_snapshot(item["_bom_line"])
-        snapshot["calculation_snapshot"] = calculation
-        line = _save_group_line(group, number, _json_value(snapshot))
-        if line.compatibility_issues:
-            raise ValidationError({"lines": f"第{number}行来源建议量、单位或材料身份不完整，请先核对BOM。"})
+        save_bom_group_line(group, number, item)
     write_audit_log(object_type="PURCHASE_GROUP", object_id=group.pk, context_type="PRODUCTION_TASK",
                     context_id=task.pk, action="CREATED", actor_employee=actor_employee,
                     after_data={"group_number": group.group_number, "source_revision": group.source_revision}, request=request)
     return group
+
+
+def save_bom_group_line(group, number, item):
+    snapshot = {key: item[key] for key in (
+        "material_catalog_id", "material_selection_snapshot",
+        "source_bom_line_id_snapshot", "required_quantity", "source_quantity_field", "source_quantity_text",
+        "source_unit_text", "quantity_parse_status", "material_attributes_snapshot",
+    )}
+    for key in ("bom_number", "product_number", "product_code", "product_name", "product_specification",
+                "section_type", "section_title", "category", "material", "part_name", "specification", "raw_material"):
+        snapshot[key + "_snapshot"] = item[key]
+    snapshot.update(bom_id=item["bom_id"], bom_line_id=item["bom_line_id"], product_line_id_snapshot=item["product_line_id"])
+    if "purchase_required" in item["_bom_line"].raw_values:
+        snapshot["purchase_required"] = item["_bom_line"].purchase_required
+    if item["section_type"] == "PROFILE":
+        calculation = pipe_source_snapshot(item["_bom_line"])
+        snapshot.update({key: calculation[key] for key in ("raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters", "suggested_purchase_weight_kg") if key in calculation})
+    else:
+        calculation = item.get("calculation_snapshot") or build_purchase_material_snapshot(item["_bom_line"])
+    snapshot["calculation_snapshot"] = calculation
+    line = _save_group_line(group, number, _json_value(snapshot))
+    if line.compatibility_issues:
+        raise ValidationError({"lines": f"第{number}行来源建议量、单位或材料身份不完整，请先核对BOM。"})
 
 
 def validate_group_line_source(line):
@@ -325,7 +332,7 @@ def validate_group_line_source(line):
         raise Conflict("采购需求来源存在待核对项，不能沿用未知来源。")
     if line.source_unit_text != source.source_unit_text or line.required_quantity != source.required_quantity:
         raise Conflict("采购批次单位或建议量与保存的采购需求快照不一致。")
-    if line.calculation_snapshot != source.source_snapshot.get("calculation_snapshot", {}):
+    if material_calculation_snapshot(line.calculation_snapshot) != source.source_snapshot.get("calculation_snapshot", {}):
         raise Conflict("采购批次材料身份或计算参数与采购需求快照不一致。")
     if line.material_catalog_id:
         purchase_catalog_selection(line)
@@ -371,11 +378,18 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     ids = [str(item["purchase_group_line_id"]) for item in inputs]
     if len(ids) != len(set(ids)) or not set(ids).issubset(source_lines):
         raise ValidationError({"lines": "批次材料必须属于当前采购需求，且不能重复。"})
+    inputs = [item for item in inputs if item.get("set_pricing")
+              or (item.get("actual_purchase_quantity") != 0 and item.get("unit_price") != 0)]
+    ids = [str(item["purchase_group_line_id"]) for item in inputs]
     if not inputs:
         raise ValidationError({"lines": "采购批次至少选择一项材料。"})
     for identifier in ids:
         source = source_lines[identifier]
         snapshot = source.source_snapshot
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("calculation_snapshot", {}), dict):
+            raise Conflict(f"第{source.line_number}项历史来源待核对，不能创建批次。")
+        if snapshot.get("purchase_required") is False:
+            raise ValidationError({"lines": "所选材料已改为外供，请重新读取采购需求。"})
         if snapshot.get("section_type_snapshot") != "PROFILE":
             continue
         calculation = snapshot.get("calculation_snapshot") or {}
@@ -410,7 +424,7 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         currency_name_snapshot=currency.chinese_name, currency_symbol_snapshot=currency.symbol,
         is_mailed=validated_data.get("is_mailed"), created_by_employee=actor_employee,
     )
-    amounts = []
+    created_lines = []
     for number, item in enumerate(inputs, 1):
         source = source_lines[str(item["purchase_group_line_id"])]
         if source.compatibility_issues:
@@ -439,8 +453,11 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         # Decimal/UUID字段在JSON中为字符串，加载模型字段转换后进行一致性校验。
         line.required_quantity = source.required_quantity
         validate_group_line_source(line)
+        apply_set_pricing(line, item)
         line.save()
-        amounts.append(amount)
+        created_lines.append(line)
+    validate_set_members(created_lines)
+    amounts = [line.amount for line in created_lines]
     if all(amount is not None for amount in amounts):
         order.total_amount = _money(sum(amounts, Decimal("0")))
         order.save(update_fields=["total_amount", "updated_at"])

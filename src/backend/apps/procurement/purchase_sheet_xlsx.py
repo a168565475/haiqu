@@ -139,8 +139,8 @@ def _line_values(layout, line, index, order_number, actual_weight, sample_source
     amount = _number(line.get("amount"))
     return [
         _text(line.get("part_name")), specification or "—", attributes or "—", color or "—",
-        quantity if quantity is not None else "—", price if price is not None else "—",
-        "待结算" if actual_weight or amount is None else amount,
+        quantity if quantity is not None else "—", price if price is not None else ("已含套价" if line.get("set_pricing") else "—"),
+        "—" if line.get("set_pricing") and not line["is_set_anchor"] else ("待结算" if actual_weight or amount is None else amount),
     ]
 
 

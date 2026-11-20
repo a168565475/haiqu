@@ -273,6 +273,11 @@ def _editable_model_values(line_data, section_type, product_quantity, *, existin
 
 def _merged_raw_values(existing_values, line_data, section_type, section_title, calculated_values):
     values = dict(existing_values or {})
+    if section_title.strip() == "裁剪明细":
+        values.pop("purchase_required", None)
+    elif "purchase_required" in line_data:
+        if line_data["purchase_required"] is False or "purchase_required" in values:
+            values["purchase_required"] = line_data["purchase_required"]
     if "source_inventory_material_id" in line_data:
         source_id = line_data["source_inventory_material_id"]
         values["source_inventory_material_id"] = str(source_id) if source_id else ""
@@ -1701,6 +1706,8 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
         after_data={"status": locked.status, "quantity_confirmation_reason": reason},
         request=request,
     )
+    from apps.procurement.external_supply import sync_external_supply
+    sync_external_supply(locked, lines, actor_employee=actor_employee, request=request)
     register_task_boms_confirmed(task_id=locked.production_task_id, actor_employee=actor_employee,
                                  confirmed_at=locked.confirmed_at)
     return locked

@@ -1,4 +1,5 @@
 """采购合同明细的规格、物料属性与颜色分栏，不修改历史快照。"""
+from .set_pricing import sheet_set_description
 
 
 COLOR_KEYS = {
@@ -15,6 +16,8 @@ def purchase_sheet_line_display(line, *, sample_source=False):
     material = _text(line.get("material"))
     remark = _text(line.get("remark"))
     attributes = [f"材质：{material}"] if material else []
+    if line.get("set_pricing"):
+        attributes.append(sheet_set_description(line))
     colors = [remark] if sample_source and remark else []
     selected = line.get("material_selection_snapshot")
     if line.get("material_catalog_id") and isinstance(selected, dict):

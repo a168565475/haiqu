@@ -1815,6 +1815,7 @@ function followingLineDraft(section: BomSectionInput, current: BomLineInput): Bo
 
   const next: BomLineInput = {
     ...current,
+    purchase_required: true,
     hardware_weight_input: current.hardware_weight_input ? { ...current.hardware_weight_input } : undefined,
     id: undefined,
     client_key: createDraftKey(),

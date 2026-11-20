@@ -20,7 +20,7 @@ from .models import (
     PurchaseRequestStatus,
     Supplier,
 )
-from .services import PurchaseQuantityParseStatus, _source_quantity
+from .services import PurchaseQuantityParseStatus, _is_purchasable_bom_section, _source_quantity
 from .selectors import purchase_request_lines_with_allocated_quantity
 
 
@@ -94,8 +94,9 @@ def create_purchase_request(*, bom, actor_employee, request=None):
         .select_related("section")
         .order_by("section__line_number", "line_number", "id")
     )
+    source_lines = [line for line in source_lines if line.purchase_required and _is_purchasable_bom_section(line.section)]
     if not source_lines:
-        raise ValidationError({"bom": "BOM 没有物料明细，不能创建采购申请。"})
+        raise ValidationError({"bom": "BOM 没有可采购的物料明细，不能创建采购申请。"})
     parsed_lines = []
     errors = []
     for source_line in source_lines:
@@ -193,6 +194,8 @@ def submit_purchase_request(*, purchase_request, actor_employee, request=None):
         raise Conflict("只有草稿采购申请可以提交。")
     errors = []
     lines = list(purchase_request.lines.select_for_update().all())
+    if not lines:
+        raise ValidationError({"lines": "采购申请没有可采购的物料。"})
     for line in lines:
         if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
             raise Conflict('旧管材采购申请不能继续提交，请从采购需求重新建立根米采购。')

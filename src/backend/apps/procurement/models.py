@@ -550,6 +550,8 @@ class PurchaseOrderLine(models.Model):
             models.CheckConstraint(
                 condition=(
                     Q(material_catalog__isnull=False, section_type_snapshot="PROFILE", actual_purchase_meters__isnull=True, amount__isnull=True)
+                    | Q(calculation_snapshot__has_key="set_pricing", purchase_group_line__isnull=False,
+                        actual_purchase_quantity__gt=0, unit_price__isnull=True, amount__isnull=False)
                     | Q(actual_purchase_quantity__isnull=True, amount__isnull=True)
                     | Q(unit_price__isnull=True, amount__isnull=True)
                     | Q(

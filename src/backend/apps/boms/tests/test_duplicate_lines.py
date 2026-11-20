@@ -20,6 +20,7 @@ class DuplicateMaterialLineTests(SimpleTestCase):
         values = {
             "section": SimpleNamespace(pk=uuid4(), title=title, section_type=section_type),
             "line_number": 1, "category": "材料", "unit": "根", "part_name": "上下短脚管",
+            "material_catalog_id": None, "purchase_required": True,
             "material": "铁", "specification": "Φ25 × 1.5 mm", "hardness": "T5",
             "cutting_length_mm": 530, "length_value": "530", "notes": "", "unit_consumption": "2",
             "raw_values": {"tube_shape": "圆管", "tube_diameter": "25", "tube_thickness": "1.5",
@@ -50,6 +51,10 @@ class DuplicateMaterialLineTests(SimpleTestCase):
             purchase_unit_weight_kg="3", coating_unit_area_sqm="4")
         with self.assertRaisesMessage(ValidationError, "物料属性完全相同"):
             validate_duplicate_material_lines([first, second])
+
+    def test_same_material_can_be_purchased_and_supplied_by_processor(self):
+        first = self.line("五金件")
+        validate_duplicate_material_lines([first, self.copy_line(first, purchase_required=False)])
 
     def test_pipe_physical_differences_are_allowed(self):
         first = self.line()

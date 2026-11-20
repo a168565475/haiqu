@@ -60,6 +60,7 @@ export interface BomSectionSummary {
 }
 
 export interface BomLine extends HardwareWeightFields {
+  purchase_required?: boolean
   component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'
   parent_part_id?: string | null
   pieces_per_part?: number | null
@@ -270,6 +271,7 @@ export interface TubeCalculationPreview {
 }
 
 export interface BomLineInput extends HardwareWeightFields {
+  purchase_required?: boolean
   component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'
   parent_part_id?: string | null
   parent_part_client_key?: string | null

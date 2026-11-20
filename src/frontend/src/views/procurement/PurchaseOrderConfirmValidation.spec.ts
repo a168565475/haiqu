@@ -44,6 +44,33 @@ describe('采购订单确认校验', () => {
 
   afterEach(() => vi.restoreAllMocks())
 
+  it('重开草稿保留手填套数与独立采购数量，拆开后要求分别报价', async () => {
+    const original = await api.fetchVersionedPurchaseOrder('order-1')
+    const pricing = { anchor_id: 'stock-1', quantity: 1500, unit_price: '5.0000' }
+    const base = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, set_pricing: pricing,
+      unit_price: null, source_unit_text: '米', supplier_id: 'supplier-1', delivery_date: '2026-11-28' }
+    const order = { ...original.data, purchase_group_id: 'g', lines: [
+      { ...base, id: 'line-1', purchase_group_line_id: 'stock-1', actual_purchase_quantity: '3200' },
+      { ...base, id: 'line-2', purchase_group_line_id: 'stock-2', actual_purchase_quantity: '1600.1234' },
+    ] }
+    vi.mocked(api.fetchVersionedPurchaseOrder).mockResolvedValue({ data: order, etag: 'version-1' })
+    const wrapper = shallowMount(PurchaseOrderConfirmView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    try {
+      const vm = wrapper.vm as unknown as {
+        totalScaled: bigint; confirmationErrors: string[]
+        order: typeof order; updatePayload: () => { lines: typeof order.lines }
+        saveSet: (change: import('./purchaseSetPricing').SetPricingChange) => void
+      }
+      expect(vm.totalScaled).toBe(75000000n)
+      expect(vm.confirmationErrors).toEqual([])
+      expect(vm.updatePayload().lines[1]).toMatchObject({ actual_purchase_quantity: '1600.1234', unit_price: null, set_pricing: pricing })
+      vm.saveSet({ anchorId: 'stock-1', members: [], pricing: null, supplierId: null, deliveryDate: '' })
+      expect(vm.updatePayload().lines.every(line => line.set_pricing === null)).toBe(true)
+      expect(vm.confirmationErrors).toHaveLength(2)
+    } finally { wrapper.unmount() }
+  })
+
   it('KG确认页保留四位重量输入，修改后按重量计价并保存且不发送旧根数', async () => {
     const initial = await api.fetchVersionedPurchaseOrder('order-1')
     const weightLine = { ...initial.data.lines[0], section_type: 'PROFILE', source_unit_text: 'KG',
@@ -57,9 +84,9 @@ describe('采购订单确认校验', () => {
       expect((input.element as HTMLInputElement).value).toBe('12.3456')
       await input.setValue('14.5678')
       await input.trigger('blur')
-      const vm = wrapper.vm as unknown as { order: { lines: Array<{ actual_purchase_quantity: string }> }; localTotal: number; confirmationErrors: string[]; saveChanges: (showSuccess: boolean) => Promise<boolean> }
+      const vm = wrapper.vm as unknown as { order: { lines: Array<{ actual_purchase_quantity: string }> }; totalScaled: bigint; confirmationErrors: string[]; saveChanges: (showSuccess: boolean) => Promise<boolean> }
       expect(vm.order.lines[0]!.actual_purchase_quantity).toBe('14.5678')
-      expect(vm.localTotal).toBe(29.1356)
+      expect(vm.totalScaled).toBe(291356n)
       expect(vm.confirmationErrors).toEqual([])
       expect(wrapper.find('[aria-label="实际采购根数"]').exists()).toBe(false)
       expect(wrapper.findAll('.el-input-group__append').map(node => node.text())).toContain('元/kg')
@@ -137,7 +164,7 @@ describe('采购订单确认校验', () => {
     const wrapper = mount(PurchaseOrderConfirmView, { global: { plugins: [ElementPlus], stubs: { ElDatePicker: true } } })
     await flushPromises()
     try {
-      const vm = wrapper.vm as unknown as { order: { lines: Array<{ actual_bar_count: string; unit_price: string }> }; confirmationErrors: string[]; localTotal: number; saveChanges: (success: boolean) => Promise<boolean> }
+      const vm = wrapper.vm as unknown as { order: { lines: Array<{ actual_bar_count: string; unit_price: string }> }; confirmationErrors: string[]; totalScaled: bigint; saveChanges: (success: boolean) => Promise<boolean> }
       const input = wrapper.get('input[aria-label="实际采购数量（米）"]')
       await input.setValue('5')
       expect(vm.confirmationErrors.join(' ')).toContain('每根长度的整数倍')
@@ -146,7 +173,7 @@ describe('采购订单确认校验', () => {
       await input.setValue('5.92')
       vm.order.lines[0]!.unit_price = '2'
       expect(vm.order.lines[0]!.actual_bar_count).toBe('2')
-      expect(vm.localTotal).toBe(11.84)
+      expect(vm.totalScaled).toBe(118400n)
       vi.mocked(api.updatePurchaseOrder).mockResolvedValue({ data: vm.order, etag: 'version-2' } as never)
       expect(await vm.saveChanges(false)).toBe(true)
       expect(vi.mocked(api.updatePurchaseOrder).mock.calls[0]![1].lines[0]).toMatchObject({ actual_bar_count: '2', actual_purchase_quantity: null })

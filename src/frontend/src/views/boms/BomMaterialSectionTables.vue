@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 import { fetchMaterialCatalog, materialCatalogError } from '@/api/materialCatalog'
 import { Delete, Edit, FullScreen } from '@element-plus/icons-vue'
 import BomLineImageSummary from '@/components/BomLineImageSummary.vue'
+import BomPurchaseRequiredColumn from './BomPurchaseRequiredColumn.vue'
 import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
 import { componentDemand, componentKey, componentMaterialValue, setComponentParent, setComponentUnit } from '@/utils/bomComposition'
 import type { BomLineInput, BomSectionInput } from '@/types/bom'
@@ -194,6 +195,7 @@ const {
                <ElTableColumn label="建议采购重量（kg）" width="145"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_weight_kg) }}</template></ElTableColumn>
                <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
                <slot name="trailing-columns" />
+               <BomPurchaseRequiredColumn :can-edit="canEdit" />
              </ElTable>
             <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -238,6 +240,7 @@ const {
               <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <ElTable v-else-if="isPlasticSection" class="erp-table-editor plastic-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前塑料件暂无数据，点击“选择数据”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -270,6 +273,7 @@ const {
               <ElTableColumn label="备注" min-width="220"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <ElTable v-else-if="isAuxiliarySection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor auxiliary-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前辅料暂无数据，点击“选择辅料”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -313,6 +317,7 @@ const {
               <ElTableColumn label="备注" min-width="190"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <ElTable v-else-if="isFabricSection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor fabric-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前面料暂无数据，点击“添加面料”开始录入">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -335,6 +340,7 @@ const {
               <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <ElTable v-else-if="isPackagingSection" class="erp-table-editor packaging-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前包材暂无数据，点击“选择包材”批量添加">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -350,6 +356,7 @@ const {
               <ElTableColumn label="需求数量" width="125"><template #default="scope">{{ packagingQuantity(scope.row.units_per_box, props.orderQuantity) || '—' }}</template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" v-bind="rowSelection" :data="activeSection.lines" border scrollbar-always-on empty-text="当前暂无部位或裁片，点击“添加材料”选择已有品名">
               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
@@ -404,6 +411,7 @@ const {
               <ElTableColumn label="备注" min-width="160"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <slot name="trailing-columns" />
+              <BomPurchaseRequiredColumn :can-edit="canEdit" />
             </ElTable>
             <div v-else class="pending-section-fields">
               <strong>{{ activeSection.title }}</strong>

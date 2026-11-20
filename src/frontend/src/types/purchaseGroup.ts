@@ -1,4 +1,4 @@
-import type { MaterialAttributeSnapshot, PurchaseBatchType, PurchaseOrderStatus } from './purchaseOrder'
+import type { MaterialAttributeSnapshot, PurchaseBatchType, PurchaseOrderStatus, PurchaseSetPricing } from './purchaseOrder'
 import type { PageMeta } from './referenceData'
 
 export type PurchaseGroupStatus = 'PENDING' | 'PURCHASING' | 'COMPLETED' | 'UNKNOWN'
@@ -58,6 +58,7 @@ export interface PurchaseGroupProgressLine {
 }
 
 export interface PurchaseGroupProgress {
+  external_supply_line_ids?: string[]
   status: PurchaseGroupStatus
   satisfied_line_count: number
   line_count: number
@@ -139,6 +140,7 @@ export interface PurchaseGroupInput {
 }
 
 export interface PurchaseBatchLineInput {
+  set_pricing?: PurchaseSetPricing | null
   purchase_group_line_id: string
   actual_purchase_quantity?: string | null
   actual_bar_count?: number | string | null

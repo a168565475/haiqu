@@ -5,6 +5,7 @@ import type { DataResponse } from '@/types/referenceData'
 import type {
   PaginatedPurchaseOrders,
   PurchaseBatchType,
+  PurchaseSetPricing,
   PurchaseOrderDetail,
   PurchaseOrderInput,
   PurchaseOrderOptions,
@@ -109,6 +110,7 @@ export async function updatePurchaseOrder(
     is_mailed: boolean | null
     lines: Array<{
       id: string
+      set_pricing?: PurchaseSetPricing | null
       actual_bar_count?: number | string | null
       raw_bar_length_m?: string | null
       raw_bar_weight_kg?: string | null

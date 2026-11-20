@@ -9,7 +9,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.boms.catalog_selection import SECTION_CATEGORIES
 from apps.boms.material_flow_calculations import MaterialFlowValueError, pipe_plan_for_line
-from apps.boms.models import Bom, BomSection
+from apps.boms.models import Bom, BomLine, BomSection
 from apps.inventory.models import MaterialInboundLine
 from apps.material_catalog.saved_selection import validate_saved_material
 from apps.production_scheduling.models import ProductionScheduleProduct
@@ -447,14 +447,21 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
     boms = {bom.pk: bom for bom in Bom.objects.filter(pk__in=[product.tracking_bom_id for product in products if product.tracking_bom_id])
         .prefetch_related(Prefetch('sections', queryset=BomSection.objects.prefetch_related('lines')))}
     current_lines = [line for bom in boms.values() for section in bom.sections.all()
-                     if _is_purchasable_bom_section(section) for line in section.lines.all()]
+                     if _is_purchasable_bom_section(section) for line in section.lines.all() if line.purchase_required]
     groups = list(PurchaseGroup.objects.filter(production_task_id__in=tasks, archived_at__isnull=True)
         .only('id', 'production_task_id', 'product_line_id_snapshot', 'compatibility_issues', 'manual_completed_at')
         .prefetch_related(Prefetch('lines', queryset=PurchaseGroupLine.objects.only('id', 'purchase_group_id',
             'source_bom_line_id_snapshot', 'product_line_id_snapshot', 'required_quantity', 'source_snapshot', 'compatibility_issues'))))
     group_map = defaultdict(list)
+    revised_source_ids = []
     for group in groups:
         group_map[(group.production_task_id, group.product_line_id_snapshot)].append(group)
+        if any(isinstance(row.source_snapshot, dict) and 'purchase_required' in row.source_snapshot
+               for row in group.lines.all()):
+            revised_source_ids.extend(row.source_bom_line_id_snapshot for row in group.lines.all())
+    frozen_row_ids = {(product_id, identity): str(pk) for product_id, identity, pk in
+                      BomLine.objects.filter(pk__in=revised_source_ids).values_list(
+                          'section__bom__product_line_id', 'component_identity', 'pk')}
     purchase_lines = list(PurchaseOrderLine.objects.filter(purchase_order__production_task_id__in=tasks,
         purchase_order__source_type='PRODUCTION', purchase_order__archived_at__isnull=True,
         purchase_order__status__in=VALID_PURCHASE_STATUSES).select_related('purchase_order')
@@ -497,15 +504,25 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
             if group and group.compatibility_issues:
                 product_notes.append('采购需求来源存在历史待核对项')
             current = {}
+            external_ids = set()
             if bom:
                 for section in bom.sections.all():
                     if _is_purchasable_bom_section(section):
                         for line in section.lines.all():
-                            current[str(line.pk)] = _bom_snapshot(line, bom, materials)
+                            if not line.purchase_required:
+                                external_ids.add(str(line.pk))
+                                continue
+                            source_id = frozen_row_ids.get((product.pk, line.component_identity), str(line.pk))
+                            current[source_id] = _bom_snapshot(line, bom, materials)
+            source_lines = [line for line in group.lines.all()
+                            if not isinstance(line.source_snapshot, dict)
+                            or line.source_snapshot.get('purchase_required') is not False] if group else []
+            if bom and bom.status == 'VERIFIED' and external_ids and not current and not source_lines:
+                continue
             if not current:
                 product_notes.append('没有可核实的采购需求行')
-            source_lines = list(group.lines.all()) if group else []
-            known_sources = {str(line.source_bom_line_id_snapshot) for line in source_lines} if group else set(current)
+            known_sources = ({str(line.source_bom_line_id_snapshot) for line in group.lines.all()}
+                             if group else set(current) | external_ids)
             if any(str(line.source_bom_line_id_snapshot) not in known_sources
                    for line in purchase_map.get((task.pk, product.pk), [])):
                 product_notes.append('历史采购无法核实BOM需求行归属，不能当作未采购')

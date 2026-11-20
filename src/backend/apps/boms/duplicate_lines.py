@@ -60,7 +60,7 @@ def validate_duplicate_material_lines(lines):
     for line in lines:
         material_key = _material_key(line)
         if material_key is not None:
-            groups.setdefault((line.section.pk, material_key), []).append(line)
+            groups.setdefault((line.section.pk, material_key, line.purchase_required), []).append(line)
     errors = []
     for duplicates in groups.values():
         if len(duplicates) < 2:

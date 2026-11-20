@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
+import PurchaseGridCell from './PurchaseGridCell.vue'
 import { pipeMeters, pipeRootsFromMeters, samplePipeSuggestedWeight } from '@/utils/pipeQuantities'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
 import refreshIcon from '@/assets/procurement/create-refresh.svg'
 import calendarIcon from '@/assets/procurement/create-calendar.svg'
@@ -29,11 +30,17 @@ import type {
   PurchaseOrderSource,
   PurchaseOrderSourceLine,
   PurchaseBatchType,
+  PurchaseSetPricing,
 } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import { isHardwareWeightLine, isWeightPurchaseLine as isWeightSourceLine } from './purchaseWeight'
+import { decimalParts, formatScaled, scaledProduct } from './purchaseAmounts'
+import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
+import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
+import { applySetPricing, isExplicitZeroPrice, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
+  set_pricing?: PurchaseSetPricing | null
   purchase_group_line_id?: string
   supplier_id: string | null
   delivery_date: string
@@ -56,7 +63,8 @@ const batchRequestId = ref('')
 let batchContentSignature = ''
 const batchConflict = ref('')
 const selectedLines = computed(() => isBatchMode.value
-  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line)))
+  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line))
+    && (line.set_pricing || !isExplicitZeroPrice(line.unit_price)))
   : lines.value)
 const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
 
@@ -65,6 +73,20 @@ const options = ref<PurchaseOrderOptions>({
 })
 const source = ref<PurchaseOrderSource | null>(null)
 const lines = ref<PurchaseLineDraft[]>([])
+// 表格只需观察行的增减和顺序，格内仍绑定原来的响应式明细。
+const gridRows = computed(() => markRaw(lines.value.slice()))
+const editingSetId = ref('')
+const setCandidates = computed(() => editingSetId.value ? lines.value.map(line => ({
+  ...line, quantityText: effectivePurchaseQuantity(line),
+  eligible: isPositiveDecimal(effectivePurchaseQuantity(line)) && isPositiveDecimal(line.required_quantity || ''),
+})) : [])
+const setSource = computed(() => setCandidates.value.find(line => line.purchase_group_line_id === editingSetId.value))
+function saveSet(change: SetPricingChange) {
+  applySetPricing(lines.value, change)
+  editingSetId.value = ''
+  refreshBulkSupplier()
+  refreshBulkDeliveryDate()
+}
 const batchRemainingQuantities = computed(() => new Map((group.value?.progress.lines || []).map(line => {
   const snapshot = line.source_snapshot
   const isPipe = snapshot.section_type_snapshot === 'PROFILE'
@@ -402,7 +424,20 @@ function applyBulkSupplier(value: string | null): void {
     showActionError('该供应商不属于当前分类，请重新选择。')
     return
   }
-  for (const line of bulkSupplierLines.value) line.supplier_id = value || null
+  for (const line of bulkSupplierLines.value) {
+    line.supplier_id = value || null
+    syncSetTerm(lines.value, line, 'supplier_id')
+  }
+}
+
+function onLineSupplierChange(line: PurchaseLineDraft) {
+  syncSetTerm(lines.value, line, 'supplier_id')
+  refreshBulkSupplier()
+}
+
+function onLineDeliveryChange(line: PurchaseLineDraft) {
+  syncSetTerm(lines.value, line, 'delivery_date')
+  refreshBulkDeliveryDate()
 }
 
 function refreshBulkSupplier(): void {
@@ -439,12 +474,12 @@ function fillNextGridRow(rowIndex: number, columnIndex: number): void {
     const value = lines.value[rowIndex]?.supplier_id
     if (!value) return
     lines.value[rowIndex + 1]!.supplier_id = value
-    refreshBulkSupplier()
+    onLineSupplierChange(lines.value[rowIndex + 1]!)
   } else if (columnIndex === 1) {
     const value = lines.value[rowIndex]?.delivery_date
     if (!value) return
     lines.value[rowIndex + 1]!.delivery_date = value
-    refreshBulkDeliveryDate()
+    onLineDeliveryChange(lines.value[rowIndex + 1]!)
   }
 }
 
@@ -550,13 +585,6 @@ function focusPipeQuantity(lineKey: string): void {
   editor?.querySelector<HTMLInputElement>('input')?.focus()
 }
 
-function decimalParts(value: string): { digits: bigint; scale: number } | null {
-  const matched = /^(\d+)(?:\.(\d+))?$/.exec(value.trim())
-  if (!matched) return null
-  const fraction = matched[2] || ''
-  return { digits: BigInt(`${matched[1] || '0'}${fraction}`), scale: fraction.length }
-}
-
 function remainingPurchaseQuantity(target: string | number | null | undefined, purchased: string | null | undefined, roots = false): string | null {
   const targetText = typeof target === 'number' && roots && Number.isSafeInteger(target) ? String(target) : target
   if (typeof targetText !== 'string' || typeof purchased !== 'string') return null
@@ -570,31 +598,22 @@ function remainingPurchaseQuantity(target: string | number | null | undefined, p
   return scale ? compactDecimal(`${digits.slice(0, -scale)}.${digits.slice(-scale)}`) : digits
 }
 
-function scaledProduct(quantity: string, price: string): bigint | null {
-  const left = decimalParts(quantity)
-  const right = decimalParts(price)
-  if (!left || !right) return null
-  const raw = left.digits * right.digits
-  const rawScale = left.scale + right.scale
-  if (rawScale === 4) return raw
-  if (rawScale < 4) return raw * 10n ** BigInt(4 - rawScale)
-  const divisor = 10n ** BigInt(rawScale - 4)
-  return (raw + divisor / 2n) / divisor
-}
-
-function formatScaled(value: bigint): string {
-  const cents = (value + 50n) / 100n
-  const whole = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return `${whole}.${(cents % 100n).toString().padStart(2, '0')}`
-}
-
 function lineAmount(line: PurchaseLineDraft): string {
-  const amount = scaledProduct(effectivePurchaseQuantity(line), line.unit_price)
+  if (isBatchMode.value && !line.set_pricing && (isExplicitZeroPrice(line.unit_price)
+    || isExplicitZeroPrice(effectivePurchaseQuantity(line)))) return '本批不买'
+  if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
+  const amount = pricedAmount(line)
   return amount === null ? '—' : formatScaled(amount)
 }
 
+function pricedAmount(line: PurchaseLineDraft) {
+  const set = line.set_pricing
+  if (set) return set.anchor_id === line.purchase_group_line_id ? scaledProduct(String(set.quantity), set.unit_price) : 0n
+  return scaledProduct(effectivePurchaseQuantity(line), line.unit_price)
+}
+
 const totalAmount = computed(() => {
-  const amounts = selectedLines.value.map((line) => scaledProduct(effectivePurchaseQuantity(line), line.unit_price))
+  const amounts = selectedLines.value.map(pricedAmount)
   if (!amounts.length || amounts.some((amount) => amount === null)) return '待计算'
   let total = 0n
   for (const amount of amounts) {
@@ -617,7 +636,7 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
     && line.delivery_date
     && isPositiveDecimal(effectivePurchaseQuantity(line))
     && (!isPipePurchaseLine(line) || !isWeightPipeLine(line) || Boolean(samplePipeSuggestedWeight(line.calculation_snapshot?.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)))
-    && isNonNegativeDecimal(line.unit_price),
+    && (line.set_pricing || isNonNegativeDecimal(line.unit_price)),
   )
 }
 
@@ -627,6 +646,7 @@ function validateDraft(): string {
     // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
     for (const [index, line] of lines.value.entries()) {
        const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
+      if (line.set_pricing && !isPositiveDecimal(quantity)) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
       if (!quantity) continue
        if (!isNonNegativeDecimal(quantity)) {
           return isWeightLine(line) ? `第 ${index + 1} 行采购重量应为大于或等于 0、最多 4 位小数的数字。`
@@ -637,7 +657,7 @@ function validateDraft(): string {
         if (error) return `第 ${index + 1} 行：${error}`
       }
     }
-    if (!selectedLines.value.length) return '请至少填写一项需求数量大于 0 的材料采购数量。'
+    if (!selectedLines.value.length) return '本批没有需要采购的材料。请填写采购数量，明确填 0 的单价会跳过本行。'
   } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
@@ -667,7 +687,7 @@ function validateDraft(): string {
     if (line.actual_purchase_quantity && !isPositiveDecimal(line.actual_purchase_quantity)) {
       return `第 ${index + 1} 行实际采购数量应为大于 0、最多 4 位小数的数字。`
     }
-    if (line.unit_price && !isNonNegativeDecimal(line.unit_price)) {
+    if (!line.set_pricing && line.unit_price && !isNonNegativeDecimal(line.unit_price)) {
       return `第 ${index + 1} 行采购单价应为大于或等于 0、最多 4 位小数的数字。`
     }
   }
@@ -688,7 +708,7 @@ function validateConfirmation(): string {
       if (!isPositiveDecimal(line.raw_bar_weight_kg || '')) missing.push('每根标准重量')
       if (!line.raw_bar_length_m) missing.push('每根长度')
     }
-    if (!isNonNegativeDecimal(line.unit_price)) missing.push('采购单价')
+    if (!line.set_pricing && !isNonNegativeDecimal(line.unit_price)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
     if (missing.length) return `第 ${index + 1} 行缺少或填写错误：${missing.join('、')}。`
   }
@@ -737,7 +757,8 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
           supplier_id: line.supplier_id || null,
           delivery_date: line.delivery_date || null,
           ...(isWeightLine(line) ? { actual_purchase_quantity: effectivePurchaseQuantity(line), actual_purchase_weight_kg: effectivePurchaseQuantity(line), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
-          unit_price: line.unit_price.trim() || null,
+          unit_price: line.set_pricing ? null : line.unit_price.trim() || null,
+          ...(line.set_pricing ? { set_pricing: line.set_pricing } : {}),
         })),
       }
       const signature = JSON.stringify(content)
@@ -962,6 +983,24 @@ async function loadGroup(preserveInput = false): Promise<void> {
       batchRequestId.value = ''
       batchContentSignature = ''
       batchType.value = 'NORMAL'
+    } else {
+      const previous = new Map(lines.value.map(line => [line.purchase_group_line_id, line]))
+      const external = new Set(result.data.progress.external_supply_line_ids || [])
+      const changedSets = new Set(lines.value.filter(line => line.set_pricing && external.has(line.purchase_group_line_id!))
+        .map(line => line.set_pricing!.anchor_id))
+      lines.value = lines.value.filter(line => !external.has(line.purchase_group_line_id!))
+      for (const source of result.data.progress.lines) {
+        if (!previous.has(source.id)) lines.value.push(groupDraft(source))
+      }
+      for (const anchorId of changedSets) {
+        const members = lines.value.filter(line => line.set_pricing?.anchor_id === anchorId)
+        if (!external.has(anchorId) && members.length >= 2) continue
+        for (const line of members) {
+          line.set_pricing = null
+          line.unit_price = ''
+        }
+        if (members.length) ElMessage.warning('采购需求已变化，原套餐剩余部件请重新按套或填写单价。')
+      }
     }
     batchConflict.value = ''
     sourceError.value = result.data.progress.status === 'UNKNOWN' ? '采购需求来源待核对，暂不能创建批次。' : ''
@@ -981,6 +1020,7 @@ async function openExistingGroup(): Promise<void> {
 }
 
 watch(() => route.fullPath, () => {
+  editingSetId.value = ''
   sourceRequestId++
   resetSource()
   group.value = null
@@ -1016,7 +1056,8 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         <div>
           
           <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购需求' }}</h1>
-          <p>{{ isBatchMode ? `${group?.group_number || '采购需求'} · 默认带入剩余采购量，可修改；空白或 0 不计入，可超过建议量` : isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
+          <p v-if="!isBatchMode">{{ isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
+          <strong v-else-if="group?.production_task_number_snapshot" class="production-task-number">{{ group.production_task_number_snapshot }}</strong>
         </div>
         <div class="page-action-panel">
           <div class="page-actions">
@@ -1039,7 +1080,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       </ElAlert>
       <div v-if="isBatchMode" class="batch-type-field">
         <span>批次类型</span><ElRadioGroup v-model="batchType" :disabled="saving" aria-label="批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
-        <span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span>
+        <PurchaseGridCell><span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span></PurchaseGridCell>
       </div>
 
       <section v-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
@@ -1183,7 +1224,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
             <ElButton plain data-testid="purchase-detail-fullscreen" @click="toggleDetailFullscreen"><img class="purchase-icon" :src="expandIcon" alt="" />{{ detailFullscreen ? '退出全屏' : '全屏' }}</ElButton>
           </div>
         </header>
-        <ElTable v-loading="sourceLoading" :data="lines" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
+        <ElTable v-loading="sourceLoading" :data="gridRows" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
           <ElTableColumn prop="category" label="分类" width="106" show-overflow-tooltip />
           <ElTableColumn label="物料信息" width="208">
@@ -1210,7 +1251,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
               <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier" @keydown.capture="handleGridNavigation($event, $index, 0)">
-                <ElSelect v-model="row.supplier_id" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
+                <ElSelect v-model="row.supplier_id" :persistent="false" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="onLineSupplierChange(row)">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
                 <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
                 </ElSelect>
@@ -1218,10 +1259,11 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购交期" :width="isSampleSource ? 170 : 195">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
+            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="onLineDeliveryChange(row)" /></div></template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
             <template #default="{ row, $index }">
+              <PurchaseGridCell>
               <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': isWeightLine(row) || !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
                 <ElPopover v-if="isPipePurchaseLine(row) && !isWeightLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
                   <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!canWriteLines">{{ pipeQuantitySummary(row) }}</button></template>
@@ -1240,13 +1282,14 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
                   </div>
                 </ElPopover>
               </div>
+              </PurchaseGridCell>
             </template>
           </ElTableColumn>
            <ElTableColumn label="采购单价" width="164">
-            <template #default="{ row, $index }"><div class="line-field line-field--price" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" placeholder="请输入"><template #append>{{ purchasePriceUnit(row) }}</template></ElInput></div></template>
+            <template #default="{ row, $index }"><PurchaseGridCell><div class="line-field line-field--price" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><PurchaseSetPriceCell :line="row" :unit="purchasePriceUnit(row)" :allow-set="isBatchMode && Boolean(row.purchase_group_line_id)" :disabled="!canWriteLines" @input="row.unit_price = $event" @edit-set="editingSetId = row.purchase_group_line_id" /></div></PurchaseGridCell></template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
-            <template #default="{ row }"><div class="amount-preview">{{ lineAmount(row) }}</div></template>
+            <template #default="{ row }"><PurchaseGridCell><div class="amount-preview">{{ lineAmount(row) }}</div></PurchaseGridCell></template>
           </ElTableColumn>
           <template #empty>
             <div class="detail-empty">
@@ -1257,18 +1300,20 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           </template>
         </ElTable>
         <p v-if="isSampleSource && source?.notes" class="sample-warehouse-note">仓库备注：{{ source.notes }}</p>
-         <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>{{ pipePricingText }}</span></footer>
+         <PurchaseGridCell><footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>{{ pipePricingText }}</span></footer></PurchaseGridCell>
       </section>
 
       <section v-if="isDetailStep" class="summary-card">
-        <div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div>
+        <PurchaseGridCell><div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div></PurchaseGridCell>
         <div class="summary-actions">
           <label class="mail-field"><span>是否邮寄</span><ElRadioGroup v-model="form.isMailed" :disabled="isBatchMode && saving" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></label>
-          <div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div>
+          <PurchaseGridCell><div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div></PurchaseGridCell>
           <ElButton type="primary" :loading="saving" :disabled="saving" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
       </section>
     </template>
+    <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates"
+      :suppliers="options.suppliers" @apply="saveSet" @close="editingSetId = ''" />
   </section>
 </template>
 
@@ -1295,6 +1340,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .page-heading > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-width: 0; }
 .page-heading h1 { margin: 0; white-space: nowrap; font: 700 38px/50px crm.$crm-font-display; letter-spacing: -1px; }
 .page-heading p { margin: 8px 0 0; color: crm.$crm-text-secondary; font-size: 13px; white-space: nowrap; }
+.production-task-number { font-size: 20px; line-height: 28px; font-weight: 700; }
 .page-action-panel { display: flex; flex-direction: column; align-items: flex-end; position: relative; }
 .page-actions { display: flex; gap: 18px; }
 .page-actions :deep(.el-button) { width: 128px; height: 42px; margin: 0; }

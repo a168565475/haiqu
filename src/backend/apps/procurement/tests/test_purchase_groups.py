@@ -53,6 +53,97 @@ class PurchaseGroupApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response
 
+    def test_external_supply_reconfirmation_keeps_confirmed_batches_and_skips_new_purchase(self):
+        from apps.procurement.external_supply import sync_external_supply
+        from apps.procurement.tracking_selectors import coverage_rows
+        from apps.procurement.services import _bom_source_details
+        confirmed = self.batch("40")
+        draft = self.batch("20", confirm=False)
+        self.bom_line.raw_values["purchase_required"] = False
+        self.bom_line.save()
+        sync_external_supply(self.bom, [self.bom_line], actor_employee=self.employee, request=None)
+        self.assertEqual(_bom_source_details(self.product_line, self.bom)[1], [])
+        progress = self.detail().data["data"]["progress"]
+        self.assertEqual(progress["lines"], [])
+        self.assertEqual(progress["external_supply_line_ids"], [self.line_id])
+        self.assertEqual(coverage_rows(task_ids=[self.task.pk]), [])
+        self.assertEqual(PurchaseOrder.objects.get(pk=confirmed["id"]).lines.get().actual_purchase_quantity, 40)
+        self.assertFalse(PurchaseOrder.objects.get(pk=draft["id"]).lines.exists())
+        response = self.client.post(f"/api/v1/purchase-groups/{self.group_id}/batches/", self.batch_payload(),
+                                    format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("外供", str(response.data))
+        self.bom_line.raw_values["purchase_required"] = True
+        self.bom_line.save()
+        sync_external_supply(self.bom, [self.bom_line], actor_employee=self.employee, request=None)
+        self.assertEqual(self.detail().data["data"]["progress"]["external_supply_line_ids"], [])
+        progress = self.detail().data["data"]["progress"]["lines"]
+        self.assertEqual([row["purchased_quantity"] for row in progress], ["40.0000"])
+
+    def test_copied_revision_matches_only_same_product_component_and_can_restore_purchase(self):
+        from apps.procurement.external_supply import sync_external_supply
+        revision, line = self.make_bom(self.product_line, version=2, section_type=BomSectionType.ACCESSORY,
+                                       budget_quantity="100")
+        line.component_identity = self.bom_line.component_identity
+        line.raw_values["purchase_required"] = False
+        line.save()
+        other = BomLine.objects.create(section=line.section, line_number=2, part_name=line.part_name,
+                                       raw_values={"purchase_required": False})
+        confirmed = self.batch("40")
+        draft = self.batch("10", confirm=False)
+        sync_external_supply(revision, [other], actor_employee=self.employee, request=None)
+        self.assertEqual(len(self.detail().data["data"]["progress"]["lines"]), 1)
+        sync_external_supply(revision, [line, other], actor_employee=self.employee, request=None)
+        self.assertEqual(self.detail().data["data"]["progress"]["status"], "COMPLETED")
+        self.assertFalse(PurchaseOrder.objects.get(pk=draft["id"]).lines.exists())
+        self.assertEqual(PurchaseOrder.objects.get(pk=confirmed["id"]).lines.get().bom_line_id, self.bom_line.pk)
+        line.raw_values["purchase_required"] = True
+        line.save()
+        sync_external_supply(revision, [line], actor_employee=self.employee, request=None)
+        self.assertEqual(self.detail().data["data"]["progress"]["lines"][0]["purchased_quantity"], "40.0000")
+
+    def test_external_set_anchor_releases_member_and_preserves_other_draft_price(self):
+        from apps.procurement.external_supply import sync_external_supply
+
+        child = self.extra_set_component("左件")
+        ordinary = self.extra_set_component("单独采购")
+        payload = self.batch_payload("9")
+        anchor = payload["lines"][0]
+        payload["lines"].append({**anchor, "purchase_group_line_id": ordinary})
+        anchor.update(unit_price=None, set_pricing={"anchor_id": self.line_id, "quantity": 3, "unit_price": "5"})
+        payload["lines"].append({**anchor, "purchase_group_line_id": child})
+        response = self.client.post(f"/api/v1/purchase-groups/{self.group_id}/batches/", payload,
+                                    format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(response.status_code, 201, response.data)
+        draft = PurchaseOrder.objects.get(pk=response.data["data"]["id"])
+        self.assertEqual(draft.total_amount, Decimal("33"))
+        self.bom_line.raw_values["purchase_required"] = False
+        self.bom_line.save()
+        sync_external_supply(self.bom, [self.bom_line], actor_employee=self.employee, request=None)
+        draft.refresh_from_db()
+        self.assertIsNone(draft.total_amount)
+        self.assertEqual(draft.lines.count(), 2)
+        self.assertEqual(draft.lines.get(purchase_group_line_id=ordinary).amount, Decimal("18"))
+        remaining = draft.lines.get(purchase_group_line_id=child)
+        self.assertNotIn("set_pricing", remaining.calculation_snapshot)
+        self.assertEqual(remaining.calculation_snapshot["set_pricing_review"], "外供调整")
+        self.assertIsNone(remaining.unit_price)
+        self.assertEqual(remaining.supplier_id, self.supplier.pk)
+
+    def test_manual_completion_keeps_record_while_supplement_excludes_external_material(self):
+        from apps.procurement.external_supply import sync_external_supply
+
+        last_completed = timezone.now()
+        PurchaseGroup.objects.filter(pk=self.group_id).update(manual_completed_at=last_completed,
+            manual_completed_by_employee=self.employee, manual_completion_remark="原人工完成")
+        self.bom_line.raw_values["purchase_required"] = False
+        self.bom_line.save()
+        sync_external_supply(self.bom, [self.bom_line], actor_employee=self.employee, request=None)
+        group = PurchaseGroup.objects.get(pk=self.group_id)
+        self.assertEqual(group.manual_completed_at, last_completed)
+        self.assertEqual(group.manual_completion_remark, "原人工完成")
+        self.assertEqual(self.detail().data["data"]["progress"]["external_supply_line_ids"], [self.line_id])
+
     def batch_payload(self, quantity="120", batch_type="NORMAL", **kwargs):
         payload = {"request_id": str(uuid4()), "batch_type": batch_type, "currency_id": str(self.cny.pk), "lines": [{
             "purchase_group_line_id": self.line_id, "actual_purchase_quantity": quantity,
@@ -115,6 +206,111 @@ class PurchaseGroupApiTests(APITestCase):
         self.assertEqual(repeated.status_code, 201, repeated.data)
         self.assertEqual(repeated.data["data"]["id"], self.group_id)
         self.assertEqual(PurchaseGroup.objects.count(), 1)
+
+    def extra_set_component(self, name, *, tape=False):
+        from apps.material_catalog.models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog
+        from apps.material_catalog.snapshots import build_material_snapshot
+        from ..group_services import save_bom_group_line
+        from ..services import _source_line
+
+        if tape:
+            catalog = MaterialCatalog.objects.create(category_key="AUXILIARY", template_key="TAPE", name=name)
+            unit, _ = ProductionUnit.objects.get_or_create(unit_name="米", catalog_owner=None, defaults={"unit_code": "QA-M"})
+            MaterialAllowedUnit.objects.create(catalog=catalog, scope="BASE", unit=unit)
+            MaterialAttributeValue.objects.create(catalog=catalog, scope="BASE", field_key="width", value="20")
+            selected = build_material_snapshot(catalog=catalog, scope="BASE", processing_state="RAW",
+                attributes={"width": "20"}, unit_id=unit.pk, required_fields=["width"])
+            section = self.bom.sections.create(line_number=2, section_type=BomSectionType.FABRIC, title="辅料类")
+            line = section.lines.create(line_number=1, part_name=name, material_catalog=catalog,
+                material_selection_snapshot=selected, unit="米", total_purchase_quantity="1600")
+        else:
+            line = BomLine.objects.get(pk=self.bom_line.pk)
+            line.pk = uuid4()
+            line.part_name = name
+            line.line_number = line.section.lines.count() + 1
+            line.save(force_insert=True)
+        group = PurchaseGroup.objects.get(pk=self.group_id)
+        source = _source_line(self.bom, line.section, line, self.product_line)
+        save_bom_group_line(group, group.lines.count() + 1, source)
+        return str(group.lines.get(source_bom_line_id_snapshot=line.pk).pk)
+
+    def test_set_pricing_manual_set_count_separate_receipts_and_sheet(self):
+        child = self.extra_set_component("套餐织带", tape=True)
+        skipped = self.extra_set_component("本批不采购")
+        skipped_quantity = self.extra_set_component("本批零数量")
+        payload = self.batch_payload("3200")
+        anchor = payload["lines"][0]
+        anchor.update(unit_price=None, set_pricing={"anchor_id": self.line_id, "quantity": 1600, "unit_price": "5"})
+        payload["lines"].extend([
+            {**anchor, "purchase_group_line_id": child, "actual_purchase_quantity": "1600"},
+            {**anchor, "purchase_group_line_id": skipped, "unit_price": "0", "set_pricing": None},
+            {**anchor, "purchase_group_line_id": skipped_quantity, "actual_purchase_quantity": "0",
+             "unit_price": "7", "set_pricing": None},
+        ])
+        response = self.client.post(f"/api/v1/purchase-groups/{self.group_id}/batches/", payload,
+                                    format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(response.status_code, 201, response.data)
+        batch = response.data["data"]
+        self.assertEqual(batch["total_amount"], "8000.0000")
+        self.assertEqual([(r["actual_purchase_quantity"], r["unit_price"], r["amount"]) for r in batch["lines"]],
+                         [("3200.0000", None, "8000.0000"), ("1600.0000", None, "0.0000")])
+        url = f"/api/v1/purchase-orders/{batch['id']}/"
+        update = self.client.patch(url, {"lines": [{
+            "id": row["id"], "supplier_id": row["supplier_id"], "delivery_date": row["delivery_date"],
+            "actual_purchase_quantity": row["actual_purchase_quantity"], "unit_price": None,
+            "set_pricing": {**row["set_pricing"], "quantity": 1400},
+        } for row in batch["lines"]]}, format="json", HTTP_IF_MATCH=self.client.get(url)["ETag"])
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(update.data["data"]["total_amount"], "7000.0000")
+        confirmed = self.client.post(url + "confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        options = self.client.get(url + "sheet-options/").data["data"]["templates"]
+        sheets = self.client.post(url + "generate-sheets/", {"assignments": [{
+            "supplier_id": str(self.supplier.pk), "template_version_id": options[0]["version_id"],
+        }]}, format="json")
+        self.assertEqual(sheets.status_code, 201, sheets.data)
+        sheet_url = f"/api/v1/supplier-purchase-sheets/{sheets.data['data'][0]['id']}/"
+        sheet = self.client.get(sheet_url)
+        content = sheet.data["data"]["content_snapshot"]
+        first, second = content["lines"]
+        self.assertEqual((first["quantity"], first["unit"], first["physical_quantity"]), ("1400", "套", "3200.0000"))
+        self.assertEqual((second["physical_quantity"], second["unit_price"]), ("1600.0000", ""))
+        self.assertEqual((first["physical_unit"], second["physical_unit"], second["unit"]), ("PCS", "米", "米"))
+        published = self.client.post(sheet_url + "publish/", {}, format="json", HTTP_IF_MATCH=sheet["ETag"])
+        self.assertEqual(published.status_code, 200, published.data)
+        self.assertEqual(published.data["data"]["total_amount"], "7000.0000")
+        receipt = self.receive(confirmed.data["data"], "1600", line_index=1)
+        inbound_line = receipt.data["data"]["lines"][0]
+        self.assertEqual(inbound_line["source_unit_text_snapshot"], "米")
+        self.assertIn("material_catalog_id", inbound_line["calculation_snapshot"])
+        self.assertNotIn("set_pricing", inbound_line["calculation_snapshot"])
+
+    def test_set_pricing_rejects_unmatched_anchor_and_mixed_delivery(self):
+        child = self.extra_set_component("套餐右件")
+        payload = self.batch_payload()
+        a = payload["lines"][0]
+        a.update(unit_price=None, set_pricing={"anchor_id": self.line_id, "quantity": 2, "unit_price": "3"})
+        url = f"/api/v1/purchase-groups/{self.group_id}/batches/"
+        for row in [None, {**a, "purchase_group_line_id": child, "delivery_date": None},
+                    {**a, "purchase_group_line_id": child, "set_pricing": {**a["set_pricing"], "anchor_id": str(uuid4())}}]:
+            payload["lines"] = [a, row] if row else [a]
+            response = self.client.post(url, payload, format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+            self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(PurchaseOrder.objects.filter(purchase_group_id=self.group_id).exists())
+
+    def test_batch_review_metadata_does_not_relax_source_identity_check(self):
+        draft = self.batch("20", confirm=False)
+        line = PurchaseOrder.objects.get(pk=draft["id"]).lines.get()
+        snapshot = {**line.calculation_snapshot, "set_pricing_review": "外供调整"}
+        line.calculation_snapshot = {**snapshot, "raw_material_id": str(uuid4())}
+        line.save(update_fields=["calculation_snapshot"])
+        url = f"/api/v1/purchase-orders/{draft['id']}/confirm/"
+        rejected = self.client.post(url, {}, format="json")
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        line.calculation_snapshot = snapshot
+        line.save(update_fields=["calculation_snapshot"])
+        confirmed = self.client.post(url, {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
     def test_both_batch_types_accept_over_suggestion_and_drafts_do_not_count(self):
         draft = self.batch("120", confirm=False)

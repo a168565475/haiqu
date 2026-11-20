@@ -126,18 +126,30 @@ def purchase_batch_display_status(order):
 
 def purchase_group_progress(group):
     lines = []
+    external_supply_line_ids = []
     valid_statuses = {PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED}
     for source in group.lines.all():
         issues = list(source.compatibility_issues)
+        snapshot = source.source_snapshot
+        if not isinstance(snapshot, dict):
+            issues.append("MATERIAL_SNAPSHOT_INVALID")
+            snapshot = {}
+        if snapshot.get("purchase_required") is False:
+            external_supply_line_ids.append(str(source.pk))
+            continue
+        calculation = snapshot.get("calculation_snapshot", {})
+        if not isinstance(calculation, dict):
+            issues.append("MATERIAL_SNAPSHOT_INVALID")
+            calculation = {}
         purchased, accepted = Decimal("0"), Decimal("0")
-        is_pipe = source.source_snapshot.get("section_type_snapshot") == "PROFILE"
+        is_pipe = snapshot.get("section_type_snapshot") == "PROFILE"
         is_weight = source.source_unit_text == "KG" and (is_pipe or
-            source.source_snapshot.get("calculation_snapshot", {}).get("measurement_kind") == "HARDWARE_WEIGHT")
+            calculation.get("measurement_kind") == "HARDWARE_WEIGHT")
         # 根数仅用于展示；历史缺数保持未知，不影响已有主数量进度。
         purchased_bars, accepted_bars = (0, 0) if is_pipe else (None, None)
         in_progress = Decimal("0")
         in_progress_bars = 0 if is_pipe else None
-        material_id = str(source.source_snapshot.get("calculation_snapshot", {}).get("raw_material_id") or "")
+        material_id = str(calculation.get("raw_material_id") or "")
         for line in source.batch_lines.all():
             order = line.purchase_order
             if order.archived_at or order.status not in valid_statuses:
@@ -146,7 +158,7 @@ def purchase_group_progress(group):
                 issues.append("MATERIAL_SNAPSHOT_INVALID")
                 continue
             batch_material_id = str(line.calculation_snapshot.get("raw_material_id") or "")
-            if "raw_material_id" not in line.calculation_snapshot and not order.batch_request_id and line.raw_material_snapshot == source.source_snapshot.get("raw_material_snapshot"):
+            if "raw_material_id" not in line.calculation_snapshot and not order.batch_request_id and line.raw_material_snapshot == snapshot.get("raw_material_snapshot"):
                 batch_material_id = material_id
             if (order.purchase_group_id != group.pk or line.source_unit_text != source.source_unit_text
                     or line.required_quantity != source.required_quantity
@@ -204,7 +216,7 @@ def purchase_group_progress(group):
             "source_bom_line_id_snapshot": source.source_bom_line_id_snapshot,
             "product_line_id_snapshot": source.product_line_id_snapshot,
             "required_quantity": source.required_quantity, "source_unit_text": source.source_unit_text,
-            "source_snapshot": source.source_snapshot,
+            "source_snapshot": snapshot,
             "purchased_quantity": None if issues else purchased,
             "accepted_quantity": None if issues else accepted,
             "purchased_bar_count": None if issues else purchased_bars,
@@ -215,7 +227,7 @@ def purchase_group_progress(group):
             "compatibility_issues": sorted(set(issues)),
         })
     satisfied = sum(line["is_satisfied"] for line in lines)
-    if not lines or group.compatibility_issues or any(line["compatibility_issues"] for line in lines):
+    if (not lines and not external_supply_line_ids) or group.compatibility_issues or any(line["compatibility_issues"] for line in lines):
         state = "UNKNOWN"
     elif satisfied == len(lines):
         state = "COMPLETED"
@@ -223,7 +235,8 @@ def purchase_group_progress(group):
         state = "PURCHASING"
     else:
         state = "PENDING"
-    return {"status": state, "satisfied_line_count": satisfied, "line_count": len(lines), "lines": lines}
+    return {"status": state, "satisfied_line_count": satisfied, "line_count": len(lines),
+            "lines": lines, "external_supply_line_ids": external_supply_line_ids}
 
 
 def purchase_group_completion_summary(group):

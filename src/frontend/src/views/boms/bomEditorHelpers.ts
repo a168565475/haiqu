@@ -61,6 +61,7 @@ export function blankLine(defaultUnit = ''): BomLineInput {
 
 export function editableLine(line: BomLine): BomLineInput {
   return {
+    purchase_required: line.purchase_required ?? true,
     component_kind: line.component_kind || '',
     parent_part_id: line.parent_part_id || null,
     pieces_per_part: line.pieces_per_part ?? null,

@@ -2,6 +2,7 @@
 import { computed, ref, toRefs } from 'vue'
 import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
+import BomPurchaseRequiredField from './BomPurchaseRequiredField.vue'
 import { selectHardwareWeight, setManualHardwareWeight } from './useHardwareWeightPreview'
 import type { MaterialCatalog, PublicMaterialOptions } from '@/types/materialCatalog'
 import { compactDecimal } from '@/utils/compactDecimal'
@@ -181,6 +182,7 @@ const {
               <label class="drawer-field"><span>切割长度（mm）</span><ElInput v-model="editingLineDraft.length_value" inputmode="numeric" placeholder="正整数毫米" aria-label="切割长度（mm）" /></label>
               <label class="drawer-field"><span>切割支数</span><ElInput v-model="editingLineDraft.tube_cut_piece_count" inputmode="decimal" placeholder="填写" aria-label="切割支数" @blur="normalizeTubeCutPieceCount(editingLineDraft)" /></label>
               <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
+              <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             </div>
             <label class="drawer-field"><span>原材料单位</span><strong class="drawer-readonly-value">根</strong></label>
             <label class="drawer-field"><span>原材料长度（m）</span><strong class="drawer-readonly-value">{{ editingLineCalculations?.tube_cut_length_m }}</strong></label>
@@ -222,6 +224,7 @@ const {
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
             <label class="drawer-field"><span>重量计算方式</span><ElSelect v-model="hardwareWeightMethod" aria-label="重量计算方式"><ElOption label="手填重量" value="MANUAL" /><ElOption label="钢制 GB/T 873 铆钉" value="RIVET_GB873_STEEL" /><ElOption label="普通平垫片" value="PLAIN_WASHER" /></ElSelect></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
+            <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             <label class="drawer-field"><span>单个材料重量（kg）</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" :placeholder="hardwareWeightLoading ? '计算中…' : '填写'" aria-label="单个材料重量" @input="setManualHardwareWeight(editingLineDraft)" /></label>
             <template v-if="editingLineDraft.hardware_weight_mode === 'AUTO' && editingLineDraft.hardware_weight_input">
               <template v-if="hardwareWeightMethod === 'RIVET_GB873_STEEL'">
@@ -255,6 +258,7 @@ const {
             <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedSpecification }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
+            <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
           </template>
 
@@ -277,6 +281,7 @@ const {
             <label v-else class="drawer-field"><span>*材质</span><strong class="drawer-readonly-value">{{ selectedAttribute('material', editingLineDraft.material) }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '待维护' }}</strong></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
+            <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
           </template>
 
@@ -289,6 +294,7 @@ const {
             <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ selectedAttribute('color', editingLineDraft.fabric_color_name) }}</strong></label>
             <label class="drawer-field"><span>门幅</span><strong v-if="catalogMode" class="drawer-readonly-value">{{ selectedAttribute('width', editingLineDraft.fabric_width) }}</strong><ElSelect v-else v-model="editingLineDraft.source_fabric_width_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.fabric_width || '选择门幅'" aria-label="面料门幅" @change="setFabricWidth(editingLineDraft, $event)"><ElOption v-for="item in fabricWidthOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
             <label class="drawer-field"><span>单耗</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单耗" /></label>
+            <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             <label v-if="!catalogMode" class="drawer-field"><span>裁片</span><ElInput v-model="editingLineDraft.part_name" maxlength="300" placeholder="填写裁片" aria-label="裁片" /></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '米' }}</strong></label>
             <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
@@ -301,6 +307,7 @@ const {
             <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedSpecification }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
             <label class="drawer-field"><span>*用量（多少成品用一份）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="decimal" placeholder="正数，最多 4 位小数" aria-label="用量（多少成品用一份）" /></label>
+            <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
             <label class="drawer-field"><span>需求数量</span><strong class="drawer-readonly-value">{{ packagingQuantity(editingLineDraft.units_per_box, bom?.order_quantity) || '待填写' }}</strong></label>
           </template>
 
@@ -345,6 +352,7 @@ const {
             <label v-if="editingSection?.section_type === 'FABRIC'" class="drawer-field"><span>原材料</span><ElInput v-model="editingLineDraft.raw_material" aria-label="原材料" /></label>
             <label v-if="editingSection?.section_type === 'FABRIC'" class="drawer-field"><span>裁片量</span><ElInput v-model="editingLineDraft.cut_piece_quantity" aria-label="裁片量" /></label>
             <label class="drawer-field"><span>单耗</span><ElInput v-model="editingLineDraft.unit_consumption" aria-label="单耗" /></label>
+            <BomPurchaseRequiredField v-if="editingSection" v-model="editingLineDraft.purchase_required" />
             <label class="drawer-field"><span>当前需求</span><ElInput v-model="editingLineDraft.total_consumption" aria-label="当前需求" /></label>
             <label class="drawer-field"><span>单位</span><strong v-if="catalogMode" class="drawer-readonly-value">{{ editingLineDraft.unit || '待选择' }}</strong><ElInput v-else v-model="editingLineDraft.unit" aria-label="单位" /></label>
             <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
@@ -362,7 +370,7 @@ const {
 <style scoped lang="scss">
 .line-drawer-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
 .drawer-field { display: block; min-width: 0; }
-.drawer-field > span { display: block; margin-bottom: 7px; color: var(--erp-color-text-secondary); font-size: 13px; }
+.drawer-field > :deep(span) { display: block; margin-bottom: 7px; color: var(--erp-color-text-secondary); font-size: 13px; }
 .drawer-readonly-value { display: flex; min-height: 32px; align-items: center; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--erp-input-border); border-radius: 6px; background: var(--erp-input-readonly-background); color: var(--erp-input-readonly-text); font-size: 13px; font-weight: 500; }
 .drawer-field--wide, .drawer-calculations { grid-column: 1 / -1; }
 .hardware-weight-hint, .hardware-weight-error { margin: 0; font-size: 12px; line-height: 1.5; }

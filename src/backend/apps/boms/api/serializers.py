@@ -45,6 +45,7 @@ FIXED_BOM_SECTIONS = (
 
 
 class BomLineSerializer(serializers.ModelSerializer):
+    purchase_required = serializers.BooleanField(read_only=True)
     parent_part_id = serializers.UUIDField(read_only=True, allow_null=True)
     material_catalog_id = serializers.UUIDField(read_only=True, allow_null=True)
     fabric_source_line_id = serializers.UUIDField(read_only=True, allow_null=True)
@@ -415,7 +416,7 @@ class BomLineSerializer(serializers.ModelSerializer):
             "id",
             "material_catalog_id", "material_selection_snapshot", "material_quantity",
             "component_identity", "cutting_length_mm", "pieces_per_product", "pieces_per_bar",
-            "component_kind", "parent_part_id", "pieces_per_part", "parts_per_product",
+            "component_kind", "parent_part_id", "pieces_per_part", "parts_per_product", "purchase_required",
             "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters",
             "fabric_source_line_id", "fabric_meters_per_set",
             "cutting_pieces_per_set", "fabric_meters_per_piece", "cutting_sets_per_product",
@@ -1070,6 +1071,7 @@ class BomHardwareWeightResponseSerializer(serializers.Serializer):
 
 
 class BomLineWriteSerializer(serializers.Serializer):
+    purchase_required = serializers.BooleanField(required=False)
     component_kind = serializers.ChoiceField(choices=("", "CUT_PIECE", "SEWN_PART"), required=False, allow_blank=True)
     parent_part_id = serializers.UUIDField(required=False, allow_null=True)
     parent_part_client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
@@ -1695,6 +1697,8 @@ class BomUpdateInputSerializer(serializers.Serializer):
         used_draft_image_ids = set()
         for section in sections:
             for line_number, line in enumerate(section["lines"], start=1):
+                if section["title"].strip() == "裁剪明细" and line.get("purchase_required") is False:
+                    raise serializers.ValidationError("裁剪明细不能标记为外供。")
                 if section["section_type"] != BomSectionType.PROFILE and any(
                     line.get(field) for field in ("source_purchase_allowance_percent", "source_raw_bar_length_m")
                 ):

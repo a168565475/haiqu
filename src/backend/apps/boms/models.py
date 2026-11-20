@@ -220,6 +220,10 @@ class BomSection(TimeStampedModel):
 
 
 class BomLine(TimeStampedModel):
+    @property
+    def purchase_required(self):
+        return not isinstance(self.raw_values, dict) or self.raw_values.get("purchase_required") is not False
+
     component_kind = models.CharField(max_length=20, blank=True, default="", choices=[
         ("", "历史用料"), ("CUT_PIECE", "裁片"), ("SEWN_PART", "车缝部位"),
     ])

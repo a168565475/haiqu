@@ -94,9 +94,10 @@ def _prepare(content):
         if not unit or not _text(line.get("part_name")):
             raise OriginalPurchaseSheetTemplateError(f"第 {index} 行缺少品名或采购单位。")
         row = {"line": line, "display": purchase_sheet_line_display(line), "quantity": _number(line.get("quantity"), f"第 {index} 行数量", positive=True)}
-        row["price"] = _number(line.get("unit_price"), f"第 {index} 行单价")
+        included = line.get("set_pricing") and not line["is_set_anchor"]
+        row["price"] = None if included else _number(line.get("unit_price"), f"第 {index} 行单价")
         # 兼容已有按实结算合同；原快照未包含实际结算重量，不能从下单数量推算金额。
-        row["amount"] = None if mode == "ACTUAL_WEIGHT" else _amount(row["quantity"], row["price"], line.get("amount"), f"第 {index} 行金额")
+        row["amount"] = None if mode == "ACTUAL_WEIGHT" else _amount(row["quantity"], row["price"] or Decimal(0), line.get("amount"), f"第 {index} 行金额")
         if _text(line.get("delivery_date")):
             dates.add(_date(line["delivery_date"], f"第 {index} 行交期"))
         prepared.append(row)
@@ -353,24 +354,7 @@ def build_original_purchase_contract_xlsx(sheet):
             target = cell(address)
             _set_value(target, value, formula=formula)
             if isinstance(value, Decimal):
-                _numeric_style(styles, target, value, number_cache)
-                if suffix:
-                    # 单据有混合单位时保留数值类型与公式，同时显示本行单位。
-                    formats, xfs = styles.find("m:numFmts", NS), styles.find("m:cellXfs", NS)
-                    base = xfs[int(target.get("s"))]
-                    existing = next(item.get("formatCode") for item in formats if item.get("numFmtId") == base.get("numFmtId"))
-                    format_code = existing + '" ' + suffix.replace('"', '""') + '"'
-                    key = (int(target.get("s")), format_code)
-                    if key not in number_cache:
-                        fmt_id = str(max(163, *(int(item.get("numFmtId")) for item in formats)) + 1)
-                        ET.SubElement(formats, f"{{{MAIN}}}numFmt", {"numFmtId": fmt_id, "formatCode": format_code})
-                        formats.set("count", str(len(formats)))
-                        style = deepcopy(base)
-                        style.set("numFmtId", fmt_id)
-                        number_cache[key] = str(len(xfs))
-                        xfs.append(style)
-                        xfs.set("count", str(len(xfs)))
-                    target.set("s", number_cache[key])
+                _numeric_style(styles, target, value, number_cache, suffix=suffix)
             return target
         def merge(reference):
             if reference.split(":")[0] != reference.split(":")[-1]:
@@ -432,8 +416,11 @@ def build_original_purchase_contract_xlsx(sheet):
                 text_fields.append((text, capacity))
             suffix = _text(line["unit"]) if not one_unit and code != "PLASTIC_PART" else ""
             write(f"{quantity_col}{number}", row["quantity"], suffix=suffix)
-            write(f"{price_col}{number}", row["price"], suffix=f"元/{suffix}" if suffix else "")
-            if row["amount"] is None:
+            write(f"{price_col}{number}", row["price"] if row["price"] is not None else "已含套价",
+                  suffix=f"元/{suffix}" if suffix else "")
+            if row["price"] is None:
+                write(f"{amount_col}{number}", "—")
+            elif row["amount"] is None:
                 write(f"{amount_col}{number}", "待结算")
             else:
                 write(f"{amount_col}{number}", row["amount"], formula=f"ROUND({quantity_col}{number}*{price_col}{number},4)")

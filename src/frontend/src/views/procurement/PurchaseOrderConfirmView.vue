@@ -18,6 +18,10 @@ import {
 import type { PurchaseOrderDetail, PurchaseOrderOptions } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import { isHardwareWeightLine } from './purchaseWeight'
+import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
+import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
+import { applySetPricing, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { formatScaled, scaledProduct } from './purchaseAmounts'
 
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
 const auth = useAuthStore()
@@ -31,6 +35,16 @@ const confirming = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const order = ref<PurchaseOrderDetail | null>(null)
+const editingSetId = ref('')
+const setCandidates = computed(() => editingSetId.value && order.value ? order.value.lines.map(line => {
+  const quantityText = line.raw_bar_length_m && !isWeightLine(line) ? pipePurchaseMeters(line) : line.actual_purchase_quantity || ''
+  return { ...line, quantityText, eligible: Number(quantityText) > 0 }
+}) : [])
+const setSource = computed(() => setCandidates.value.find(line => line.purchase_group_line_id === editingSetId.value))
+function saveSet(change: SetPricingChange) {
+  if (order.value) applySetPricing(order.value.lines, change)
+  editingSetId.value = ''
+}
 const canReturnToGroup = computed(() => !!order.value?.purchase_group_id && auth.hasPermission('procurement.view_purchaseorder'))
 const options = ref<Pick<PurchaseOrderOptions, 'suppliers'> | null>(null)
 const optionsLoading = ref(false)
@@ -92,15 +106,17 @@ function suggestedWeight(line: PurchaseOrderDetail['lines'][number]): string {
   return line.suggested_purchase_weight_kg || line.required_quantity || ''
 }
 
-const localTotal = computed(() => (order.value?.lines || []).reduce((sum, line) => {
-  const quantity = Number(isWeightLine(line)
+function amountScaled(line: PurchaseOrderDetail['lines'][number]) {
+  if (line.set_pricing) return line.set_pricing.anchor_id === line.purchase_group_line_id
+    ? scaledProduct(String(line.set_pricing.quantity), line.set_pricing.unit_price) : 0n
+  const quantity = isWeightLine(line)
     ? pipeWeight(line)
     : line.raw_bar_length_m
       ? pipePurchaseMeters(line)
-      : line.actual_purchase_quantity)
-  const price = Number(line.unit_price)
-  return Number.isFinite(quantity) && Number.isFinite(price) ? sum + quantity * price : sum
-}, 0))
+      : line.actual_purchase_quantity
+  return scaledProduct(quantity || '0', line.unit_price || '0')
+}
+const totalScaled = computed(() => (order.value?.lines || []).reduce((sum, line) => sum + (amountScaled(line) ?? 0n), 0n))
 
 const confirmationErrors = computed(() => {
   const errors: string[] = []
@@ -118,7 +134,7 @@ const confirmationErrors = computed(() => {
         ? pipePurchaseMeters(line)
         : line.actual_purchase_quantity
     if (!rootError && (actualQuantity === null || actualQuantity === '' || !Number.isFinite(Number(actualQuantity)) || Number(actualQuantity) <= 0)) missing.push(weightPipe ? '实际采购重量' : '实际采购数量')
-    if (line.unit_price === null || line.unit_price === '' || !Number.isFinite(Number(line.unit_price)) || Number(line.unit_price) < 0) missing.push('采购单价')
+    if (!line.set_pricing && (line.unit_price === null || line.unit_price === '' || !Number.isFinite(Number(line.unit_price)) || Number(line.unit_price) < 0)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
     if (order.value?.source_type === 'SAMPLE' && isWeightPipeLine(line)) {
       if (!/^\d{1,14}(?:\.\d{1,2})?$/.test(line.raw_bar_length_m || '') || Number(line.raw_bar_length_m) <= 0) missing.push('有效每根长度')
@@ -153,20 +169,10 @@ function formatQuantityInput(value: string | number | null | undefined, precisio
   return `${amount / factor}${fractionText ? `.${fractionText}` : ''}`
 }
 
-function money(value: number | string | null): string {
-  const parsed = Number(value || 0)
-  return parsed.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
 function lineAmount(line: PurchaseOrderDetail['lines'][number]): string {
-  const quantity = Number(isWeightLine(line)
-    ? pipeWeight(line)
-    : line.raw_bar_length_m
-      ? pipePurchaseMeters(line)
-      : line.actual_purchase_quantity)
-  const price = Number(line.unit_price)
-  if (!Number.isFinite(quantity) || !Number.isFinite(price)) return '—'
-  return money(quantity * price)
+  if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
+  const amount = amountScaled(line)
+  return amount === null ? '—' : formatScaled(amount)
 }
 
 function disabledPastDate(date: Date): boolean {
@@ -198,7 +204,7 @@ function updateOrder(result: { data: PurchaseOrderDetail; etag: string }): void 
       } : {}),
       actual_purchase_quantity: isWeightLine(line)
         ? formatQuantityInput(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity ?? (result.data.source_type === 'SAMPLE' ? line.calculation_snapshot?.actual_purchase_weight_kg : null), 4)
-        : formatQuantityInput(line.actual_purchase_quantity, line.raw_bar_length_m ? 4 : 2),
+        : formatQuantityInput(line.actual_purchase_quantity, line.set_pricing || line.raw_bar_length_m ? 4 : 2),
     })),
   }
   etag.value = result.etag
@@ -209,6 +215,7 @@ async function loadOrder(): Promise<void> {
   loading.value = true
   loadError.value = ''
   actionError.value = ''
+  editingSetId.value = ''
   order.value = null
   etag.value = ''
   try {
@@ -284,7 +291,8 @@ function updatePayload() {
           ? { actual_bar_count: line.actual_bar_count }
           : {}),
       ...(order.value?.source_type === 'SAMPLE' && (isWeightPipeLine(line) || line.raw_bar_length_m) ? { raw_bar_length_m: line.raw_bar_length_m || null } : {}),
-      unit_price: line.unit_price === '' ? null : line.unit_price,
+      unit_price: line.set_pricing || line.unit_price === '' ? null : line.unit_price,
+      ...(line.set_pricing !== undefined ? { set_pricing: line.set_pricing } : {}),
     })),
   }
 }
@@ -404,7 +412,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
           </ElTableColumn>
           <ElTableColumn label="供应商" min-width="271">
             <template #default="{ row }">
-              <ElSelect v-model="row.supplier_id" filterable clearable :loading="optionsLoading" :disabled="!optionsReady" :placeholder="optionsLoading ? '正在加载供应商' : '请选择供应商'" teleported>
+              <ElSelect v-model="row.supplier_id" filterable clearable :loading="optionsLoading" :disabled="!optionsReady" :placeholder="optionsLoading ? '正在加载供应商' : '请选择供应商'" teleported @change="syncSetTerm(order!.lines, row, 'supplier_id')">
                 <ElOption
                   v-for="supplier in options?.suppliers || []"
                   :key="supplier.id"
@@ -425,6 +433,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                 format="YYYY-MM-DD"
                 placeholder="选择采购交期"
                 :disabled-date="disabledPastDate"
+                @change="syncSetTerm(order!.lines, row, 'delivery_date')"
                 teleported
               />
             </template>
@@ -455,12 +464,17 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                 data-testid="confirm-quantity"
                 inputmode="decimal"
                 placeholder="请输入数量"
-                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity)"
+                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, row.set_pricing ? 4 : 2)"
               ><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购单价" min-width="164">
-            <template #default="{ row }"><ElInput v-model="row.unit_price" :aria-label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price" inputmode="decimal" placeholder="请输入单价"><template #append>{{ purchasePriceUnit(row) }}</template></ElInput></template>
+            <template #default="{ row }">
+              <PurchaseSetPriceCell :line="row" :unit="purchasePriceUnit(row)" :label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price"
+                :allow-set="Boolean(order.purchase_group_id && row.purchase_group_line_id && order.status === 'DRAFT')"
+                :disabled="!canEdit || Boolean(row.set_pricing && order.status !== 'DRAFT')" @input="row.unit_price = $event" @edit-set="editingSetId = row.purchase_group_line_id" />
+              <small v-if="row.calculation_snapshot?.set_pricing_review && !row.set_pricing && !Number(row.unit_price)">外供调整，请重选按套或填写单价</small>
+            </template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
             <template #default="{ row }"><strong>{{ lineAmount(row) }}</strong></template>
@@ -472,7 +486,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
         <div class="summary-counts">采购明细 <strong>{{ order.lines.length }}</strong> 项 <span>·</span> 已选供应商 <strong>{{ supplierCount }}</strong> 家</div>
         <div class="summary-actions">
           <div class="mailing-panel"><span>是否邮寄</span><ElRadioGroup v-model="order.is_mailed" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></div>
-          <div class="total"><span>采购总金额</span><strong>¥ {{ money(localTotal) }}</strong></div>
+          <div class="total"><span>采购总金额</span><strong>¥ {{ formatScaled(totalScaled) }}</strong></div>
           <ElButton class="save-button" :loading="saving" :disabled="!canEdit || confirming || loading || !optionsReady" @click="saveChanges()">保存修改</ElButton>
           <ElButton class="confirm-button" data-testid="confirm-next" type="primary" :loading="confirming" :disabled="!canEdit || (order.status === 'DRAFT' && !canSubmit) || saving || loading || !optionsReady" @click="confirmAndContinue">
             {{ order.status === 'DRAFT' ? '确认采购' : '保存并继续' }}<img :src="rightIcon" alt="" class="purchase-icon" />
@@ -480,6 +494,8 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
         </div>
       </footer>
     </template>
+    <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates" :suppliers="options?.suppliers || []"
+      @close="editingSetId = ''" @apply="saveSet" />
   </section>
 </template>
 

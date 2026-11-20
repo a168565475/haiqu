@@ -193,12 +193,12 @@ onBeforeUnmount(() => { version++ })
 
 <template>
   <section class="group-detail erp-glass-detail" data-testid="purchase-group-detail" v-loading="loading">
-    <header><div><h1>采购需求</h1><span>{{ group?.group_number }}</span></div><div class="actions">
+    <header><div><h1>采购需求</h1><strong v-if="group?.production_task_number_snapshot" class="production-task-number">{{ group.production_task_number_snapshot }}</strong></div><div class="actions">
       <ElButton @click="router.push({ name: 'purchase-orders', query: { view: 'groups' } })">返回采购需求列表</ElButton>
       <ElButton v-if="canView" :disabled="completionLoading || completionSubmitting || deleting" @click="load">刷新进度</ElButton>
       <ElTooltip v-if="group?.completion && canComplete" :content="completionBlockedReason" :disabled="!completionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-complete" :loading="completionLoading" :disabled="!!completionBlockedReason || completionSubmitting || deleting" @click="openCompletion">完成采购</ElButton></span></ElTooltip>
       <ElTooltip v-if="group && canDelete" :content="deletionBlockedReason" :disabled="!deletionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-delete" type="danger" plain :loading="deleting" :disabled="!!deletionBlockedReason || completionLoading || completionSubmitting || completionVisible" @click="removeGroup">删除采购需求</ElButton></span></ElTooltip>
-      <ElButton v-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="group.progress.status === 'UNKNOWN' || deleting" @click="router.push({ name: 'purchase-batch-create', params: { groupId: group.id } })">新增采购批次</ElButton>
+      <ElButton v-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="!group.progress.line_count || group.progress.status === 'UNKNOWN' || deleting" @click="router.push({ name: 'purchase-batch-create', params: { groupId: group.id } })">新增采购批次</ElButton>
     </div></header>
     <ElAlert v-if="!canView" title="当前账号无权查看采购需求。" type="warning" :closable="false" />
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"><ElButton link @click="load">重新加载</ElButton></ElAlert>
@@ -207,7 +207,7 @@ onBeforeUnmount(() => { version++ })
     <ElAlert v-if="deletionError" data-testid="purchase-group-delete-error" :title="deletionError" type="error" :closable="false" />
     <template v-if="group">
       <dl class="group-summary">
-        <div><dt>生产订单</dt><dd>{{ group.production_task_number_snapshot }}</dd></div>
+        <div><dt>采购需求单号</dt><dd>{{ group.group_number }}</dd></div>
         <div><dt>销售订单 / 客户</dt><dd>{{ group.sales_order_number_snapshot }} · {{ group.customer_name_snapshot }}</dd></div>
         <div><dt>产品</dt><dd>{{ product?.product_name || '来源待核对' }}</dd></div>
         <div><dt>规格</dt><dd>{{ product?.specification || '—' }}</dd></div>
@@ -228,7 +228,7 @@ onBeforeUnmount(() => { version++ })
             <td><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === line.id || focusedLineId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line.source_snapshot)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div><div v-if="!materialAttributeFields(line.source_snapshot).length">暂无物料属性</div><div v-if="line.source_snapshot.section_type_snapshot === 'PROFILE' && isWeightPipeLine(line)"><span>每根标准重量</span><strong>{{ line.source_snapshot.raw_bar_weight_kg == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_weight_kg)} kg/根` }}</strong></div><div v-else-if="line.source_snapshot.section_type_snapshot === 'PROFILE'"><span>采购原长</span><strong>{{ line.source_snapshot.raw_bar_length_m == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_length_m)} 米/根` }}</strong></div><div v-else-if="isWeightLine(line) && line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg"><span>单个材料重量</span><strong>{{ compactDecimal(String(line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg)) }} kg/个</strong></div></div></template><span class="material-detail" tabindex="0" :aria-label="`查看材料属性：${line.source_snapshot.part_name_snapshot || line.source_snapshot.material_snapshot || line.source_snapshot.raw_material_snapshot || '未命名物料'}`" @focus="focusedLineId = line.id" @blur="focusedLineId = ''" @keydown.esc="focusedLineId = ''; hoveredLineId = ''">{{ materialSpecificationValue(line.source_snapshot) }}</span></ElTooltip></td>
             <td>{{ quantityText(line, line.required_quantity, line.source_snapshot.suggested_bar_count) }}</td><td>{{ quantityText(line, line.purchased_quantity, line.purchased_bar_count) }}</td><td>{{ quantityText(line, line.in_progress_quantity ?? '待核对', line.in_progress_bar_count) }}</td><td>{{ quantityText(line, line.accepted_quantity, line.accepted_bar_count) }}</td>
             <td :class="{ satisfied: line.is_satisfied, unknown: line.progress_percent === null }"><strong>{{ line.progress_percent === null ? '来源待核对' : `${compactDecimal(line.progress_percent)}%` }}</strong></td>
-          </tr><tr v-if="!group.progress.lines.length"><td colspan="9" class="empty">暂无材料明细，来源待核对</td></tr></tbody>
+          </tr><tr v-if="!group.progress.lines.length"><td colspan="9" class="empty">{{ group.progress.status === 'COMPLETED' ? '本单材料已全部改为外供' : '暂无材料明细，来源待核对' }}</td></tr></tbody>
         </table></div>
       </section>
       <section class="group-content-card"><h2>采购批次 <small>{{ group.batches.length }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
@@ -255,6 +255,7 @@ onBeforeUnmount(() => { version++ })
 header, header > div, .actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 header { justify-content: space-between; }
 h1 { margin: 0; font-size: 36px; line-height: 44px; font-weight: 700; }
+.production-task-number { font-size: 20px; line-height: 28px; font-weight: 700; }
 h2 { margin: 0 0 10px; font-size: 16px; } h2 small { font-size: 12px; font-weight: 400; }
 .group-summary { @include detail.surface; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 14px; padding: 16px; margin: 0; }
 .group-content-card { @include detail.surface; padding: 14px 16px 16px; }

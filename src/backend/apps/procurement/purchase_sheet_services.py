@@ -28,6 +28,7 @@ from .models import (
     SupplierPurchaseSheetStatus,
 )
 from .services import MAX_MONEY_VALUE, MONEY_QUANT, next_purchase_order_number
+from .set_pricing import line_set_pricing, set_sheet_fields
 
 
 DEFAULT_BUYER = {
@@ -172,6 +173,9 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
     settlement_mode = config.get("settlement_mode")
     if settlement_mode not in ALLOWED_SETTLEMENT_MODES:
         settlement_mode = "NORMAL"
+    anchors = {str(line.purchase_group_line_id): line for line in lines if line_set_pricing(line)}
+    if anchors and settlement_mode == "ACTUAL_WEIGHT":
+        raise ValidationError({"settlement_mode": "按套计价的采购单请选择普通结算模板。"})
     content_lines = []
     for line in lines:
         pipe_fields = pipe_sheet_fields(line)
@@ -200,6 +204,7 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
                 "amount": format(line.amount, "f") if line.amount is not None else "",
                 "delivery_date": line.delivery_date.isoformat() if line.delivery_date else "",
                 "remark": line.color_snapshot if order.source_type == "SAMPLE" else "",
+                **set_sheet_fields(line, anchors),
             }
         )
     total = None
@@ -461,6 +466,8 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
         for item in original_lines
         if isinstance(item, dict) and item.get("source_purchase_order_line_id")
     }
+    if settlement_mode == "ACTUAL_WEIGHT" and any(row.get("set_pricing") for row in original_by_id.values()):
+        raise ValidationError({"settlement_mode": "按套计价的采购表请使用普通结算方式。"})
     submitted_lines = raw_content.get("lines")
     if not isinstance(submitted_lines, list) or not submitted_lines:
         raise ValidationError({"lines": "采购表至少需要一条采购明细。"})
@@ -477,17 +484,25 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
         source_id = str(item.get("source_purchase_order_line_id"))
         source_line = original_by_id[source_id]
         hardware_source = hardware_sources.get(source_id, source_line)
-        hardware_fields = normalize_hardware_sheet_line(hardware_source, item, settlement_mode)
-        if source_id in hardware_sources:
-            normalize_hardware_sheet_line(hardware_source, source_line, settlement_mode)
-        pipe_fields = normalize_pipe_sheet_line(original_by_id[source_id], item, settlement_mode)
-        if pipe_fields:
-            item = {**item, **{key: original_by_id[source_id][key] for key in ('quantity', 'unit', 'unit_price')}}
-        elif hardware_fields:
-            item = {**item, **{key: hardware_source[key] for key in ('quantity', 'unit', 'unit_price')}}
+        set_pricing = source_line.get("set_pricing")
+        if set_pricing:
+            # 套餐的定价和收货数量是两种单位，核对时始终使用确认采购时的依据。
+            item = {**item, **{key: source_line[key] for key in ("quantity", "unit", "unit_price")}}
+            measurement_fields = source_line
+        else:
+            hardware_fields = normalize_hardware_sheet_line(hardware_source, item, settlement_mode)
+            pipe_fields = normalize_pipe_sheet_line(source_line, item, settlement_mode)
+            if source_id in hardware_sources:
+                normalize_hardware_sheet_line(hardware_source, source_line, settlement_mode)
+            if pipe_fields:
+                item = {**item, **{key: source_line[key] for key in ('quantity', 'unit', 'unit_price')}}
+            elif hardware_fields:
+                item = {**item, **{key: hardware_source[key] for key in ('quantity', 'unit', 'unit_price')}}
+            measurement_fields = {**pipe_fields, **hardware_fields}
         quantity = _decimal(item.get("quantity"), field_name=f"lines.{index}.quantity", allow_null=not for_publish, positive=True)
-        unit_price = _decimal(item.get("unit_price"), field_name=f"lines.{index}.unit_price", allow_null=not for_publish)
-        amount = None
+        included = bool(set_pricing) and not source_line["is_set_anchor"]
+        unit_price = _decimal(item.get("unit_price"), field_name=f"lines.{index}.unit_price", allow_null=not for_publish or included)
+        amount = Decimal("0.0000") if included else None
         if settlement_mode != "ACTUAL_WEIGHT" and quantity is not None and unit_price is not None:
             try:
                 amount = (quantity * unit_price).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -499,8 +514,7 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
             raise ValidationError({"lines": f"第 {index} 行缺少单位。"})
         normalized_lines.append(
             {
-                **pipe_fields,
-                **hardware_fields,
+                **measurement_fields,
                 "source_purchase_order_line_id": source_id,
                 "product_name": _string(item.get("product_name"), field_name=f"lines.{index}.product_name", max_length=200),
                 "product_specification": _string(item.get("product_specification"), field_name=f"lines.{index}.product_specification", max_length=300),

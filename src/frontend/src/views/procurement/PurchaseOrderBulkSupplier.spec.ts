@@ -3,7 +3,7 @@ import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPurchaseOrder, fetchPurchaseOrderOptions, fetchPurchaseOrderSource } from '@/api/purchaseOrders'
 import { createPurchaseBatch, createPurchaseGroup } from '@/api/purchaseGroups'
-import type { PurchaseOrderInput, PurchaseOrderSource, PurchaseOrderSupplierOption } from '@/types/purchaseOrder'
+import type { PurchaseOrderInput, PurchaseOrderSource, PurchaseOrderSupplierOption, PurchaseSetPricing } from '@/types/purchaseOrder'
 import type { SupplierCategory } from '@/types/supplier'
 import PurchaseOrderFormView from './PurchaseOrderFormView.vue'
 
@@ -13,7 +13,8 @@ vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fet
 vi.mock('@/api/purchaseGroups', () => ({ createPurchaseBatch: vi.fn(), createPurchaseGroup: vi.fn(), fetchVersionedPurchaseGroup: vi.fn() }))
 
 type Page = {
-  lines: Array<{ category: string; supplier_id: string | null; delivery_date: string; suggested_supplier_category: SupplierCategory | null }>
+  lines: Array<{ category: string; supplier_id: string | null; delivery_date: string; suggested_supplier_category: SupplierCategory | null; set_pricing?: PurchaseSetPricing }>
+  options: { suppliers: PurchaseOrderSupplierOption[] }
   source: PurchaseOrderSource
   sourceLoading: boolean
   saving: boolean
@@ -201,6 +202,86 @@ describe('采购行内回车下填', () => {
     await flushPromises()
     return event
   }
+
+  // jsdom 没有系统剪贴板，两个真实输入框共享同一份事件数据。
+  function clipboard(text = '') {
+    const formats = new Map([['text/plain', text]])
+    return {
+      getData: (format: string) => formats.get(format) || '',
+      setData: (format: string, value: string) => formats.set(format, value),
+      get types() { return [...formats.keys()] },
+    }
+  }
+  async function transfer(action: 'copy' | 'paste', row: number, column: number, data: ReturnType<typeof clipboard>) {
+    const event = Object.assign(new Event(action, { bubbles: true, cancelable: true }), { clipboardData: data })
+    field(row, column).get('input').element.dispatchEvent(event)
+    await flushPromises()
+    return event
+  }
+
+  it.each([
+    [0, 'supplier_id', '包材供应商', 'supplier-b', 'supplier-a'],
+    [1, 'delivery_date', '2099-11-12', '2099-11-12', '2099-11-11'],
+  ] as const)('第 %i 列粘贴已选值停在目标格，再按回车才填写下一行', async (column, key, text, value, original) => {
+    const data = clipboard()
+    await transfer('copy', 2, column, data)
+    expect(data.getData('text/plain')).toBe(text)
+    const target = field(0, column).get('input').element
+    target.focus()
+    expect((await transfer('paste', 0, column, data)).defaultPrevented).toBe(true)
+    expect(page.lines.map(row => row[key])).toEqual([value, original, value])
+    expect(document.activeElement).toBe(target)
+    await press(0, column)
+    expect(page.lines.map(row => row[key])).toEqual([value, value, value])
+    expect(document.activeElement).toBe(field(1, column).get('input').element)
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+  })
+
+  it('外部名称精确匹配供应商，同名时可从表内复制准确的供应商', async () => {
+    expect((await transfer('paste', 0, 0, clipboard('包材'))).defaultPrevented).toBe(false)
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-b')
+    page.options.suppliers[2]!.supplier_name = '包材供应商'
+    page.lines[0]!.supplier_id = 'supplier-a'
+    page.lines[2]!.supplier_id = 'supplier-c'
+    await flushPromises()
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-a')
+    const data = clipboard()
+    await transfer('copy', 2, 0, data)
+    await transfer('paste', 0, 0, data)
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+  })
+
+  it('粘贴过去的交期或无效日期时保留原值', async () => {
+    for (const text of ['2000-01-01', '2099-02-30', '无日期']) {
+      expect((await transfer('paste', 0, 1, clipboard(text))).defaultPrevented).toBe(true)
+      expect(page.lines[0]!.delivery_date).toBe('2099-11-10')
+    }
+  })
+
+  it.each(['preview', 'loading', 'saving'])('%s 时粘贴不能修改供应商或交期', async state => {
+    if (state === 'preview') page.source.can_create = false
+    if (state === 'loading') page.sourceLoading = true
+    if (state === 'saving') page.saving = true
+    await flushPromises()
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    await transfer('paste', 0, 1, clipboard('2099-11-12'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+    expect(page.lines[0]!.delivery_date).toBe('2099-11-10')
+  })
+
+  it('粘贴到套餐部件时，同套部件沿用相同供应商和交期', async () => {
+    const setPrice = { anchor_id: 'line-1', quantity: 1, unit_price: '1' }
+    page.lines[0]!.set_pricing = page.lines[2]!.set_pricing = setPrice
+    page.lines[2]!.supplier_id = page.lines[0]!.supplier_id
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    await transfer('paste', 0, 1, clipboard('2099-12-01'))
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-b', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-12-01', '2099-11-11', '2099-12-01'])
+  })
 
   it('每次回车只复制供应商到下一行，再按一次才继续下一行', async () => {
     await chooseCategory('__all__')

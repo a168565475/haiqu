@@ -468,6 +468,59 @@ function refreshBulkDeliveryDate(): void {
     : ''
 }
 
+const supplierClipboardType = 'application/x-haiqu-supplier-id'
+
+function copyGridTerm(event: ClipboardEvent, line: PurchaseLineDraft, field: 'supplier_id' | 'delivery_date'): void {
+  const data = event.clipboardData
+  if (!data) return
+  let text = line.delivery_date
+  if (field === 'supplier_id') {
+    const supplier = options.value.suppliers.find(item => item.id === line.supplier_id)
+    if (!supplier) return
+    text = supplier.supplier_name
+    data.setData(supplierClipboardType, supplier.id)
+  }
+  if (!text) return
+  data.setData('text/plain', text)
+  event.preventDefault()
+}
+
+function pasteGridTerm(event: ClipboardEvent, line: PurchaseLineDraft, field: 'supplier_id' | 'delivery_date'): void {
+  const data = event.clipboardData
+  const input = event.target
+  if (!data || !(input instanceof HTMLInputElement)) return
+  if (!canWriteLines.value || saving.value || sourceLoading.value || input.disabled) {
+    event.preventDefault()
+    return
+  }
+  const text = data.getData('text/plain').trim()
+  let value = text
+  if (field === 'supplier_id') {
+    const id = data.getData(supplierClipboardType)
+    const matches = options.value.suppliers.filter(item => id ? item.id === id : item.supplier_name === text)
+    if (matches.length !== 1) return // 交给下拉框搜索，采购员可以继续选。
+    value = matches[0]!.id
+  } else {
+    const date = new Date(text + 'T00:00:00')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || date.getDate() !== Number(text.slice(-2)) || disablePastDeliveryDate(date)) {
+      event.preventDefault()
+      showActionError('请输入今天或以后的交期，日期格式为 YYYY-MM-DD。')
+      return
+    }
+  }
+  event.preventDefault()
+  // 收起下拉面板并结束此前的搜索或日期输入，下一次回车就能按表格规则向下填。
+  if (document.activeElement === input) input.blur()
+  if (field === 'supplier_id') {
+    line.supplier_id = value
+    onLineSupplierChange(line)
+  } else {
+    line.delivery_date = value
+    onLineDeliveryChange(line)
+  }
+  input.focus({ preventScroll: true })
+}
+
 function fillNextGridRow(rowIndex: number, columnIndex: number): void {
   if (!canWriteLines.value || sourceLoading.value || saving.value || rowIndex < 0 || rowIndex >= lines.value.length - 1) return
   if (columnIndex === 0) {
@@ -1250,7 +1303,9 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
-              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier" @keydown.capture="handleGridNavigation($event, $index, 0)">
+              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier"
+                @copy.capture="copyGridTerm($event, row, 'supplier_id')" @paste.capture="pasteGridTerm($event, row, 'supplier_id')"
+                @keydown.capture="handleGridNavigation($event, $index, 0)">
                 <ElSelect v-model="row.supplier_id" :persistent="false" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="onLineSupplierChange(row)">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
                 <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
@@ -1259,7 +1314,13 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购交期" :width="isSampleSource ? 170 : 195">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="onLineDeliveryChange(row)" /></div></template>
+            <template #default="{ row, $index }">
+              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date"
+                @copy.capture="copyGridTerm($event, row, 'delivery_date')" @paste.capture="pasteGridTerm($event, row, 'delivery_date')"
+                @keydown.capture="handleGridNavigation($event, $index, 1)">
+                <ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="onLineDeliveryChange(row)" />
+              </div>
+            </template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
             <template #default="{ row, $index }">

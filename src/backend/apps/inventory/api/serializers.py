@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 from apps.boms.api.serializers import BomCatalogSelectionSerializer
+from ..bom_inventory_sections import RAW_SECTIONS, SEMI_SECTIONS, SECTIONS_BY_STOCK_KIND
 from ..purchase_receiving_sections import RECEIVING_SELECTIONS
 
 
@@ -20,6 +21,19 @@ from ..models import (
     WarehouseType,
     WarehouseZone,
 )
+
+
+class MaterialInventorySectionQuerySerializer(serializers.Serializer):
+    stock_kind = serializers.ChoiceField(
+        choices=["RAW", "SEMI"], default="RAW", error_messages={"invalid_choice": "请选择原材料或半成品。"},
+    )
+    bom_section = serializers.ChoiceField(choices=list(dict.fromkeys([*RAW_SECTIONS, *SEMI_SECTIONS])), required=False)
+
+    def validate(self, attrs):
+        section = attrs.get("bom_section")
+        if section and section not in SECTIONS_BY_STOCK_KIND[attrs["stock_kind"]]:
+            raise serializers.ValidationError({"bom_section": "请选择当前库存性质下的 BOM 分区。"})
+        return attrs
 
 
 class WarehouseSerializer(serializers.ModelSerializer):

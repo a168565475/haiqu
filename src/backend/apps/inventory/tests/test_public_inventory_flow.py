@@ -13,7 +13,7 @@ from apps.procurement.models import PurchaseReturn, PurchaseReturnLine
 from apps.procurement.tests import test_pipe_purchase_flow as pipe_fixture
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductCategory, ProductionUnit
-from apps.workshop_config.models import Craft
+from apps.workshop_config.models import Craft, Workshop
 
 from ..models import MaterialInbound, MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, PublicStockBalance, PublicStockMovement, Warehouse, WarehouseZone
 from ..pipe_stock_services import credit_pipe_inbound
@@ -250,6 +250,35 @@ class PublicInventoryFlowTests(APITestCase):
         self.assertEqual(self.client.get("/api/v1/material-inventory/", {"stock_kind": "SEMI", "processing_status": "POWDER_COATING"}).data["count"], 1)
         self.assertEqual(self.client.get("/api/v1/material-inventory/", {"stock_kind": "SEMI", "processing_status": "METAL"}).data["count"], 0)
         self.assertEqual(self.client.get("/api/v1/material-inventory/", {"stock_kind": "SEMI", "q": "修改后的部位"}).data["count"], 0)
+
+    def test_bom_inventory_sections_filter_raw_and_semi_with_separate_attributes(self):
+        self.assertEqual(self.manual().status_code, 201)
+        coated, _ = self.semi()
+        workshop, _ = Workshop.objects.get_or_create(name="金工车间")
+        metal = Craft.objects.create(name="未喷塑测试用金工", craft_type="INTERNAL", plan_category="METAL", workshop=workshop)
+        identity = build_semi_finished_identity(bom_line=self.bom_line, completed_craft=metal, unit=coated.unit)
+        credit_public_stock(identity=identity, zone=coated.zone, quantity=3, source_type="TEST_PUBLIC_METAL",
+            source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee)
+        path = "/api/v1/material-inventory/"
+        options = self.client.get(path + "options/", {"scope": "filters"}).data["data"]["bom_sections"]
+        self.assertEqual([section["key"] for section in options["RAW"]], ["TUBE", "HARDWARE", "PLASTIC", "FABRIC", "AUXILIARY", "PACKAGING"])
+        self.assertEqual(options["RAW"][0]["label"], "管材")
+        self.assertEqual([(section["key"], section["label"]) for section in options["SEMI"]],
+            [("TUBE", "管材"), ("FABRIC_SEMI", "裁片"), ("SEWN_PART", "部位半成品")])
+        raw = self.client.get(path, {"bom_section": "TUBE"})
+        self.assertEqual(raw.status_code, 200, raw.data)
+        self.assertEqual(raw.data["count"], 1)
+        self.assertEqual(raw.data["results"][0]["inventory_attributes"]["length"], "3.05 m")
+        self.assertEqual(self.client.get(path, {"bom_section": "FABRIC"}).data["count"], 0)
+        for code, label in (("METAL", "未喷塑"), ("POWDER_COATING", "已喷塑")):
+            semi = self.client.get(path, {"stock_kind": "SEMI", "bom_section": "TUBE", "processing_status": code})
+            self.assertEqual(semi.status_code, 200, semi.data)
+            row, = semi.data["results"]
+            self.assertEqual(row["processing_status_label"], label)
+            self.assertEqual(row["inventory_attributes"]["cutting_length_mm"], 500)
+            self.assertEqual(row["inventory_attributes"]["thickness"], "1")
+        self.assertEqual(self.client.get(path, {"stock_kind": "SEMI", "bom_section": "FABRIC"}).status_code, 400)
+        self.assertEqual(self.client.get(path, {"bom_section": "ALL"}).status_code, 400)
 
     def test_zero_quantity_public_semi_balance_is_hidden_from_inventory_list(self):
         balance, _ = self.semi()

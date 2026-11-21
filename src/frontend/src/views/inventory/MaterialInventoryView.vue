@@ -27,7 +27,7 @@ let disposed = false
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
-const activeSection = ref('')
+const activeSection = ref('TUBE')
 const warehouseConfiguration = ref<InstanceType<typeof WarehouseConfigurationDialogs> | null>(null)
 const filters = reactive({ q: '', warehouseId: '', zoneId: '', processingStatus: '' })
 
@@ -35,6 +35,10 @@ function routeStockKind(value: unknown): 'RAW' | 'SEMI' {
   return value === 'SEMI' ? 'SEMI' : 'RAW'
 }
 const stockKind = ref<'RAW' | 'SEMI'>(routeStockKind(route.query.stock_kind))
+const bomSections = computed(() => options.value.bom_sections?.[stockKind.value] ?? [])
+const attributeFields = computed(() => bomSections.value.find(section => section.key === activeSection.value)?.fields ?? [])
+const showCoatingFilter = computed(() => stockKind.value === 'SEMI' && activeSection.value === 'TUBE')
+const showWeight = computed(() => stockKind.value === 'RAW' && ['TUBE', 'HARDWARE'].includes(activeSection.value))
 
 const warehousesForFilter = computed(() => options.value.warehouses.filter((item) =>
   !item.warehouse_type || item.warehouse_type === (stockKind.value === 'SEMI' ? 'SEMI_FINISHED' : 'MATERIAL')))
@@ -49,38 +53,49 @@ function formatQuantity(value: string | number): string {
   const number = Number(value)
   return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
-function stockQuantityText(row: MaterialInventoryRow): string {
-  const quantity = formatQuantity(row.inventory_quantity)
-  return row.measurement_kind === 'PIPE'
-    ? `${quantity} 根 · ${stockWeightText(row)}`
-    : row.measurement_kind === 'HARDWARE_WEIGHT' ? `${quantity} ${row.unit} · ${stockWeightText(row)}`
-    : quantity
-}
 function stockWeightText(row: MaterialInventoryRow): string {
   const weight = row.weight_quantity_kg ?? row.weight_quantity
-  return weight != null && /^\d+(?:\.\d+)?$/.test(String(weight)) ? `${formatQuantity(weight)} kg` : '重量待核对'
+  if (weight != null && /^\d+(?:\.\d+)?$/.test(String(weight))) return formatQuantity(weight)
+  return ['PIPE', 'HARDWARE_WEIGHT'].includes(row.measurement_kind || '') ? '重量待核对' : '—'
 }
-function sectionLabel(row: MaterialInventoryRow): string {
-  return stockKind.value === 'SEMI' && row.section_type === 'PROFILE' ? '管材' : row.section_title
+function attributeText(row: MaterialInventoryRow, key: string) {
+  const value = row.inventory_attributes?.[key]
+  return value == null || value === '' ? '—' : value
 }
 function search() { page.value = 1; void loadRows() }
-function reset() { Object.assign(filters, { q: '', warehouseId: '', zoneId: '', processingStatus: '' }); activeSection.value = ''; search() }
+function reset() { Object.assign(filters, { q: '', warehouseId: '', zoneId: '', processingStatus: '' }); search() }
 function warehouseChanged() { filters.zoneId = ''; search() }
+function selectSection(key: string) {
+  if (key === activeSection.value) return
+  activeSection.value = key
+  filters.processingStatus = ''
+  rows.value = []
+  total.value = 0
+  search()
+}
+function resetStockKindFilters() {
+  filters.warehouseId = ''
+  filters.zoneId = ''
+  filters.processingStatus = ''
+  activeSection.value = bomSections.value[0]?.key ?? 'TUBE'
+  rows.value = []
+  total.value = 0
+}
 function stockKindChanged() {
-  filters.warehouseId = ''; filters.zoneId = ''; filters.processingStatus = ''; activeSection.value = ''; page.value = 1
+  resetStockKindFilters()
   const query = { ...route.query }
   if (stockKind.value === 'SEMI') query.stock_kind = 'SEMI'
   else delete query.stock_kind
   void router.replace({ name: 'material-inventory', query })
-  void loadRows()
+  search()
 }
 async function loadRows() {
   const version = ++rowsVersion
   loading.value = true
   try {
     const result = await fetchMaterialInventory({
-      stock_kind: stockKind.value, page: page.value, page_size: pageSize.value, q: filters.q || undefined, section_title: activeSection.value || undefined,
-      processing_status: stockKind.value === 'SEMI' ? (filters.processingStatus || undefined) : undefined,
+      stock_kind: stockKind.value, page: page.value, page_size: pageSize.value, q: filters.q || undefined, bom_section: activeSection.value,
+      processing_status: showCoatingFilter.value ? (filters.processingStatus || undefined) : undefined,
       warehouse_id: filters.warehouseId || undefined, zone_id: filters.zoneId || undefined,
     })
     if (disposed || version !== rowsVersion) return
@@ -103,8 +118,9 @@ onBeforeUnmount(() => { disposed = true; rowsVersion++ })
 watch(() => route.query.stock_kind, value => {
   const next = routeStockKind(value)
   if (next === stockKind.value) return
-  stockKind.value = next; filters.warehouseId = ''; filters.zoneId = ''; filters.processingStatus = ''; activeSection.value = ''; page.value = 1
-  void loadRows()
+  stockKind.value = next
+  resetStockKindFilters()
+  search()
 })
 onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()]) })
 </script>
@@ -120,14 +136,11 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
       </header>
 
       <section class="filters-card" aria-label="材料库存筛选">
-        <form class="filter-row erp-list-filters" :class="{ 'filter-row--semi': stockKind === 'SEMI' }" @submit.prevent="search">
+        <form class="filter-row erp-list-filters" @submit.prevent="search">
           <ElInput v-model="filters.q" class="filter-control filter-control--search" clearable aria-label="搜索原料名称、规格、拼音或首字母" placeholder="搜索原料名称、规格、拼音或首字母">
             <template #suffix><img class="field-icon" :src="searchIcon" alt="" aria-hidden="true" /></template>
           </ElInput>
-          <ElSelect v-model="activeSection" class="filter-control filter-control--section" clearable aria-label="材料分类" placeholder="材料分类：全部" @change="search">
-            <ElOption v-for="section in options.sections" :key="section" :value="section" :label="section" />
-          </ElSelect>
-          <ElSelect v-if="stockKind === 'SEMI'" v-model="filters.processingStatus" class="filter-control filter-control--status" clearable aria-label="加工状态" placeholder="加工状态：全部" @change="search">
+          <ElSelect v-if="showCoatingFilter" v-model="filters.processingStatus" class="filter-control filter-control--status" clearable aria-label="喷塑状态" placeholder="喷塑状态：全部" @change="search">
             <ElOption value="METAL" label="未喷塑" />
             <ElOption value="POWDER_COATING" label="已喷塑" />
           </ElSelect>
@@ -146,24 +159,26 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
 
       </section>
       <section class="inventory-table erp-list-data">
-        <header class="erp-list-toolbar"><div><h2>材料库存明细</h2><span>{{ stockKind === 'SEMI' && publicStock ? '公共半成品按实物属性、工艺和单位汇总，不关联采购批次' : stockKind === 'SEMI' && hasCatalogRows ? '新材料按保存属性、工艺和单位汇总；旧半成品保留订单与部位' : publicStock ? '原材料按实物属性和库区汇总' : '原材料按长度、材料仓和库区汇总；半成品按订单、部位和工艺区分' }}</span></div><span>共 {{ total }} 条</span></header>
+        <nav v-if="bomSections.length" class="stock-sections" aria-label="BOM 分区">
+          <button v-for="section in bomSections" :key="section.key" type="button"
+            :aria-pressed="activeSection === section.key" @click="selectSection(section.key)">{{ section.label }}</button>
+        </nav>
         <div class="table-shell erp-list-table-frame">
-          <ElTable v-loading="loading" :data="rows" height="100%" stripe empty-text="暂无材料库存" row-key="inventory_key">
+          <ElTable :key="`${stockKind}-${activeSection}`" v-loading="loading" :data="rows" height="100%" stripe empty-text="当前分区暂无匹配库存" row-key="inventory_key">
           <ElTableColumn type="index" label="序号" width="66" align="center" class-name="sequence-column" label-class-name="sequence-column" :index="(index: number) => (page - 1) * pageSize + index + 1" />
-          <ElTableColumn label="材料分类" width="104"><template #default="{ row }">{{ sectionLabel(row) }}</template></ElTableColumn>
-          <ElTableColumn prop="category" label="类别" width="90" />
-          <ElTableColumn prop="material" label="材质" width="90" />
-          <ElTableColumn prop="part_name" label="部件" min-width="120" />
-          <ElTableColumn prop="color" label="颜色" width="110"><template #default="{ row }">{{ row.color || '—' }}</template></ElTableColumn>
-          <ElTableColumn prop="specification" label="规格/切割长度" min-width="170" />
-          <ElTableColumn v-if="stockKind === 'SEMI' && (publicStock || hasCatalogRows)" label="厚度" width="82"><template #default="{ row }">{{ row.tube_thickness || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}<template v-if="row.measurement_kind === 'PIPE'"> 根</template><template v-else-if="row.measurement_kind === 'HARDWARE_WEIGHT'">{{ ' ' + row.unit }}</template></b><small v-if="['PIPE', 'HARDWARE_WEIGHT'].includes(row.measurement_kind || '')"> · {{ stockWeightText(row) }}</small></span></template></ElTableColumn>
+          <ElTableColumn prop="part_name" label="材料名称" min-width="120" show-overflow-tooltip />
+          <ElTableColumn v-for="field in attributeFields" :key="field.key" :label="field.label"
+            :min-width="Math.max(88, field.label.length * 13 + 24)" show-overflow-tooltip>
+            <template #default="{ row }">{{ attributeText(row, field.key) }}</template>
+          </ElTableColumn>
+          <ElTableColumn v-if="stockKind === 'SEMI'" label="加工状态" min-width="112"><template #default="{ row }">{{ row.processing_status_label || row.completed_craft || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="当前库存" min-width="106" align="right"><template #default="{ row }"><b>{{ formatQuantity(row.inventory_quantity) }}</b></template></ElTableColumn>
           <ElTableColumn prop="unit" label="单位" width="65" align="center" />
+          <ElTableColumn v-if="showWeight" label="重量（kg）" min-width="106" align="right"><template #default="{ row }">{{ stockWeightText(row) }}</template></ElTableColumn>
           <ElTableColumn label="材料仓" min-width="150"><template #default="{ row }">{{ row.warehouse_name || '—' }}</template></ElTableColumn>
           <ElTableColumn label="库区" min-width="175"><template #default="{ row }">{{ row.zone_name }}</template></ElTableColumn>
           <ElTableColumn v-if="stockKind === 'RAW'" label="订单追溯" width="126" align="center"><template #default="{ row }"><ElButton link type="primary" @click="openMaterialDetail(row, 'purchases')">采购</ElButton><ElButton link type="primary" @click="openMaterialDetail(row, 'issues')">领用</ElButton></template></ElTableColumn>
           <ElTableColumn v-if="stockKind === 'SEMI' && hasCatalogRows" label="库存详情" width="100" align="center"><template #default="{ row }"><ElButton v-if="row.material_catalog_id" link type="primary" @click="openMaterialDetail(row, 'purchases')">查看</ElButton><span v-else>—</span></template></ElTableColumn>
-          <ElTableColumn v-if="stockKind === 'SEMI' && (publicStock || hasCatalogRows)" label="加工状态" min-width="112"><template #default="{ row }">{{ row.processing_status_label || row.completed_craft || '—' }}</template></ElTableColumn>
           <ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="production_task_number" label="生产单号" min-width="150" /><ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="product_name" label="产品" min-width="150" /><ElTableColumn prop="latest_inbound_date" label="最近入库日期" width="129" align="center" />
           </ElTable>
         </div>
@@ -178,14 +193,14 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
 .total-count { color: var(--erp-color-text-secondary); font-size: 13px; white-space: nowrap; }
 .stock-kind-switch { flex: none; }
 .filter-control--search { width: min(100%, 410px); }
-.filter-control--section, .filter-control--status { width: 150px; }
+.filter-control--status { width: 150px; }
 .filter-control--warehouse { width: 210px; }
 .filter-control--zone { width: 170px; }
 .field-icon { display: block; width: 16px; height: 16px; opacity: .72; }
-.inventory-table header { justify-content: space-between; }
-.inventory-table header > div { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
-.inventory-table h2 { margin: 0; font-size: 16px; }
-.inventory-table header span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.table-shell :deep(.stock-quantity) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stock-sections { display: flex; flex: none; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--erp-color-border-subtle); }
+.stock-sections button { min-height: 34px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--erp-color-text-secondary); font: inherit; cursor: pointer; }
+.stock-sections button:hover { background: var(--erp-color-selected); }
+.stock-sections button[aria-pressed='true'] { border-bottom-color: var(--erp-color-brand); color: var(--erp-color-brand); font-weight: 600; }
+.stock-sections button:focus-visible { outline: 2px solid var(--erp-color-brand); outline-offset: -2px; }
 .empty-state { padding: 80px; text-align: center; color: var(--erp-color-text-secondary); }
 </style>

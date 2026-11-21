@@ -239,9 +239,12 @@ def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", ca
 
 
 def material_inventory_rows(
-    *, keyword="", section_title="", warehouse_id="", zone_id="", location_id="",
+    *, keyword="", section_title="", warehouse_id="", zone_id="", location_id="", raw_category_names=(),
+    attribute_fields=(),
 ):
     queryset = MaterialStockBalance.objects.filter(quality=MaterialStockQuality.AVAILABLE)
+    if raw_category_names:
+        queryset = queryset.filter(raw_material__category__category_name__in=raw_category_names)
     inbound_movements = MaterialStockMovement.objects.filter(
         balance_id=OuterRef('pk'), direction=MaterialStockDirection.IN,
     ).order_by().values('balance_id').annotate(total=Count('source_id', distinct=True), latest=Max('occurred_at'))
@@ -291,6 +294,7 @@ def material_inventory_rows(
             "zone__warehouse_id",
             "zone__warehouse__warehouse_number",
             "zone__warehouse__warehouse_name",
+            *attribute_fields,
         )
         .annotate(missing_weight_count=Count('pk', filter=Q(quantity__gt=0, weight_quantity__isnull=True)))
         .annotate(

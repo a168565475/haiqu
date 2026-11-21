@@ -106,6 +106,10 @@ from ..workflow import purchase_inbound_workflow_status
 from ..sample_receiving_services import receive_sample_purchase
 from ..public_stock_mode import public_flow_enabled
 from ..public_inventory_queries import public_pipe_summary, public_raw_inventory_page, public_semi_inventory_page
+from ..bom_inventory_sections import (
+    LEGACY_FABRIC_CRAFT_CODES, RAW_SECTIONS, SEMI_SECTIONS, TUBE_PROCESSING_LABELS,
+    bom_inventory_section_options, legacy_semi_craft_filter, legacy_semi_inventory_attributes, raw_inventory_attributes,
+)
 from .serializers import (
     FinishedGoodsOutboundInputSerializer,
     FinishedGoodsOutboundSerializer,
@@ -114,6 +118,7 @@ from .serializers import (
     FinishedGoodsReceiptSerializer,
     FinishedGoodsInventoryScopeSerializer,
     MaterialInboundInputSerializer,
+    MaterialInventorySectionQuerySerializer,
     SampleMaterialInboundInputSerializer,
     SampleMaterialInboundResponseSerializer,
     ManualMaterialInboundInputSerializer,
@@ -578,17 +583,20 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
     def _accessible_task_ids(self, request):
         return accessible_production_tasks(request).order_by().values_list("id", flat=True)
 
+    @extend_schema(parameters=[MaterialInventorySectionQuerySerializer])
     def list(self, request):
         require_inventory_overview(request)
-        kind = request.query_params.get('stock_kind', 'RAW')
-        if kind not in ('RAW', 'SEMI'):
-            raise ValidationError({'stock_kind': '请选择原材料或半成品。'})
+        section_query = MaterialInventorySectionQuerySerializer(data=request.query_params.dict())
+        section_query.is_valid(raise_exception=True)
+        kind = section_query.validated_data["stock_kind"]
+        bom_section = section_query.validated_data.get("bom_section", "")
+        section_title = "" if bom_section else request.query_params.get("section_title", "").strip()
         if kind == 'SEMI':
-            return self._semi_finished_rows(request)
+            return self._semi_finished_rows(request, bom_section=bom_section, section_title=section_title)
         public_enabled = public_flow_enabled()
         filters = dict(
             keyword=request.query_params.get("q", "").strip(),
-            section_title=request.query_params.get("section_title", "").strip(),
+            section_title=section_title, bom_section=bom_section,
             warehouse_id=self._optional_uuid(request, "warehouse_id"),
             zone_id=self._optional_uuid(request, "zone_id"),
             location_id=self._optional_uuid(request, "location_id"),
@@ -602,6 +610,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             color = row["raw_material__color__color_name"] or row["raw_material__color_snapshot"]
             results.append({
                 "inventory_key": row.get("inventory_key", identity),
+                **({"inventory_attributes": raw_inventory_attributes(row, bom_section, color)} if bom_section else {}),
                 **({"material_catalog_id": row["material_catalog_id"], "material_selection_snapshot": row["material_selection_snapshot"],
                     "balance_id": row["_balance_id"], "identity_key": row["identity_key"]} if row.get("material_catalog_id") else {}),
                 'stock_kind': 'RAW',
@@ -638,14 +647,15 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             })
         return Response({"count": count, "next": None, "previous": None, "results": results})
 
-    def _semi_finished_rows(self, request):
+    def _semi_finished_rows(self, request, *, bom_section, section_title):
+        processing_status = request.query_params.get("processing_status", "").strip().upper()
         if public_flow_enabled():
             return Response(public_semi_inventory_page(
                 page=positive_int(request.query_params.get("page"), "page", 1),
                 page_size=min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100),
                 keyword=request.query_params.get("q", "").strip(),
-                section_title=request.query_params.get("section_title", "").strip(),
-                processing_status=request.query_params.get("processing_status", "").strip().upper(),
+                section_title=section_title, bom_section=bom_section,
+                processing_status=processing_status,
                 warehouse_id=self._optional_uuid(request, "warehouse_id"),
                 zone_id=self._optional_uuid(request, "zone_id"),
                 location_id=self._optional_uuid(request, "location_id"),
@@ -658,9 +668,20 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         if keyword:
             queryset = queryset.filter(Q(bom_line__part_name__icontains=keyword) | Q(bom_line__specification__icontains=keyword)
                                        | Q(production_task__task_number__icontains=keyword))
-        section = request.query_params.get('section_title', '').strip()
-        if section:
-            queryset = queryset.filter(Q(bom_line__section__title=section) | Q(bom_line__category=section))
+        if bom_section == "TUBE":
+            queryset = queryset.filter(bom_line__section__section_type="PROFILE")
+            if processing_status:
+                queryset = queryset.filter(legacy_semi_craft_filter((processing_status,)))
+        elif bom_section == "HARDWARE":
+            queryset = queryset.filter(bom_line__section__title__in=RAW_SECTIONS["HARDWARE"][1])
+        elif bom_section in LEGACY_FABRIC_CRAFT_CODES:
+            queryset = queryset.filter(
+                Q(bom_line__component_kind__in=SEMI_SECTIONS[bom_section][1])
+                | (Q(bom_line__component_kind="", bom_line__section__title="裁剪明细")
+                   & legacy_semi_craft_filter(LEGACY_FABRIC_CRAFT_CODES[bom_section]))
+            )
+        elif section_title:
+            queryset = queryset.filter(Q(bom_line__section__title=section_title) | Q(bom_line__category=section_title))
         for parameter, field in (('warehouse_id', 'zone__warehouse_id'), ('zone_id', 'zone_id')):
             value = self._optional_uuid(request, parameter)
             if value:
@@ -672,11 +693,16 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         count = queryset.count()
         results = []
         for item in queryset.order_by('-updated_at', 'id')[:page * page_size]:
+            craft = item.completed_craft
+            craft_code = craft.plan_category if craft.craft_type == "INTERNAL" else craft.outsourcing_code
             results.append({
                 '_sort_updated_at': item.updated_at, '_sort_id': str(item.pk), 'stock_mode': 'LEGACY',
+                **({"inventory_attributes": legacy_semi_inventory_attributes(item.bom_line, item.color_snapshot, bom_section)} if bom_section else {}),
                 'inventory_key': f'SEMI|{item.pk}', 'stock_kind': 'SEMI', 'stock_item_id': '',
                 'section_type': item.bom_line.section.section_type, 'section_title': item.bom_line.section.title,
-                'category': item.completed_craft.name, 'material_number': item.production_task.task_number,
+                'category': craft.name, 'material_number': item.production_task.task_number,
+                'completed_craft': craft.name,
+                **({"processing_status_label": TUBE_PROCESSING_LABELS.get(craft_code, craft.name)} if bom_section == "TUBE" else {}),
                 'material': item.bom_line.material, 'part_name': item.bom_line.part_name,
                 'specification': item.bom_line.specification, 'color': item.color_snapshot,
                 'raw_material': '', 'unit': item.unit.unit_name, 'inventory_quantity': item.quantity,
@@ -688,8 +714,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 'production_task_number': item.production_task.task_number, 'product_name': item.product_line.product_name_snapshot,
             })
         catalog = public_semi_inventory_page(page=1, page_size=page * page_size, legacy=True,
-            keyword=keyword, section_title=section,
-            processing_status=request.query_params.get('processing_status', '').strip().upper(),
+            keyword=keyword, section_title=section_title, bom_section=bom_section,
+            processing_status=processing_status,
             warehouse_id=self._optional_uuid(request, 'warehouse_id'), zone_id=self._optional_uuid(request, 'zone_id'),
             location_id=self._optional_uuid(request, 'location_id'))
         results.extend(catalog['results'])
@@ -942,6 +968,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "zones": list(zones.values("id", "warehouse", "zone_name")),
             }
             if scope == "filters":
+                data["bom_sections"] = bom_inventory_section_options()
                 data["sections"] = list(MaterialInboundLine.objects.values_list("section_title_snapshot", flat=True)
                     .distinct().order_by("section_title_snapshot"))
                 if public_flow_enabled() or PublicStockBalance.objects.filter(stock_kind="CATALOG_SEMI").exists():

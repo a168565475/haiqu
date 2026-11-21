@@ -12,6 +12,7 @@ from apps.boms.models import BomLine, BomSection
 from apps.inventory.models import PublicStockMovement, WarehouseZone
 from apps.inventory.part_flow_quantities import first_output_available
 from apps.inventory.part_flow_receipts import component_stock_craft
+from apps.inventory.public_inventory_queries import public_semi_inventory_page
 from apps.inventory.public_stock_identity import build_semi_finished_identity
 from apps.inventory.public_stock_services import credit_public_stock
 from apps.inventory.tests.test_internal_receipt_sewing import SewingFixture
@@ -182,6 +183,11 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
         self.assertEqual({row.balance.identity_snapshot['semi_kind'] for row in returns}, {'SEWN_PART'})
         self.assertEqual({row.balance.unit_id for row in returns}, {self.part_unit.pk})
         self.assertFalse(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').exists())
+        cutting = public_semi_inventory_page(page=1, page_size=20, bom_section='FABRIC_SEMI')
+        parts = public_semi_inventory_page(page=1, page_size=20, bom_section='SEWN_PART')
+        self.assertEqual(cutting['count'], 0)
+        row, = parts['results']
+        self.assertEqual(row['inventory_quantity'], 10002)
 
     def test_stock_pieces_debit_without_first_output_recount_and_dispatch_can_be_reduced(self):
         order = self.create_part_plan('PUBLIC_PIECE')

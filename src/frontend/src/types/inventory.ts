@@ -136,6 +136,7 @@ export type FinishedGoodsOutboundDetail = FinishedGoodsOutbound
 
 export interface MaterialInventoryRow {
   material_catalog_id?: string | null; material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot
+  inventory_attributes?: Record<string, string | number | null>
   balance_id?: string; identity_key?: string
   stock_mode?: 'LEGACY' | 'PUBLIC_V2'; completed_craft?: string; completed_craft_code?: string
   processing_status?: string; processing_status_label?: string; tube_thickness?: string | null; cutting_length_mm?: number | null
@@ -235,8 +236,15 @@ export interface SampleMaterialReceivingPayload {
   items: Array<{ purchase_order_line_id: string; zone_id: string; remark: string; received_weight_kg?: string; received_bar_count?: string }>
 }
 
+export interface MaterialInventorySection {
+  key: string
+  label: string
+  fields: { key: string; label: string }[]
+}
+
 export interface MaterialFilterOptions extends MaterialReceivingOptions {
   sections: string[]; stock_mode?: 'LEGACY' | 'PUBLIC_V2'
+  bom_sections?: Record<'RAW' | 'SEMI', MaterialInventorySection[]>
   warehouses: (Pick<Warehouse, 'id' | 'warehouse_number' | 'warehouse_name'> & { warehouse_type?: WarehouseType })[]
 }
 

@@ -1,5 +1,6 @@
 import uuid
 
+from django.contrib.auth.models import Permission
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -169,6 +170,30 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         typed_sewing = [row for row in sewing if row['conversion_snapshot']['public_identity']['identity_snapshot'].get('schema_version') == 3]
         self.assertEqual({row['material_name'] for row in typed_sewing}, {line.part_name for line in self.parts})
         self.assertEqual(PublicStockBalance.objects.filter(identity_snapshot__semi_kind='SEWN_PART').get().quantity, 9000)
+
+    def test_inventory_tabs_split_receipts_and_legacy_fabric_stock(self):
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label='inventory', codename='view_materialinbound'))
+        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
+        for category, line in (('CUTTING', self.parts[0]), ('SEWING', self.part)):
+            created, _ = self.submit(category, line, 1)
+            self.assertEqual(created.status_code, 201, created.data)
+            confirmed = self.confirm(created)
+            self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        legacy_line = BomLine(section=self.part.section, category='裁片', specification='50*40',
+            material=self.fabric.material, fabric_source_line=self.fabric, cutting_pieces_per_set=2)
+        for stage, name in (('CUTTING', '旧款裁片'), ('SEWING', '旧款车缝部位')):
+            legacy_line.part_name = name
+            identity = build_semi_finished_identity(bom_line=legacy_line, completed_craft=component_stock_craft(stage), unit=self.set_unit)
+            credit_public_stock(identity=identity, zone=self.semi_zone, quantity=3, actor_employee=self.employee,
+                source_type='TEST_LEGACY_FABRIC', source_id=uuid.uuid4(), source_line_id=uuid.uuid4())
+
+        for section, expected in (('FABRIC_SEMI', {self.parts[0].part_name, '旧款裁片'}),
+                                  ('SEWN_PART', {self.part.part_name, '旧款车缝部位'})):
+            result = self.client.get('/api/v1/material-inventory/', {'stock_kind': 'SEMI', 'bom_section': section})
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data['count'], 2)
+            self.assertEqual({row['part_name'] for row in result.data['results']}, expected)
 
     def test_attribute_identity_extension_passes_receipt_constraints_and_freezes_each_stage(self):
         from apps.material_catalog.models import MaterialCatalog

@@ -59,8 +59,10 @@ class PipeWeightReturnTests(SimpleTestCase):
         balance = SimpleNamespace(identity_snapshot={}, raw_material_id=identity["raw_material_id"],
             raw_bar_length_m=Decimal("6"), quantity=Decimal(roots), meter_quantity=Decimal(roots) * 6,
             bar_weight_kg=existing_bar_weight, weight_quantity=weight, save=Mock(), stock_kind="RAW_PIPE", version=1)
-        with patch("apps.inventory.public_stock_services.PublicStockBalance.objects.select_for_update") as rows:
+        with patch("apps.inventory.public_stock_services.PublicStockBalance.objects.select_for_update") as rows, \
+                patch("apps.inventory.public_stock_services.PublicStockMovement.objects.filter") as movements:
             rows.return_value.filter.return_value.order_by.return_value.first.return_value = balance
+            movements.return_value.exists.return_value = False
             return _locked_balance(identity, uuid4(), "AVAILABLE", weight_quantity=requested_weight, bar_weight_kg=incoming_bar_weight)
 
     def test_empty_legacy_balance_can_start_new_actual_weight_without_standard_weight(self):

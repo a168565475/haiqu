@@ -4,6 +4,17 @@ import type { PurchaseReturn } from '@/types/purchaseReturn'
 import PurchaseReturnConfirmDialog from './PurchaseReturnConfirmDialog.vue'
 
 describe('新目录管材退货保留原根米显示', () => {
+  it('按根退货在仓库详情只显示实际退根数', () => {
+    const record = { status: 'QUALITY_GENERATED', lines: [{ id: 'line', raw_bar_length_m: '3.05',
+      return_bar_count: 2, quantity: '2.0000', unit: '根' }] } as unknown as PurchaseReturn
+    const wrapper = shallowMount(PurchaseReturnConfirmDialog, { props: { visible: true, record, submitting: false,
+      action: 'view', showPipeRoots: true }, global: { renderStubDefaultSlot: true } })
+    const cell = wrapper.get('.return-confirm-quantity')
+    expect(cell.text()).toBe('2')
+    expect(cell.element.nextElementSibling?.textContent).toBe('根')
+    expect(cell.attributes('title')).toBeUndefined()
+    wrapper.unmount()
+  })
   it.each([[false, '7.25'], [true, '2 根 / 7.25']])('KG管材按退货重量显示，仓库根数展示=%s', (showPipeRoots, expected) => {
     const record = { status: 'QUALITY_GENERATED', lines: [{ id: 'line', material_catalog_id: 'catalog',
       raw_bar_length_m: '3.05', return_bar_count: 2, quantity: '7.2500', unit: 'KG' }] } as unknown as PurchaseReturn

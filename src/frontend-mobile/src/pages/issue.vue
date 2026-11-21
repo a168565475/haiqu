@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
-import { Button as VanButton, Field as VanField, Loading as VanLoading, Icon as VanIcon, Popup as VanPopup, Picker as VanPicker, PickerGroup as VanPickerGroup, DatePicker as VanDatePicker, TimePicker as VanTimePicker, showDialog } from 'vant'
+import { Button as VanButton, Field as VanField, Loading as VanLoading, Icon as VanIcon, Popup as VanPopup, Picker as VanPicker, PickerGroup as VanPickerGroup, DatePicker as VanDatePicker, TimePicker as VanTimePicker, showConfirmDialog, showDialog } from 'vant'
 import type { PickerConfirmEventParams, PickerOption } from 'vant'
 import 'vant/es/popup/style'
 import 'vant/es/field/style'
@@ -14,7 +14,7 @@ import WorkPage from '@/components/WorkPage.vue'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { createRequestId } from '@/utils/requestId'
-import { buildIssueLines, materialAttributes, omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError } from '@/utils/materialQuantities'
+import { buildIssueLines, issueOrderOverages, materialAttributes, omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError } from '@/utils/materialQuantities'
 import { createMaterialIssue, fetchMaterialIssue, fetchMaterialIssueOptions, fetchMaterialIssueProducts, fetchMaterialRequirements, submitMaterialIssue, updateMaterialIssue } from '@/api/materialIssues'
 import type { IssueWritePayload, MaterialIssue, MaterialIssueOptions, MaterialIssueProduct, MaterialIssueSourceKind, MaterialRequirement, MaterialRequirementResponse, VersionedIssue } from '@/types/materialIssue'
 
@@ -129,6 +129,28 @@ function writePayload(): IssueWritePayload {
   }
   return { ...context, recipient_workshop_employee_id: recipientId.value, issue_at: `${issueAt.value}:00+08:00`, remark: remark.value, lines }
 }
+function readRequirements() {
+  return fetchMaterialRequirements({ ...context, issue_id: persistedId.value || undefined, plan_category: query('plan_category') || undefined })
+}
+async function checkedPayload(run: number) {
+  const latest = await readRequirements()
+  if (!active || run !== generation) return null
+  const ids = new Set(latest.items.map(row => row.requirement_id))
+  if (Object.entries(selected).some(([id, value]) => !omittedQuantity(value) && !ids.has(id))) {
+    throw new Error('已选物料的领料范围有变，请刷新页面后重新核对。')
+  }
+  requirements.value = latest.items
+  blockers.value = latest.blockers
+  const payload = writePayload()
+  const overages = issueOrderOverages(latest.items, selected)
+  if (overages.length) {
+    try {
+      await showConfirmDialog({ title: '领料超出本产品需求', message: overages.join('\n\n'), messageAlign: 'left',
+        confirmButtonText: '确认提交', cancelButtonText: '返回修改' })
+    } catch (reason) { if (reason === 'cancel' || reason === 'close') return null; throw reason }
+  }
+  return active && run === generation ? payload : null
+}
 function remember(result: VersionedIssue) {
   persistedId.value = result.data.id
   etag.value = result.etag
@@ -182,7 +204,7 @@ async function initialize() {
     }
     const [loadedOptions, products, data] = await Promise.all([
       fetchMaterialIssueOptions(context.production_task_id), fetchMaterialIssueProducts(context.production_task_id),
-      fetchMaterialRequirements({ ...context, issue_id: id || undefined, plan_category: query('plan_category') || undefined }),
+      readRequirements(),
     ])
     if (!active || run !== generation) return
     options.value = loadedOptions
@@ -213,7 +235,9 @@ async function save() {
   const run = generation
   saving.value = true
   try {
-    const payload = createUncertain.value && createAttempt.value ? createAttempt.value : writePayload()
+    const recovery = createUncertain.value ? createAttempt.value : null
+    const payload = recovery || await checkedPayload(run)
+    if (!payload) return
     if (!persistedId.value) {
       if (!canCreate.value) throw new Error('当前账号没有新建领料申请权限。')
       createAttempt.value ||= { ...payload, schedule_product_id: query('schedule_product_id'), plan_category: query('plan_category'), client_request_id: requestId }
@@ -241,6 +265,8 @@ async function save() {
       success.value = issue.value?.status === 'ISSUED' ? '这张申请已由仓库确认发料。' : '已核对，这张申请正在等待仓库发料。'
       return
     }
+    // 找回结果不明的原单必须重放原请求。若找回草稿，提交前再按原单号核对需求。
+    if (recovery && !await checkedPayload(run)) return
     const result = await submitMaterialIssue(persistedId.value, etag.value, latest => {
       if (active && run === generation) {
         if (['DRAFT', 'RETURNED'].includes(latest.data.status) && latest.etag !== etag.value) needsReload.value = true

@@ -27,9 +27,11 @@ export interface PurchasePayableLine {
   material_attributes?: Record<string, unknown>
   material_attributes_snapshot?: Record<string, unknown>
   accepted_quantity: string
+  settlement_quantity?: string
   accepted_unit?: string
   source_unit_text_snapshot?: string
   accepted_bar_count?: number | null
+  receipt_bar_counts?: { received: number; returned: number } | null
   received_quantity?: string | null
   return_quantity?: string | null
   received_weight_kg?: string | null

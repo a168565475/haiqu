@@ -60,6 +60,7 @@ export interface PurchaseGroupProgressLine {
   in_progress_quantity?: string | null
   purchased_bar_count?: string | null
   accepted_bar_count?: string | null
+  receipt_quantity_mode?: 'ROOTS' | null
   in_progress_bar_count?: string | null
   /** 后端十进制百分比，不封顶；null表示来源或汇总缺口。 */
   progress_percent: string | null
@@ -169,6 +170,5 @@ export interface PurchaseBatchInput {
   request_id: string
   batch_type: PurchaseBatchType
   currency_id: string
-  is_mailed?: boolean | null
   lines: PurchaseBatchLineInput[]
 }

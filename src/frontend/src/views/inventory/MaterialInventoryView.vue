@@ -38,7 +38,7 @@ const stockKind = ref<'RAW' | 'SEMI'>(routeStockKind(route.query.stock_kind))
 const bomSections = computed(() => options.value.bom_sections?.[stockKind.value] ?? [])
 const attributeFields = computed(() => bomSections.value.find(section => section.key === activeSection.value)?.fields ?? [])
 const showCoatingFilter = computed(() => stockKind.value === 'SEMI' && activeSection.value === 'TUBE')
-const showWeight = computed(() => stockKind.value === 'RAW' && ['TUBE', 'HARDWARE'].includes(activeSection.value))
+const showWeight = computed(() => stockKind.value === 'RAW' && activeSection.value === 'HARDWARE')
 
 const warehousesForFilter = computed(() => options.value.warehouses.filter((item) =>
   !item.warehouse_type || item.warehouse_type === (stockKind.value === 'SEMI' ? 'SEMI_FINISHED' : 'MATERIAL')))
@@ -56,7 +56,7 @@ function formatQuantity(value: string | number): string {
 function stockWeightText(row: MaterialInventoryRow): string {
   const weight = row.weight_quantity_kg ?? row.weight_quantity
   if (weight != null && /^\d+(?:\.\d+)?$/.test(String(weight))) return formatQuantity(weight)
-  return ['PIPE', 'HARDWARE_WEIGHT'].includes(row.measurement_kind || '') ? '重量待核对' : '—'
+  return row.measurement_kind === 'HARDWARE_WEIGHT' ? '重量待核对' : '—'
 }
 function attributeText(row: MaterialInventoryRow, key: string) {
   const value = row.inventory_attributes?.[key]

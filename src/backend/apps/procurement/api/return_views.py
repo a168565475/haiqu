@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.inventory.pipe_receipt_basis import is_root_receipt
 from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..completion_services import advance_purchase_return
@@ -29,7 +30,7 @@ class PurchaseReturnLineSerializer(serializers.ModelSerializer):
     specification = serializers.CharField(source="inbound_line.specification_snapshot", read_only=True)
     material_attributes_snapshot = serializers.JSONField(source="inbound_line.material_attributes_snapshot", read_only=True)
     color = serializers.SerializerMethodField()
-    unit = serializers.CharField(source="inbound_line.source_unit_text_snapshot", read_only=True)
+    unit = serializers.SerializerMethodField()
     quality_remark = serializers.CharField(source="inbound_line.quality_remark", read_only=True)
 
     class Meta:
@@ -40,6 +41,9 @@ class PurchaseReturnLineSerializer(serializers.ModelSerializer):
     def get_color(self, obj):
         purchase_order_line = obj.inbound_line.purchase_order_line
         return purchase_order_line.color_snapshot if purchase_order_line else ""
+
+    def get_unit(self, obj) -> str:
+        return '根' if is_root_receipt(obj.inbound_line) else obj.inbound_line.source_unit_text_snapshot
 
 
 class PurchaseReturnSerializer(serializers.ModelSerializer):

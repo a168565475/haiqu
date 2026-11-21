@@ -249,12 +249,12 @@ onMounted(() => { void loadList() })
             <div><span>状态</span><el-tag>{{ record.status_display || statusLabel[record.status] }}</el-tag></div>
             <div><span>金额</span><strong>{{ formatAmount(record.amount, currencyCode(record)) }}</strong></div>
           </div>
-          <el-alert type="info" :closable="false" title="数量沿用入库已确认数量；KG、含税口径、运费口径仍按接口返回状态处理，本期不做换算和付款操作。" />
+          <el-alert type="info" :closable="false" title="按根验收的管材使用采购批次的约定公斤数结算。" />
           <el-table :data="record.lines" row-key="line_id" class="line-table">
             <el-table-column label="物料" min-width="160"><template #default="{ row }">{{ lineMaterial(row) }}</template></el-table-column>
             <el-table-column label="规格" min-width="130"><template #default="{ row }">{{ lineSpecification(row) }}</template></el-table-column>
-            <el-table-column label="已确认入库" width="130"><template #default="{ row }">{{ row.accepted_quantity }} {{ lineUnit(row) }}</template></el-table-column>
-            <el-table-column label="KG" width="110"><template #default="{ row }">{{ row.accepted_weight_kg ?? '待确认' }}</template></el-table-column>
+            <el-table-column label="结算数量" width="130"><template #default="{ row }">{{ row.settlement_quantity ?? row.accepted_quantity }} {{ lineUnit(row) }}</template></el-table-column>
+            <el-table-column label="合格入库" width="120"><template #default="{ row }">{{ row.receipt_bar_counts ? row.accepted_bar_count + ' 根' : row.accepted_weight_kg ?? '待确认' }}</template></el-table-column>
             <el-table-column label="单价" width="180">
               <template #default="{ row, $index }">
                 <template v-if="canEditPrice"><el-input v-model="form.lines[$index].unit_price" size="small" /><el-input v-model="form.lines[$index].price_unit_text" size="small" class="unit-input" /></template>

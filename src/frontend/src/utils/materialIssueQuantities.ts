@@ -12,6 +12,29 @@ export function issueMeterText(value: unknown): string {
   return whole ? `${whole}.${fraction.slice(0, 2).padEnd(2, '0')}` : '—'
 }
 
+export function issueOrderOverages(rows: MaterialRequirement[], selected: Record<string, string>) {
+  const totals = new Map<string, { row: MaterialRequirement; requested: bigint; remaining: bigint }>()
+  for (const row of rows) {
+    const requested = decimalUnits(selected[row.requirement_id])
+    if (!requested || row.product_order_remaining === null) continue
+    // 旧半成品只有库存余额。公共半成品的不同工艺行共享同一部位的订单用量。
+    if (row.line_type === 'SEMI' && row.stock_mode !== 'PUBLIC_V2') continue
+    const component = row.line_type === 'SEMI' && row.conversion_snapshot?.component_identity
+    const key = component ? `${component}:${row.unit}` : row.requirement_id
+    const remaining = decimalUnits(row.product_order_remaining ?? row.component_order_remaining ?? row.order_remaining)
+    if (remaining === null) throw new Error('领料需求数量无效')
+    const total = totals.get(key)
+    if (total) total.requested += requested
+    else totals.set(key, { row, requested, remaining })
+  }
+  const format = (amount: bigint) => issueQuantityText(`${amount / 10000n}.${String(amount % 10000n).padStart(4, '0')}`)
+  return [...totals.values()].filter(item => item.requested > item.remaining).map(({ row, requested, remaining }) => {
+    const part = row.conversion_snapshot?.public_bom_snapshot?.line?.part_name || row.conversion_snapshot?.part_name || row.part_names?.join('、')
+    const name = [...new Set([row.material_name, part, row.specification, row.line_type === 'RAW' ? row.color : ''].filter(Boolean))].join(' · ')
+    return `${name}\n剩余需求 ${format(remaining)} ${row.unit}，本次领 ${format(requested)} ${row.unit}，超出 ${format(requested - remaining)} ${row.unit}`
+  })
+}
+
 export function issuePipePlan(value: string, row: MaterialRequirement) {
   const input = decimalUnits(value)
   const cuts = BigInt(row.conversion_snapshot?.pieces_per_bar || 0)

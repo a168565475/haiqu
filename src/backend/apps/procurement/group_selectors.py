@@ -4,10 +4,12 @@ from django.db.models import Exists, OuterRef, Prefetch, Q
 from rest_framework.exceptions import ValidationError
 
 from apps.inventory.models import MaterialInboundLine, MaterialInboundStatus
+from apps.inventory.pipe_receipt_basis import allocated_order_kg, is_root_receipt, root_receipt_line_ids
 from apps.production_tasks.models import ProductionTaskProduct
 
 from .catalog_materials import is_weight_purchase, purchase_catalog_selection
 from .multi_bom_sources import matches_combined_source
+from .tracking_rules import decimal_value, root_count_value
 from .models import (
     PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus,
     PurchaseReturnLine, PurchaseReturnStatus,
@@ -108,7 +110,10 @@ def purchase_batch_display_status(order):
                     return order.status
             elif inbound_line.material_catalog_id or str(inbound_line.raw_material_information_id or "") != material_id:
                 return order.status
-            if is_weight_purchase(line):
+            if is_root_receipt(inbound_line):
+                actual = line.actual_bar_count
+                quantity, returned = Decimal(inbound_line.accepted_bar_count), Decimal(inbound_line.return_bar_count)
+            elif is_weight_purchase(line):
                 quantity, returned = inbound_line.accepted_weight_kg, inbound_line.return_weight_kg
             else:
                 quantity, returned = inbound_line.accepted_quantity, inbound_line.return_quantity
@@ -146,6 +151,9 @@ def purchase_group_progress(group):
     external_supply_line_ids = []
     valid_statuses = {PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED}
     previous_lines = previous_group_lines(group)
+    root_ids = root_receipt_line_ids(line for source in [*group.lines.all(), *previous_lines.values()]
+        if source.source_unit_text == 'KG' for line in source.batch_lines.all()
+        if line.section_type_snapshot == 'PROFILE' and not line.material_inbound_lines.all())
     for source in group.lines.all():
         issues = list(source.compatibility_issues)
         snapshot = source.source_snapshot
@@ -163,7 +171,8 @@ def purchase_group_progress(group):
         is_pipe = snapshot.get("section_type_snapshot") == "PROFILE"
         is_weight = source.source_unit_text == "KG" and (is_pipe or
             calculation.get("measurement_kind") == "HARDWARE_WEIGHT")
-        # 根数仅用于展示；历史缺数保持未知，不影响已有主数量进度。
+        required_bars = root_count_value(snapshot.get('suggested_bar_count'))
+        roots_only = is_pipe and is_weight and required_bars is not None
         purchased_bars, accepted_bars = (0, 0) if is_pipe else (None, None)
         in_progress = Decimal("0")
         in_progress_bars = 0 if is_pipe else None
@@ -204,20 +213,28 @@ def purchase_group_progress(group):
                 continue
             purchased += line.actual_purchase_quantity
             planned += line.actual_purchase_quantity
+            receipts = line.material_inbound_lines.all()
+            root_receipt = is_weight and is_pipe and (is_root_receipt(receipts[0]) if receipts else line.pk in root_ids)
+            roots_only = roots_only and root_receipt
             if is_pipe and purchased_bars is not None:
                 purchased_bars = None if line.actual_bar_count is None else purchased_bars + line.actual_bar_count
             is_active = order.status in {PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING}
             batch_remaining = line.actual_purchase_quantity
             batch_remaining_bars = line.actual_bar_count if is_pipe else None
-            for inbound_line in line.material_inbound_lines.all():
+            for inbound_line in receipts:
                 if inbound_line.inbound.status != MaterialInboundStatus.CONFIRMED:
+                    if root_receipt and is_active:
+                        batch_remaining_bars -= inbound_line.received_bar_count
                     continue
                 if (inbound_line.source_unit_text_snapshot != source.source_unit_text
                         or (inbound_line.raw_material_information_id
                             and str(inbound_line.raw_material_information_id) != material_id)):
                     issues.append("INBOUND_IDENTITY_OR_UNIT_MISMATCH")
                     continue
-                quantity = inbound_line.accepted_weight_kg if is_weight else inbound_line.accepted_quantity
+                if root_receipt:
+                    quantity = decimal_value(inbound_line.calculation_snapshot.get('settlement_weight_kg'))
+                else:
+                    quantity = inbound_line.accepted_weight_kg if is_weight else inbound_line.accepted_quantity
                 if is_weight and (quantity is None or not quantity.is_finite() or quantity < 0):
                     issues.append("INBOUND_WEIGHT_MISSING_OR_INVALID")
                     continue
@@ -234,6 +251,9 @@ def purchase_group_progress(group):
                                                 else batch_remaining_bars - inbound_line.accepted_bar_count)
             if is_active:
                 # 每批单独截零，避免某批超收入库抵消其他批尚未入库的数量。
+                if root_receipt:
+                    occupied_bars = line.actual_bar_count - max(batch_remaining_bars, 0)
+                    batch_remaining = line.actual_purchase_quantity - allocated_order_kg(line, occupied_bars)
                 with localcontext() as context:
                     context.prec = 64
                     in_progress += max(batch_remaining, Decimal("0"))
@@ -244,7 +264,9 @@ def purchase_group_progress(group):
             issues.append("SUGGESTED_QUANTITY_MISSING")
         with localcontext() as context:
             context.prec = 64
-            percent = None if issues else (accepted / source.required_quantity * 100).quantize(Decimal("0.0001"))
+            target = Decimal(required_bars) if roots_only else source.required_quantity
+            done = accepted_bars if roots_only else accepted
+            percent = None if issues else (done / target * 100).quantize(Decimal("0.0001"))
         lines.append({
             "id": source.pk, "line_number": source.line_number,
             "source_bom_line_id_snapshot": source.source_bom_line_id_snapshot,
@@ -259,7 +281,8 @@ def purchase_group_progress(group):
             "accepted_bar_count": None if issues else accepted_bars,
             "in_progress_quantity": None if issues else in_progress,
             "in_progress_bar_count": None if issues else in_progress_bars,
-            "progress_percent": percent, "is_satisfied": not issues and accepted >= source.required_quantity,
+            "receipt_quantity_mode": 'ROOTS' if roots_only else None,
+            "progress_percent": percent, "is_satisfied": not issues and done >= target,
             "compatibility_issues": sorted(set(issues)),
         })
     satisfied = sum(line["is_satisfied"] for line in lines)
@@ -299,7 +322,10 @@ def purchase_group_completion_summary(group, *, progress=None):
                     return_line = inbound_line.purchase_return_line
                 except PurchaseReturnLine.DoesNotExist:
                     return_line = None
-                returned = inbound_line.return_weight_kg if is_weight_purchase(line) else inbound_line.return_quantity
+                if is_root_receipt(inbound_line):
+                    returned = Decimal(inbound_line.return_bar_count)
+                else:
+                    returned = inbound_line.return_weight_kg if is_weight_purchase(line) else inbound_line.return_quantity
                 if returned is None or not returned.is_finite() or returned < 0:
                     return {"can_complete": False, "blocked_reason": "到货退货数量缺失或无效，请先核对。"}
                 if returned > 0 or return_line is not None:

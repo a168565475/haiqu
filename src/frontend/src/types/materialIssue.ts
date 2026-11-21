@@ -49,6 +49,7 @@ export interface MaterialRequirement {
   material_number: string; material_name: string; material?: string; part_names?: string[]; specification: string; color: string; unit: string
   required_quantity: string; internal_issued_quantity: string; outsourcing_issued_quantity: string
   pending_issue_quantity?: string
+  product_order_remaining?: string | null
   order_remaining: string; available_stock: string; max_issue_quantity: string; bom_version: number
   warehouse_zones?: string[]
   validation_errors: string[]

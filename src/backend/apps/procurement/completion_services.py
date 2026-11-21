@@ -8,12 +8,15 @@ from apps.core.audit import write_audit_log
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.numbering import next_business_number
+from apps.inventory.pipe_receipt_basis import is_root_receipt
 
 from .models import PurchaseOrder, PurchaseOrderStatus, PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus
 from .selectors import purchase_orders_with_context
 
 
 def _inbound_quantity(line, field):
+    if is_root_receipt(line):
+        return Decimal(getattr(line, field + '_bar_count'))
     snapshot = getattr(line, 'calculation_snapshot', None)
     hardware = isinstance(snapshot, dict) and snapshot.get('measurement_kind') == 'HARDWARE_WEIGHT'
     if (line.measurement_kind == 'PIPE' or hardware) and line.source_unit_text_snapshot in {'KG', 'kg', '千克', '公斤'}:
@@ -39,7 +42,10 @@ def purchase_completion_summary(order):
     missing_return = False
     for line in lines:
         line_received_quantity = Decimal("0")
+        ordered = line.actual_purchase_quantity
         for inbound_line in line.material_inbound_lines.all():
+            if is_root_receipt(inbound_line):
+                ordered = line.actual_bar_count
             has_inbound = True
             received_value = _inbound_quantity(inbound_line, 'received')
             received_quantity += Decimal(received_value or 0)
@@ -59,7 +65,7 @@ def purchase_completion_summary(order):
                     if return_line.quantity != return_value:
                         missing_return = True
                     return_orders[return_line.return_order_id] = return_line.return_order.status
-        if line.actual_purchase_quantity is not None and Decimal(line.actual_purchase_quantity) - line_received_quantity > 0:
+        if ordered is not None and ordered > line_received_quantity:
             remaining_line_count += 1
     return_statuses = set(return_orders.values())
     return_total = len(return_orders)

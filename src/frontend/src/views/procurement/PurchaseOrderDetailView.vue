@@ -7,9 +7,9 @@ import { fetchPurchaseOrderReadDetail } from '@/api/purchaseOrderReadDetail'
 import { fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import { useAuthStore } from '@/stores/auth'
 import { usePageTabsStore } from '@/stores/pageTabs'
-import type { PurchaseOrderReadDetail } from '@/types/purchaseOrderReadDetail'
+import type { PurchaseOrderReadDetail, PurchaseReadInboundLine, PurchaseReadLine } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue, type MaterialAttributeSource } from '@/utils/materialAttributes'
-import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
+import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal, quantityWithUnit } from './purchaseOrderDetailDisplay'
 import { setPriceText } from './purchaseSetPricing'
 import { isHardwareWeightLine, isKilogramUnit } from './purchaseWeight'
 import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
@@ -137,21 +137,29 @@ function isWeightUnit(unit: unknown): boolean { return isKilogramUnit(unit) }
   if (!isWeightUnit(unit) || (!line.raw_bar_length_m && !hardwareWeight)) return fallback
   return line[`${kind}_weight_kg`] ?? (hardwareWeight ? fallback : null)
 }
+function receiptText(line: PurchaseReadLine | PurchaseReadInboundLine, kind: 'received' | 'accepted' | 'return') {
+  const value = line[`${kind}_quantity`]
+  const unit = 'source_unit_text_snapshot' in line ? line.source_unit_text_snapshot : line.source_unit_text
+  if (('receipt_quantity_mode' in line && line.receipt_quantity_mode === 'ROOTS') || line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS') {
+    return quantityWithUnit(String(line[`${kind}_bar_count`] ?? ''), '根')
+  }
+  return purchaseQuantityText(quantityValue(line, kind, value), unit, line.raw_bar_length_m, line[`${kind}_bar_count`])
+}
 const rows = computed<RecordRow[]>(() => {
   if (!order.value) return []
   if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line,
     cells: {
     index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: purchaseQuantityText(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count),
-    price: setPriceText(line) || `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id ? '—' : formatMoney(line.amount), received: purchaseQuantityText(quantityValue(line, 'received', line.received_quantity), line.source_unit_text, line.raw_bar_length_m, line.received_bar_count),
-    accepted: purchaseQuantityText(quantityValue(line, 'accepted', line.accepted_quantity), line.source_unit_text, line.raw_bar_length_m, line.accepted_bar_count), returned: purchaseQuantityText(quantityValue(line, 'return', line.return_quantity), line.source_unit_text, line.raw_bar_length_m, line.return_bar_count),
+    price: setPriceText(line) || `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id ? '—' : formatMoney(line.amount), received: receiptText(line, 'received'),
+    accepted: receiptText(line, 'accepted'), returned: receiptText(line, 'return'),
   } }))
   if (activeTab.value === 'inbounds') {
     const materials = new Map(order.value.lines.map(line => [line.id, line]))
     return order.value.inbounds.flatMap(batch => batch.lines.map(line => ({ id: line.id, status: batch.status, materialSource: line, cells: {
       number: batch.inbound_number, date: batch.inbound_date, name: line.part_name_snapshot, specification: materialSpecificationValue(line), material: line.material_snapshot || '—', color: materials.get(line.purchase_order_line_id)?.color || '—', supplier: line.supplier_name_snapshot || '—',
-      received: purchaseQuantityText(quantityValue(line, 'received', line.received_quantity), line.source_unit_text_snapshot, line.raw_bar_length_m, line.received_bar_count),
-      accepted: batch.status === 'CONFIRMED' ? purchaseQuantityText(quantityValue(line, 'accepted', line.accepted_quantity), line.source_unit_text_snapshot, line.raw_bar_length_m, line.accepted_bar_count) : '—',
-      returned: batch.status === 'CONFIRMED' ? purchaseQuantityText(quantityValue(line, 'return', line.return_quantity), line.source_unit_text_snapshot, line.raw_bar_length_m, line.return_bar_count) : '—',
+      received: receiptText(line, 'received'),
+      accepted: batch.status === 'CONFIRMED' ? receiptText(line, 'accepted') : '—',
+      returned: batch.status === 'CONFIRMED' ? receiptText(line, 'return') : '—',
       status: batch.status_display, warehouse: [line.warehouse_name, line.zone_name, line.location_number].filter(Boolean).join(' / ') || '—',
       receiver: batch.received_by_name || '—', inspector: batch.quality_confirmed_by_name || '—', time: formatTime(batch.quality_confirmed_at), remark: line.quality_remark || '—',
     } })))
@@ -167,9 +175,12 @@ const totals = computed<Record<string, string>>(() => {
   const quantity = (line: typeof lines[number], meters: unknown, _bars: unknown, weight: unknown) => isWeightUnit(line.source_unit_text)
     ? (line.raw_bar_length_m ? weight : isHardwareWeightLine(line) ? weight ?? meters : meters)
     : meters
+  const receiptUnits = lines.map((line, index) => line.receipt_quantity_mode === 'ROOTS' ? { source_unit_text: '根' } : units[index]!)
+  const receivedTotal = (kind: 'received' | 'accepted' | 'return') => quantityTotal(receiptUnits, lines.map(line =>
+    line.receipt_quantity_mode === 'ROOTS' ? String(line[`${kind}_bar_count`] ?? '') : quantityValue(line, kind, line[`${kind}_quantity`])))
   const result: Record<string, string> = { index: '合计', purchase: quantityTotal(units, lines.map(line => quantity(line, line.actual_purchase_quantity, line.actual_bar_count, line.actual_purchase_weight_kg))),
-    amount: formatMoney(order.value?.total_amount), received: quantityTotal(units, lines.map(line => quantity(line, line.received_quantity, line.received_bar_count, line.received_weight_kg))),
-    accepted: quantityTotal(units, lines.map(line => quantity(line, line.accepted_quantity, line.accepted_bar_count, line.accepted_weight_kg))), returned: quantityTotal(units, lines.map(line => quantity(line, line.return_quantity, line.return_bar_count, line.return_weight_kg))) }
+    amount: formatMoney(order.value?.total_amount), received: receivedTotal('received'),
+    accepted: receivedTotal('accepted'), returned: receivedTotal('return') }
   return result
 })
 function statusTone(status: string) {

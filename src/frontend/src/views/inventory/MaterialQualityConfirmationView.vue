@@ -10,7 +10,7 @@ import { confirmMaterialQuality, fetchMaterialQualityBatch, fetchMaterialQuality
 import { router } from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialInbound, MaterialInboundLine } from '@/types/inventory'
-import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
+import { receiptMaterialAttributeColumnWidth, receiptMaterialLeadingColumnWidths, receiptMaterialTables, receiptMaterialTableWidth } from '@/utils/receiptMaterialTables'
 
 interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; quantityInputUnit: string; qualityRemark: string }
 const auth = useAuthStore()
@@ -24,8 +24,10 @@ const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `material-
 let draftRaw: string | null = null
 const batch = ref<MaterialInbound | null>(null)
 const rows = ref<QualityRow[]>([])
-const hoveredRowId = ref('')
-const hoveredSupplierRowId = ref('')
+const materialTables = computed(() => receiptMaterialTables(rows.value))
+const leadingColumnWidths = receiptMaterialLeadingColumnWidths
+const trailingColumnWidths = [120, 178, 130, 150, 126, 192, 100]
+const tableWidth = computed(() => receiptMaterialTableWidth(materialTables.value, [...leadingColumnWidths, ...trailingColumnWidths]))
 const loading = ref(false)
 const confirming = ref(false)
 const confirmed = ref(false)
@@ -44,24 +46,32 @@ const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
   set: (value: boolean) => { if (!locked.value) rows.value.forEach(row => { row.included = value }) },
 })
+function setTableSelected(table: (typeof materialTables.value)[number], selected: boolean) {
+  if (!locked.value) table.rows.forEach(({ row }) => { row.included = selected })
+}
 // 用整数单位表示万分之一，保持接口支持的 4 位小数精度。
 function scaled(value: string): bigint | null {
   if (!/^\d{1,14}(\.\d{1,4})?$/.test(value)) return null
   const [whole = '0', fraction = ''] = value.split('.')
   return BigInt(whole) * 10000n + BigInt(fraction.padEnd(4, '0'))
 }
+function receivedByRoots(line: MaterialInboundLine): boolean {
+  return line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS'
+}
 function isWeightPipe(line: MaterialInboundLine): boolean {
-  return line.measurement_kind === 'PIPE' && (String(line.source_unit_text_snapshot || '').toUpperCase() === 'KG' || line.received_weight_kg != null || line.bar_weight_kg != null)
+  return !receivedByRoots(line) && line.measurement_kind === 'PIPE' && (String(line.source_unit_text_snapshot || '').toUpperCase() === 'KG' || line.received_weight_kg != null || line.bar_weight_kg != null)
 }
 function isHardware(line: MaterialInboundLine): boolean { return line.measurement_kind === 'HARDWARE_WEIGHT' }
 function hardwarePieces(line: MaterialInboundLine): boolean { return isHardware(line) && !['KG', '千克', '公斤'].includes(String(line.quantity_unit || line.piece_unit || '').toUpperCase()) }
 function receivedPieces(line: MaterialInboundLine): string { return String(line.received_piece_count ?? line.received_quantity) }
 function receivedInput(row: QualityRow): string {
+  if (receivedByRoots(row.line)) return String(row.line.received_bar_count ?? '')
   if (isWeightPipe(row.line) || isHardware(row.line)) return String(row.line.received_weight_kg ?? '')
   return row.line.received_quantity
 }
-function returnRoots(row: QualityRow): string {
-  return pipeRootsFromMeters(row.returnQuantity, row.line.raw_bar_length_m)
+function returnRoots(row: QualityRow, quantity = row.returnQuantity): string {
+  if (receivedByRoots(row.line)) return /^\d{1,14}$/.test(quantity) ? quantity : ''
+  return pipeRootsFromMeters(quantity, row.line.raw_bar_length_m)
 }
 function acceptedPieces(row: QualityRow): bigint | null {
   const received = scaled(receivedInput(row)), returned = scaled(row.returnQuantity)
@@ -112,16 +122,16 @@ function formatScaled(value: bigint): string {
 function formatQuantity(value: string): string { const number = scaled(value); return number === null ? '—' : formatScaled(number) }
 function accepted(row: QualityRow): string { return validRow(row) ? formatScaled(scaled(receivedInput(row))! - scaled(row.returnQuantity)!) : '—' }
 function receivedQuantityText(line: MaterialInboundLine): string {
-  if (isHardware(line)) return line.received_weight_kg == null ? '重量未记录' : `${formatQuantity(line.received_weight_kg)} kg`
-  if (isWeightPipe(line)) return line.received_weight_kg == null ? '重量未记录' : `${formatQuantity(line.received_weight_kg)} kg`
+  if (receivedByRoots(line)) return `${formatQuantity(String(line.received_bar_count))} 根`
+  if (isHardware(line) || isWeightPipe(line)) return line.received_weight_kg == null ? '重量未记录' : `${formatQuantity(line.received_weight_kg)} kg`
   return `${formatQuantity(line.received_quantity)} ${line.source_unit_text_snapshot}`
 }
 function acceptedQuantityText(row: QualityRow): string {
   const quantity = accepted(row)
-  if (isHardware(row.line)) return quantity === '—' ? quantity : `${quantity} kg`
-  return quantity === '—' ? quantity : `${quantity} ${isWeightPipe(row.line) ? 'kg' : row.line.source_unit_text_snapshot || ''}`.trim()
+  return quantity === '—' ? quantity : `${quantity} ${row.quantityInputUnit || ''}`.trim()
 }
 function quantityInputTitle(row: QualityRow): string {
+  if (receivedByRoots(row.line)) return `请填写退货整根数，最多 ${row.line.received_bar_count} 根。`
   if (partialReturnLeavesLessThanOneBar(row)) return '剩余合格重量不足一整根，请核对退货重量。'
   if (hardwarePieces(row.line) && hardwareReferenceCount('1', row.line.calculation_snapshot?.hardware_unit_weight_kg) === null) return '采购单件重量未记录或无效，无法折算'
   if (isWeightPipe(row.line) && (scaled(String(row.line.bar_weight_kg ?? '')) ?? 0n) <= 0n) return '采购单根重量未记录或无效，无法折算'
@@ -190,9 +200,11 @@ async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
       const saved = previous.get(line.id) || record(draft[line.id])
       const hasSavedQuantity = typeof saved.returnQuantity === 'string' || typeof saved.returnQuantity === 'number'
       const savedQuantity = hasSavedQuantity ? String(saved.returnQuantity) : ''
+      const byRoots = receivedByRoots(line)
       return { line, included: typeof saved.included === 'boolean' ? saved.included : true,
-        quantityInputUnit: line.source_unit_text_snapshot,
-        returnQuantity: hasSavedQuantity ? line.measurement_kind === 'PIPE' && !isWeightPipe(line) && saved.quantityInputUnit === undefined ? pipeMeters(savedQuantity, line.raw_bar_length_m) : savedQuantity
+        quantityInputUnit: byRoots ? '根' : isWeightPipe(line) || isHardware(line) ? 'kg' : line.source_unit_text_snapshot,
+        returnQuantity: byRoots ? (hasSavedQuantity && saved.quantityInputUnit === '根' ? savedQuantity : String(line.return_bar_count ?? 0))
+          : hasSavedQuantity ? line.measurement_kind === 'PIPE' && !isWeightPipe(line) && saved.quantityInputUnit === undefined ? pipeMeters(savedQuantity, line.raw_bar_length_m) : savedQuantity
           : isWeightPipe(line) || isHardware(line) ? String(line.return_weight_kg ?? 0) : line.return_quantity || '0.00',
         qualityRemark: typeof saved.qualityRemark === 'string' ? saved.qualityRemark : line.quality_remark || '' }
     })
@@ -205,7 +217,7 @@ function applyBulk() {
   if (locked.value || loadError.value) return
   if (!selectedRows.value.length) return ElMessage.warning('请先勾选需要批量设置的明细。')
   const quantity = scaled(bulk.returnQuantity)
-  if (quantity === null || selectedRows.value.some(row => row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line) && pipeRootsFromMeters(bulk.returnQuantity, row.line.raw_bar_length_m) === '') || bulk.remark.length > 3000 || selectedRows.value.some(row => { const received = scaled(receivedInput(row)); return received === null || quantity > received })) return ElMessage.warning('退货数量须为非负数，最多4位小数，且不能大于任一勾选明细的到货数量；米制管材须为原长的整数倍。')
+  if (quantity === null || selectedRows.value.some(row => row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line) && returnRoots(row, bulk.returnQuantity) === '') || bulk.remark.length > 3000 || selectedRows.value.some(row => { const received = scaled(receivedInput(row)); return received === null || quantity > received })) return ElMessage.warning('请按各行单位填写退货数量，不能超过到货数量。管材按整根退货。')
   selectedRows.value.forEach(row => { row.returnQuantity = bulk.returnQuantity; if (bulk.remark) row.qualityRemark = bulk.remark })
 }
 function saveDraft() {
@@ -220,7 +232,7 @@ async function confirmInbound() {
   if (!owned.isCurrent() || !canSubmit.value || !batch.value) return
   const id = batch.value.id, consumedDraftRaw = draftRaw
   // 勾选只控制批量设置；接口要求提交整个批次，并冻结确认框打开前的内容。
-  const payload = { items: rows.value.map(row => ({ line_id: row.line.id, expected_received_quantity: isWeightPipe(row.line) || isHardware(row.line) ? row.line.received_weight_kg : row.line.received_quantity, ...(isHardware(row.line) || isWeightPipe(row.line) ? { return_weight_kg: row.returnQuantity } : row.line.measurement_kind === 'PIPE' ? { return_bar_count: returnRoots(row) } : { return_quantity: row.returnQuantity }), quality_remark: row.qualityRemark })) }
+  const payload = { items: rows.value.map(row => ({ line_id: row.line.id, expected_received_quantity: receivedInput(row), ...(isHardware(row.line) || isWeightPipe(row.line) ? { return_weight_kg: row.returnQuantity } : row.line.measurement_kind === 'PIPE' ? { return_bar_count: returnRoots(row) } : { return_quantity: row.returnQuantity }), quality_remark: row.qualityRemark })) }
   confirming.value = true
   try {
     dialogOpen = true
@@ -274,30 +286,46 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
             <template v-if="batch"><span>入库单号 <strong>{{ batch.inbound_number }}</strong></span><span>采购单号 <strong>{{ batch.purchase_order_number || '—' }}</strong></span><span>生产单号 <strong>{{ batch.lines[0]?.production_task_number_snapshot || '—' }}</strong></span><span>状态 <ElTag type="warning" round>待质检</ElTag></span></template>
             <span v-if="!recordId" class="batch-selector"><label>批次</label><ElSelect v-model="selectedBatchId" aria-label="选择待质检批次" filterable :disabled="locked" :loading="loading" placeholder="入库单号 / 采购单号 / 供应商" @change="selectBatch()"><ElOption v-for="item in batches" :key="item.id" :value="item.id" :label="`${item.inbound_number} · ${item.purchase_order_number || '—'} · ${item.lines[0]?.supplier_name_snapshot || '—'}`" /></ElSelect></span>
           </div></div>
-          <strong>共 {{ rows.length }} 项</strong>
+          <div class="table-summary">
+            <ElCheckbox v-if="materialTables.length > 1" v-model="allSelected" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked">全选明细</ElCheckbox>
+            <strong>共 {{ rows.length }} 项</strong>
+          </div>
         </div>
         <div v-loading="loading" class="quality-table-scroll">
-          <table class="erp-table-editor quality-table"><colgroup><col v-for="(width, index) in [56,56,232,190,200,160,200,170,150,126,220,120]" :key="index" :style="{ width: width / 1880 * 100 + '%' }" /></colgroup>
-            <thead><tr><th><ElCheckbox v-model="allSelected" aria-label="全选明细" :disabled="locked" :indeterminate="selectedRows.length > 0 && !allSelected" /></th><th>序号</th><th>物料信息</th><th>规格</th><th>供应商</th><th>到货数量</th><th>退货数量</th><th>合格入库数量</th><th>材料仓</th><th>库区</th><th>退货/质检说明</th><th>状态</th></tr></thead>
+          <section v-for="table in materialTables" :key="table.key" class="receipt-material-group" :data-material-category="table.key">
+          <h3 v-if="materialTables.length > 1 || !['ALL', 'TUBE', 'OTHER'].includes(table.key)">{{ table.label }}</h3>
+          <table class="erp-table-editor quality-table" :aria-label="table.label || '品质确认明细'" :style="{ minWidth: `${tableWidth}px` }">
+            <colgroup>
+              <col v-for="(width, index) in leadingColumnWidths" :key="`leading-${index}`" :style="{ width: `${width}px` }" />
+              <col v-for="(label, index) in table.columns" :key="label" :style="{ width: index < table.columns.length - 1 ? `${receiptMaterialAttributeColumnWidth(label)}px` : undefined }" />
+              <col v-for="(width, index) in trailingColumnWidths" :key="`trailing-${index}`" :style="{ width: table.columns.length || index < trailingColumnWidths.length - 1 ? `${width}px` : undefined }" />
+            </colgroup>
+            <thead><tr>
+              <th><ElCheckbox :model-value="table.rows.length > 0 && table.selected === table.rows.length" :aria-label="materialTables.length > 1 ? `全选${table.label}` : '全选明细'" :disabled="locked || !table.rows.length" :indeterminate="table.selected > 0 && table.selected < table.rows.length" @update:model-value="setTableSelected(table, $event === true)" /></th><th scope="col">序号</th><th scope="col">物料信息</th>
+              <th scope="col">供应商</th>
+              <th v-for="label in table.columns" :key="label" scope="col">{{ label }}</th>
+              <th v-for="title in ['到货数量', '退货数量', '合格入库数量', '材料仓', '库区', '退货/质检说明', '状态']" :key="title" scope="col">{{ title }}</th>
+            </tr></thead>
             <tbody>
-              <tr v-for="(row, index) in rows" :key="row.line.id" @mouseenter="hoveredRowId = row.line.id" @mouseleave="hoveredRowId = ''">
-                <td><ElCheckbox v-model="row.included" :aria-label="`勾选第 ${index + 1} 项`" :disabled="locked" /></td><td class="muted">{{ index + 1 }}</td>
+              <tr v-for="({ row, number, attributes }) in table.rows" :key="row.line.id">
+                <td><ElCheckbox v-model="row.included" :aria-label="`勾选第 ${number} 项`" :disabled="locked" /></td><td class="muted">{{ number }}</td>
                 <td class="material-cell"><strong>{{ materialTitle(row.line) }}</strong></td>
-                <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id && hoveredSupplierRowId !== row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
                 <ElTooltip :content="row.line.supplier_name_snapshot" placement="top" :show-after="150" :disabled="!row.line.supplier_name_snapshot" :teleported="true">
-                  <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name_snapshot || '—' }}</td>
+                  <td class="supplier-cell">{{ row.line.supplier_name_snapshot || '—' }}</td>
                 </ElTooltip>
+                <td v-for="label in table.columns" :key="label">{{ attributes.get(label) ?? '—' }}</td>
                 <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
-                <td><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${index + 1} 项退货${isWeightPipe(row.line) || isHardware(row.line) ? '重量' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" maxlength="19" inputmode="decimal" :title="quantityInputTitle(row)"><template #append>{{ isWeightPipe(row.line) || isHardware(row.line) ? 'kg' : row.line.source_unit_text_snapshot || '单位未识别' }}</template></ElInput>
+                <td class="return-quantity-cell"><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${number} 项退货${isWeightPipe(row.line) || isHardware(row.line) ? '重量' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" maxlength="19" inputmode="decimal" :title="quantityInputTitle(row)"><template #append>{{ row.quantityInputUnit || '单位未识别' }}</template></ElInput>
                 </td>
                 <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
                 <td class="muted">{{ row.line.warehouse_name }}</td><td class="muted">{{ row.line.zone_name }}</td>
-                <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${index + 1} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="质检说明（可选）" /></td>
+                <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${number} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="质检说明（可选）" /></td>
                 <td><ElTag :type="!validRow(row) ? 'warning' : status(row) === '合格' ? 'success' : 'danger'" round>{{ status(row) }}</ElTag></td>
               </tr>
-              <tr v-if="!rows.length"><td colspan="12" class="table-empty">{{ loadError || (loading ? '正在加载…' : '暂无待质检明细') }}</td></tr>
+              <tr v-if="!table.rows.length"><td :colspan="leadingColumnWidths.length + trailingColumnWidths.length" class="table-empty">{{ loadError || (loading ? '正在加载…' : '暂无待质检明细') }}</td></tr>
             </tbody>
           </table>
+          </section>
         </div>
         <footer><span>已勾选 {{ selectedRows.length }} 项 · {{ returnCount }} 项有退货</span><strong :class="{ complete: allComplete }">{{ allComplete ? `全部 ${rows.length} 项填写完整` : `已完成 ${completeCount} / ${rows.length} 项，请检查退货数量` }}</strong></footer>
       </section>
@@ -340,9 +368,11 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-order-meta strong { color: token.$crm-text-primary; font-weight: 500; }
 .table-order-meta .batch-selector { gap: 8px; }
 .batch-selector > .el-select { width: 320px; }
-.table-head > strong { margin-right: 16px; font-size: 13px; white-space: nowrap; }
+.table-head .table-summary { gap: 12px; margin-right: 16px; font-size: 13px; white-space: nowrap; }
+.receipt-material-group + .receipt-material-group { margin-top: 10px; }
+.receipt-material-group h3 { position: sticky; left: 0; width: max-content; margin: 0; padding: 5px 16px; color: var(--erp-table-header-text); font-size: 13px; }
 .quality-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-.quality-table { width: 100%; min-width: 1634px; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--erp-table-body-fill); }
+.quality-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--erp-table-body-fill); }
 .quality-table th, .quality-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: center; overflow-wrap: anywhere; }
 .quality-table th:nth-child(2), .quality-table td:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
 .quality-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
@@ -351,13 +381,8 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .quality-table th:first-child, .quality-table td:first-child { padding: 0; vertical-align: middle; }
 .quality-table th:first-child :deep(.el-checkbox), .quality-table td:first-child :deep(.el-checkbox) { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; margin: 0; }
 .quality-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }
-.quality-table .specification-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.quality-table .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
-.material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .quality-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
-.quality-table td:nth-child(7) { padding: 4px 11px; }
+.quality-table .return-quantity-cell { padding: 4px 11px; }
 .quantity-input :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; white-space: nowrap; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }

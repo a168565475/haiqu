@@ -261,7 +261,11 @@ def _locked_balance(identity, zone_id, quality, *, bar_weight_kg=None, weight_qu
         balance.weight_quantity = Decimal("0")
         balance.bar_weight_kg = bar_weight_kg
     if weight_quantity is not None and balance.weight_quantity is None and not catalog_piece_weight_identity(identity):
-        _invalid("公共库存实际重量缺失，请先核对现存库存。", "IDENTITY_CONFLICT")
+        # 根数收货后的混合库存总重未知，后来的称重入库只应记录本次的实重。
+        if not PublicStockMovement.objects.filter(
+            balance=balance, snapshot__contains={"receipt_quantity_mode": "ROOTS"},
+        ).exists():
+            _invalid("公共库存实际重量缺失，请先核对现存库存。", "IDENTITY_CONFLICT")
     if weight_quantity is not None and balance.quantity > 0 and balance.bar_weight_kg != bar_weight_kg:
         # 标准单重属于来源单据；同实物池只累加已知实重，混合后不再声明统一单重。
         balance.bar_weight_kg = None
@@ -292,6 +296,10 @@ def _record(*, balance, quantity, direction, source, weight_quantity=None):
         before_weight, movement_weight, after_weight = piece_weight_change(
             before_quantity=before, before_weight=before_weight, quantity=quantity,
             direction=direction, weight_quantity=weight_quantity, quantity_unit=balance.identity_snapshot["unit_name"])
+    elif source.get("snapshot", {}).get("receipt_quantity_mode") == "ROOTS" and direction == MaterialStockDirection.IN:
+        balance.bar_weight_kg = None
+    elif before_weight is None and weight_quantity is not None and direction == MaterialStockDirection.IN:
+        movement_weight = weight_quantity
     elif balance.bar_weight_kg is not None or before_weight is not None or weight_quantity is not None:
         if before_weight is None or not before_weight.is_finite() or before_weight < 0:
             _invalid("管材重量余额无效。", "PIPE_BALANCE_INVALID")

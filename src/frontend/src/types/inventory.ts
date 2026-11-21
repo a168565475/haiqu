@@ -168,7 +168,7 @@ export interface ProcurementInboundOrder {
   currency_code: string
   product_summary: ProcurementInboundProductSummary[]
   pending_quality_count: number; confirmed_batch_count: number
-  received_quantity: string; return_quantity: string
+  received_quantity: string | null; return_quantity: string | null
   received_weight_quantity: string | null; return_weight_quantity: string | null; weight_unit: boolean; quantity_unit?: string
   receipt_progress_percent?: string | null
   workflow_status: 'PENDING_RECEIPT' | 'PARTIAL_RECEIVED' | 'PENDING_QUALITY' | 'PENDING_PROCUREMENT_CONFIRMATION' | 'PENDING_RETURN' | 'COMPLETED'
@@ -184,6 +184,7 @@ export interface ManualMaterialOptions {
   materials: ManualMaterialOption[]
 }
 export interface EligibleMaterialLine {
+  receipt_quantity_mode?: 'ROOTS' | null
   measurement_kind?: string; piece_unit?: string; quantity_unit?: string; unit_weight_kg?: string | null
   suggested_warehouse_id?: string | null
   material_catalog_id?: string | null; material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
@@ -288,6 +289,7 @@ export interface MaterialInventorySummary {
   zones: { zone_id: string; warehouse_number: string; warehouse_name: string; zone_name: string; quality: string; quantity: string; bar_weight_kg?: string | null; weight_quantity?: string | null; weight_quantity_kg?: string | null }[]
 }
 export interface MaterialOrderPurchase {
+  bar_counts?: { ordered: number; accepted: number | null; pending: number | null } | null
    purchase_order_id: string; purchase_order_number: string; production_task_id: string | null
   production_task_number: string; purchase_quantity: string; actual_inbound_quantity: string | null
   pending_inbound_quantity: string | null; weight_quantity_kg?: string | null; weight_unit?: boolean; unit: string; can_view_purchase_detail: boolean

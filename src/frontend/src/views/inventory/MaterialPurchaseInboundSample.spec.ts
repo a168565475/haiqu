@@ -1,13 +1,14 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElMessage } from 'element-plus'
+import ElementPlus, { ElCheckbox, ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/inventory'
 import { router } from '@/router'
 import MaterialPurchaseInboundView from './MaterialPurchaseInboundView.vue'
 
 const permissions = vi.hoisted(() => ({ receive: true }))
+const route = vi.hoisted(() => ({ params: { purchaseOrderId: 'sample-order' }, query: {} as Record<string, string> }))
 vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'sample-order' } }), useRouter: () => router }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: (permission: string) => permission !== 'inventory.receive_material' || permissions.receive }) }))
 vi.mock('@/api/inventory', () => ({
   fetchMaterialReceivingOptions: vi.fn(), fetchEligibleMaterialPurchaseOrders: vi.fn(),
@@ -30,16 +31,19 @@ type View = {
   bulk: { warehouseId: string; zoneId: string }; form: { remark: string }
   applyBulkZone: () => void; submitReceiving: () => Promise<void>
 }
-const mount = () => shallowMount(MaterialPurchaseInboundView, { global: { plugins: [ElementPlus] } })
+const mount = () => shallowMount(MaterialPurchaseInboundView, {
+  global: { plugins: [ElementPlus], stubs: { ElTooltip: { inheritAttrs: false, template: '<slot />' } } },
+})
 function assignZone(vm: View) {
   vm.bulk.warehouseId = 'warehouse'
   vm.bulk.zoneId = 'zone'
   vm.applyBulkZone()
 }
 
-describe('样品采购全部入库', () => {
+describe('采购收货和样品采购全部入库', () => {
   beforeEach(() => {
     vi.clearAllMocks(); localStorage.clear(); permissions.receive = true
+    route.query = {}
     vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: vi.fn() }))
     vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: vi.fn() }))
     vi.mocked(api.fetchMaterialReceivingOptions).mockResolvedValue(options)
@@ -48,6 +52,70 @@ describe('样品采购全部入库', () => {
     vi.mocked(api.createSampleMaterialReceiving).mockResolvedValue(receipt as never)
   })
   afterEach(() => { vi.restoreAllMocks() })
+
+  it.each([
+    { section: 'A', template: 'TUBE', fields: { material: '铁', shape: '方管', section_size: '25×25', thickness: '0.6' },
+      extra: { unit: 'KG', remaining_quantity: '675.0000', actual_bar_count: 700, raw_bar_length_m: '6.000', receipt_quantity_mode: 'ROOTS' },
+      expected: { 材质: '铁', 截面形状: '方管', 规格: '25×25', 厚度: '0.6', 单根长度: '6 米', 待收数量: '675 根' } },
+    { section: 'B', template: 'CARTON', fields: { model: '半盖纸箱', printing: '唛头1' },
+      extra: { unit: '个', remaining_quantity: '12' }, expected: { '型号/图号': '半盖纸箱', 印刷版本: '唛头1', 待收数量: '12 个' } },
+    { section: 'C', template: 'FABRIC', fields: { fabric_spec: '600D', width: '150 cm', gram_weight: '240 g/m²' },
+      extra: { unit: '米', remaining_quantity: '25.5' }, expected: { 面料规格: '600D', 门幅: '150 cm', 克重: '240 g/m²', 待收数量: '25.5 米' } },
+  ])('$section 分区的材料属性和待收数量各在独立列', async ({ section, template, fields, extra, expected }) => {
+    route.query = { material_section: section }
+    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, source_type: 'PRODUCTION' }] as never)
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...lines[1], ...extra,
+      material_selection_snapshot: { schema_version: 1, template_key: template, name: '材料', attributes: fields },
+    }], etag: '"production-v1"' } as never)
+    const wrapper = mount(); await flushPromises()
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    const cells = wrapper.findAll('tbody tr:first-child td')
+    expect(cells).toHaveLength(headers.length)
+    for (const [label, value] of Object.entries(expected)) {
+      expect(headers).toContain(label)
+      expect(cells[headers.indexOf(label)]?.text()).toBe(value)
+    }
+    expect(headers.indexOf('待收数量')).toBe(headers.indexOf('本次到货数量') - 1)
+    expect(headers.slice(4, -8)).toEqual(Object.keys(expected).filter(label => label !== '待收数量'))
+    expect(cells[headers.indexOf('本次到货数量')]?.text()).not.toContain('待收')
+    expect(wrapper.find('.specification-cell').exists()).toBe(false)
+    expect(api.fetchEligibleMaterialLinesWithVersion).toHaveBeenCalledWith(order.id, section)
+    wrapper.unmount()
+  })
+
+  it('五金件、塑料件、包材按顺序分表并一次提交所勾选的材料', async () => {
+    route.query = { material_section: 'B' }
+    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, source_type: 'PRODUCTION' }] as never)
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [
+      { ...lines[1], id: 'box', category: '包材类', material_selection_snapshot: {
+        schema_version: 1, category_key: 'PACKAGING', template_key: 'CARTON', color_card: '潘通色卡', color_code: '5445 C',
+        attributes: { color: '蓝灰色', layers: '5', box_type: '半盖' },
+      } },
+      { ...lines[1], id: 'plastic', section_title: '塑料件类', material_attributes_snapshot: { fields: [{ key: 'tube_size', label: '适配管材尺寸', value: '25×25' }] } },
+      { ...lines[1], id: 'hardware', section_title: '五金件', material_attributes_snapshot: { fields: [{ key: 'thread', label: '螺纹规格', value: 'M6' }] } },
+    ] } as never)
+    vi.mocked(api.createMaterialReceiving).mockResolvedValue(receipt as never)
+    const wrapper = mount(); await flushPromises()
+    const tables = wrapper.findAll('.receipt-material-group')
+    expect(tables.map(table => table.get('h3').text())).toEqual(['五金件', '塑料件', '包材'])
+    const headers = tables.map(table => table.findAll('thead th').map(cell => cell.text()))
+    expect(headers.map(columns => columns.slice(0, 4))).toEqual(Array.from({ length: 3 }, () => ['', '序号', '物料信息', '供应商']))
+    expect(headers.map(columns => columns.slice(4, -8))).toEqual([['螺纹规格'], ['适配管材尺寸'], ['色卡', '色号', '颜色', '层数', '箱子形状']])
+    const colorColumn = headers[2]!.indexOf('颜色')
+    expect(tables[2]!.findAll('colgroup col')[colorColumn]?.attributes('style')).toContain('width: 192px')
+    expect(headers.map(columns => columns.slice(-8, -4))).toEqual(Array.from({ length: 3 }, () => [
+      '采购数量', '累计已收', '待收数量', '本次到货数量',
+    ]))
+    tables[1]!.findComponent(ElCheckbox).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    assignZone(vm); expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(api.createMaterialReceiving).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      material_section: 'B', items: [expect.objectContaining({ purchase_order_line_id: 'box' }), expect.objectContaining({ purchase_order_line_id: 'hardware' })],
+    }))
+    wrapper.unmount()
+  })
 
   it('新打样KG一次全入，只显示采购重量并自动折算根数提交', async () => {
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [

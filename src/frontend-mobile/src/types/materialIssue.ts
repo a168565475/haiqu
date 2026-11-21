@@ -20,6 +20,7 @@ export interface MaterialRequirement {
   direct_available_quantity?: string; source_kind?: MaterialIssueSourceKind
   required_quantity: string; internal_issued_quantity: string; outsourcing_issued_quantity: string
   pending_issue_quantity?: string; order_remaining: string; available_stock: string; max_issue_quantity: string
+  product_order_remaining?: string | null; component_order_remaining?: string
   validation_errors: string[]; warehouse_zones?: string[]; warehouse_zone?: string; completed_craft?: string
   processing_status?: string; bom_attributes?: MaterialAttribute[]
   material_selection_snapshot?: {
@@ -29,6 +30,7 @@ export interface MaterialRequirement {
   conversion_snapshot?: {
     kind: string; pieces_per_bar?: number; raw_bar_length_m?: string; part_name?: string
     integer_required?: boolean; physical_issued_quantity?: string
+    component_identity?: string; public_bom_snapshot?: { line?: { part_name?: string } }
   }
   semi_balance_allocations?: { balance_id: string; max_issue_quantity: string }[]
 }

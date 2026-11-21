@@ -1,6 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Exists, F, OuterRef, Prefetch, Q, Sum
+from django.db.models import Case, DecimalField, Exists, F, OuterRef, Prefetch, Q, Sum, When
 
 from apps.boms.models import Bom
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
@@ -77,6 +77,7 @@ def purchase_orders_with_product_ids(queryset=None):
 
 def purchase_return_amount(record):
     """按本次退货数量和原采购单价汇总，沿用采购金额四位小数规则。"""
+    from apps.inventory.pipe_receipt_basis import allocated_order_kg, is_root_receipt
     lines = list(record.lines.all())
     if not lines:
         return None
@@ -85,7 +86,8 @@ def purchase_return_amount(record):
         purchase_line = line.inbound_line.purchase_order_line
         if not purchase_line or purchase_line.unit_price is None:
             return None
-        total += (line.quantity * purchase_line.unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        quantity = allocated_order_kg(purchase_line, line.quantity) if is_root_receipt(line.inbound_line) else line.quantity
+        total += (quantity * purchase_line.unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
     return format(total, ".4f")
 
 
@@ -98,13 +100,11 @@ def filter_purchase_return_status(queryset, status):
         inbound__status=MaterialInboundStatus.CONFIRMED,
     ).filter(Q(return_quantity__gt=0) | Q(return_weight_kg__gt=0))
     records = PurchaseReturn.objects.filter(purchase_order_id=OuterRef("pk"))
-    return_quantity_mismatch = (
-        Q(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"])
-        & ~Q(purchase_return_line__quantity=F("return_weight_kg"))
-    ) | (
-        ~Q(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"])
-        & ~Q(purchase_return_line__quantity=F("return_quantity"))
-    )
+    return_quantity_mismatch = ~Q(purchase_return_line__quantity=Case(
+        When(calculation_snapshot__receipt_quantity_mode='ROOTS', then=F('return_bar_count')),
+        When(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"], then=F('return_weight_kg')),
+        default=F('return_quantity'), output_field=DecimalField(),
+    ))
     queryset = queryset.alias(
         has_returns=Exists(returned),
         missing_returns=Exists(returned.filter(Q(purchase_return_line__isnull=True) | return_quantity_mismatch)),

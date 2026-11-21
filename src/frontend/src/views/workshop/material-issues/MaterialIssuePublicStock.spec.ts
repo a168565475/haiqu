@@ -1,7 +1,7 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { apiClient } from '@/api/request'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MaterialIssueFormView from './MaterialIssueFormView.vue'
 import MaterialIssueDetailView from './MaterialIssueDetailView.vue'
@@ -44,7 +44,7 @@ function detail(stockMode: 'PUBLIC_V2' | null = 'PUBLIC_V2') {
 const wrappers: ReturnType<typeof mount>[] = []
 const dialogStub = { template: '<section><slot/><slot name="footer"/></section>' }
 async function formView() {
-  const wrapper = mount(MaterialIssueFormView, { global: { plugins: [ElementPlus], stubs: { MaterialIssuePartitions: true } } })
+  const wrapper = mount(MaterialIssueFormView, { global: { plugins: [ElementPlus, createPinia()], stubs: { MaterialIssuePartitions: true } } })
   wrappers.push(wrapper); await flushPromises(); return wrapper
 }
 async function detailView(value = detail()) {
@@ -203,6 +203,131 @@ describe('公共库存领料按接收订单提交', () => {
     expect(vm.selected['receiving-bom-line']).toBe('5')
     expect(vm.payload().lines).toEqual([{ requirement_id: 'legacy-a', requested_quantity: '5' }])
     expect(api.requirements).toHaveBeenCalledWith('task-1', 'product-1', 'workshop-1', 'issue-1', 'ASSEMBLY')
+  })
+})
+
+describe('提交仓库审核时核对本产品剩余需求', () => {
+  const fabric = { ...semi, line_type: 'RAW' as const, section_code: 'FABRIC', material_name: '蓝色面料', unit: '米',
+    order_remaining: '9', product_order_remaining: '1.2345', max_issue_quantity: '20' }
+  const saved = { data: { id: 'issue-1' }, etag: '"saved"' }
+
+  async function filledForm(rows: MaterialRequirement[], quantities: string[]) {
+    api.requirements.mockResolvedValue({ items: rows, blockers: [] })
+    api.create.mockResolvedValue(saved)
+    api.update.mockResolvedValue(saved)
+    api.submit.mockResolvedValue(saved)
+    const wrapper = await formView()
+    const vm = wrapper.vm as any
+    vm.form.recipient_workshop_employee_id = 'recipient-1'
+    rows.forEach((row, i) => { vm.selected[row.requirement_id] = quantities[i] })
+    return wrapper
+  }
+  async function clickForm(wrapper: ReturnType<typeof mount>, text: string) {
+    await wrapper.findAll('button').find(button => button.text() === text)!.trigger('click')
+    await flushPromises()
+  }
+  function currentDialog() {
+    const boxes = document.body.querySelectorAll<HTMLElement>('.el-message-box')
+    expect(boxes.length).toBeGreaterThan(0)
+    return new DOMWrapper(boxes[boxes.length - 1]!)
+  }
+  afterEach(() => { ElMessageBox.close() })
+
+  it.each([
+    { requested: '1.2344', remaining: '1.2345' },
+    { requested: '1.2345', remaining: '1.2345' },
+    { requested: '10', remaining: null },
+  ])('填 $requested、产品需求 $remaining 时直接提交一次', async ({ requested, remaining }) => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const wrapper = await filledForm([{ ...fabric, product_order_remaining: remaining }], [requested])
+    await clickForm(wrapper, '提交仓库审核')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(api.create).toHaveBeenCalledOnce()
+    expect(api.submit).toHaveBeenCalledExactlyOnceWith('issue-1', saved.etag)
+  })
+
+  it('提交前按最新产品需求提示，返回保留输入，再次确认只提交一次', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const pipe = { ...semi, line_type: 'RAW' as const, section_code: 'PIPE', requirement_id: 'pipe',
+      material_name: '上下脚', unit: '支', order_remaining: '8', max_issue_quantity: '60',
+      conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3' } }
+    const wrapper = await filledForm([{ ...fabric, product_order_remaining: '5' }, pipe], ['1.2346', '12'])
+    api.requirements.mockResolvedValue({ items: [pipe, fabric], blockers: [] })
+    await clickForm(wrapper, '提交仓库审核')
+    await clickForm(wrapper, '提交仓库审核')
+    expect(confirm).toHaveBeenCalledOnce()
+    const box = currentDialog()
+    expect(box.text()).toContain('领料超出本产品需求')
+    const content = box.text().replace(/\s/g, '')
+    for (const value of ['蓝色面料', '1.2345', '1.2346', '0.0001', '上下脚', '12支', '8支', '4支']) expect(content).toContain(value)
+    expect(api.create).not.toHaveBeenCalled()
+    expect(api.submit).not.toHaveBeenCalled()
+    await box.findAll('button').find(button => button.text() === '返回修改')!.trigger('click')
+    await flushPromises()
+    expect((wrapper.vm as any).selected).toMatchObject({ [fabric.requirement_id]: '1.2346', pipe: '12' })
+    expect(api.create).not.toHaveBeenCalled()
+    expect(api.update).not.toHaveBeenCalled()
+    expect(api.submit).not.toHaveBeenCalled()
+    await clickForm(wrapper, '提交仓库审核')
+    await currentDialog().findAll('button').find(button => button.text() === '确认提交')!.trigger('click')
+    await flushPromises()
+    expect(api.create).toHaveBeenCalledOnce()
+    expect(api.submit).toHaveBeenCalledExactlyOnceWith('issue-1', saved.etag)
+  })
+
+  it('编辑超量时返回修改，再保存草稿直接更新同一张单', async () => {
+    route.params = { issueId: 'issue-1' }
+    api.detail.mockResolvedValue({ data: detail(), etag: '"original"' })
+    const wrapper = await filledForm([fabric], ['2'])
+    await clickForm(wrapper, '重新提交审核')
+    const box = currentDialog()
+    expect(api.update).not.toHaveBeenCalled()
+    expect(api.submit).not.toHaveBeenCalled()
+    await box.findAll('button').find(button => button.text() === '返回修改')!.trigger('click')
+    await flushPromises()
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const reads = api.requirements.mock.calls.length
+    await clickForm(wrapper, '保存草稿')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(api.requirements).toHaveBeenCalledTimes(reads)
+    expect(api.create).not.toHaveBeenCalled()
+    expect(api.update).toHaveBeenCalledExactlyOnceWith('issue-1', expect.objectContaining({
+      lines: [{ requirement_id: fabric.requirement_id, requested_quantity: '2' }],
+    }), '"original"')
+    expect(api.submit).not.toHaveBeenCalled()
+  })
+
+  it('同一半成品两个工艺行合计超量，编辑确认后只更新和提交原单一次', async () => {
+    route.params = { issueId: 'issue-1' }
+    api.detail.mockResolvedValue({ data: detail(), etag: '"original"' })
+    const cut = { ...semi, conversion_snapshot: { kind: 'SEMI_PIPE', component_identity: 'front-leg' },
+      order_remaining: '40', component_order_remaining: '10' }
+    const wrapper = await filledForm([cut, { ...cut, completed_craft: '弯管', requirement_id: 'bent' }], ['7', '5'])
+    await clickForm(wrapper, '重新提交审核')
+    const box = currentDialog()
+    const text = box.text().replace(/\s/g, '')
+    expect(text).toContain('12支')
+    expect(text).toContain('超出2支')
+    expect(api.update).not.toHaveBeenCalled()
+    await box.findAll('button').find(button => button.text() === '确认提交')!.trigger('click')
+    await flushPromises()
+    expect(api.create).not.toHaveBeenCalled()
+    expect(api.update).toHaveBeenCalledExactlyOnceWith('issue-1', expect.objectContaining({
+      lines: [{ requirement_id: cut.requirement_id, requested_quantity: '7' }, { requirement_id: 'bent', requested_quantity: '5' }],
+    }), '"original"')
+    expect(api.submit).toHaveBeenCalledExactlyOnceWith('issue-1', saved.etag)
+  })
+
+  it.each([false, true])('库存不足先拦截（加载后库存变化 %s），无法用超量确认绕过校验', async changed => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const wrapper = await filledForm([{ ...fabric, max_issue_quantity: changed ? '30' : '20' }], ['21'])
+    api.requirements.mockResolvedValue({ items: [fabric], blockers: [] })
+    await clickForm(wrapper, '提交仓库审核')
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('超过当前可领上限'))
+    expect(confirm).not.toHaveBeenCalled()
+    expect(api.create).not.toHaveBeenCalled()
+    expect(api.submit).not.toHaveBeenCalled()
   })
 })
 

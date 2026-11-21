@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
+from apps.inventory.pipe_receipt_basis import is_root_receipt, root_receipt_line_ids
 from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope
 from ..group_selectors import purchase_batch_display_status
 from ..catalog_materials import is_weight_purchase
@@ -35,6 +36,7 @@ def with_read_detail_records(queryset, *, receiving_sections=None):
 
 
 class ReadDetailLineSerializer(PurchaseOrderLineSerializer):
+    receipt_quantity_mode = serializers.SerializerMethodField()
     received_quantity = serializers.SerializerMethodField()
     accepted_quantity = serializers.SerializerMethodField()
     return_quantity = serializers.SerializerMethodField()
@@ -48,12 +50,20 @@ class ReadDetailLineSerializer(PurchaseOrderLineSerializer):
     class Meta(PurchaseOrderLineSerializer.Meta):
         fields = PurchaseOrderLineSerializer.Meta.fields + ["received_quantity", "accepted_quantity", "return_quantity",
                                                           "received_bar_count", "accepted_bar_count", "return_bar_count"]
-        fields = fields + ["received_weight_kg", "accepted_weight_kg", "return_weight_kg"]
+        fields = fields + ["receipt_quantity_mode", "received_weight_kg", "accepted_weight_kg", "return_weight_kg"]
 
-    @staticmethod
-    def _quantity(line, field, confirmed_only=False):
+    def get_receipt_quantity_mode(self, line) -> str | None:
+        if 'root_receipt_ids' in self.context:
+            return 'ROOTS' if line.pk in self.context['root_receipt_ids'] else None
+        receipts = line.material_inbound_lines.all()
+        return 'ROOTS' if receipts and is_root_receipt(receipts[0]) else None
+
+    def _quantity(self, line, field, confirmed_only=False):
+        if self.get_receipt_quantity_mode(line):
+            count = self._bar_count(line, field.replace('_quantity', '_bar_count'), confirmed_only)
+            return str(count) if count is not None else None
         if is_weight_purchase(line):
-            return ReadDetailLineSerializer._weight(line, field.replace("_quantity", "_weight_kg"), confirmed_only)
+            return self._weight(line, field.replace("_quantity", "_weight_kg"), confirmed_only)
         return str(sum((getattr(record, field) for record in line.material_inbound_lines.all()
                         if not confirmed_only or record.inbound.status == MaterialInboundStatus.CONFIRMED), Decimal("0")))
 
@@ -66,8 +76,9 @@ class ReadDetailLineSerializer(PurchaseOrderLineSerializer):
     def get_return_quantity(self, line):
         return self._quantity(line, "return_quantity", confirmed_only=True)
 
-    @staticmethod
-    def _weight(line, field, confirmed_only=False):
+    def _weight(self, line, field, confirmed_only=False):
+        if self.get_receipt_quantity_mode(line):
+            return None
         records = [record for record in line.material_inbound_lines.all()
                    if not confirmed_only or record.inbound.status == MaterialInboundStatus.CONFIRMED]
         if line.source_unit_text != "KG" and not any(getattr(record, field) is not None for record in records):
@@ -179,6 +190,10 @@ class PurchaseOrderReadDetailSerializer(PurchaseOrderDetailSerializer):
 
     class Meta(PurchaseOrderDetailSerializer.Meta):
         fields = PurchaseOrderDetailSerializer.Meta.fields + ["display_status", "completed_by_name", "inbounds", "returns"]
+
+    def to_representation(self, instance):
+        self.context['root_receipt_ids'] = root_receipt_line_ids(instance.lines.all())
+        return super().to_representation(instance)
 
     @extend_schema_field(serializers.ChoiceField(choices=PurchaseOrderStatus.choices))
     def get_display_status(self, instance):

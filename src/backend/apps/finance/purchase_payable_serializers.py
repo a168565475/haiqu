@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.core.api.concurrency import etag_for_instance
+from apps.inventory.pipe_receipt_basis import is_root_receipt
 from .purchase_payable_models import PurchasePayable, PurchasePayableLine, PurchasePayableStatus
 
 
@@ -82,6 +83,8 @@ class PurchasePayableLineSerializer(serializers.ModelSerializer):
     accepted_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
     accepted_weight_kg = serializers.DecimalField(max_digits=22, decimal_places=4, read_only=True)
     accepted_bar_count = serializers.IntegerField(read_only=True)
+    settlement_quantity = serializers.DecimalField(source="accepted_quantity", max_digits=18, decimal_places=4, read_only=True)
+    receipt_bar_counts = serializers.SerializerMethodField()
     reference_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
     reference_amount = serializers.DecimalField(max_digits=22, decimal_places=4, read_only=True)
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, allow_null=True, read_only=True)
@@ -101,7 +104,7 @@ class PurchasePayableLineSerializer(serializers.ModelSerializer):
             "material_attributes_snapshot", "source_unit_text_snapshot",
             "material", "specification", "part_name", "material_attributes", "accepted_unit",
             "received_quantity", "return_quantity", "received_weight_kg", "return_weight_kg",
-            "accepted_quantity", "accepted_weight_kg", "accepted_bar_count",
+            "accepted_quantity", "accepted_weight_kg", "accepted_bar_count", "settlement_quantity", "receipt_bar_counts",
             "reference_unit_price", "reference_amount", "unit_price", "price_unit_text", "price_unit",
             "currency_code_snapshot", "currency_code", "price_source", "price_confirmed_by_name",
             "price_confirmed_at", "price_remark", "price_confirmation_remark", "price_confirmed_by",
@@ -110,6 +113,12 @@ class PurchasePayableLineSerializer(serializers.ModelSerializer):
 
     def _inbound_line(self, obj):
         return getattr(obj, "material_inbound_line", None)
+
+    def get_receipt_bar_counts(self, obj) -> dict[str, int] | None:
+        line = self._inbound_line(obj)
+        if is_root_receipt(line):
+            return {"received": line.received_bar_count, "returned": line.return_bar_count}
+        return None
 
     def get_received_quantity(self, obj):
         line = self._inbound_line(obj)

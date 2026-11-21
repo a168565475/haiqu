@@ -7,9 +7,10 @@ from apps.material_catalog.saved_selection import validate_saved_material
 from .catalog_stock_identity import build_catalog_stock_identity
 from .hardware_receipts import hardware_receipt_values, is_hardware_weight, validate_hardware_inbound
 from .pipe_receipts import weight_pipe_receipt_quantities
+from .pipe_receipt_basis import ROOT_RECEIPT, is_root_receipt, root_receipt_values
 
 
-def catalog_receipt_values(*, purchase_line, item):
+def catalog_receipt_values(*, purchase_line, item, by_roots=False):
     from apps.procurement.catalog_materials import purchase_catalog_selection
     selected = purchase_catalog_selection(purchase_line)
     if is_hardware_weight(purchase_line):
@@ -20,6 +21,9 @@ def catalog_receipt_values(*, purchase_line, item):
         length = purchase_line.raw_bar_length_m
         if item.get("raw_bar_length_m") is not None and item["raw_bar_length_m"] != length:
             raise ValidationError({"raw_bar_length_m": "实到单根长度与采购保存长度不同，请核对原单。"})
+        if by_roots:
+            return {"material_catalog_id": purchase_line.material_catalog_id, "material_selection_snapshot": selected,
+                    **root_receipt_values(purchase_line, item)}
         weight_mode = purchase_line.source_unit_text in {"KG", "kg", "千克"}
         snapshot = purchase_line.calculation_snapshot or {}
         if weight_mode:
@@ -57,10 +61,13 @@ def validate_catalog_inbound(line):
     hardware_weight = (line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
     if hardware_weight:
         validate_hardware_inbound(line, selected["unit_name"])
-    expected_unit = ("KG" if line.received_weight_kg is not None else "米") if pipe else ("KG" if hardware_weight else selected["unit_name"])
-    if expected_unit != line.source_unit_text_snapshot:
+    by_roots = is_root_receipt(line)
+    expected_unit = ("KG" if by_roots or line.received_weight_kg is not None else "米") if pipe else ("KG" if hardware_weight else selected["unit_name"])
+    unit_matches = (line.source_unit_text_snapshot in {"KG", "kg", "千克", "公斤"}
+                    if by_roots else expected_unit == line.source_unit_text_snapshot)
+    if not unit_matches:
         raise ValidationError({"items": "入库数量单位与保存材料不一致。"})
-    if pipe and expected_unit == "KG":
+    if pipe and expected_unit == "KG" and not by_roots:
         weights = (line.received_weight_kg, line.accepted_weight_kg, line.return_weight_kg)
         if (any(value is None or not value.is_finite() or value < 0 for value in weights)
                 or weights[0] <= 0 or weights[0] != weights[1] + weights[2]):
@@ -89,7 +96,8 @@ def credit_catalog_inbound(*, line, actor_employee):
     purchase = line.purchase_order_line
     contributions = (purchase.calculation_snapshot or {}).get("group_source_contributions", []) if purchase else []
     shared_product = len({row["product_line_id"] for row in contributions}) > 1
-    pipe_weight_mode = line.measurement_kind == "PIPE" and line.source_unit_text_snapshot == "KG"
+    by_roots = is_root_receipt(line)
+    pipe_weight_mode = line.measurement_kind == "PIPE" and line.source_unit_text_snapshot == "KG" and not by_roots
     return credit_public_stock(identity=identity, zone=line.zone, quantity=line.accepted_bar_count if line.measurement_kind == "PIPE" else line.accepted_quantity,
         source_type="MATERIAL_INBOUND", source_id=line.inbound_id, source_line_id=line.pk,
         actor_employee=actor_employee, production_task=purchase.purchase_order.production_task_id if purchase else None,
@@ -100,7 +108,8 @@ def credit_catalog_inbound(*, line, actor_employee):
         snapshot={"material_selection_snapshot": line.material_selection_snapshot, "inbound_number": line.inbound.inbound_number,
                   **({"group_source_contributions": contributions} if contributions else {}),
                   "purchase_order_number": line.purchase_order_number_snapshot,
-                  "unit_name": line.material_selection_snapshot["unit_name"] if is_hardware_weight(line) else line.source_unit_text_snapshot,
+                  "unit_name": line.material_selection_snapshot["unit_name"] if by_roots or is_hardware_weight(line) else line.source_unit_text_snapshot,
+                  **(ROOT_RECEIPT if by_roots else {}),
                   **({"purchase_unit": line.source_unit_text_snapshot, "accepted_weight_kg": str(line.accepted_weight_kg),
                       "measurement_kind": "HARDWARE_WEIGHT"} if is_hardware_weight(line) else {}),
                   **({"bar_weight_kg": str(line.bar_weight_kg) if line.bar_weight_kg is not None else None,

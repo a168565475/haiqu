@@ -23,6 +23,23 @@ const order = { id: 'order-1', source_type: 'PRODUCTION', order_number: 'CGDD261
 
 describe('采购详情按采购单位', () => {
   beforeEach(() => { route.name = 'purchase-order-detail'; vi.mocked(api.fetchPurchaseOrderReadDetail).mockResolvedValue(order as never) })
+  it('按根点收的批次保留公斤价格，到货、合格和退货用实点根数合计', async () => {
+    vi.mocked(api.fetchPurchaseOrderReadDetail).mockResolvedValue({ ...order, lines: [{
+      ...line, receipt_quantity_mode: 'ROOTS', source_unit_text: 'KG', actual_purchase_weight_kg: '300',
+      received_weight_kg: null, accepted_weight_kg: null, return_weight_kg: null,
+    }], inbounds: [{ ...order.inbounds[0], lines: [{ ...inboundLine, source_unit_text_snapshot: 'KG',
+      calculation_snapshot: { receipt_quantity_mode: 'ROOTS' } }] }] } as never)
+    const wrapper = shallowMount(PurchaseOrderDetailView); await flushPromises()
+    try {
+      for (const selector of ['tbody tr', 'tfoot tr']) {
+        const cells = wrapper.get(selector).findAll('td')
+        expect(cells[3]!.text()).toBe('300 kg')
+        expect(cells.slice(6).map(cell => cell.text())).toEqual(['800 根', '790 根', '10 根'])
+      }
+      await wrapper.get('#purchase-detail-tab-inbounds').trigger('click')
+      expect(wrapper.get('tbody tr').findAll('td').slice(5, 8).map(cell => cell.text())).toEqual(['800 根', '790 根', '10 根'])
+    } finally { wrapper.unmount() }
+  })
   it('采购入库入口的材料、历史、退货和合计只显示采购KG', async () => {
     route.name = 'purchase-inbound-detail'
     vi.mocked(api.fetchPurchaseOrderReadDetail).mockResolvedValue({ ...order, total_amount: '750.0000',

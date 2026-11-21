@@ -5,7 +5,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomStatus
@@ -16,6 +16,7 @@ from apps.products.models import RawMaterialInformation
 from apps.production_tasks.models import ProductionTask
 
 from .models import (
+    MaterialIssueLine,
     MaterialIssueLineType,
     OrderMaterialRequirement,
     RequirementContribution,
@@ -53,6 +54,36 @@ def inventory_source_quantity(line, bom):
 
 def _stable_requirement_id(task_id, raw_material_id, unit_id, line_type):
     return uuid.uuid5(REQUIREMENT_NAMESPACE, f"{task_id}:{raw_material_id}:{unit_id}:{line_type}")
+
+
+def product_material_usage(product_line_id, requirement_ids, *, exclude_issue_id=None):
+    """旧原料额度由整单共用，按单据所属产品还原已使用和待审数量。"""
+    from apps.outsourcing.models import OutsourcingDispatchLine, TubeOutsourcingMaterial
+
+    used = defaultdict(Decimal)
+    issues = MaterialIssueLine.objects.filter(requirement_id__in=requirement_ids,
+        issue__product_line_id=product_line_id, issue__status__in=["ISSUED", "PENDING_REVIEW"])
+    if exclude_issue_id:
+        issues = issues.exclude(issue_id=exclude_issue_id, issue__status="PENDING_REVIEW")
+    for row in issues.values("requirement_id").annotate(
+        issued=Sum("issued_quantity", filter=Q(issue__status="ISSUED"), default=0),
+        pending=Sum("requested_quantity", filter=Q(issue__status="PENDING_REVIEW"), default=0),
+    ):
+        used[row["requirement_id"]] += row["issued"] + row["pending"]
+
+    dispatched = OutsourcingDispatchLine.objects.filter(requirement_id__in=requirement_ids,
+        material_item__allocation__processing_item__order_product__bom__product_line_id=product_line_id)
+    for row in dispatched.values("pk", "requirement_id", "issued_quantity").annotate(
+        returned=Sum("raw_returns__quantity", default=0)
+    ):
+        used[row["requirement_id"]] += row["issued_quantity"] - row["returned"]
+
+    materials = TubeOutsourcingMaterial.objects.filter(requirement_id__in=requirement_ids,
+        order__product_line_id=product_line_id, order__is_plan=False,
+        order__status__in=["PENDING_DISPATCH", "PROCESSING", "COMPLETED"])
+    for row in materials.values("requirement_id").annotate(total=Sum("quantity")):
+        used[row["requirement_id"]] += row["total"]
+    return used
 
 
 def _bom_line_section_code(bom_line, source_key=""):

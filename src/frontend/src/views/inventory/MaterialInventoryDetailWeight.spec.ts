@@ -8,7 +8,7 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { stockItemId: 'stock'
 vi.mock('@/router', () => ({ router: { replace: vi.fn(), push: vi.fn() } }))
 vi.mock('@/api/inventory', () => ({ fetchMaterialInventorySummary: vi.fn(), fetchMaterialOrderIssues: vi.fn(), fetchMaterialOrderPurchases: vi.fn() }))
 
-describe('管材公共可用重量', () => {
+describe('库存数量与计量单位', () => {
   it.each(['个', '片'])('五金库存%s和KG独立展示，关联采购为KG、领料仍是原单位', async unit => {
     vi.mocked(api.fetchMaterialInventorySummary).mockResolvedValue({ measurement_kind: 'HARDWARE_WEIGHT',
       current_quantity: '900', available_quantity: '800', weight_quantity: '3.9', available_weight_quantity: '3.4667',
@@ -46,22 +46,23 @@ describe('管材公共可用重量', () => {
     expect(cards[1]!.get('small').text()).toBe('重量待核对')
     wrapper.unmount()
   })
-  it.each([
-    ['6', '12.5', '12.5 kg'],
-    ['6', null, '重量待核对'],
-    ['10.0000', undefined, '20 kg'],
-  ])('可用根数%s、可用重量%s，独立于合格库存总重量', async (available, availableWeight, expected) => {
-    vi.mocked(api.fetchMaterialInventorySummary).mockResolvedValue({ measurement_kind: 'PIPE', current_quantity: '10', available_quantity: available,
-      weight_quantity: '20', available_weight_quantity: availableWeight, cumulative_inbound_quantity: '10', cumulative_issued_quantity: '0', unit: '根', zones: [] } as never)
+  it('管材库存和订单到货只显示根数，包括有历史实重的库区', async () => {
+    vi.mocked(api.fetchMaterialInventorySummary).mockResolvedValue({ measurement_kind: 'PIPE', current_quantity: '10', available_quantity: '6',
+      weight_quantity: '20', available_weight_quantity: '12.5', cumulative_inbound_quantity: '10', cumulative_issued_quantity: '0', unit: '根',
+      zones: [{ warehouse_name: '原料仓', zone_name: '管材区', quantity: '10', weight_quantity: '20', bar_weight_kg: '2' }] } as never)
     vi.mocked(api.fetchMaterialOrderIssues).mockResolvedValue([])
-    vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([])
-    const wrapper = shallowMount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus] } })
+    vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([{ purchase_order_number: 'CG01', production_task_number: 'HT26205',
+      purchase_quantity: '12', actual_inbound_quantity: '9.6', pending_inbound_quantity: '2.4', weight_unit: true, unit: 'KG',
+      bar_counts: { ordered: 5, accepted: 4, pending: 1 } }] as never)
+    const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     try {
       const cards = wrapper.findAll('.stock-cards article')
-      expect(cards[0]!.get('small').text()).toBe('20 kg')
-      expect(cards[1]!.get('small').text()).toBe(expected)
-      expect(cards[1]!.get('strong').text()).toBe(`${Number(available)} 根`)
+      expect(cards[0]!.get('strong').text()).toBe('10 根')
+      expect(cards[1]!.get('strong').text()).toBe('6 根')
+      expect(wrapper.text()).not.toMatch(/kg|重量/i)
+      const purchases = wrapper.get('#pane-purchases').text()
+      for (const value of ['HT26205', '5 根', '4 根', '1 根']) expect(purchases).toContain(value)
     } finally { wrapper.unmount() }
   })
 })

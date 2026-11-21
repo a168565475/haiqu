@@ -24,6 +24,10 @@ let requestVersion = 0
 let disposed = false
 
 function quantity(line: PurchaseReadInboundLine, kind: 'received' | 'accepted' | 'return') {
+  if (line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS') {
+    const roots = line[`${kind}_bar_count`]
+    return roots == null ? '根数未记录' : purchaseQuantityText(String(roots), '根', null, null)
+  }
   const unit = String(line.source_unit_text_snapshot || '').trim().toUpperCase()
   const hardwareWeight = isHardwareWeightLine({
     section_type_snapshot: line.section_type_snapshot,

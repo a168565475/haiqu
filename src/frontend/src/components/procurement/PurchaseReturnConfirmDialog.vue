@@ -37,6 +37,7 @@ function returnUnit(line: PurchaseReturnLine): string {
   return ['KG', '千克', '公斤'].includes(String(line.unit || '').trim().toUpperCase()) ? 'kg' : props.showPipeRoots && line.raw_bar_length_m ? '根' : line.unit || '—'
 }
 function returnTitle(line: PurchaseReturnLine): string | undefined {
+  if (line.unit === '根') return undefined
   if (isWeightPipe(line)) return `${returnQuantity(line)} kg`
   return props.showPipeRoots && line.raw_bar_length_m ? `${quantity(line.quantity)} 米 · ${line.raw_bar_length_m} 米/根` : undefined
 }

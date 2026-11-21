@@ -380,7 +380,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
           <ElPagination :current-page="currentPage" :page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" background @current-change="changePage" @size-change="changePageSize" />
         </footer>
       </section>
-      <p v-if="mode === 'arrival'" class="tracking-footnote">管材提前5天、其他材料提前3天提醒；实收包含待检，未到与退货分开提示，退货不自动视为补交。</p>
+      <p v-if="mode === 'arrival'" class="tracking-footnote">管材提前5天、其他材料提前3天提醒。实收包含待检。按根收的管材，待检的根数先从未到数量里扣除，退货后再加回。</p>
       <PurchaseTrackingPolicyDialog v-if="mode === 'coverage' && canManagePolicy" v-model="policyVisible" @saved="load" />
     </template>
   </section>

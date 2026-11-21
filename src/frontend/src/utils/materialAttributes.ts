@@ -1,4 +1,5 @@
 import type { MaterialAttributeField, MaterialAttributeSnapshot } from '@/types/purchaseOrder'
+import { compactDecimal } from './compactDecimal'
 
 export interface MaterialAttributeSource {
   material_selection_snapshot?: import('@/types/materialCatalog').MaterialSelectionSnapshot | Record<string, never> | null
@@ -65,6 +66,22 @@ export function materialAttributeFields(source: MaterialAttributeSource): Materi
 
 export function materialAttributeText(source: MaterialAttributeSource): string {
   return materialAttributeFields(source).map((field) => `${field.label}：${field.value}`).join('\n') || '暂无物料属性'
+}
+
+export function materialAttributeTable(sources: (MaterialAttributeSource & { raw_bar_length_m?: string | number | null })[]) {
+  const columns = new Set<string>()
+  const cells = sources.map(source => {
+    const values = new Map<string, string>()
+    for (const field of materialAttributeFields(source)) {
+      if (field.key === 'part_name' || field.key === 'unit' || field.key === 'length' && source.raw_bar_length_m) continue
+      const value = text(field.value)
+      if (value) values.set(field.label, value)
+    }
+    if (source.raw_bar_length_m) values.set('单根长度', `${compactDecimal(source.raw_bar_length_m)} 米`)
+    for (const label of values.keys()) columns.add(label)
+    return values
+  })
+  return { columns: [...columns], cells }
 }
 
 export function materialSpecificationValue(source: MaterialAttributeSource): string {

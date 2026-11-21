@@ -4,6 +4,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from apps.boms.api.serializers import BomCatalogSelectionSerializer
 from ..bom_inventory_sections import RAW_SECTIONS, SEMI_SECTIONS, SECTIONS_BY_STOCK_KIND
+from ..pipe_receipt_basis import is_root_receipt
 from ..purchase_receiving_sections import RECEIVING_SELECTIONS
 
 
@@ -518,29 +519,38 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     @staticmethod
-    def _sum(instance, field):
-        return sum((getattr(line, field) for line in instance.lines.all()), Decimal("0"))
+    def _sum_quantity(instance, kind):
+        values = (getattr(line, f"{kind}_bar_count" if is_root_receipt(line) else f"{kind}_quantity")
+                  for line in instance.lines.all())
+        total = sum(values, Decimal("0"))
+        return f"{total:.4f}"
 
     def get_total_received_quantity(self, instance):
-        return f"{self._sum(instance, 'received_quantity'):.4f}"
+        return self._sum_quantity(instance, "received")
 
     def get_total_return_quantity(self, instance):
-        return f"{self._sum(instance, 'return_quantity'):.4f}"
+        return self._sum_quantity(instance, "return")
 
     def get_total_accepted_quantity(self, instance):
-        return f"{self._sum(instance, 'accepted_quantity'):.4f}"
+        return self._sum_quantity(instance, "accepted")
 
-    def _sum_weight(self, instance, field):
-        return sum((getattr(line, field) or Decimal("0") for line in instance.lines.all()), Decimal("0"))
+    @staticmethod
+    def _sum_weight(instance, field):
+        total = Decimal("0")
+        for line in instance.lines.all():
+            if is_root_receipt(line):
+                return None
+            total += getattr(line, field) or 0
+        return f"{total:.4f}"
 
-    def get_total_received_weight_kg(self, instance):
-        return f"{self._sum_weight(instance, 'received_weight_kg'):.4f}"
+    def get_total_received_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "received_weight_kg")
 
-    def get_total_return_weight_kg(self, instance):
-        return f"{self._sum_weight(instance, 'return_weight_kg'):.4f}"
+    def get_total_return_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "return_weight_kg")
 
-    def get_total_accepted_weight_kg(self, instance):
-        return f"{self._sum_weight(instance, 'accepted_weight_kg'):.4f}"
+    def get_total_accepted_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "accepted_weight_kg")
 
     @staticmethod
     def get_source_type(instance):

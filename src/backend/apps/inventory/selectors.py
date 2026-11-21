@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 from django.contrib.postgres.aggregates import ArrayAgg
 from django.db.models import Case, Count, DecimalField, Exists, F, Max, OuterRef, Prefetch, Q, Sum, Value, Subquery, When
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Cast, Coalesce
+from django.db.models.fields.json import KeyTextTransform
+from .pipe_receipt_basis import ROOT_RECEIPT, root_receipt_line_ids
 from .product_identity import finished_product_selection_key
 from apps.production_tasks.models import ProductionTaskProduct
 from apps.material_catalog.models import MaterialCatalog
@@ -309,15 +311,45 @@ def material_inventory_rows(
     )
 
 
+def stock_purchase_bar_counts(lines, receipts, accepted_purchase_quantities):
+    """仓库追溯显示整根。已经按重量履约的批次沿用原到齐判断。"""
+    from .pipe_receipts import estimated_receipt_roots
+
+    pipes = {line.pk: line for line in lines if line.actual_bar_count is not None}
+    counts = {key: {"ordered": line.actual_bar_count, "accepted": 0, "pending": line.actual_bar_count}
+              for key, line in pipes.items()}
+    if not pipes:
+        return counts
+    confirmed = receipts.filter(purchase_order_line_id__in=pipes, inbound__status=MaterialInboundStatus.CONFIRMED)
+    for row in confirmed.values("purchase_order_line_id").annotate(
+        accepted=Sum("accepted_bar_count"), missing=Count("pk", filter=Q(accepted_bar_count__isnull=True)),
+        weighed=Count("received_weight_kg"),
+    ):
+        key = row["purchase_order_line_id"]
+        line = pipes[key]
+        accepted = None if row["missing"] else row["accepted"]
+        pending = None if accepted is None else max(line.actual_bar_count - accepted, 0)
+        if row["weighed"] and line.source_unit_text in {"KG", "kg", "千克"}:
+            weight = accepted_purchase_quantities.get(key)
+            pending = None if weight is None or not line.raw_bar_weight_kg else estimated_receipt_roots(
+                max(line.actual_purchase_quantity - weight, 0), line.raw_bar_weight_kg,
+                round_down=line.purchase_order.source_type == "PRODUCTION")
+        counts[key].update(accepted=accepted, pending=pending)
+    return counts
+
+
 def accepted_material_inbound_totals(queryset):
     """采购追溯只计已确认合格入库；重量缺失仅使对应采购行未知。"""
     weight_pipe = (Q(measurement_kind='PIPE') | Q(calculation_snapshot__measurement_kind='HARDWARE_WEIGHT')) & Q(purchase_order_line__source_unit_text__in=['KG', 'kg', '千克'])
+    roots = Q(calculation_snapshot__contains=ROOT_RECEIPT)
+    settlement = Cast(KeyTextTransform("settlement_weight_kg", "calculation_snapshot"), DecimalField(max_digits=22, decimal_places=4))
     rows = queryset.filter(inbound__status=MaterialInboundStatus.CONFIRMED).order_by().values(
         'purchase_order_line_id',
     ).annotate(
-        total=Sum(Case(When(weight_pipe, then=F('accepted_weight_kg')), default=F('accepted_quantity'),
+        total=Sum(Case(When(roots, then=settlement), When(weight_pipe, then=F('accepted_weight_kg')), default=F('accepted_quantity'),
                        output_field=DecimalField())),
-        missing_weight=Count('id', filter=weight_pipe & Q(accepted_weight_kg__isnull=True)),
+        missing_weight=Count('id', filter=(weight_pipe & ~roots & Q(accepted_weight_kg__isnull=True))
+            | (roots & ~Q(calculation_snapshot__has_key="settlement_weight_kg"))),
     )
     return {row['purchase_order_line_id']: None if row['missing_weight'] else row['total'] for row in rows}
 
@@ -329,19 +361,20 @@ def material_received_totals(line_ids=None):
     weight_pipe = (Q(measurement_kind='PIPE') | Q(calculation_snapshot__measurement_kind='HARDWARE_WEIGHT')) & Q(purchase_order_line__source_unit_text__in=['KG', 'kg', '千克'])
     missing_weight = Q(inbound__status=MaterialInboundStatus.CONFIRMED, accepted_weight_kg__isnull=True) | Q(
         inbound__status=MaterialInboundStatus.PENDING_QUALITY, received_weight_kg__isnull=True)
-    if queryset.filter(weight_pipe & missing_weight).exists():
+    roots = Q(calculation_snapshot__contains=ROOT_RECEIPT)
+    if queryset.filter(weight_pipe & ~roots & missing_weight).exists():
         from apps.core.api.exceptions import Conflict
         raise Conflict('计重采购存在缺少实际重量的入库记录，请核对后再计算剩余采购量。')
     totals = {}
     confirmed = (
         queryset.filter(inbound__status=MaterialInboundStatus.CONFIRMED)
         .values_list("purchase_order_line_id")
-        .annotate(total=Sum(Case(When(weight_pipe, then=F('accepted_weight_kg')), default=F('accepted_quantity'), output_field=DecimalField())))
+        .annotate(total=Sum(Case(When(roots, then=F('accepted_bar_count')), When(weight_pipe, then=F('accepted_weight_kg')), default=F('accepted_quantity'), output_field=DecimalField())))
     )
     pending = (
         queryset.filter(inbound__status=MaterialInboundStatus.PENDING_QUALITY)
         .values_list("purchase_order_line_id")
-        .annotate(total=Sum(Case(When(weight_pipe, then=F('received_weight_kg')), default=F('received_quantity'), output_field=DecimalField())))
+        .annotate(total=Sum(Case(When(roots, then=F('received_bar_count')), When(weight_pipe, then=F('received_weight_kg')), default=F('received_quantity'), output_field=DecimalField())))
     )
     for line_id, total in [*confirmed, *pending]:
         totals[line_id] = totals.get(line_id, Decimal("0")) + Decimal(total or 0)
@@ -418,11 +451,14 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False, receivin
         queryset = queryset.select_related("purchase_order", "purchase_order__production_task", "supplier")
     lines = list(queryset)
     totals = material_received_totals([line.pk for line in lines])
-    return [
-        (line, Decimal(line.actual_purchase_quantity) - Decimal(totals.get(line.pk, 0)))
-        for line in lines
-        if Decimal(line.actual_purchase_quantity) - Decimal(totals.get(line.pk, 0)) > 0
-    ]
+    root_ids = root_receipt_line_ids(lines)
+    result = []
+    for line in lines:
+        ordered = line.actual_bar_count if line.pk in root_ids else line.actual_purchase_quantity
+        remaining = Decimal(ordered) - totals.get(line.pk, 0)
+        if remaining > 0:
+            result.append((line, remaining, 'ROOTS' if line.pk in root_ids else None))
+    return result
 
 
 def material_receiving_warehouse_suggestions(lines):
@@ -565,6 +601,7 @@ def _inbound_product_summary(product_id, name, specification, item_number, color
 
 def material_inbound_order_totals(order_ids, *, receipt_lines=None):
     """列表只汇总进度；批次跨多行时用 distinct 防止批次数被放大。"""
+    root_receipt = Q(lines__calculation_snapshot__receipt_quantity_mode='ROOTS')
     pipe_weight = (Q(lines__measurement_kind='PIPE') | Q(lines__calculation_snapshot__measurement_kind='HARDWARE_WEIGHT')) & Q(lines__source_unit_text_snapshot__in=['KG', 'kg', '千克', '公斤'])
     kg_unit = Q(lines__source_unit_text_snapshot__in=['KG', 'kg', '千克', '公斤'])
     batches = MaterialInbound.objects.filter(purchase_order_id__in=order_ids)
@@ -573,8 +610,10 @@ def material_inbound_order_totals(order_ids, *, receipt_lines=None):
     rows = batches.order_by().values("purchase_order_id").annotate(
         pending_count=Count("id", filter=Q(status=MaterialInboundStatus.PENDING_QUALITY), distinct=True),
         confirmed_count=Count("id", filter=Q(status=MaterialInboundStatus.CONFIRMED), distinct=True),
-        received_quantity=Sum("lines__received_quantity", default=0),
-        return_quantity=Sum("lines__return_quantity", default=0),
+        received_quantity=Sum(Case(When(root_receipt, then=F('lines__received_bar_count')),
+                                   default=F('lines__received_quantity'), output_field=DecimalField()), default=0),
+        return_quantity=Sum(Case(When(root_receipt, then=F('lines__return_bar_count')),
+                                 default=F('lines__return_quantity'), output_field=DecimalField()), default=0),
         received_weight_quantity=Sum(Case(When(pipe_weight, then=F('lines__received_weight_kg')), When(kg_unit, then=F('lines__received_quantity')), default=Value(0), output_field=DecimalField()), default=0),
         return_weight_quantity=Sum(Case(When(pipe_weight, then=F('lines__return_weight_kg')), When(kg_unit, then=F('lines__return_quantity')), default=Value(0), output_field=DecimalField()), default=0),
         missing_received_weight=Count('lines', filter=pipe_weight & Q(lines__received_weight_kg__isnull=True)),
@@ -590,14 +629,20 @@ def material_inbound_order_totals(order_ids, *, receipt_lines=None):
     return result
 
 
-def material_receipt_progress(purchase_lines):
-    """各材料累计到货比例封顶后等权平均；已退货仍属于曾经到货。"""
+def material_receipt_progress(purchase_lines, *, root_ids=None):
+    """按行计算履约比例再等权平均；按根收货时，已退的根数等待补货。"""
+    from .pipe_receipt_basis import root_receipt_line_ids
     lines = {line.pk: line for line in purchase_lines}
+    if root_ids is None:
+        root_ids = root_receipt_line_ids(lines.values())
+    ordered = {pk: line.actual_bar_count if pk in root_ids else line.actual_purchase_quantity for pk, line in lines.items()}
     received = {line_id: Decimal("0") for line_id in lines}
     rows = MaterialInboundLine.objects.filter(purchase_order_line_id__in=lines).order_by().values(
         "purchase_order_line_id", "measurement_kind", "calculation_snapshot__measurement_kind",
     ).annotate(
         received_quantity=Sum("received_quantity", default=0),
+        occupied_roots=Sum(Case(When(inbound__status=MaterialInboundStatus.CONFIRMED, then=F('accepted_bar_count')),
+                                default=F('received_bar_count')), default=0),
         received_weight_quantity=Sum("received_weight_kg", default=0),
         missing_received_weight=Count("id", filter=Q(received_weight_kg__isnull=True)),
     )
@@ -608,7 +653,7 @@ def material_receipt_progress(purchase_lines):
             line.section_type_snapshot == "PROFILE" or line.raw_bar_length_m is not None
             or line.calculation_snapshot.get("measurement_kind") == "HARDWARE_WEIGHT"
             or row["measurement_kind"] == "PIPE" or row["calculation_snapshot__measurement_kind"] == "HARDWARE_WEIGHT")
-        value = None if uses_weight and row["missing_received_weight"] else row[
+        value = row['occupied_roots'] if line_id in root_ids else None if uses_weight and row["missing_received_weight"] else row[
             "received_weight_quantity" if uses_weight else "received_quantity"]
         # 旧米制的 received_quantity 已按冻结原长换算成米，不能再次乘原长。
         current = received[line_id]
@@ -620,12 +665,12 @@ def material_receipt_progress(purchase_lines):
     with localcontext() as context:
         context.prec = 64
         for order_id, order_lines in orders.items():
-            if any(line.actual_purchase_quantity is None or line.actual_purchase_quantity <= 0
+            if any(ordered[line.pk] is None or ordered[line.pk] <= 0
                    or received[line.pk] is None for line in order_lines):
                 result[order_id] = None
                 continue
-            all_received = all(received[line.pk] >= line.actual_purchase_quantity for line in order_lines)
-            average = sum(min(received[line.pk] / line.actual_purchase_quantity, Decimal("1"))
+            all_received = all(received[line.pk] >= ordered[line.pk] for line in order_lines)
+            average = sum(min(received[line.pk] / ordered[line.pk], Decimal("1"))
                           for line in order_lines) * 100 / len(order_lines)
             percentage = average.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
             result[order_id] = "100.0" if all_received else f"{min(percentage, Decimal('99.9')):.1f}"

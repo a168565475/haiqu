@@ -1,8 +1,8 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import IssuePage from './issue.vue'
-import { DatePicker, TimePicker, PickerGroup, Picker } from 'vant'
+import { DatePicker, TimePicker, PickerGroup, Picker, showConfirmDialog } from 'vant'
 import * as api from '@/api/materialIssues'
 import type { MaterialRequirement } from '@/types/materialIssue'
 
@@ -15,7 +15,10 @@ vi.mock('vue-router', () => ({
   onBeforeRouteLeave: (guard: typeof mocks.guards[string]) => { mocks.guards.leave = guard },
   onBeforeRouteUpdate: (guard: typeof mocks.guards[string]) => { mocks.guards.update = guard },
 }))
-vi.mock('vant', async importOriginal => ({ ...await importOriginal<typeof import('vant')>(), showDialog: vi.fn().mockResolvedValue('confirm') }))
+vi.mock('vant', async importOriginal => {
+  const vant = await importOriginal<typeof import('vant')>()
+  return { ...vant, showConfirmDialog: vi.fn(vant.showConfirmDialog), showDialog: vi.fn().mockResolvedValue('confirm') }
+})
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/utils/requestId', () => ({ createRequestId: () => 'request-one' }))
 vi.mock('@/components/WorkPage.vue', () => ({ default: { template: '<div><slot /><slot name="footer" /></div>' } }))
@@ -66,6 +69,75 @@ function submitButton(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button').find(button => /提交领料申请|继续提交此申请|核对并继续提交/.test(button.text()))!
 }
 describe('领料申请两步保存恢复', () => {
+  it('提交前复核产品剩余，超出的面料按四位小数提示，返回保留输入，确认才保存并提交', async () => {
+    const wrapper = await preparedPage()
+    const input = wrapper.get<HTMLInputElement>('input[inputmode="decimal"]')
+    await input.setValue('1.2346')
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [
+      { ...requirement, material_name: '蓝色面料', unit: '米', product_order_remaining: '1.2345' },
+    ] })
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    expect(showConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '领料超出本产品需求' }))
+    const dialog = new DOMWrapper(document.body.querySelector<HTMLElement>('.van-dialog')!)
+    expect(dialog.text()).toContain('蓝色面料')
+    expect(dialog.text()).toContain('超出 0.0001 米')
+    expect(api.createMaterialIssue).not.toHaveBeenCalled()
+    await dialog.get('.van-dialog__cancel').trigger('click'); await flushPromises()
+    expect(input.element.value).toBe('1.2346')
+    expect(api.createMaterialIssue).not.toHaveBeenCalled()
+    expect(api.submitMaterialIssue).not.toHaveBeenCalled()
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    await dialog.get('.van-dialog__confirm').trigger('click'); await flushPromises()
+    expect(api.createMaterialIssue).toHaveBeenCalledOnce()
+    expect(api.submitMaterialIssue).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it.each(['2', '8', null])('剩余需求为 %s，领 2 件时直接提交', async remaining => {
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [
+      { ...requirement, order_remaining: '0', product_order_remaining: remaining },
+    ] })
+    const wrapper = await preparedPage()
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    expect(showConfirmDialog).not.toHaveBeenCalled()
+    expect(api.submitMaterialIssue).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('编辑时同部位不同工艺合计超量，确认前不修改草稿', async () => {
+    mocks.route.query.issue_id = draft.id
+    vi.mocked(api.fetchMaterialIssue).mockResolvedValue({ data: { ...draft, issue_at: '2026-09-28T09:00:00+08:00' }, etag: '"v1"' })
+    vi.mocked(api.updateMaterialIssue).mockResolvedValue({ data: draft, etag: '"edited"' })
+    const semi = { ...requirement, line_type: 'SEMI' as const, unit: '支', component_order_remaining: '3',
+      conversion_snapshot: { kind: 'SEMI_PIPE', component_identity: 'front-leg' } }
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [
+      semi, { ...semi, requirement_id: 'bent', completed_craft: '弯管' },
+    ] })
+    const wrapper = await preparedPage()
+    await wrapper.findAll('input[inputmode="decimal"]')[1]!.setValue('2')
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    const dialog = new DOMWrapper(document.body.querySelector<HTMLElement>('.van-dialog')!)
+    expect(dialog.text()).toContain('剩余需求 3 支，本次领 4 支，超出 1 支')
+    expect(api.updateMaterialIssue).not.toHaveBeenCalled()
+    expect(api.fetchMaterialRequirements).toHaveBeenLastCalledWith(expect.objectContaining({ issue_id: draft.id }))
+    await dialog.get('.van-dialog__confirm').trigger('click'); await flushPromises()
+    expect(api.updateMaterialIssue).toHaveBeenCalledOnce()
+    expect(api.submitMaterialIssue).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('填写后库存不足时先提示库存，拦住确认与保存', async () => {
+    const wrapper = await preparedPage()
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [
+      { ...requirement, max_issue_quantity: '1', order_remaining: '0' },
+    ] })
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('申请数量超过当前可领上限')
+    expect(showConfirmDialog).not.toHaveBeenCalled()
+    expect(api.createMaterialIssue).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('车缝可切换裁片库存领取和裁剪直交，按所选余量校验并提交真实来源', async () => {
     mocks.route.query.plan_category = 'SEWING'
     vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [{ ...requirement,
@@ -273,6 +345,25 @@ describe('领料申请两步保存恢复', () => {
     expect(calls[1]![0]).toEqual(calls[0]![0])
     expect(calls[0]![0].client_request_id).toBe('request-one')
     expect(api.submitMaterialIssue).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+  it('找回网络中断前的草稿时，用原单号复核，超量可返回继续改原单', async () => {
+    vi.mocked(api.createMaterialIssue).mockRejectedValueOnce(new Error('网络中断'))
+    const wrapper = await preparedPage()
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [
+      { ...requirement, product_order_remaining: '0' },
+    ] })
+    await submitButton(wrapper).trigger('click'); await flushPromises()
+    const creates = vi.mocked(api.createMaterialIssue).mock.calls
+    expect(creates[1]).toEqual(creates[0])
+    expect(api.fetchMaterialRequirements).toHaveBeenLastCalledWith(expect.objectContaining({ issue_id: draft.id }))
+    const dialog = new DOMWrapper(document.body.querySelector<HTMLElement>('.van-dialog')!)
+    expect(dialog.text()).toContain('超出 2 件')
+    await dialog.get('.van-dialog__cancel').trigger('click'); await flushPromises()
+    expect(api.submitMaterialIssue).not.toHaveBeenCalled()
+    expect(mocks.route.query.issue_id).toBe(draft.id)
+    expect(wrapper.get('input[inputmode="decimal"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
   it('缺失作业计划上下文时显式阻断，不请求材料或保存', async () => {

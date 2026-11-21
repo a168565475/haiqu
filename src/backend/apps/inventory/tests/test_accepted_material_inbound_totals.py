@@ -26,12 +26,17 @@ class AcceptedMaterialInboundTotalsTests(SimpleTestCase):
                          {known: Decimal('4.1'), missing: None, ordinary: Decimal('6')})
         queryset.filter.assert_called_once_with(inbound__status='CONFIRMED')
         annotations = grouped.annotate.call_args.kwargs
-        condition = Q(measurement_kind='PIPE', purchase_order_line__source_unit_text__in=['KG', 'kg', '千克'])
+        roots = Q(calculation_snapshot__contains={"receipt_quantity_mode": "ROOTS"})
+        condition = (Q(measurement_kind='PIPE') | Q(calculation_snapshot__measurement_kind='HARDWARE_WEIGHT')) & Q(
+            purchase_order_line__source_unit_text__in=['KG', 'kg', '千克'])
         case = annotations['total'].get_source_expressions()[0]
-        self.assertEqual(case.cases[0].condition, condition)
-        self.assertEqual(case.cases[0].result.name, 'accepted_weight_kg')
+        self.assertEqual(case.cases[0].condition, roots)
+        self.assertEqual(case.cases[0].result.get_source_expressions()[0].key_name, 'settlement_weight_kg')
+        self.assertEqual(case.cases[1].condition, condition)
+        self.assertEqual(case.cases[1].result.name, 'accepted_weight_kg')
         self.assertEqual(case.default.name, 'accepted_quantity')
-        self.assertEqual(annotations['missing_weight'].filter, condition & Q(accepted_weight_kg__isnull=True))
+        self.assertEqual(annotations['missing_weight'].filter, (condition & ~roots & Q(accepted_weight_kg__isnull=True))
+            | (roots & ~Q(calculation_snapshot__has_key="settlement_weight_kg")))
 
     def test_empty_history_has_no_unknown_or_fabricated_totals(self):
         queryset = MagicMock()
@@ -43,7 +48,7 @@ class OrderPurchaseUnknownWeightResponseTests(SimpleTestCase):
     def rows(self, catalog_mode, total):
         catalog_id, unit_id, line_id = uuid4(), uuid4(), uuid4()
         line = SimpleNamespace(pk=line_id, purchase_order_id=uuid4(), material_catalog_id=catalog_id,
-            material_selection_snapshot={}, raw_bar_length_m=Decimal('6'), actual_purchase_quantity=Decimal('10'),
+            material_selection_snapshot={}, raw_bar_length_m=Decimal('6'), actual_bar_count=None, actual_purchase_quantity=Decimal('10'),
             source_unit_text='KG', purchase_order=SimpleNamespace(order_number='CG-KG',
                 production_task_id=None, production_task_number_snapshot=''))
         catalog = SimpleNamespace(material_catalog_id=catalog_id, unit_id=unit_id, identity_key='identity')

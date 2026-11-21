@@ -3,6 +3,7 @@ from .catalog_manual_receipts import lock_manual_request, manual_request_snapsho
 from apps.procurement.catalog_materials import purchase_catalog_selection
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from .pipe_receipts import receipt_pipe_values, quality_pipe_quantities
+from .pipe_receipt_basis import freeze_settlement_weights, is_root_receipt, root_receipt_line_ids
 from apps.organizations.selectors import active_department_employees
 from apps.procurement.pipe_purchase import pipe_meters
 from apps.procurement.set_pricing import material_calculation_snapshot
@@ -615,6 +616,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
 
     # 待检批次按到货量占用采购余额；已质检批次只按合格量占用，退货数量可重新收货。
     received_totals = material_received_totals(line_ids)
+    root_lines = root_receipt_line_ids(locked_lines)
+    ordered_quantities = {line.pk: line.actual_bar_count if line.pk in root_lines else line.actual_purchase_quantity for line in locked_lines}
     completed_return_line_ids = set(
         PurchaseReturnLine.objects.filter(
             inbound_line__purchase_order_line_id__in=line_ids,
@@ -658,15 +661,16 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         if not line.source_unit_text.strip():
             raise ValidationError({"items": f"采购单第 {line.line_number} 行缺少单位。"})
         current_received = Decimal(received_totals.get(line_id, 0))
-        current_remaining = line.actual_purchase_quantity - current_received
+        current_remaining = ordered_quantities[line_id] - current_received
         expected = item["expected_remaining_quantity"]
         if expected != current_remaining:
             raise Conflict(f"采购单第 {line.line_number} 行剩余数量已变化，请刷新后重试。")
         if line_id in expected_values and expected_values[line_id] != expected:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
-        receipt_values = (catalog_receipt_values(purchase_line=line, item=item) if line.material_catalog_id
-                          else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode))
+        by_roots = line_id in root_lines
+        receipt_values = (catalog_receipt_values(purchase_line=line, item=item, by_roots=by_roots) if line.material_catalog_id
+                          else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line, by_roots=by_roots), stock_mode))
         if "calculation_snapshot" in receipt_values:
             receipt_values["calculation_snapshot"] = material_calculation_snapshot(receipt_values["calculation_snapshot"])
         item['_pipe_values'] = receipt_values
@@ -675,8 +679,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
         if item.get('received_quantity') is None:
             raise ValidationError({'received_quantity': '请填写到货数量。'})
-        submitted_quantity = (
-            item.get("received_weight_kg")
+        submitted_quantity = receipt_values["received_bar_count"] if by_roots else (
+            item["received_weight_kg"]
             if line.source_unit_text in {"KG", "kg", "千克"} and item.get("received_weight_kg") is not None
             else item["received_quantity"]
         )
@@ -699,8 +703,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     for line_id, submitted in submitted_totals.items():
         line = line_map[line_id]
         current_received = Decimal(received_totals.get(line_id, 0))
-        if current_received + submitted > line.actual_purchase_quantity:
-            remaining = line.actual_purchase_quantity - current_received
+        if current_received + submitted > ordered_quantities[line_id]:
+            remaining = ordered_quantities[line_id] - current_received
             raise ValidationError({"items": f"采购单第 {line.line_number} 行最多还能入库 {remaining}。"})
 
     inbound = MaterialInbound.objects.create(
@@ -1124,7 +1128,7 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     prepared = []
     for item in items:
         line = line_map[item["line_id"]]
-        expected_received = (
+        expected_received = line.received_bar_count if is_root_receipt(line) else (
             line.received_weight_kg
             if line.source_unit_text_snapshot in {"KG", "kg", "千克"} and line.received_weight_kg is not None
             else line.received_quantity
@@ -1149,6 +1153,7 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
             validate_inbound_stock_identity(line)
         prepared.append(line)
 
+    freeze_settlement_weights(prepared, (row for row in locked_purchase_lines if row.inbound.status == MaterialInboundStatus.CONFIRMED))
     total_return = Decimal("0")
     total_accepted = Decimal("0")
     for line in prepared:
@@ -1159,6 +1164,7 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
                 "return_quantity",
                 "accepted_quantity",
                 "return_weight_kg", "accepted_weight_kg",
+                "calculation_snapshot",
                 "quality_remark",
                 "updated_at",
             ]

@@ -5,23 +5,26 @@ import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connections, transaction
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
-from apps.boms.models import Bom, BomLine
+from apps.boms.models import Bom, BomLine, BomSection
 from apps.boms.material_flow_calculations import pipe_plan
 from apps.core.api.concurrency import etag_for_instance
 from apps.inventory.models import MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, PublicStockMovement, Warehouse, WarehouseZone
 from apps.inventory.pipe_stock_services import credit_pipe_inbound, issue_pipe_material
 from apps.inventory.stock_services import credit_confirmed_inbound_line
+from apps.organizations.models import Employee
 from apps.outsourcing.models import OutsourcingDispatchLine, OutsourcingMaterialItem
 from apps.outsourcing.tests import test_material_flow as outsourcing_fixtures
 from apps.products.models import RawMaterialInformation
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.production_scheduling.tests import test_production_scheduling_api as schedule_fixtures
+from apps.production_tasks.models import ProductionTaskProduct
 from apps.reference_data.models import ProductCategory, ProductionUnit
 from apps.workshop_config.models import Craft, Workshop
 from apps.workshop_config.tests.factories import production_employee
@@ -241,6 +244,38 @@ class OrdinaryStockFixture(StockLimitedApiMixin):
 
 
 class OrdinaryStockLimitedIssueTests(OrdinaryStockFixture, APITestCase):
+    def test_shared_material_remaining_belongs_to_the_selected_product(self):
+        product = ProductionTaskProduct.objects.get(pk=self.product_line.pk)
+        product.pk, product.line_number = None, 2
+        product.save()
+        bom = Bom.objects.get(pk=self.bom.pk)
+        bom.pk, bom.bom_number, bom.product_line = None, "BOM-SECOND-ISSUE-PRODUCT", product
+        bom.save()
+        section = BomSection.objects.get(pk=self.bom_line.section_id)
+        section.pk, section.bom = None, bom
+        section.save()
+        line = BomLine.objects.get(pk=self.bom_line.pk)
+        line.pk, line.component_identity, line.section, line.budget_quantity = None, uuid.uuid4(), section, "200"
+        line.save()
+
+        issued = self.create_api(100)
+        self.action_api(issued, "submit")
+        reviewer = get_user_model().objects.create_user(username="issue_remaining_reviewer")
+        Employee.objects.create(user=reviewer, employee_code="ISSUE_REMAINING_REVIEWER", display_name="仓库审核员")
+        reviewer.user_permissions.set(self.user.user_permissions.all())
+        self.client.force_authenticate(reviewer)
+        self.action_api(issued, "confirm-issue", {"request_id": str(uuid.uuid4())})
+        self.client.force_authenticate(self.user)
+        pending = self.create_api(30)
+        self.action_api(pending, "submit")
+        row = self.rows()[0]
+        self.assertEqual(Decimal(row["order_remaining"]), 570)
+        self.assertEqual(Decimal(row["product_order_remaining"]), 370)
+        self.assertEqual(Decimal(self.rows(issue=pending)[0]["product_order_remaining"]), 400)
+        other = self.rows(scope=SimpleNamespace(task=self.task, product_line=product))[0]
+        self.assertEqual(other["requirement_id"], row["requirement_id"])
+        self.assertEqual(Decimal(other["product_order_remaining"]), 200)
+
     def assert_inactive_location_blocks_every_stage(self, location):
         for public_mode in (False, True):
             with self.subTest(public_mode=public_mode), override_settings(PUBLIC_STOCK_ISSUES_ENABLED=public_mode), transaction.atomic():
@@ -451,6 +486,31 @@ class UnrelatedMaterialOutsourcingTests(StockLimitedApiMixin, outsourcing_fixtur
         self.assertEqual(requirement_b.outsourcing_issued_quantity, 2)
         self.assertEqual(MaterialStockBalance.objects.get(raw_material=self.raw_a).quantity, 50)
         self.assertEqual(MaterialStockBalance.objects.get(raw_material=self.raw_b).quantity, 8)
+
+    def test_product_remaining_deducts_issued_outsourcing_and_restores_returns(self):
+        hardware = self.f.hardware
+        hardware.raw_values = {**hardware.raw_values, "hardware_weight_mode": "MANUAL"}
+        hardware.budget_quantity = "12"
+        hardware.save(update_fields=["raw_values", "budget_quantity"])
+        payload = self.payload(amount="6")
+        materials = payload["products"][0]["materials"]
+        materials.append({**materials[0], "bom_line_id": str(hardware.pk), "planned_issue_quantity": "2"})
+        order_id = self.f.create_order(payload).data["data"]["id"]
+        by_line = {line.bom_material_line_id: line for line in OutsourcingMaterialItem.objects.filter(
+            allocation__processing_item__order_product__order_id=order_id)}
+        self.post(order_id, "confirm-dispatch", {"request_id": str(uuid.uuid4()), "lines": [
+            {"material_item_id": str(by_line[line.pk].pk), "inbound_line_id": str(batch.pk), "requested_quantity": qty}
+            for line, batch, qty in [(self.f.profile, self.pipe_batch, "6"), (hardware, self.batches[self.raw_b.pk], "2")]
+        ]})
+        source = OutsourcingDispatchLine.objects.get(dispatch__order_id=order_id, raw_material=self.raw_b)
+
+        def remaining():
+            row = next(row for row in self.rows() if row["requirement_id"] == str(source.requirement_id))
+            return Decimal(row["product_order_remaining"])
+
+        self.assertEqual(remaining(), 10)
+        self.raw_return(order_id, source, 1)
+        self.assertEqual(remaining(), 11)
 
 
 class ConcurrentSubmitMixin:

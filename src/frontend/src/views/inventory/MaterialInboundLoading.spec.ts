@@ -57,6 +57,32 @@ describe('采购入库读取', () => {
     expect(payload.items[0]).not.toHaveProperty('received_quantity')
     wrapper.unmount()
   })
+  it('按根到货只收本批未到的整根，旧公斤草稿不当根数恢复', async () => {
+    const pipe = { ...line, receipt_quantity_mode: 'ROOTS', unit: 'KG', purchased_quantity: '25', weight_unit: true,
+      actual_bar_count: 10, remaining_bar_count: 6, raw_bar_length_m: '3.35', quantity_unit: '根' }
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [pipe], etag: 'v1' } as never)
+    localStorage.setItem('material-receiving-draft:v2:order-1:user:7', JSON.stringify({ purchaseOrderId: 'order-1',
+      rows: { 'line-1': { receivedQuantity: '2.5', quantityInputUnit: 'KG', warehouseId: 'wh', zoneId: 'zone' } } }))
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as WarehouseView
+    const row = vm.rows[0]!
+    const cell = wrapper.get('.purchase-quantity-cell')
+    expect([cell.text(), cell.element.nextElementSibling?.textContent]).toEqual(['10 根', '4 根'])
+    expect(row.receivedQuantity).toBe('')
+    expect(vm.readyToSubmit).toBe(false)
+    for (const invalid of ['0', '1.5', '7']) { row.receivedQuantity = invalid; expect(vm.readyToSubmit).toBe(false) }
+    row.receivedQuantity = '2'
+    await flushPromises()
+    expect(cell.element.nextElementSibling?.nextElementSibling?.textContent).toBe('6 根')
+    expect(wrapper.get('thead').text()).toContain('待收数量')
+    expect(wrapper.get('thead').text()).toContain('合格及待检')
+    expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(vi.mocked(api.createMaterialReceiving).mock.calls[0]![0].items).toEqual([{
+      purchase_order_line_id: line.id, zone_id: 'zone', received_bar_count: '2', raw_bar_length_m: '3.35', expected_remaining_quantity: '6', remark: '',
+    }])
+    wrapper.unmount()
+  })
   it('重量口径管材显示kg，输入重量并提交received_weight_kg', async () => {
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: 'KG', weight_unit: true, purchased_quantity: '33.5', remaining_quantity: '20.1', remaining_weight_kg: '20.1', raw_bar_length_m: '3.35', raw_bar_weight_kg: '2.5', actual_bar_count: 14, remaining_bar_count: 9 }], etag: '"receiving-weight-v1"' } as never)
     const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
@@ -247,11 +273,10 @@ describe('采购入库读取', () => {
     const wrapper = mount(PurchaseInboundListView); await flushPromises()
     const vm = wrapper.vm as unknown as {
       canOpenReceiving: (row: Record<string, unknown>) => boolean
-      hasRowActions: (row: Record<string, unknown>) => boolean
+      canOpenReturns: (row: Record<string, unknown>) => boolean
     }
     expect(vm.canOpenReceiving(completed)).toBe(false)
-    expect(vm.hasRowActions(completed)).toBe(false)
-    expect(vm.hasRowActions({ ...completed, workflow_status: 'PENDING_QUALITY' })).toBe(true)
+    expect(vm.canOpenReturns(completed)).toBe(false)
     wrapper.unmount()
   })
 

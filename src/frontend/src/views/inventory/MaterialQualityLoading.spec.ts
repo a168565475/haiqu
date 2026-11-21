@@ -14,7 +14,9 @@ const line = { id: 'line-1', received_quantity: '3.0000', return_quantity: '0.00
 const first = { id: 'batch-1', inbound_number: 'RK01', status: 'PENDING_QUALITY', lines: [line] }
 const second = { ...first, id: 'batch-2', inbound_number: 'RK02', lines: [{ ...line, id: 'line-2' }] }
 type View = { loading: boolean; loadError: string; canSubmit: boolean; selectedBatchId: string; batch: typeof first | null; rows: Array<{ included: boolean; line: typeof line; returnQuantity: string; qualityRemark: string }>; loadBatches: () => Promise<void>; selectBatch: (preserve?: boolean) => Promise<void>; confirmInbound: () => Promise<void> }
-const mount = () => shallowMount(MaterialQualityConfirmationView, { global: { plugins: [ElementPlus] } })
+const mount = () => shallowMount(MaterialQualityConfirmationView, {
+  global: { plugins: [ElementPlus], stubs: { ElTooltip: { inheritAttrs: false, template: '<slot />' } } },
+})
 // Element Plus declares MessageBoxData as input-data & Action; confirm without input resolves the action string.
 const confirmedAction = 'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
 describe('品质确认读取', () => {
@@ -52,6 +54,59 @@ describe('品质确认读取', () => {
     vm.rows[0]!.returnQuantity = '33.5'; await flushPromises()
     expect(cells[1]!.text()).toBe('0 米'); expect(vm.canSubmit).toBe(true)
     wrapper.unmount()
+  })
+  it('品质确认按五金件、塑料件、包材顺序分表，空分类不显示', async () => {
+    const box = { ...line, part_name_snapshot: '纸箱', material_selection_snapshot: {
+      schema_version: 1, category_key: 'PACKAGING', template_key: 'CARTON', name: '纸箱', attributes: { box_type: '半盖', layers: '5' },
+    } }
+    const screw = { ...line, id: 'line-2', part_name_snapshot: '螺丝', specification_snapshot: 'M6', section_title_snapshot: '五金件类' }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [box, screw] }] as never)
+    const wrapper = mount(); await flushPromises()
+    const tables = wrapper.findAll('.receipt-material-group')
+    expect(tables.map(table => table.get('h3').text())).toEqual(['五金件', '包材'])
+    const header = (table: typeof tables[number]) => table.findAll('thead th').map(cell => cell.text())
+    expect(tables.map(table => header(table).slice(0, 4))).toEqual(Array.from({ length: 2 }, () => ['', '序号', '物料信息', '供应商']))
+    expect(tables.map(table => header(table).slice(4, -7))).toEqual([['规格'], ['箱子形状', '层数']])
+    expect(tables.map(table => header(table).slice(-7, -4))).toEqual(Array.from({ length: 2 }, () => ['到货数量', '退货数量', '合格入库数量']))
+    expect(tables[1]!.findAll('tbody td').map(cell => cell.text()).slice(4, 6)).toEqual(['半盖', '5'])
+    expect(wrapper.find('.specification-cell').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('面料和辅料分表时仍按原单一次确认完整质检结果', async () => {
+    const accessory = { ...line, part_name_snapshot: '织带', category_snapshot: '辅料类' }
+    const fabric = { ...line, id: 'line-2', part_name_snapshot: '牛津布', section_title_snapshot: '面料类' }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [accessory, fabric] }] as never)
+    const wrapper = mount(); await flushPromises()
+    expect(wrapper.findAll('.receipt-material-group h3').map(title => title.text())).toEqual(['面料', '辅料'])
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    await (wrapper.vm as unknown as View).confirmInbound()
+    expect(api.confirmMaterialQuality).toHaveBeenCalledExactlyOnceWith(first.id, { items: [
+      expect.objectContaining({ line_id: accessory.id }), expect.objectContaining({ line_id: fabric.id }),
+    ] })
+    confirm.mockRestore(); wrapper.unmount()
+  })
+  it('按根质检拒绝小数与超退，退货数量与确认时的到货数量都用根', async () => {
+    const pipe = { ...line, measurement_kind: 'PIPE', source_unit_text_snapshot: 'KG',
+      raw_bar_length_m: '3.35', received_quantity: '33.50', received_bar_count: 10, return_bar_count: 0,
+      specification_snapshot: '25×25', material_snapshot: '铁',
+      calculation_snapshot: { receipt_quantity_mode: 'ROOTS' } }
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [pipe] }] as never)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    const row = wrapper.findAll('tbody tr:first-child td')
+    expect(headers).toEqual(expect.arrayContaining(['材质', '规格', '单根长度']))
+    expect(['材质', '规格', '单根长度'].map(label => row[headers.indexOf(label)]?.text())).toEqual(['铁', '25×25', '3.35 米'])
+    for (const invalid of ['0.1', '11']) { vm.rows[0]!.returnQuantity = invalid; expect(vm.canSubmit).toBe(false) }
+    vm.rows[0]!.returnQuantity = '2'; await flushPromises()
+    expect(wrapper.findAll('td.quantity-cell').map(cell => cell.text())).toEqual(['10 根', '8 根'])
+    expect(vm.canSubmit).toBe(true)
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    await vm.confirmInbound()
+    expect(api.confirmMaterialQuality).toHaveBeenCalledWith(first.id, { items: [{
+      line_id: line.id, expected_received_quantity: '10', return_bar_count: '2', quality_remark: '',
+    }] })
+    confirm.mockRestore(); wrapper.unmount()
   })
   it('KG管材质检只显示和提交采购重量，根数由后端按剩余合格重量折算', async () => {
     const weightLine = { ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 2, return_bar_count: 0, source_unit_text_snapshot: 'KG', bar_weight_kg: '2.5', received_weight_kg: '4.1', return_weight_kg: '0' }

@@ -6,6 +6,7 @@ from apps.core.api.exceptions import Conflict
 from apps.procurement.pipe_purchase import pipe_meters
 from apps.products.models import RawMaterialInformation
 from .hardware_receipts import hardware_receipt_values, is_hardware_weight, quality_hardware_quantities
+from .pipe_receipt_basis import is_root_receipt, root_receipt_values
 
 
 def estimated_receipt_roots(weight, bar_weight, *, round_down):
@@ -32,7 +33,7 @@ def weight_pipe_receipt_quantities(purchase_line, item):
     return weight, bar_weight, roots, snapshot
 
 
-def receipt_pipe_values(item, purchase_line=None, material=None):
+def receipt_pipe_values(item, purchase_line=None, material=None, *, by_roots=False):
     if purchase_line is not None:
         if is_hardware_weight(purchase_line):
             from apps.procurement.material_receipt_identity import resolve_purchase_material
@@ -94,6 +95,8 @@ def receipt_pipe_values(item, purchase_line=None, material=None):
             "calculation_snapshot": {**snapshot, "measurement_unit": "kg", "received_bar_count": roots,
                 "received_meters": pipe_meters_text(meters), "received_weight_kg": format(weight, ".4f")},
             "raw_material_information": material}
+    if by_roots:
+        return {"raw_material_information": material, **root_receipt_values(purchase_line, item)}
     weight_mode = str(getattr(purchase_line, "source_unit_text", "") or "") in {"KG", "kg", "千克"}
     if weight_mode:
         weight, bar_weight, roots, snapshot = weight_pipe_receipt_quantities(purchase_line, item)
@@ -125,7 +128,10 @@ def quality_pipe_quantities(line, item):
         if item.get('return_quantity') is None:
             raise ValidationError({'return_quantity': '请填写不良退货数量。'})
         return item['return_quantity']
-    weight_mode = line.source_unit_text_snapshot in {"KG", "kg", "千克", "公斤"}
+    by_roots = is_root_receipt(line)
+    if by_roots and (item.get("return_weight_kg") is not None or item.get("return_quantity") is not None):
+        raise ValidationError({"return_bar_count": "这批管材请直接填写退货根数。"})
+    weight_mode = not by_roots and line.source_unit_text_snapshot in {"KG", "kg", "千克", "公斤"}
     if weight_mode:
         try:
             weight = Decimal(str(item.get("return_weight_kg", item.get("return_quantity", "0"))))

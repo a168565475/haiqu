@@ -17,6 +17,7 @@ from apps.production_tasks.models import ProductionTask
 from .models import MaterialInbound, MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, WarehouseZone
 from .stock_services import inbound_line_material
 from .pipe_weight_quantities import issued_pipe_weight
+from .pipe_receipt_basis import ROOT_RECEIPT, is_root_receipt
 
 
 def _uuid(value):
@@ -65,7 +66,8 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
         returned = positive_integer(line.return_bar_count, "return_bar_count", allow_zero=True)
     except MaterialFlowValueError as error:
         raise pipe_error(error.code, str(error)) from error
-    weight_mode = line.source_unit_text_snapshot in {"KG", "kg", "千克"}
+    by_roots = is_root_receipt(line)
+    weight_mode = not by_roots and line.source_unit_text_snapshot in {"KG", "kg", "千克"}
     if (received != bars + returned or line.received_quantity != received * length
             or line.return_quantity != returned * length or line.accepted_quantity != bars * length):
         raise pipe_error("PIPE_LENGTH_MISMATCH", "入库的根数、单根长度和米数不一致。")
@@ -74,7 +76,7 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
                 or line.received_weight_kg <= 0 or line.accepted_weight_kg < 0 or line.return_weight_kg < 0
                 or line.received_weight_kg != line.accepted_weight_kg + line.return_weight_kg):
             raise pipe_error("PIPE_WEIGHT_MISMATCH", "入库的到货、合格和退货重量不一致。")
-    elif line.source_unit_text_snapshot != "米":
+    elif not by_roots and line.source_unit_text_snapshot != "米":
         raise pipe_error("PIPE_UNIT_MISMATCH", "历史管材入库单位不是米或KG。")
     if public_mode:
         from .public_stock_services import lock_public_stock_locations
@@ -108,6 +110,7 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
                       "inbound_number": inbound.inbound_number, "inbound_line_id": str(line.pk),
                       "raw_material_id": str(material.pk), "raw_bar_length_m": str(length),
                        "accepted_bar_count": bars, "accepted_meters": str(bars * length),
+                       **(ROOT_RECEIPT if by_roots else {}),
                        **({"bar_weight_kg": str(line.bar_weight_kg) if line.bar_weight_kg is not None else None,
                            "accepted_weight_kg": str(line.accepted_weight_kg)} if weight_mode else {}),
                        "zone_id": str(zone.pk)})
@@ -116,6 +119,7 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
     existing = MaterialStockMovement.objects.filter(**source).first()
     snapshot = {"schema_version": 2, "raw_bar_length_m": str(length), "accepted_bar_count": bars,
                 "raw_material_id": str(material.pk), "inbound_line_id": str(line.pk), "zone_id": str(zone.pk),
+                **(ROOT_RECEIPT if by_roots else {}),
                 **({"bar_weight_kg": str(line.bar_weight_kg) if line.bar_weight_kg is not None else None,
                     "accepted_weight_kg": str(line.accepted_weight_kg)} if weight_mode else {})}
     if existing:

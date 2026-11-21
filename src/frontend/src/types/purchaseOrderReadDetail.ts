@@ -2,6 +2,7 @@ import type { PurchaseOrderDetail, PurchaseOrderStatus } from './purchaseOrder'
 import type { PurchaseReturn } from './purchaseReturn'
 
 export type PurchaseReadLine = PurchaseOrderDetail['lines'][number] & {
+  receipt_quantity_mode?: 'ROOTS' | null
   color: string
   received_quantity: string
   accepted_quantity: string

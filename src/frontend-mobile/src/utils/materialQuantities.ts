@@ -17,6 +17,27 @@ export function unitsText(value: bigint): string {
 export function omittedQuantity(value: unknown): boolean {
   return String(value ?? '').trim() === '' || decimalUnits(value) === 0n
 }
+export function issueOrderOverages(rows: MaterialRequirement[], selected: Record<string, string>) {
+  const totals = new Map<string, { row: MaterialRequirement; requested: bigint; remaining: bigint }>()
+  for (const row of rows) {
+    const requested = decimalUnits(selected[row.requirement_id])
+    if (!requested || row.product_order_remaining === null) continue
+    // 旧半成品只有库存余额，公共半成品的不同工艺共享同一部位的订单需求。
+    if (row.line_type === 'SEMI' && row.stock_mode !== 'PUBLIC_V2') continue
+    const component = row.line_type === 'SEMI' && row.conversion_snapshot?.component_identity
+    const key = component ? `${component}:${row.unit}` : row.requirement_id
+    const remaining = decimalUnits(row.product_order_remaining ?? row.component_order_remaining ?? row.order_remaining)
+    if (remaining === null) throw new Error('领料需求数量无效，请刷新后重试。')
+    const total = totals.get(key)
+    if (total) total.requested += requested
+    else totals.set(key, { row, requested, remaining })
+  }
+  return [...totals.values()].filter(item => item.requested > item.remaining).map(({ row, requested, remaining }) => {
+    const part = row.conversion_snapshot?.public_bom_snapshot?.line?.part_name || row.conversion_snapshot?.part_name || row.part_names?.join('、')
+    const name = [...new Set([row.material_name, part, row.specification, row.line_type === 'RAW' ? row.color : ''].filter(Boolean))].join(' · ')
+    return `${name}\n剩余需求 ${unitsText(remaining)} ${row.unit}，本次领 ${unitsText(requested)} ${row.unit}，超出 ${unitsText(requested - remaining)} ${row.unit}`
+  })
+}
 function pipeCuts(row: MaterialRequirement): bigint {
   const value = row.conversion_snapshot?.pieces_per_bar
   return Number.isSafeInteger(value) && Number(value) > 0 ? BigInt(value!) : 0n

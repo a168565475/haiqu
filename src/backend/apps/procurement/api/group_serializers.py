@@ -68,7 +68,6 @@ class PurchaseBatchCreateSerializer(serializers.Serializer):
     request_id = serializers.UUIDField()
     batch_type = serializers.ChoiceField(choices=PurchaseBatchType.choices)
     currency_id = serializers.UUIDField()
-    is_mailed = serializers.BooleanField(required=False, allow_null=True, default=None)
     lines = PurchaseBatchLineSerializer(many=True, allow_empty=False, max_length=5000)
 
     def validate_lines(self, lines):
@@ -97,6 +96,7 @@ class PurchaseGroupProgressLineSerializer(serializers.Serializer):
     accepted_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True)
     purchased_bar_count = serializers.DecimalField(max_digits=30, decimal_places=0, allow_null=True, read_only=True)
     accepted_bar_count = serializers.DecimalField(max_digits=30, decimal_places=0, allow_null=True, read_only=True)
+    receipt_quantity_mode = serializers.CharField(allow_null=True, read_only=True)
     in_progress_quantity = serializers.DecimalField(max_digits=30, decimal_places=4, allow_null=True, read_only=True)
     in_progress_bar_count = serializers.DecimalField(max_digits=30, decimal_places=0, allow_null=True, read_only=True)
     progress_percent = serializers.DecimalField(max_digits=38, decimal_places=4, allow_null=True)

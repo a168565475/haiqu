@@ -76,7 +76,7 @@ function openDetails(row: ProcurementInboundOrder) {
   void router.push({ name: 'purchase-inbound-detail', params: { id: row.id } })
 }
 function receivingActionLabel(row: ProcurementInboundOrder): string {
-  return Number(row.received_quantity) > 0 ? '再次入库' : '办理入库'
+  return row.pending_quality_count || row.confirmed_batch_count || Number(row.received_quantity) > 0 ? '再次入库' : '办理入库'
 }
 function receiptProgress(row: ProcurementInboundOrder): number | null {
   const value = row.receipt_progress_percent

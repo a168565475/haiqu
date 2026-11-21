@@ -51,6 +51,7 @@ from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import AccessoryMaterial, FabricMaterial, ProductColor, ReferenceStatus
 from apps.reference_data.pinyin_search import build_pinyin_search
 from ..pipe_receipts import estimated_receipt_roots
+from ..pipe_receipt_basis import root_receipt_line_ids
 from ..purchase_receiving_sections import (
     SECTION_BY_CATEGORY, assigned_receiving_sections, receiving_categories, receiving_lines_in_scope, with_receiving_section,
 )
@@ -76,6 +77,7 @@ from ..models import (
 )
 from ..selectors import (
     accepted_material_inbound_totals,
+    stock_purchase_bar_counts,
     eligible_material_lines,
     eligible_material_purchase_orders,
     finished_goods_inventory_rows,
@@ -813,12 +815,14 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             ).select_related("purchase_order").order_by("purchase_order__order_number", "line_number", "id")
             lines = [line for line in candidates if build_catalog_stock_identity(material_catalog_id=line.material_catalog_id,
                 material_selection_snapshot=line.material_selection_snapshot, raw_bar_length_m=line.raw_bar_length_m)["identity_key"] == catalog.identity_key]
-            totals = accepted_material_inbound_totals(MaterialInboundLine.objects.filter(
-                purchase_order_line_id__in=[line.pk for line in lines]))
+            receipts = MaterialInboundLine.objects.filter(purchase_order_line_id__in=[line.pk for line in lines])
+            totals = accepted_material_inbound_totals(receipts)
+            bar_counts = stock_purchase_bar_counts(lines, receipts, totals)
             return Response({"data": [{"purchase_order_id": str(line.purchase_order_id), "purchase_order_number": line.purchase_order.order_number,
                 "production_task_id": str(line.purchase_order.production_task_id) if line.purchase_order.production_task_id else None,
                 "production_task_number": line.purchase_order.production_task_number_snapshot,
                 "purchase_quantity": str(line.actual_purchase_quantity or 0),
+                "bar_counts": bar_counts.get(line.pk),
                 "actual_inbound_quantity": str(totals.get(line.pk, 0)) if totals.get(line.pk, 0) is not None else None,
                 "pending_inbound_quantity": str(max((line.actual_purchase_quantity or 0) - totals.get(line.pk, 0), 0))
                     if totals.get(line.pk, 0) is not None else None,
@@ -878,10 +882,12 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         )
         if has_conflicting_line:
             raise Conflict("采购明细存在多个已冻结库存原料身份，追溯数量不可靠，请先完成受控数据修复。")
-        inbound_totals = accepted_material_inbound_totals(MaterialInboundLine.objects.filter(
+        receipts = MaterialInboundLine.objects.filter(
             purchase_order_line_id__in=[line.pk for line in lines],
             raw_material_information=material,
-        ))
+        )
+        inbound_totals = accepted_material_inbound_totals(receipts)
+        bar_counts = stock_purchase_bar_counts(lines, receipts, inbound_totals)
         rows = []
         for line in lines:
             inbound = inbound_totals.get(line.pk, 0)
@@ -892,6 +898,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "production_task_id": str(line.purchase_order.production_task_id) if line.purchase_order.production_task_id else None,
                 "production_task_number": line.purchase_order.production_task_number_snapshot,
                 "purchase_quantity": str(purchased),
+                "bar_counts": bar_counts.get(line.pk),
                 "actual_inbound_quantity": str(inbound) if inbound is not None else None,
                 "pending_inbound_quantity": str(max(purchased - inbound, 0)) if inbound is not None else None,
                 "unit": line.source_unit_text,
@@ -1033,13 +1040,15 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 | Q(Exists(lines.filter(purchase_order_id=OuterRef("pk"), supplier_name_snapshot__icontains=keyword)))
             ).distinct()
         orders = list(queryset[:500])
-        totals = material_received_totals([line.pk for order in orders for line in order.lines.all()])
+        purchase_lines = [line for order in orders for line in order.lines.all()]
+        root_ids = root_receipt_line_ids(purchase_lines)
+        totals = material_received_totals([line.pk for line in purchase_lines])
         data = []
         for order in orders:
             remaining_lines = [
                 line for line in order.lines.all()
                 if line.actual_purchase_quantity is not None
-                and line.actual_purchase_quantity - totals.get(line.pk, 0) > 0
+                and (line.actual_bar_count if line.pk in root_ids else line.actual_purchase_quantity) > totals.get(line.pk, 0)
             ]
             if not remaining_lines:
                 continue
@@ -1092,11 +1101,12 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         product_summaries = procurement_inbound_product_summaries(orders)
         purchase_lines = [line for order in orders for line in order.lines.all()]
         received_totals = material_received_totals([line.pk for line in purchase_lines])
+        root_ids = root_receipt_line_ids(purchase_lines)
         receipt_lines = receiving_lines_in_scope(
             MaterialInboundLine.objects.all(), sections, order_field="inbound__purchase_order",
         ) if sections is not None else None
         batch_totals = material_inbound_order_totals(order_ids, receipt_lines=receipt_lines)
-        receipt_progress_by_order = material_receipt_progress(purchase_lines)
+        receipt_progress_by_order = material_receipt_progress(purchase_lines, root_ids=root_ids)
         return_statuses_by_order = {order_id: set() for order_id in order_ids}
         for order_id, return_status in PurchaseReturn.objects.filter(
             inbound__purchase_order_id__in=order_ids,
@@ -1108,7 +1118,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             lines = [line for line in order.lines.all() if line.actual_purchase_quantity is not None]
             remaining_lines = [
                 line for line in lines
-                if line.actual_purchase_quantity - received_totals.get(line.pk, 0) > 0
+                if (line.actual_bar_count if line.pk in root_ids else line.actual_purchase_quantity) > received_totals.get(line.pk, 0)
             ]
             progress = batch_totals.get(order.pk, {})
             pending_count = progress.get("pending_count", 0)
@@ -1118,8 +1128,11 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             received_weight_quantity = progress.get("received_weight_quantity", 0)
             return_weight_quantity = progress.get("return_weight_quantity", 0)
             # 混合单位不展示相加后的数量，避免把 kg、米、件混成一个数字。
-            weight_unit = bool(lines) and all(str(line.source_unit_text or "").strip().upper() in {"KG", "千克", "公斤"} for line in lines)
-            quantity_unit = 'kg' if weight_unit else next(iter({line.source_unit_text for line in lines}), '') if len({line.source_unit_text for line in lines}) <= 1 else 'MIXED'
+            units = {'根' if line.pk in root_ids else 'kg' if str(line.source_unit_text).upper() in {'KG', '千克', '公斤'}
+                     else line.source_unit_text for line in lines}
+            quantity_unit = next(iter(units), '') if len(units) <= 1 else 'MIXED'
+            mixed_root_units = quantity_unit == 'MIXED' and any(line.pk in root_ids for line in lines)
+            weight_unit = quantity_unit == 'kg'
             return_statuses = return_statuses_by_order.get(order.pk, set())
             if PurchaseReturnStatus.QUALITY_GENERATED in return_statuses:
                 current_return_status = PurchaseReturnStatus.QUALITY_GENERATED
@@ -1157,8 +1170,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                     if order.source_type == "PRODUCTION" and key in remaining_sections],
                 "pending_quality_count": pending_count,
                 "confirmed_batch_count": confirmed_count,
-                "received_quantity": f"{received_quantity:.4f}",
-                "return_quantity": f"{return_quantity:.4f}",
+                "received_quantity": None if mixed_root_units else f"{received_quantity:.4f}",
+                "return_quantity": None if mixed_root_units else f"{return_quantity:.4f}",
                 "received_weight_quantity": f"{received_weight_quantity:.4f}" if received_weight_quantity is not None else None,
                 "return_weight_quantity": f"{return_weight_quantity:.4f}" if return_weight_quantity is not None else None,
                 "weight_unit": weight_unit,
@@ -1250,15 +1263,18 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             sections = receiving_categories(sections, section)
         visible_lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), sections)
         lines = eligible_material_lines(order_id, read_optimized=True, receiving_lines=visible_lines)
-        warehouse_suggestions = material_receiving_warehouse_suggestions([line for line, _remaining in lines])
+        warehouse_suggestions = material_receiving_warehouse_suggestions([line for line, _, _mode in lines])
         rows = []
-        for line, remaining in lines:
+        for line, remaining, receipt_mode in lines:
             from apps.inventory.hardware_receipts import is_hardware_weight, hardware_piece_unit
             hardware_weight = is_hardware_weight(line)
             weight_unit = line.source_unit_text in {"KG", "kg", "千克"}
             raw_bar_weight_kg = getattr(line, "raw_bar_weight_kg", None)
             remaining_bar_count = None
-            if weight_unit and raw_bar_weight_kg:
+            root_receipt = receipt_mode == 'ROOTS'
+            if root_receipt:
+                remaining_bar_count = int(remaining)
+            elif weight_unit and raw_bar_weight_kg:
                 remaining_bar_count = estimated_receipt_roots(
                     remaining, raw_bar_weight_kg, round_down=order.source_type == "PRODUCTION")
             elif line.raw_bar_length_m:
@@ -1285,7 +1301,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "weight_unit": weight_unit,
                 "measurement_kind": "HARDWARE_WEIGHT" if hardware_weight else "PIPE" if line.raw_bar_length_m else "OTHER",
                 "piece_unit": hardware_piece_unit(line) if hardware_weight else "",
-                "quantity_unit": hardware_piece_unit(line) if hardware_weight else line.source_unit_text,
+                "quantity_unit": '根' if root_receipt else hardware_piece_unit(line) if hardware_weight else line.source_unit_text,
+                "receipt_quantity_mode": receipt_mode,
                 "unit_weight_kg": (line.calculation_snapshot or {}).get("hardware_unit_weight_kg") if hardware_weight else None,
                 "supplier_name": line.supplier_name_snapshot,
                 "purchased_quantity": f"{line.actual_purchase_quantity:.4f}",
@@ -1294,7 +1311,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 'actual_bar_count': line.actual_bar_count,
                 'remaining_bar_count': remaining_bar_count,
                 "remaining_quantity": f"{remaining:.4f}",
-                "remaining_weight_kg": f"{remaining:.4f}" if weight_unit else None,
+                "remaining_weight_kg": f"{remaining:.4f}" if weight_unit and not root_receipt else None,
                 "pinyin_search": build_pinyin_search(text),
             })
         data = {"data": rows}

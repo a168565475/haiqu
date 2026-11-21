@@ -8,6 +8,7 @@ from rest_framework.generics import get_object_or_404
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.audit import write_audit_log
 from apps.core.daily_numbering import next_daily_business_number
+from apps.inventory.pipe_receipt_basis import is_root_receipt
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
 from .exceptions import FinanceConflict
 from .purchase_payable_models import PurchasePayable, PurchasePayableLine, PurchasePayableStatus
@@ -17,7 +18,9 @@ MONEY_QUANTUM = Decimal("0.01")
 
 
 def payable_quantity(line):
-    """返回与采购计价单位一致的合格数量；KG仅使用已有重量，不做其他单位换算。"""
+    """取本批质检冻结的采购计价量，管材的结算公斤和实重分别保存。"""
+    if is_root_receipt(line):
+        return Decimal(line.calculation_snapshot["settlement_weight_kg"])
     unit = (line.source_unit_text_snapshot or "").strip().upper()
     if unit in {"KG", "千克"} and line.accepted_weight_kg is not None:
         return line.accepted_weight_kg

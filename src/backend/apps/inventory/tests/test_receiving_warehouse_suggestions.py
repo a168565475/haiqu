@@ -89,14 +89,14 @@ class ReceivingWarehouseSuggestionContractTests(SimpleTestCase):
         line = PurchaseOrderLine(line_number=1, actual_purchase_quantity=Decimal("10"),
                                  material_selection_snapshot=snapshot)
         legacy = PurchaseOrderLine(line_number=2, actual_purchase_quantity=Decimal("3"))
-        request = SimpleNamespace(query_params={"purchase_order_id": str(uuid4())})
+        request = SimpleNamespace(query_params={"purchase_order_id": str(uuid4())}, user=SimpleNamespace(is_superuser=True))
         with patch.object(MaterialInventoryViewSet, "_accessible_task_ids", return_value=[]), \
                 patch("apps.inventory.api.views.purchase_order_access", return_value=Q()), \
                 patch("apps.inventory.api.views.PurchaseOrder.objects.filter") as orders, \
-                patch("apps.inventory.api.views.eligible_material_lines", return_value=[(line, Decimal("8")), (legacy, Decimal("3"))]), \
+                patch("apps.inventory.api.views.eligible_material_lines", return_value=[(line, Decimal("8"), None), (legacy, Decimal("3"), None)]), \
                 patch("apps.inventory.api.views.material_receiving_warehouse_suggestions", return_value={line.pk: warehouse_id}), \
                 patch("apps.inventory.api.views.etag_for_instance", return_value='"version"'):
-            orders.return_value.first.return_value = SimpleNamespace()
+            orders.return_value.first.return_value = SimpleNamespace(source_type="PRODUCTION")
             response = MaterialInventoryViewSet().eligible_lines(request)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"][0]["suggested_warehouse_id"], warehouse_id)
@@ -113,11 +113,11 @@ class ReceivingWarehouseSuggestionContractTests(SimpleTestCase):
             raw_bar_length_m=Decimal("6"),
             raw_bar_weight_kg=Decimal("2.5"),
         )
-        request = SimpleNamespace(query_params={"purchase_order_id": str(uuid4())})
+        request = SimpleNamespace(query_params={"purchase_order_id": str(uuid4())}, user=SimpleNamespace(is_superuser=True))
         with patch.object(MaterialInventoryViewSet, "_accessible_task_ids", return_value=[]), \
                 patch("apps.inventory.api.views.purchase_order_access", return_value=Q()), \
                 patch("apps.inventory.api.views.PurchaseOrder.objects.filter") as orders, \
-                patch("apps.inventory.api.views.eligible_material_lines", return_value=[(line, Decimal("4.1"))]), \
+                patch("apps.inventory.api.views.eligible_material_lines", return_value=[(line, Decimal("4.1"), None)]), \
                 patch("apps.inventory.api.views.material_receiving_warehouse_suggestions", return_value={}), \
                 patch("apps.inventory.api.views.etag_for_instance", return_value='"version"'):
             orders.return_value.first.return_value = SimpleNamespace(source_type="PRODUCTION")

@@ -24,6 +24,12 @@ describe('采购入库历史重量口径', () => {
       .toEqual(['材料分区 五金件、塑料件、包材', '材料分区 未登记'])
     wrapper.unmount()
   })
+  it.each([false, true])('按根收货的采购和仓库记录都使用实收、合格、退货根数（仓库 %s）', showPipeRoots => {
+    const wrapper = mountHistory({ received_weight_kg: null, accepted_weight_kg: null, return_weight_kg: null,
+      calculation_snapshot: { receipt_quantity_mode: 'ROOTS' } }, showPipeRoots)
+    expect(wrapper.findAll('tbody td.numeric').map(cell => cell.text())).toEqual(['20 根', '18 根', '2 根'])
+    wrapper.unmount()
+  })
   it('KG管材使用实际重量，隐藏根数与旧米数', () => {
     const wrapper = mountHistory()
     expect(wrapper.findAll('tbody td.numeric').map(cell => cell.text())).toEqual(['25.25 kg', '22.75 kg', '2.5 kg'])

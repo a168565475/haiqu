@@ -11,7 +11,7 @@ import {
   fetchMaterialRequirements, materialIssueProductImageUrl, submitMaterialIssue, updateMaterialIssue,
 } from '@/api/materialIssues'
 import MaterialIssuePartitions from '@/components/workshop/MaterialIssuePartitions.vue'
-import { issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
+import { issueOrderOverages, issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
 import type { MaterialIssueBatch } from '@/types/materialIssue'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
@@ -106,10 +106,13 @@ async function loadProducts(clear = true) {
   if (clear) { form.product_line_id = ''; requirements.value = []; Object.keys(selected).forEach((key) => delete selected[key]) }
   products.value = form.production_task_id ? await fetchEligibleMaterialIssueProducts(form.production_task_id) : []
 }
+function readRequirements() {
+  return fetchMaterialRequirements(form.production_task_id, form.product_line_id, form.workshop_id, loadedIssueId.value || undefined, planCategory.value || undefined)
+}
 async function loadRequirements(restore?: Map<string, string>) {
   requirements.value = []; blockers.value = []
   if (!form.production_task_id || !form.product_line_id || !form.workshop_id) return
-  const data = await fetchMaterialRequirements(form.production_task_id, form.product_line_id, form.workshop_id, loadedIssueId.value || undefined, planCategory.value || undefined)
+  const data = await readRequirements()
   requirements.value = data.items; blockers.value = data.blockers
   Object.keys(selected).forEach((key) => delete selected[key])
   if (restore) {
@@ -174,11 +177,38 @@ function payload() {
   }
   return data
 }
+async function confirmOrderQuantities() {
+  const { items, blockers: latestBlockers } = await readRequirements()
+  const currentIds = new Set(items.map(item => item.requirement_id))
+  if (recordedRows.value.some(item => !currentIds.has(item.requirement_id))) {
+    ElMessage.warning('已选物料的领料范围有变，请刷新页面后重新核对。')
+    return false
+  }
+  const directIds = new Set(selectedRows.value.filter(item => item.source_kind === 'CUTTING_DIRECT').map(item => item.requirement_id))
+  requirements.value = items.map(item => directIds.has(item.requirement_id) ? { ...item, source_kind: 'CUTTING_DIRECT' } : item)
+  blockers.value = latestBlockers
+  const message = validate()
+  if (message) { ElMessage.warning(message); return false }
+  const overages = issueOrderOverages(items, selected)
+  if (!overages.length) return true
+  try {
+    await ElMessageBox.confirm(overages.join('\n\n'), '领料超出本产品需求', {
+      type: 'warning', confirmButtonText: '确认提交', cancelButtonText: '返回修改',
+      customClass: 'material-issue-overage-dialog', closeOnClickModal: false,
+    })
+    return true
+  } catch (reason) {
+    if (reason === 'cancel' || reason === 'close') return false
+    throw reason
+  }
+}
 async function save(submit: boolean) {
+  if (saving.value) return
   if (editing.value && !editLoadComplete.value) { ElMessage.warning('编辑数据尚未完整加载，请先重试。'); return }
   if (submit) { const message = validate(); if (message) { ElMessage.warning(message); return } }
   saving.value = true
   try {
+    if (submit && !await confirmOrderQuantities()) return
     const targetId = issueId.value || persistedIssueId.value
     const targetEtag = etag.value || persistedEtag.value
     const result = targetId
@@ -312,7 +342,7 @@ onMounted(initialize)
       <ElEmpty :description="contextError"><ElButton type="primary" @click="router.push({ name: 'workshop-metalworking-plan' })">返回作业计划</ElButton></ElEmpty>
     </section>
     <template v-else>
-      <div class="material-issue-scroll">
+      <div class="material-issue-scroll" :inert="saving">
         <header class="form-titlebar">
           <div class="form-title-copy">
             <h1>{{ editing ? '修改车间领料单' : '新增车间领料单' }}</h1>
@@ -374,7 +404,7 @@ onMounted(initialize)
       <footer class="form-action-footer">
         <span><b>原材料 {{ recordedRows.filter(r => r.line_type === 'RAW').length }} 项 · 半成品 {{ recordedRows.filter(r => r.line_type === 'SEMI').length }} 项</b><i></i>不同单位的物料 / 半成品，按各自计量单位领料</span>
         <div>
-          <ElButton :icon="ArrowLeft" @click="router.back()">{{ editing ? '返回详情' : '返回' }}</ElButton>
+          <ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">{{ editing ? '返回详情' : '返回' }}</ElButton>
           <ElButton :loading="saving" :icon="DocumentChecked" @click="save(false)">保存草稿</ElButton>
           <ElButton type="primary" :loading="saving" :icon="Check" @click="save(true)">{{ editing ? '重新提交审核' : '提交仓库审核' }}</ElButton>
         </div>
@@ -386,6 +416,8 @@ onMounted(initialize)
 <style scoped lang="scss">
 @use '@/styles/materialIssue';
 @use '@/styles/theme/detail' as detail;
+:global(.material-issue-overage-dialog) { --el-messagebox-width: 520px; }
+:global(.material-issue-overage-dialog .el-message-box__message) { white-space: pre-line; max-height: 55vh; overflow-y: auto; }
 .material-issue-page.material-issue-form { --el-color-primary: var(--erp-color-brand); height: auto; min-height: 0; display: flex; flex-direction: column; overflow: visible; background: transparent; }
 .material-issue-form :deep(.mi-surface) { @include detail.surface; }
 .material-issue-scroll { flex: none; min-height: 0; overflow: visible; }

@@ -4,10 +4,10 @@ import { MoreFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { fetchPurchaseReceiptRecord, fetchPurchaseReceiptRecords } from '@/api/inventory'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import ReceiptRecordMaterialTables from '@/components/inventory/ReceiptRecordMaterialTables.vue'
 import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
-import { materialSpecificationValue } from '@/utils/materialAttributes'
-import { formatInboundProductField, formatQuantity, formatTime } from '@/views/procurement/purchaseOrderDetailDisplay'
+import { formatInboundProductField, formatTime } from '@/views/procurement/purchaseOrderDetailDisplay'
 import type { PurchaseReceiptRecord, PurchaseReceiptRecordsPage, PurchaseReceiptStatus } from '@/types/inventory'
 
 const router = useRouter()
@@ -29,6 +29,7 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
 const detail = ref<Awaited<ReturnType<typeof fetchPurchaseReceiptRecord>>>()
+const detailRecord = ref<PurchaseReceiptRecord>()
 let detailRequestId = 0
 
 async function load() {
@@ -58,6 +59,7 @@ function reset() {
 }
 async function openDetail(row: PurchaseReceiptRecord) {
   const current = ++detailRequestId
+  detailRecord.value = row
   detail.value = undefined
   detailError.value = ''
   detailOpen.value = true
@@ -128,18 +130,20 @@ onMounted(load)
     <AppWindowDialog v-model="detailOpen" title="入库记录详情" width="80vw" :height="600" @closed="detailRequestId++">
       <div v-loading="detailLoading" class="receipt-detail">
         <ElAlert v-if="detailError" :title="detailError" type="error" :closable="false" />
-        <PurchaseInboundHistory v-if="detail?.source === 'PURCHASE'" :purchase-order-id="detail.data.purchase_order_id" :inbounds="[detail.data]" embedded expand-single />
+        <template v-if="detail?.source === 'PURCHASE'">
+          <div v-if="detailRecord" class="receipt-meta">
+            <span v-if="detailRecord.production_task_number">生产任务单号 <strong>{{ detailRecord.production_task_number }}</strong></span>
+            <span v-if="detailRecord.purchase_order_number">采购单号 <strong>{{ detailRecord.purchase_order_number }}</strong></span>
+          </div>
+          <PurchaseInboundHistory :purchase-order-id="detail.data.purchase_order_id" :inbounds="[detail.data]" embedded expand-single>
+            <template #material-details="{ quantity }">
+              <ReceiptRecordMaterialTables :receipt="{ ...detail, productionTaskNumber: detailRecord?.production_task_number, formatQuantity: quantity }" />
+            </template>
+          </PurchaseInboundHistory>
+        </template>
         <template v-else-if="detail?.source === 'TRANSFER'">
-          <div class="transfer-meta"><strong>{{ detail.data.transfer_number }}</strong><span>材料收发</span><span>已入库</span><span>{{ detail.data.transfer_date }}</span><span>{{ detail.data.operated_by_name }}</span></div>
-          <ElTable :data="detail.data.lines" row-key="line_key">
-            <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ row.catalog_name || '—' }}</template></ElTableColumn>
-            <ElTableColumn label="规格" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ materialSpecificationValue(row) }}</template></ElTableColumn>
-            <ElTableColumn label="入库数量" min-width="100" align="right"><template #default="{ row }">{{ formatQuantity(row.quantity) }}</template></ElTableColumn>
-            <ElTableColumn prop="unit_name" label="单位" width="72" />
-            <ElTableColumn label="实际重量（kg）" min-width="120" align="right"><template #default="{ row }">{{ formatQuantity(row.weight_quantity) }}</template></ElTableColumn>
-            <ElTableColumn prop="warehouse_name" label="仓库" min-width="126" show-overflow-tooltip />
-            <ElTableColumn prop="zone_name" label="库区" min-width="110" show-overflow-tooltip />
-          </ElTable>
+          <div class="receipt-meta"><strong>{{ detail.data.transfer_number }}</strong><span>材料收发</span><span>已入库</span><span>{{ detail.data.transfer_date }}</span><span>{{ detail.data.operated_by_name }}</span></div>
+          <ReceiptRecordMaterialTables :receipt="detail" />
           <p v-if="detail.data.remark" class="transfer-remark">备注 {{ detail.data.remark }}</p>
         </template>
       </div>
@@ -152,6 +156,6 @@ onMounted(load)
 .receipt-status { width: 174px; }
 .row-more-button { width: 36px; height: 32px; margin: 0; color: var(--erp-table-text); }
 .receipt-detail { min-height: 120px; }
-.transfer-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 12px; }
+.receipt-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 12px; }
 .transfer-remark { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

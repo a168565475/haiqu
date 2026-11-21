@@ -12,6 +12,7 @@ import { materialAttributeFields, materialSpecificationValue, type MaterialAttri
 import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal, quantityWithUnit } from './purchaseOrderDetailDisplay'
 import { setPriceText } from './purchaseSetPricing'
 import { isHardwareWeightLine, isKilogramUnit } from './purchaseWeight'
+import ReceiptRecordMaterialTables from '@/components/inventory/ReceiptRecordMaterialTables.vue'
 import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 
 type Tab = 'materials' | 'inbounds' | 'returns' | 'completion'
@@ -145,11 +146,17 @@ function receiptText(line: PurchaseReadLine | PurchaseReadInboundLine, kind: 're
   }
   return purchaseQuantityText(quantityValue(line, kind, value), unit, line.raw_bar_length_m, line[`${kind}_bar_count`])
 }
+function orderQuantityText(line: PurchaseReadLine) {
+  return purchaseQuantityText(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count)
+}
+function warehouseMaterialQuantities(line: PurchaseReadLine) {
+  return [orderQuantityText(line), receiptText(line, 'received'), receiptText(line, 'return'), receiptText(line, 'accepted')]
+}
 const rows = computed<RecordRow[]>(() => {
   if (!order.value) return []
   if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line,
     cells: {
-    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: purchaseQuantityText(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count),
+    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: orderQuantityText(line),
     price: setPriceText(line) || `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id ? '—' : formatMoney(line.amount), received: receiptText(line, 'received'),
     accepted: receiptText(line, 'accepted'), returned: receiptText(line, 'return'),
   } }))
@@ -248,7 +255,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <header class="detail-heading">
       <div class="heading-identity"><h1>{{ fromInbound ? '采购入库详情' : '采购订单详情' }}</h1><span v-if="order" class="detail-tag" :class="statusTone(headerStatus)">{{ headerStatusLabel }}</span><span class="readonly-label">只读</span></div>
       <div class="heading-actions">
-        <button v-if="order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
+        <button v-if="!fromInbound && order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
         <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : order?.purchase_group_id && canReadGroup && !groupError ? '采购需求' : '采购订单' }}</button>
       </div>
     </header>
@@ -273,7 +280,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           </ElTooltip><span v-else>未分配供应商</span>
         </dd></div>
         <div><dt>采购员</dt><dd :title="order.created_by_name">{{ order.created_by_name || '—' }}</dd></div>
-        <div><dt>采购金额{{ order.currency_code && order.currency_code !== 'CNY' ? `（${order.currency_code}）` : '' }}</dt><dd class="order-amount">{{ order.total_amount === null ? '—' : `${order.currency_symbol || ''}${formatMoney(order.total_amount)}` }}</dd></div>
+        <div v-if="!fromInbound"><dt>采购金额{{ order.currency_code && order.currency_code !== 'CNY' ? `（${order.currency_code}）` : '' }}</dt><dd class="order-amount">{{ order.total_amount === null ? '—' : `${order.currency_symbol || ''}${formatMoney(order.total_amount)}` }}</dd></div>
       </dl>
       <section class="detail-content-card">
       <nav class="detail-tabs" role="tablist" aria-label="采购明细分类">
@@ -284,7 +291,13 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <template v-if="order.completed_at"><dl><div><dt>采购状态</dt><dd><span class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span></dd></div><div><dt>完成人</dt><dd>{{ order.completed_by_name || '—' }}</dd></div><div><dt>完成时间</dt><dd>{{ formatTime(order.completed_at) }}</dd></div></dl><p><span>完成备注</span>{{ order.completion_remark || '—' }}</p></template>
           <p v-else class="empty-record">暂无完成记录</p>
         </div>
-        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :colors="inboundColors" :hide-material-section="order.source_type === 'SAMPLE'" embedded />
+        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :hide-material-section="order.source_type === 'SAMPLE'" embedded>
+          <template #material-details="{ record, quantity }">
+            <ReceiptRecordMaterialTables :receipt="{ source: 'PURCHASE', data: record, productionTaskNumber: order.production_task_number, fallbackColors: inboundColors, formatQuantity: quantity }" />
+          </template>
+        </PurchaseInboundHistory>
+        <ReceiptRecordMaterialTables v-else-if="fromInbound && activeTab === 'materials'"
+          :receipt="{ source: 'ORDER', data: { lines: order.lines }, formatQuantities: warehouseMaterialQuantities, totals: [totals.purchase, totals.received, totals.returned, totals.accepted] }" />
         <div v-else class="detail-table-scroll" tabindex="0" :aria-label="`${tabs.find(tab => tab.key === activeTab)?.label}表格`">
           <table class="detail-table" :style="{ minWidth: `${tableWidth}px` }" :data-testid="`detail-table-${activeTab}`">
             <colgroup><col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>

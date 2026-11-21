@@ -38,7 +38,7 @@ function materialCategory(line: ReceiptMaterialLine): string {
     ?? materialCategories.find(category => category.aliases.includes(categoryName)))?.key ?? 'OTHER'
 }
 
-export function receiptMaterialTables<Row extends { line: ReceiptMaterialLine; included: boolean }>(rows: Row[], grouped = true) {
+export function receiptMaterialTables<Row extends { line: ReceiptMaterialLine; included?: boolean }>(rows: Row[], grouped = true) {
   const sections = grouped && rows.length ? materialCategories : [{ key: 'ALL', label: '', aliases: [] }]
   const rowsByCategory = new Map<string, Row[]>()
   for (const row of rows) {

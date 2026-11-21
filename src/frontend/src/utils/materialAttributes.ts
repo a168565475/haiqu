@@ -68,7 +68,7 @@ export function materialAttributeText(source: MaterialAttributeSource): string {
   return materialAttributeFields(source).map((field) => `${field.label}：${field.value}`).join('\n') || '暂无物料属性'
 }
 
-export function materialAttributeTable(sources: (MaterialAttributeSource & { raw_bar_length_m?: string | number | null })[]) {
+export function materialAttributeTable(sources: (MaterialAttributeSource & { raw_bar_length_m?: string | number | null; fallbackColor?: string })[]) {
   const columns = new Set<string>()
   const cells = sources.map(source => {
     const values = new Map<string, string>()
@@ -77,6 +77,8 @@ export function materialAttributeTable(sources: (MaterialAttributeSource & { raw
       const value = text(field.value)
       if (value) values.set(field.label, value)
     }
+    const fallbackColor = text(source.fallbackColor)
+    if (fallbackColor && !values.has('颜色')) values.set('颜色', fallbackColor)
     if (source.raw_bar_length_m) values.set('单根长度', `${compactDecimal(source.raw_bar_length_m)} 米`)
     for (const label of values.keys()) columns.add(label)
     return values

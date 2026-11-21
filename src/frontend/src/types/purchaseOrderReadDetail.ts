@@ -25,6 +25,7 @@ export interface PurchaseReadInboundLine {
   section_title_snapshot?: string
   calculation_snapshot?: Record<string, unknown>
   raw_bar_length_m?: string | null
+  bar_weight_kg?: string | null
   received_bar_count?: number | null
   accepted_bar_count?: number | null
   return_bar_count?: number | null

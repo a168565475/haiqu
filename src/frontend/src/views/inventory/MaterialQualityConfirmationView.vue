@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { hardwareReferenceCount } from '@/views/procurement/purchaseWeight'
-import { pipeMeters, pipeRootsFromMeters } from '@/utils/pipeQuantities'
+import { pipeMeters, pipeRootsFromMeters, weighedProductionPipe } from '@/utils/pipeQuantities'
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { isCancel } from 'axios'
@@ -58,11 +58,6 @@ function scaled(value: string): bigint | null {
   if (!/^\d{1,14}(\.\d{1,4})?$/.test(value)) return null
   const [whole = '0', fraction = ''] = value.split('.')
   return BigInt(whole) * 10000n + BigInt(fraction.padEnd(4, '0'))
-}
-function weighedProductionPipe(line: MaterialInboundLine): line is MaterialInboundLine & { received_weight_kg: string; received_bar_count: number } {
-  return line.measurement_kind === 'PIPE' && !!line.purchase_order_line_id && line.received_weight_kg != null
-    && (line.received_bar_count ?? 0) > 0 && (scaled(String(line.bar_weight_kg ?? '')) ?? 0n) > 0n
-    && (!!line.production_task_number_snapshot || line.calculation_snapshot?.receipt_root_rounding === 'FLOOR')
 }
 function inspectByRoots(line: MaterialInboundLine): boolean {
   return line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS' || weighedProductionPipe(line)

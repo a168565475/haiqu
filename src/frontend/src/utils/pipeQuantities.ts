@@ -12,6 +12,25 @@ export function pipeRootError(roots: unknown): string {
   return ''
 }
 
+interface WeighedPipeReceipt {
+  measurement_kind?: string
+  purchase_order_line_id: string | null
+  received_weight_kg?: string | null
+  received_bar_count?: number | null
+  bar_weight_kg?: string | null
+  production_task_number_snapshot?: string
+  calculation_snapshot?: Record<string, unknown>
+}
+
+export function weighedProductionPipe<T extends WeighedPipeReceipt>(
+  line: T, productionTaskNumber = line.production_task_number_snapshot,
+): line is T & { received_weight_kg: string; received_bar_count: number } {
+  const unitWeight = line.bar_weight_kg ?? ''
+  return line.measurement_kind === 'PIPE' && !!line.purchase_order_line_id && line.received_weight_kg != null
+    && (line.received_bar_count ?? 0) > 0 && /^\d{1,14}(?:\.\d{1,4})?$/.test(unitWeight) && Number(unitWeight) > 0
+    && (!!productionTaskNumber || line.calculation_snapshot?.receipt_root_rounding === 'FLOOR')
+}
+
 /** 米制采购按冻结原长整根收退，非整数倍不做近似换算。 */
 export function pipeRootsFromMeters(meters: string, length: string | null | undefined): string {
   if (!/^\d{1,14}(?:\.\d{1,4})?$/.test(meters) || !/^\d{1,14}(?:\.\d{1,3})?$/.test(length || '')) return ''

@@ -121,6 +121,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <span class="expand-label"><span class="expand-text">展开明细</span><span class="collapse-text">收起明细</span></span>
         </summary>
         <div class="record-body">
+          <slot name="material-details" :record="record" :quantity="quantity">
           <div class="record-table-scroll" tabindex="0" :aria-label="`${record.inbound_number}材料明细`">
             <table class="record-table" :style="showPipeRoots ? { minWidth: '1470px' } : undefined">
               <colgroup><col style="width: 220px" /><col style="width: 180px" /><col style="width: 180px" /><col v-for="kind in ['received', 'accepted', 'returned']" :key="kind" :style="{ width: showPipeRoots ? '170px' : '120px' }" /><col style="width: 180px" /><col style="width: 200px" /></colgroup>
@@ -140,6 +141,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
               </tbody>
             </table>
           </div>
+          </slot>
           <p v-if="record.remark" class="record-remark"><span>本次备注</span>{{ record.remark }}</p>
         </div>
       </details>

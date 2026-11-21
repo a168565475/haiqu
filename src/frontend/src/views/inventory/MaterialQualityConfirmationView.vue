@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { MaterialInbound, MaterialInboundLine } from '@/types/inventory'
 import { receiptMaterialAttributeColumnWidth, receiptMaterialLeadingColumnWidths, receiptMaterialTables, receiptMaterialTableWidth } from '@/utils/receiptMaterialTables'
 
-interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; quantityInputUnit: string; qualityRemark: string }
+interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; returnWeightKg: string; quantityInputUnit: string; qualityRemark: string }
 const auth = useAuthStore()
 const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
@@ -42,6 +42,10 @@ function openReceiptRecords() {
 const qualityDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
 const locked = computed(() => !owned.isCurrent() || loading.value || confirming.value || confirmed.value || !canConfirm.value)
 const selectedRows = computed(() => rows.value.filter(row => row.included))
+const bulkUnit = computed(() => {
+  const unit = selectedRows.value[0]?.quantityInputUnit
+  return unit && selectedRows.value.every(row => row.quantityInputUnit === unit) ? unit : '按行单位'
+})
 const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
   set: (value: boolean) => { if (!locked.value) rows.value.forEach(row => { row.included = value }) },
@@ -55,22 +59,27 @@ function scaled(value: string): bigint | null {
   const [whole = '0', fraction = ''] = value.split('.')
   return BigInt(whole) * 10000n + BigInt(fraction.padEnd(4, '0'))
 }
-function receivedByRoots(line: MaterialInboundLine): boolean {
-  return line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS'
+function weighedProductionPipe(line: MaterialInboundLine): line is MaterialInboundLine & { received_weight_kg: string; received_bar_count: number } {
+  return line.measurement_kind === 'PIPE' && !!line.purchase_order_line_id && line.received_weight_kg != null
+    && (line.received_bar_count ?? 0) > 0 && (scaled(String(line.bar_weight_kg ?? '')) ?? 0n) > 0n
+    && (!!line.production_task_number_snapshot || line.calculation_snapshot?.receipt_root_rounding === 'FLOOR')
+}
+function inspectByRoots(line: MaterialInboundLine): boolean {
+  return line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS' || weighedProductionPipe(line)
 }
 function isWeightPipe(line: MaterialInboundLine): boolean {
-  return !receivedByRoots(line) && line.measurement_kind === 'PIPE' && (String(line.source_unit_text_snapshot || '').toUpperCase() === 'KG' || line.received_weight_kg != null || line.bar_weight_kg != null)
+  return !inspectByRoots(line) && line.measurement_kind === 'PIPE' && (String(line.source_unit_text_snapshot || '').toUpperCase() === 'KG' || line.received_weight_kg != null || line.bar_weight_kg != null)
 }
 function isHardware(line: MaterialInboundLine): boolean { return line.measurement_kind === 'HARDWARE_WEIGHT' }
 function hardwarePieces(line: MaterialInboundLine): boolean { return isHardware(line) && !['KG', '千克', '公斤'].includes(String(line.quantity_unit || line.piece_unit || '').toUpperCase()) }
 function receivedPieces(line: MaterialInboundLine): string { return String(line.received_piece_count ?? line.received_quantity) }
 function receivedInput(row: QualityRow): string {
-  if (receivedByRoots(row.line)) return String(row.line.received_bar_count ?? '')
+  if (inspectByRoots(row.line)) return String(row.line.received_bar_count ?? '')
   if (isWeightPipe(row.line) || isHardware(row.line)) return String(row.line.received_weight_kg ?? '')
   return row.line.received_quantity
 }
 function returnRoots(row: QualityRow, quantity = row.returnQuantity): string {
-  if (receivedByRoots(row.line)) return /^\d{1,14}$/.test(quantity) ? quantity : ''
+  if (inspectByRoots(row.line)) return /^\d{1,14}$/.test(quantity) ? quantity : ''
   return pipeRootsFromMeters(quantity, row.line.raw_bar_length_m)
 }
 function acceptedPieces(row: QualityRow): bigint | null {
@@ -86,16 +95,24 @@ function acceptedPieces(row: QualityRow): bigint | null {
     row.line.calculation_snapshot?.hardware_unit_weight_kg)
 }
 function partialReturnLeavesLessThanOneBar(row: QualityRow): boolean {
-  if (row.line.calculation_snapshot?.receipt_root_rounding !== 'FLOOR') return false
+  if (!isWeightPipe(row.line) || row.line.calculation_snapshot?.receipt_root_rounding !== 'FLOOR') return false
   const received = scaled(receivedInput(row)), returned = scaled(row.returnQuantity)
   const barWeight = scaled(String(row.line.bar_weight_kg ?? ''))
   return received !== null && returned !== null && barWeight !== null && returned > 0n
     && returned < received && received - returned < barWeight
 }
+function partialWeighedReturn(row: QualityRow): boolean {
+  return weighedProductionPipe(row.line) && returnRoots(row) !== ''
+    && Number(row.returnQuantity) > 0 && Number(row.returnQuantity) < row.line.received_bar_count
+}
 function validRow(row: QualityRow): boolean {
   if (isWeightPipe(row.line) && !/^\d{1,14}(?:\.\d{1,4})?$/.test(row.returnQuantity)) return false
   if (row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line) && returnRoots(row) === '') return false
   const returned = scaled(row.returnQuantity), received = scaled(receivedInput(row))
+  if (partialWeighedReturn(row)) {
+    const weight = scaled(row.returnWeightKg)
+    if (weight === null || weight <= 0n || weight >= (scaled(row.line.received_weight_kg!) ?? 0n)) return false
+  }
   if (hardwarePieces(row.line)) {
     const count = acceptedPieces(row), receivedCount = scaled(receivedPieces(row.line))
     if (count === null || receivedCount === null || receivedCount % 10000n !== 0n
@@ -122,7 +139,7 @@ function formatScaled(value: bigint): string {
 function formatQuantity(value: string): string { const number = scaled(value); return number === null ? '—' : formatScaled(number) }
 function accepted(row: QualityRow): string { return validRow(row) ? formatScaled(scaled(receivedInput(row))! - scaled(row.returnQuantity)!) : '—' }
 function receivedQuantityText(line: MaterialInboundLine): string {
-  if (receivedByRoots(line)) return `${formatQuantity(String(line.received_bar_count))} 根`
+  if (inspectByRoots(line)) return `${formatQuantity(String(line.received_bar_count))} 根`
   if (isHardware(line) || isWeightPipe(line)) return line.received_weight_kg == null ? '重量未记录' : `${formatQuantity(line.received_weight_kg)} kg`
   return `${formatQuantity(line.received_quantity)} ${line.source_unit_text_snapshot}`
 }
@@ -131,7 +148,7 @@ function acceptedQuantityText(row: QualityRow): string {
   return quantity === '—' ? quantity : `${quantity} ${row.quantityInputUnit || ''}`.trim()
 }
 function quantityInputTitle(row: QualityRow): string {
-  if (receivedByRoots(row.line)) return `请填写退货整根数，最多 ${row.line.received_bar_count} 根。`
+  if (inspectByRoots(row.line)) return `请填写退货整根数，最多 ${row.line.received_bar_count} 根。`
   if (partialReturnLeavesLessThanOneBar(row)) return '剩余合格重量不足一整根，请核对退货重量。'
   if (hardwarePieces(row.line) && hardwareReferenceCount('1', row.line.calculation_snapshot?.hardware_unit_weight_kg) === null) return '采购单件重量未记录或无效，无法折算'
   if (isWeightPipe(row.line) && (scaled(String(row.line.bar_weight_kg ?? '')) ?? 0n) <= 0n) return '采购单根重量未记录或无效，无法折算'
@@ -200,10 +217,17 @@ async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
       const saved = previous.get(line.id) || record(draft[line.id])
       const hasSavedQuantity = typeof saved.returnQuantity === 'string' || typeof saved.returnQuantity === 'number'
       const savedQuantity = hasSavedQuantity ? String(saved.returnQuantity) : ''
-      const byRoots = receivedByRoots(line)
+      const byRoots = inspectByRoots(line)
+      const oldWeightDraft = weighedProductionPipe(line) && hasSavedQuantity && saved.quantityInputUnit !== '根'
+      const oldWeight = oldWeightDraft ? scaled(savedQuantity) : null
+      // 旧草稿只记录退货公斤。部分退货的根数由质检员核对。
+      const savedRoots = oldWeightDraft
+        ? oldWeight === 0n ? '0' : oldWeight !== null && oldWeight === scaled(line.received_weight_kg!) ? String(line.received_bar_count) : ''
+        : hasSavedQuantity && saved.quantityInputUnit === '根' ? savedQuantity : String(line.return_bar_count ?? 0)
       return { line, included: typeof saved.included === 'boolean' ? saved.included : true,
         quantityInputUnit: byRoots ? '根' : isWeightPipe(line) || isHardware(line) ? 'kg' : line.source_unit_text_snapshot,
-        returnQuantity: byRoots ? (hasSavedQuantity && saved.quantityInputUnit === '根' ? savedQuantity : String(line.return_bar_count ?? 0))
+        returnWeightKg: oldWeightDraft ? savedQuantity : typeof saved.returnWeightKg === 'string' ? saved.returnWeightKg : '',
+        returnQuantity: byRoots ? savedRoots
           : hasSavedQuantity ? line.measurement_kind === 'PIPE' && !isWeightPipe(line) && saved.quantityInputUnit === undefined ? pipeMeters(savedQuantity, line.raw_bar_length_m) : savedQuantity
           : isWeightPipe(line) || isHardware(line) ? String(line.return_weight_kg ?? 0) : line.return_quantity || '0.00',
         qualityRemark: typeof saved.qualityRemark === 'string' ? saved.qualityRemark : line.quality_remark || '' }
@@ -223,16 +247,27 @@ function applyBulk() {
 function saveDraft() {
   if (!batch.value || locked.value) return
   try {
-    const raw = JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, quantityInputUnit: row.quantityInputUnit, qualityRemark: row.qualityRemark }])))
+    const raw = JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, returnWeightKg: row.returnWeightKg, quantityInputUnit: row.quantityInputUnit, qualityRemark: row.qualityRemark }])))
     owned.write(raw); draftRaw = raw
     ElMessage.success('质检草稿已保存在当前浏览器。')
   } catch { ElMessage.error('浏览器无法保存草稿，填写内容仍保留在页面中。') }
+}
+function qualityPayload(row: QualityRow) {
+  const common = { line_id: row.line.id, expected_received_quantity: receivedInput(row), quality_remark: row.qualityRemark }
+  if (weighedProductionPipe(row.line)) {
+    const weight = row.line.received_weight_kg
+    const returned = Number(row.returnQuantity) === 0 ? '0' : partialWeighedReturn(row) ? row.returnWeightKg : weight
+    return { ...common, expected_received_quantity: weight, return_bar_count: row.returnQuantity, return_weight_kg: returned }
+  }
+  if (isHardware(row.line) || isWeightPipe(row.line)) return { ...common, return_weight_kg: row.returnQuantity }
+  if (row.line.measurement_kind === 'PIPE') return { ...common, return_bar_count: returnRoots(row) }
+  return { ...common, return_quantity: row.returnQuantity }
 }
 async function confirmInbound() {
   if (!owned.isCurrent() || !canSubmit.value || !batch.value) return
   const id = batch.value.id, consumedDraftRaw = draftRaw
   // 勾选只控制批量设置；接口要求提交整个批次，并冻结确认框打开前的内容。
-  const payload = { items: rows.value.map(row => ({ line_id: row.line.id, expected_received_quantity: receivedInput(row), ...(isHardware(row.line) || isWeightPipe(row.line) ? { return_weight_kg: row.returnQuantity } : row.line.measurement_kind === 'PIPE' ? { return_bar_count: returnRoots(row) } : { return_quantity: row.returnQuantity }), quality_remark: row.qualityRemark })) }
+  const payload = { items: rows.value.map(qualityPayload) }
   confirming.value = true
   try {
     dialogOpen = true
@@ -278,7 +313,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
       <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><div><ElButton v-if="recordId" :disabled="confirming" @click="openReceiptRecords">返回入库记录</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></div></header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
       <section class="surface bulk-card erp-flat-form">
-        <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>按行单位</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
+        <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>{{ bulkUnit }}</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
       </section>
       <section class="surface table-card">
         <div class="table-head">
@@ -314,8 +349,9 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
                   <td class="supplier-cell">{{ row.line.supplier_name_snapshot || '—' }}</td>
                 </ElTooltip>
                 <td v-for="label in table.columns" :key="label">{{ attributes.get(label) ?? '—' }}</td>
-                <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
+                <td class="quantity-cell" :title="weighedProductionPipe(row.line) ? '原收货登记 ' + formatQuantity(row.line.received_weight_kg!) + ' 公斤' : receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
                 <td class="return-quantity-cell"><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${number} 项退货${isWeightPipe(row.line) || isHardware(row.line) ? '重量' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" maxlength="19" inputmode="decimal" :title="quantityInputTitle(row)"><template #append>{{ row.quantityInputUnit || '单位未识别' }}</template></ElInput>
+                  <ElInput v-if="partialWeighedReturn(row)" v-model="row.returnWeightKg" class="quantity-input partial-return-weight" :aria-label="`第 ${number} 项实退重量`" :disabled="locked" maxlength="19" inputmode="decimal" placeholder="实退重量"><template #append>kg</template></ElInput>
                 </td>
                 <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
                 <td class="muted">{{ row.line.warehouse_name }}</td><td class="muted">{{ row.line.zone_name }}</td>
@@ -383,6 +419,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .quality-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }
 .quality-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
 .quality-table .return-quantity-cell { padding: 4px 11px; }
+.partial-return-weight { margin-top: 4px; }
 .quantity-input :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; white-space: nowrap; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }

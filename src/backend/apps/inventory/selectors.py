@@ -76,13 +76,17 @@ def scoped_finished_outbounds(queryset, request):
     return queryset.filter(Exists(visible), ~Exists(inaccessible))
 
 
-def require_inventory_overview(request, permission='inventory.view_materialinbound'):
+def can_read_inventory_overview(request, permission):
     from apps.access_control.role_policy import role_scopes
     from apps.access_control.resource_scopes import has_legacy_permission
+
+    return request.user.is_superuser or role_scopes(request, permission) != {'FOLLOWED'} or has_legacy_permission(request, permission)
+
+
+def require_inventory_overview(request, permission='inventory.view_materialinbound'):
     from rest_framework.exceptions import PermissionDenied
 
-    scopes = role_scopes(request, permission)
-    if scopes == {'FOLLOWED'} and not request.user.is_superuser and not has_legacy_permission(request, permission):
+    if not can_read_inventory_overview(request, permission):
         raise PermissionDenied('当前权限仅可在关联任务中读取库存来源和出入库记录。')
 
 
@@ -340,7 +344,8 @@ def material_received_totals(line_ids=None):
     return totals
 
 
-def eligible_material_purchase_orders(queryset=None, *, include_open_returns=False, read_optimized=False):
+def eligible_material_purchase_orders(queryset=None, *, include_open_returns=False, read_optimized=False,
+                                      receiving_lines=None):
     if queryset is None:
         queryset = PurchaseOrder.objects.all()
     returns_for_order = PurchaseReturnLine.objects.filter(
@@ -370,11 +375,11 @@ def eligible_material_purchase_orders(queryset=None, *, include_open_returns=Fal
         .order_by("-created_at", "-id")
     )
     if read_optimized:
-        return result.prefetch_related("lines")
+        return result.prefetch_related(Prefetch("lines", queryset=receiving_lines))
     return result.select_related("production_task").prefetch_related("lines__supplier")
 
 
-def eligible_material_lines(purchase_order_id, *, read_optimized=False):
+def eligible_material_lines(purchase_order_id, *, read_optimized=False, receiving_lines=None):
     returns_for_line = PurchaseReturnLine.objects.filter(
         inbound_line__purchase_order_line_id=OuterRef("pk"),
     )
@@ -382,7 +387,7 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False):
         inbound_line__purchase_order_line__purchase_order_id=OuterRef("purchase_order_id"),
     ).exclude(return_order__status=PurchaseReturnStatus.COMPLETED)
     queryset = (
-        PurchaseOrderLine.objects.annotate(
+        (PurchaseOrderLine.objects.all() if receiving_lines is None else receiving_lines).annotate(
             has_completed_material_return=Exists(
                 returns_for_line.filter(return_order__status=PurchaseReturnStatus.COMPLETED)
             ),
@@ -466,7 +471,6 @@ def procurement_inbound_supplier_summaries(lines):
 
 
 def procurement_inbound_product_summaries(orders):
-    """按采购行保留产品顺序；打样材料无逐产品绑定，展示来源打样明细。"""
     lines_by_order = {
         order.pk: sorted(
             (line for line in order.lines.all() if line.actual_purchase_quantity is not None),
@@ -474,10 +478,13 @@ def procurement_inbound_product_summaries(orders):
         )
         for order in orders
     }
-    sources = {
-        order.pk: [source for line in lines_by_order[order.pk] for source in purchase_line_products(line)]
-        for order in orders if order.source_type == "PRODUCTION"
-    }
+    return inbound_product_summaries({order.pk: order for order in orders}, lines_by_order)
+
+
+def inbound_product_summaries(orders_by_key, lines_by_key, *, include_unlinked=False):
+    """按单据可见明细取成品来源；打样材料展示来源打样明细。"""
+    sources = {key: [source for line in lines_by_key[key] for source in purchase_line_products(line)]
+               for key, order in orders_by_key.items() if order.source_type == "PRODUCTION"}
     products = {
         (str(product.pk), product.production_task_id): product
         for product in ProductionTaskProduct.objects.filter(
@@ -492,7 +499,7 @@ def procurement_inbound_product_summaries(orders):
         )
     }
     sample_products = {}
-    sample_ids = {order.sample_procurement_request_id for order in orders if order.source_type == "SAMPLE"}
+    sample_ids = {order.sample_procurement_request_id for order in orders_by_key.values() if order.source_type == "SAMPLE"}
     items = SampleItem.objects.filter(
         sample_request__material_request__procurement_request__id__in=sample_ids,
     ).select_related("sample_product").annotate(
@@ -508,14 +515,20 @@ def procurement_inbound_product_summaries(orders):
             product.material_snapshot if product else "",
         ))
     result = {}
-    for order in orders:
+    for key, order in orders_by_key.items():
         if order.source_type == "SAMPLE":
-            result[order.pk] = sample_products.get(order.sample_procurement_request_id, [])
+            result[key] = sample_products.get(order.sample_procurement_request_id, [])
             continue
         summary, seen = [], set()
-        for product_id, bom_id, name, specification in sources[order.pk]:
+        for product_id, bom_id, name, specification in sources[key]:
             product = products.get((product_id, order.production_task_id))
-            if not product or product.pk in seen:
+            if not product:
+                saved_identity = (product_id, name, specification)
+                if include_unlinked and (name or specification) and saved_identity not in seen:
+                    seen.add(saved_identity)
+                    summary.append(_inbound_product_summary(None, name, specification, '', '', ''))
+                continue
+            if product.pk in seen:
                 continue
             seen.add(product.pk)
             bom = boms.get(bom_id)
@@ -529,13 +542,13 @@ def procurement_inbound_product_summaries(orders):
                 bom.product_color_name_snapshot if bom else product.color_name_snapshot,
                 source.material_snapshot,
             ))
-        result[order.pk] = summary
+        result[key] = summary
     return result
 
 
 def _inbound_product_summary(product_id, name, specification, item_number, color, material):
     return {
-        "product_line_id": str(product_id),
+        "product_line_id": str(product_id) if product_id is not None else None,
         "product_name": name or "",
         "item_number": item_number or "",
         "specification": specification_display(SimpleNamespace(
@@ -546,11 +559,14 @@ def _inbound_product_summary(product_id, name, specification, item_number, color
     }
 
 
-def material_inbound_order_totals(order_ids):
+def material_inbound_order_totals(order_ids, *, receipt_lines=None):
     """列表只汇总进度；批次跨多行时用 distinct 防止批次数被放大。"""
     pipe_weight = (Q(lines__measurement_kind='PIPE') | Q(lines__calculation_snapshot__measurement_kind='HARDWARE_WEIGHT')) & Q(lines__source_unit_text_snapshot__in=['KG', 'kg', '千克', '公斤'])
     kg_unit = Q(lines__source_unit_text_snapshot__in=['KG', 'kg', '千克', '公斤'])
-    rows = MaterialInbound.objects.filter(purchase_order_id__in=order_ids).order_by().values("purchase_order_id").annotate(
+    batches = MaterialInbound.objects.filter(purchase_order_id__in=order_ids)
+    if receipt_lines is not None:
+        batches = batches.filter(lines__in=receipt_lines)
+    rows = batches.order_by().values("purchase_order_id").annotate(
         pending_count=Count("id", filter=Q(status=MaterialInboundStatus.PENDING_QUALITY), distinct=True),
         confirmed_count=Count("id", filter=Q(status=MaterialInboundStatus.CONFIRMED), distinct=True),
         received_quantity=Sum("lines__received_quantity", default=0),

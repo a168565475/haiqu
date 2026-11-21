@@ -17,7 +17,7 @@ from apps.core.audit import write_audit_log
 from apps.audit.models import AuditLog
 from apps.organizations.models import Employee, OrganizationUnit, RoleProfile
 from apps.wecom.models import WeComBinding, OAuthState
-from .models import RoleActionGrant, RoleGrantResource
+from .models import MaterialSectionGrant, RoleActionGrant, RoleGrantResource
 from .services import require_manager
 
 DELETED_REASON = "管理页面删除（保留历史）"
@@ -72,7 +72,7 @@ def deletion_mode(obj, kind, actor):
             return "ARCHIVE"
         # 角色授权本身可以随误建角色清理，授权被其他对象使用则保留。
         for grant in obj.action_grants.all():
-            if referenced(grant, (RoleGrantResource,)):
+            if referenced(grant, (RoleGrantResource, MaterialSectionGrant)):
                 return "ARCHIVE"
     elif referenced(obj):
         return "ARCHIVE"
@@ -163,7 +163,9 @@ def delete_selected(request, kind, items, token):
                 if user:
                     user.delete()
             elif kind == "roles":
+                from .resource_scopes import delete_material_grants
                 group = obj.auth_group
+                delete_material_grants(obj)
                 RoleGrantResource.objects.filter(grant__role=obj).delete()
                 RoleActionGrant.objects.filter(role=obj).delete()
                 obj.delete()

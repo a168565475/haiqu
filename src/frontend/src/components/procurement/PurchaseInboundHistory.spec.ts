@@ -15,6 +15,15 @@ function mountHistory(overrides: Partial<PurchaseReadInboundLine> = {}, showPipe
 }
 
 describe('采购入库历史重量口径', () => {
+  it('逐次显示已登记分区，历史未登记的记录明确标示', async () => {
+    const wrapper = mountHistory()
+    expect(wrapper.get('[data-testid="inbound-material-section"]').text()).toBe('材料分区 未登记')
+    const [old] = wrapper.props('inbounds')!
+    await wrapper.setProps({ inbounds: [{ ...old!, id: 'new', material_section: 'B', material_section_display: '五金件、塑料件、包材' }, old!] })
+    expect(wrapper.findAll('[data-testid="inbound-material-section"]').map(field => field.text()))
+      .toEqual(['材料分区 五金件、塑料件、包材', '材料分区 未登记'])
+    wrapper.unmount()
+  })
   it('KG管材使用实际重量，隐藏根数与旧米数', () => {
     const wrapper = mountHistory()
     expect(wrapper.findAll('tbody td.numeric').map(cell => cell.text())).toEqual(['25.25 kg', '22.75 kg', '2.5 kg'])

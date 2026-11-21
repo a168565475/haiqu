@@ -1,7 +1,7 @@
-export type AccessScope = 'OWN' | 'TEAM' | 'ALL' | 'MODULE' | 'WORKSHOP' | 'CRAFT' | 'STOCK' | 'FOLLOWED'
+export type AccessScope = 'OWN' | 'TEAM' | 'ALL' | 'MODULE' | 'WORKSHOP' | 'CRAFT' | 'MATERIAL' | 'STOCK' | 'FOLLOWED'
 export interface Grant { permission: string; scope: AccessScope; resource_ids?: string[] }
 export interface ScopeOption { id: string; name: string; active: boolean }
-export interface ScopeOptions { enabled: boolean; workshops: ScopeOption[]; crafts: ScopeOption[] }
+export interface ScopeOptions { enabled: boolean; workshops: ScopeOption[]; crafts: ScopeOption[]; material_sections?: ScopeOption[] }
 export interface AccessRole { id: string; role_code: string; display_name: string; description: string; department_id: string | null; archived: boolean; assigned_employee_count: number; grants: Grant[]; etag: string }
 export interface CatalogEntry { code: string; module: string; module_name: string; label: string; resource: string; resource_name: string; action: string; action_name: string; scopes: AccessScope[]; available: boolean; integration_stage: number; implied_permissions: string[] }
 export interface AccessEmployee { id: string; employee_code: string; display_name: string; status: string; username: string | null; last_login?: string | null; login_count?: number | null; account_active: boolean | null; account_protected: boolean; team_id: string | null; department: string; department_ids?: string[]; wecom_departments?: { id: number; name: string | null }[] | null; role_ids: string[]; etag: string }

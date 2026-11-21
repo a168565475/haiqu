@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 from apps.boms.api.serializers import BomCatalogSelectionSerializer
+from ..purchase_receiving_sections import RECEIVING_SELECTIONS
 
 
 from ..models import (
@@ -12,6 +13,7 @@ from ..models import (
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
+    PURCHASE_INBOUND_SECTION_NAMES,
     RecordStatus,
     Warehouse,
     WarehouseLocation,
@@ -275,6 +277,7 @@ class MaterialInboundLineInputSerializer(serializers.Serializer):
 
 
 class MaterialInboundInputSerializer(serializers.Serializer):
+    material_section = serializers.ChoiceField(choices=RECEIVING_SELECTIONS, required=False)
     inbound_date = serializers.DateField(default=timezone.localdate)
     remark = serializers.CharField(
         max_length=3000,
@@ -284,6 +287,10 @@ class MaterialInboundInputSerializer(serializers.Serializer):
         default="",
     )
     items = MaterialInboundLineInputSerializer(many=True, allow_empty=False, max_length=100)
+
+
+class ReceivingSectionQuerySerializer(serializers.Serializer):
+    material_section = serializers.ChoiceField(choices=RECEIVING_SELECTIONS, required=False)
 
 
 class SampleMaterialInboundLineInputSerializer(serializers.Serializer):
@@ -425,11 +432,17 @@ class ProcurementInboundSupplierSerializer(serializers.Serializer):
     total_amount = serializers.CharField(allow_null=True)
 
 
+class ProcurementReceivingSectionSerializer(serializers.Serializer):
+    id = serializers.ChoiceField(choices=PURCHASE_INBOUND_SECTION_NAMES)
+    name = serializers.CharField()
+
+
 class ProcurementInboundOrderSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     order_number = serializers.CharField()
     batch_number = serializers.IntegerField(allow_null=True, min_value=1)
     source_type = serializers.ChoiceField(choices=["PRODUCTION", "SAMPLE"])
+    production_task_number = serializers.CharField(allow_blank=True)
     source_number = serializers.CharField(allow_blank=True)
     sales_order_number = serializers.CharField(allow_blank=True)
     product_summary = ProcurementInboundProductSerializer(many=True)
@@ -438,6 +451,7 @@ class ProcurementInboundOrderSerializer(serializers.Serializer):
     supplier_names = serializers.ListField(child=serializers.CharField())
     line_count = serializers.IntegerField()
     remaining_line_count = serializers.IntegerField()
+    receiving_sections = ProcurementReceivingSectionSerializer(many=True)
     pending_quality_count = serializers.IntegerField()
     confirmed_batch_count = serializers.IntegerField()
     received_quantity = serializers.CharField()
@@ -465,6 +479,7 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    material_section_display = serializers.CharField(read_only=True)
     purchase_order_number = serializers.CharField(source="purchase_order.order_number", read_only=True, allow_null=True)
     total_received_quantity = serializers.SerializerMethodField()
     total_return_quantity = serializers.SerializerMethodField()
@@ -480,6 +495,7 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         model = MaterialInbound
         fields = [
             "id", "inbound_number", "source_type", "source_type_display", "purchase_order_id", "purchase_order_number", "inbound_date",
+            "material_section", "material_section_display",
             "status", "status_display", "remark", "received_by_name", "quality_confirmed_by_name",
             "quality_confirmed_at", "total_received_quantity", "total_return_quantity",
             "total_accepted_quantity", "total_received_weight_kg", "total_return_weight_kg", "total_accepted_weight_kg",

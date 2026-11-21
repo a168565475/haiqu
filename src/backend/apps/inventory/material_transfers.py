@@ -257,7 +257,9 @@ def create_material_transfer(*, client_request_id, direction, transfer_date, rem
     return transfer
 
 
-def serialize_material_transfer(transfer):
+def serialize_material_transfer(transfer, *, lines=None):
+    if lines is None:
+        lines = transfer.lines.select_related('zone__warehouse').all()
     return {
         "id": str(transfer.pk),
         "transfer_number": transfer.transfer_number,
@@ -275,6 +277,6 @@ def serialize_material_transfer(transfer):
                 "zone_name": line.zone.zone_name,
                 "warehouse_name": line.zone.warehouse.warehouse_name,
             }
-            for line in transfer.lines.select_related("zone__warehouse").all()
+            for line in lines
         ],
     }

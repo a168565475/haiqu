@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -86,9 +86,27 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = PurchaseReturn.objects.filter(
             purchase_order_access(self._task_ids(), self.request, "purchase_order__"), purchase_order__archived_at__isnull=True,
         )
+        lines = PurchaseReturnLine.objects.select_related("inbound_line", "inbound_line__purchase_order_line")
+        if self.action in {"list", "retrieve", "stats", "filter_options"}:
+            from apps.access_control.module_policy import has_permission
+            from apps.inventory.models import MaterialInboundLine
+            from apps.inventory.purchase_receiving_sections import assigned_receiving_sections, receiving_lines_in_scope
+
+            sections = assigned_receiving_sections(self.request)
+            if sections is not None:
+                inbound_lines = receiving_lines_in_scope(
+                    MaterialInboundLine.objects.all(), sections, order_field="inbound__purchase_order",
+                )
+                other_scope = Q()
+                for code in ("procurement.view_purchaseorder", "inventory.quality_confirm_material"):
+                    if has_permission(self.request, code):
+                        tasks = accessible_production_tasks(self.request, permission=code).values("id")
+                        other_scope |= purchase_order_access(tasks, self.request, "purchase_order__", permission=code)
+                lines = lines.filter(Q(inbound_line__in=inbound_lines) | other_scope)
+                queryset = queryset.filter(Exists(lines.filter(return_order_id=OuterRef("pk"))))
         if self.action in {"list", "retrieve"}:
             queryset = queryset.select_related("purchase_order", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee").prefetch_related(
-                Prefetch("lines", queryset=PurchaseReturnLine.objects.select_related("inbound_line", "inbound_line__purchase_order_line")),
+                Prefetch("lines", queryset=lines),
             )
         elif self.action not in {"stats", "filter_options"}:
             # 写操作沿用原查询；读取优化不改变推进状态时的对象和校验。

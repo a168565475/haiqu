@@ -27,6 +27,13 @@ interface ReceivingRow {
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const materialSection = computed(() => typeof route.query?.material_section === 'string' ? route.query.material_section : undefined)
+const materialSectionLabel = ref('')
+function fetchReceivingLines(orderId: string) {
+  return materialSection.value
+    ? fetchEligibleMaterialLinesWithVersion(orderId, materialSection.value)
+    : fetchEligibleMaterialLinesWithVersion(orderId)
+}
 const canReceive = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.receive_material'))
 const canQuality = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const baseLoading = ref(false)
@@ -49,7 +56,7 @@ function localToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 const form = reactive({ inboundDate: localToday(), remark: '' })
-const receivingDraftKey = computed(() => `material-receiving-draft:v2:${selectedPurchaseOrderId.value}`)
+const receivingDraftKey = computed(() => `material-receiving-draft:v2:${selectedPurchaseOrderId.value}${materialSection.value ? ':' + materialSection.value : ''}`)
 const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `${receivingDraftKey.value}:user:${uid}`, legacyKeys: () => [receivingDraftKey.value] })
 let draftRaw: string | null = null
 let linesRequest = 0
@@ -220,7 +227,7 @@ async function loadBase() {
     const [optionData, orderData, lineData] = await Promise.all([
       fetchMaterialReceivingOptions(),
       fetchEligibleMaterialPurchaseOrders({ purchase_order_id: orderId }),
-      fetchEligibleMaterialLinesWithVersion(orderId),
+      fetchReceivingLines(orderId),
     ])
     owned.assertCurrent()
     if (disposed) return
@@ -257,11 +264,12 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
   linesLoading.value = true
   try {
     owned.assertCurrent()
-    const response = preloadedLines ?? await fetchEligibleMaterialLinesWithVersion(orderId)
+    const response = preloadedLines ?? await fetchReceivingLines(orderId)
     owned.assertCurrent()
     // 切换采购单后，迟到的旧响应不能覆盖新单据。
     if (disposed || request !== linesRequest || selectedPurchaseOrderId.value !== orderId) return
     receivingVersion.value = response.etag
+    materialSectionLabel.value = response.materialSectionDisplay ?? ''
     let draft: Record<string, unknown> = currentDraft || {}
     if (!currentDraft) {
       // 历史无主草稿从不读取、迁移或删除，只恢复当前已核验 UID 的草稿。
@@ -331,6 +339,7 @@ async function submitReceiving() {
       await createSampleMaterialReceiving(sampleAttempt.payload, receivingVersion.value)
     } else await createMaterialReceiving({
       inbound_date: form.inboundDate, remark: form.remark,
+      ...(materialSection.value ? { material_section: materialSection.value } : {}),
       items: selectedRows.value.map((row) => ({
         purchase_order_line_id: row.line.id, zone_id: row.zoneId,
         ...(isHardware(row.line) || isWeightPipe(row.line)
@@ -346,14 +355,14 @@ async function submitReceiving() {
     historyRefreshKey.value += 1
   } catch (error) {
     if (isCancel(error) || !owned.isCurrent()) return
-    ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交品质确认失败，请核对收货记录后重试。'))
+    ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交收货失败，请核对入库记录后重试。'))
     submitting.value = false
     return
   }
   // 收货成功后，草稿清理或跳转失败都不能再次提交同一批次。
   try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('收货已登记，但当前用户草稿已变化，已保留后写入的内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('收货已登记，但当前用户草稿未能清理。') }
-  ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '仓库收货已登记，已转入品质确认。')
-  try { await router.push({ name: !isSample.value && canQuality.value ? 'material-quality-confirmation' : 'purchase-inbounds' }) }
+  ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '收货已登记，可在入库记录查看待质检状态。')
+  try { await router.push({ name: !isSample.value && canQuality.value ? 'purchase-receipt-records' : 'purchase-inbounds' }) }
   catch { if (owned.isCurrent()) ElMessage.warning('收货已登记，请从采购入库列表继续处理。') }
   finally { if (owned.isCurrent()) submitting.value = false }
 }
@@ -366,7 +375,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
     <div v-if="!canReceive" class="empty-state"><h1>无权进行采购入库</h1><p>请联系管理员开通采购入库权限。</p></div>
     <template v-else>
       <header class="page-title-row">
-        <div><h1>采购入库</h1></div>
+        <div><h1>{{ materialSectionLabel }}采购入库</h1></div>
         <div class="head-actions"><ElButton :icon="Refresh" :loading="loading" :disabled="locked" @click="loadBase">刷新</ElButton><ElButton :icon="Tickets" :disabled="submitting" @click="router.push({ name: 'purchase-inbounds' })">返回列表</ElButton></div>
       </header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
@@ -422,9 +431,9 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
       <section class="submit-bar">
         <label for="receiving-batch-remark">本批次备注（可选）</label><ElInput id="receiving-batch-remark" v-model="form.remark" placeholder="请输入备注信息…" :maxlength="3000" :disabled="locked" />
         <ElButton :disabled="locked || !rows.length" @click="saveDraft">保存草稿</ElButton>
-        <ElButton type="primary" :loading="submitting" :disabled="!readyToSubmit" @click="submitReceiving">{{ isSample ? '全部入库' : '提交品质确认' }}</ElButton>
+        <ElButton type="primary" :loading="submitting" :disabled="!readyToSubmit" @click="submitReceiving">{{ isSample ? '全部入库' : '提交收货' }}</ElButton>
       </section>
-      <PurchaseInboundHistory v-if="selectedPurchaseOrderId && owned.isCurrent()" :purchase-order-id="selectedPurchaseOrderId" :refresh-key="historyRefreshKey" />
+      <PurchaseInboundHistory v-if="selectedPurchaseOrderId && owned.isCurrent()" :purchase-order-id="selectedPurchaseOrderId" :material-section="materialSection" :hide-material-section="isSample" :refresh-key="historyRefreshKey" />
     </template>
   </section>
 </template>

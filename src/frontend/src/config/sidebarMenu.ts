@@ -94,6 +94,7 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
       { key: 'material-transfers', label: '材料收发', to: { name: 'material-transfers' }, permission: 'inventory.receive_material' },
       { key: 'purchase-inbounds', label: '采购入库', to: { name: 'purchase-inbounds' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
+      { key: 'purchase-receipt-records', label: '入库记录', to: { name: 'purchase-receipt-records' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material', 'inventory.view_material_receipt'] },
       { key: 'purchase-returns', label: '退货明细', to: { name: 'purchase-returns' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
       { key: 'material-issues', label: '车间领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
       { key: 'semi-receipt-records', label: '车间入库', to: { name: 'semi-receipt-records' }, permission: 'inventory.view_internalsemifinishedreceipt' },

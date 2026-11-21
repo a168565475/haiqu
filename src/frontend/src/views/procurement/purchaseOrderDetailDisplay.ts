@@ -1,4 +1,11 @@
 import { compactDecimal } from '@/utils/compactDecimal'
+import type { ProcurementInboundProductSummary } from '@/types/inventory'
+
+type InboundProductFields = Omit<ProcurementInboundProductSummary, 'product_line_id'>
+
+export function formatInboundProductField(products: InboundProductFields[], field: keyof InboundProductFields): string {
+  return products.map(product => product[field].trim() || '—').join('、') || '—'
+}
 // 使用定点整数处理数量合计，避免小数累加误差及不同单位相加。
 export function quantityValue(value: unknown): bigint | null {
   if (typeof value !== 'string' || !/^\d{1,18}(\.\d{1,4})?$/.test(value)) return null

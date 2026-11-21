@@ -144,3 +144,29 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.purchase_line.calculation_snapshot = {'raw_material_id': str(other.pk)}
         line = MaterialInboundLine(purchase_order_line=self.purchase_line)
         self.assertIsNone(inbound_line_material(line))
+
+    def test_receipt_list_keeps_each_record_and_reflects_partial_and_full_returns(self):
+        root = '/api/v1/material-inventory/purchase-receipt-records/'
+        first = self.receive(expected='10.5000')
+        second = self.receive(expected='6.2500')
+        pending_ids = []
+        for received, returned, result in [(first, '1.0000', 'CONFIRMED'), (second, '4.2500', 'RETURNED')]:
+            self.assertEqual(received.status_code, 201, received.data)
+            record = received.data['data']
+            pending_ids.append(str(record['id']))
+            filters = {'section': record['material_section'] or 'UNASSIGNED', 'q': record['inbound_number']}
+            listing = self.client.get(root, {**filters, 'status': 'PENDING_QUALITY'})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
+            self.assertTrue(listing.data['data'][0]['can_quality_confirm'])
+            confirmed = self.confirm_quality(received, return_quantity=returned)
+            self.assertEqual(confirmed.status_code, 200, confirmed.data)
+            listing = self.client.get(root, {**filters, 'status': result})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
+            self.assertFalse(listing.data['data'][0]['can_quality_confirm'])
+            detail = self.client.get(root + f"{record['id']}/")
+            self.assertEqual(detail.status_code, 200, detail.data)
+            self.assertEqual(detail.data['data']['status_display'], '已入库' if result == 'CONFIRMED' else '全部退货')
+            self.assertEqual(len(detail.data['data']['lines']), 1)
+        self.assertEqual(MaterialInbound.objects.filter(pk__in=pending_ids).count(), 2)

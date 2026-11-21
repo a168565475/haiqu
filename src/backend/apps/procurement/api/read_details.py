@@ -1,11 +1,12 @@
 """采购只读详情；不推进采购、入库或退货状态。"""
 from decimal import Decimal
 
-from django.db.models import Prefetch
+from django.db.models import Exists, OuterRef, Prefetch
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
+from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope
 from ..group_selectors import purchase_batch_display_status
 from ..catalog_materials import is_weight_purchase
 from ..models import PurchaseOrderStatus, PurchaseReturn, PurchaseReturnLine
@@ -13,16 +14,21 @@ from .serializers import PurchaseOrderDetailSerializer, PurchaseOrderLineSeriali
 from .return_views import PurchaseReturnSerializer
 
 
-def with_read_detail_records(queryset):
+def with_read_detail_records(queryset, *, receiving_sections=None):
     inbound_lines = MaterialInboundLine.objects.select_related("zone__warehouse", "location")
+    inbound_lines = receiving_lines_in_scope(inbound_lines, receiving_sections, order_field="inbound__purchase_order")
     inbounds = MaterialInbound.objects.select_related(
         "received_by_employee", "quality_confirmed_by_employee",
     ).prefetch_related(Prefetch("lines", queryset=inbound_lines))
+    return_lines = PurchaseReturnLine.objects.select_related("inbound_line__purchase_order_line")
+    if receiving_sections is not None:
+        inbounds = inbounds.filter(Exists(inbound_lines.filter(inbound_id=OuterRef("pk"))))
+        return_lines = return_lines.filter(inbound_line__in=inbound_lines)
     returns = PurchaseReturn.objects.select_related(
         "purchase_order", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee",
-    ).prefetch_related(Prefetch("lines", queryset=PurchaseReturnLine.objects.select_related(
-        "inbound_line__purchase_order_line",
-    )))
+    ).prefetch_related(Prefetch("lines", queryset=return_lines))
+    if receiving_sections is not None:
+        returns = returns.filter(Exists(return_lines.filter(return_order_id=OuterRef("pk"))))
     return queryset.select_related("completed_by_employee").prefetch_related(
         Prefetch("material_inbounds", queryset=inbounds), Prefetch("returns", queryset=returns),
     )
@@ -151,6 +157,7 @@ class ReadInboundLineSerializer(serializers.ModelSerializer):
 
 class ReadInboundSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    material_section_display = serializers.CharField(read_only=True)
     received_by_name = serializers.CharField(source="received_by_employee.display_name", read_only=True)
     quality_confirmed_by_name = serializers.CharField(source="quality_confirmed_by_employee.display_name", read_only=True, default="")
     lines = ReadInboundLineSerializer(many=True, read_only=True)
@@ -158,6 +165,7 @@ class ReadInboundSerializer(serializers.ModelSerializer):
     class Meta:
         model = MaterialInbound
         fields = ["id", "inbound_number", "inbound_date", "status", "status_display", "remark",
+                  "material_section", "material_section_display",
                   "received_by_name", "quality_confirmed_by_name", "quality_confirmed_at", "created_at", "lines"]
         read_only_fields = fields
 

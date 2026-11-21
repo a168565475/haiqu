@@ -7,6 +7,7 @@ from django.db import connection
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APITestCase
 
 from apps.procurement.tests import test_loading_read_api as purchase_tests
@@ -304,13 +305,24 @@ class InboundLoadingTests(APITestCase):
             product_line_id_snapshot=self.order.production_task.products.get(line_number=3).pk,
             quantity_parse_status='MISSING',
         )
-        row = self.get('procurement-inbound-orders').json()['data'][0]
+        row = self.get('procurement-inbound-orders', {'q': self.order.production_task_number_snapshot}).json()['data'][0]
+        self.assertEqual(row['production_task_number'], self.order.production_task_number_snapshot)
         self.assertEqual(row.get('product_summary'), [
             {'product_line_id': str(second.pk), 'product_name': '采购时产品二', 'item_number': 'ITEM-2',
              'specification': '60*70', 'color_name': '黑色', 'material': '铝'},
             {'product_line_id': str(first.pk), 'product_name': '采购时产品一', 'item_number': 'ITEM-1',
              'specification': '47*55*79', 'color_name': '酒红色', 'material': 'PE'},
         ])
+        inbound = self.batch('PRODUCT-CHECK', 'CONFIRMED', [(2, 0)])
+        inbound.quality_confirmed_at = timezone.now()
+        inbound.save(update_fields=['quality_confirmed_at'])
+        inbound.lines.update(supplier_name_snapshot='收货记载的供应商', product_name_snapshot='采购时产品二')
+        records = self.get('purchase-receipt-records', {'q': '收货记载的供应商'}).json()['data']
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['id'], str(inbound.pk))
+        self.assertEqual(records[0]['product_summary'], row['product_summary'][:1])
+        self.assertEqual(records[0]['supplier_names'], ['收货记载的供应商'])
+        self.assertEqual(parse_datetime(records[0]['quality_confirmed_at']), inbound.quality_confirmed_at)
 
     def test_inbound_product_uses_linked_bom_snapshots_and_does_not_query_per_product(self):
         from apps.boms.models import Bom

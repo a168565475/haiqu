@@ -16,6 +16,8 @@ interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuant
 const auth = useAuthStore()
 const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
+const recordsQuery = computed(() => router.currentRoute?.value.query)
+const recordId = computed(() => typeof recordsQuery.value?.receipt === 'string' ? recordsQuery.value.receipt : '')
 const batches = ref<MaterialInbound[]>([])
 const selectedBatchId = ref('')
 const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `material-quality-draft:v2:${selectedBatchId.value}:user:${uid}`, legacyKeys: () => [`material-quality-draft:v2:${selectedBatchId.value}`] })
@@ -32,6 +34,9 @@ const bulk = reactive({ returnQuantity: '0', remark: '' })
 let requestVersion = 0
 let disposed = false
 let dialogOpen = false
+function openReceiptRecords() {
+  return router.push({ name: 'purchase-receipt-records' })
+}
 const qualityDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
 const locked = computed(() => !owned.isCurrent() || loading.value || confirming.value || confirmed.value || !canConfirm.value)
 const selectedRows = computed(() => rows.value.filter(row => row.included))
@@ -147,6 +152,11 @@ async function loadBatches() {
   loadError.value = ''
   try {
     owned.assertCurrent()
+    if (recordId.value) {
+      selectedBatchId.value = recordId.value
+      await selectBatch(selectedBatchId.value === batch.value?.id)
+      return
+    }
     const data = await fetchMaterialQualityBatches()
     owned.assertCurrent()
     if (disposed || version !== requestVersion) return
@@ -233,7 +243,10 @@ async function confirmInbound() {
     try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('入库已成功，但当前用户草稿已变化，已保留后写入内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('入库已成功，但当前用户草稿未能清除。') }
     if (disposed) return
     ElMessage.success('品质确认完成，合格数量已计入库存，有退货的明细已生成退货单。')
-    try { await router.push({ name: canViewInventory.value ? 'material-inventory' : 'purchase-inbounds' }) }
+    try {
+      if (recordId.value) await openReceiptRecords()
+      else await router.push({ name: canViewInventory.value ? 'material-inventory' : 'purchase-inbounds' })
+    }
     catch { if (owned.isCurrent()) ElMessage.warning('入库已成功，请从采购入库列表继续。') }
   } catch (error) {
     if (!isCancel(error) && owned.isCurrent() && !disposed) {
@@ -250,13 +263,19 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
   <section class="inventory-workflow quality-page erp-glass-form" data-testid="material-quality-confirmation-page">
     <div v-if="!canConfirm" class="empty-state"><h1>无权进行品质确认</h1><p>请联系管理员开通材料品质确认权限。</p></div>
     <template v-else>
-      <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></header>
+      <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><div><ElButton v-if="recordId" :disabled="confirming" @click="openReceiptRecords">返回入库记录</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></div></header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
       <section class="surface bulk-card erp-flat-form">
         <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>按行单位</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
       </section>
       <section class="surface table-card">
-        <div class="table-head"><div><h2>品质确认明细</h2><div class="table-order-meta"><template v-if="batch"><span>入库单号 <strong>{{ batch.inbound_number }}</strong></span><span>采购单号 <strong>{{ batch.purchase_order_number || '—' }}</strong></span><span>生产单号 <strong>{{ batch.lines[0]?.production_task_number_snapshot || '—' }}</strong></span><span>状态 <ElTag type="warning" round>待质检</ElTag></span></template><span class="batch-selector"><label>批次</label><ElSelect v-model="selectedBatchId" aria-label="选择待质检批次" filterable :disabled="locked" :loading="loading" placeholder="入库单号 / 采购单号 / 供应商" @change="selectBatch()"><ElOption v-for="item in batches" :key="item.id" :value="item.id" :label="`${item.inbound_number} · ${item.purchase_order_number || '—'} · ${item.lines[0]?.supplier_name_snapshot || '—'}`" /></ElSelect></span></div></div><strong>共 {{ rows.length }} 项</strong></div>
+        <div class="table-head">
+          <div><h2>品质确认明细</h2><div class="table-order-meta">
+            <template v-if="batch"><span>入库单号 <strong>{{ batch.inbound_number }}</strong></span><span>采购单号 <strong>{{ batch.purchase_order_number || '—' }}</strong></span><span>生产单号 <strong>{{ batch.lines[0]?.production_task_number_snapshot || '—' }}</strong></span><span>状态 <ElTag type="warning" round>待质检</ElTag></span></template>
+            <span v-if="!recordId" class="batch-selector"><label>批次</label><ElSelect v-model="selectedBatchId" aria-label="选择待质检批次" filterable :disabled="locked" :loading="loading" placeholder="入库单号 / 采购单号 / 供应商" @change="selectBatch()"><ElOption v-for="item in batches" :key="item.id" :value="item.id" :label="`${item.inbound_number} · ${item.purchase_order_number || '—'} · ${item.lines[0]?.supplier_name_snapshot || '—'}`" /></ElSelect></span>
+          </div></div>
+          <strong>共 {{ rows.length }} 项</strong>
+        </div>
         <div v-loading="loading" class="quality-table-scroll">
           <table class="erp-table-editor quality-table"><colgroup><col v-for="(width, index) in [56,56,232,190,200,160,200,170,150,126,220,120]" :key="index" :style="{ width: width / 1880 * 100 + '%' }" /></colgroup>
             <thead><tr><th><ElCheckbox v-model="allSelected" aria-label="全选明细" :disabled="locked" :indeterminate="selectedRows.length > 0 && !allSelected" /></th><th>序号</th><th>物料信息</th><th>规格</th><th>供应商</th><th>到货数量</th><th>退货数量</th><th>合格入库数量</th><th>材料仓</th><th>库区</th><th>退货/质检说明</th><th>状态</th></tr></thead>

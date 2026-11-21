@@ -5,7 +5,8 @@ import * as api from '@/api/inventory'
 import MaterialQualityConfirmationView from './MaterialQualityConfirmationView.vue'
 import { router } from '@/router'
 
-vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
+const currentRoute = vi.hoisted(() => ({ value: { query: {} as Record<string, string> } }))
+vi.mock('@/router', () => ({ router: { push: vi.fn(), currentRoute } }))
 const identity = vi.hoisted(() => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => identity }))
 vi.mock('@/api/inventory', () => ({ fetchMaterialQualityBatches: vi.fn(), fetchMaterialQualityBatch: vi.fn(), confirmMaterialQuality: vi.fn() }))
@@ -19,9 +20,24 @@ const confirmedAction = 'confirm' as Awaited<ReturnType<typeof ElMessageBox.conf
 describe('品质确认读取', () => {
   beforeEach(() => {
     vi.resetAllMocks(); localStorage.clear()
+    currentRoute.value.query = {}
     Object.assign(identity, { user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 })
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([first, second] as never)
     vi.mocked(api.fetchMaterialQualityBatch).mockImplementation(async id => (id === second.id ? second : first) as never)
+  })
+  it('从入库记录只打开指定批次，确认后返回记录列表', async () => {
+    currentRoute.value.query = { receipt: second.id }
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    expect(api.fetchMaterialQualityBatches).not.toHaveBeenCalled()
+    expect(api.fetchMaterialQualityBatch).toHaveBeenCalledExactlyOnceWith(second.id)
+    expect(vm.batch?.id).toBe(second.id)
+    const dialog = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    await vm.confirmInbound()
+    expect(api.confirmMaterialQuality).toHaveBeenCalledWith(second.id, expect.any(Object))
+    expect(router.push).toHaveBeenCalledWith({ name: 'purchase-receipt-records' })
+    dialog.mockRestore()
+    wrapper.unmount()
   })
   it('米制管材质检按采购米显示与录入，退货只能为冻结原长整数倍', async () => {
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [{ ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 10, return_bar_count: 0, received_quantity: '33.5000', source_unit_text_snapshot: '米' }] }] as never)

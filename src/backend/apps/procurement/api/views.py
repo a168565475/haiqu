@@ -41,6 +41,7 @@ from ..models import (
     PurchaseContractTemplate,
     PurchaseContractTemplateStatus,
     PurchaseOrder,
+    PurchaseOrderLine,
     PurchaseOrderStatus,
     PurchaseReturnStatus,
     Supplier,
@@ -377,13 +378,12 @@ class PurchaseOrderViewSet(
         }
         if ordering not in allowed_ordering:
             raise ValidationError({"ordering": "排序参数不正确。"})
-        queryset = purchase_orders_with_context(
-            queryset.distinct().order_by(ordering, "-id"),
-            read_optimized=self.action in {"list", "retrieve", "details"},
-        )
+        receiving_sections = None
         if self.action == "details":
             from .read_details import with_read_detail_records
             from apps.access_control import module_policy, sales_policy
+            from apps.inventory.purchase_receiving_sections import assigned_receiving_sections, receiving_categories, receiving_lines_in_scope
+            from apps.inventory.api.serializers import ReceivingSectionQuerySerializer
             if module_policy.enabled():
                 can_read_purchase = module_policy.has_permission(self.request, "procurement.view_purchaseorder")
             elif sales_policy.enabled():
@@ -391,6 +391,8 @@ class PurchaseOrderViewSet(
             else:
                 can_read_purchase = self.request.user.has_perm("procurement.view_purchaseorder")
             # 仓库入口沿用原有范围，不因新增详情暴露尚未进入采购执行的草稿。
+            receiving_view = self.request.query_params.get("receiving") == "1"
+            assigned_sections = assigned_receiving_sections(self.request)
             if not can_read_purchase:
                 queryset = queryset.filter(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED])
             elif module_policy.enabled():
@@ -399,8 +401,24 @@ class PurchaseOrderViewSet(
                     read_tasks, self.request, permission='procurement.view_purchaseorder')).values('id')
                 # 当前单据没有采购读取范围时，兼任仓库只能读取已进入执行的采购。
                 queryset = queryset.filter(Q(pk__in=read_orders) | Q(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED]))
-            queryset = with_read_detail_records(queryset)
-        return queryset
+                if assigned_sections is not None and not receiving_view:
+                    order_id = self._uuid_value(self.kwargs['pk'], 'id')
+                    can_read_purchase = read_orders.filter(pk=order_id).exists()
+            if not can_read_purchase or receiving_view or assigned_sections is not None and not module_policy.enabled():
+                receiving_sections = assigned_sections
+                section_query = ReceivingSectionQuerySerializer(data=self.request.query_params)
+                section_query.is_valid(raise_exception=True)
+                section = section_query.validated_data.get("material_section")
+                receiving_sections = receiving_categories(receiving_sections, section)
+                if receiving_sections is not None:
+                    visible_lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), receiving_sections)
+                    queryset = queryset.filter(pk__in=visible_lines.values("purchase_order_id"))
+            queryset = with_read_detail_records(queryset, receiving_sections=receiving_sections)
+        return purchase_orders_with_context(
+            queryset.distinct().order_by(ordering, "-id"),
+            read_optimized=self.action in {"list", "retrieve", "details"},
+            receiving_sections=receiving_sections,
+        )
 
     def _accessible_tasks(self):
         return accessible_production_tasks(self.request).filter(archived_at__isnull=True)

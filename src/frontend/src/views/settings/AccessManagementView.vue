@@ -100,10 +100,16 @@ const retainedRoles = computed(() => roles.value.filter(role => subject.value?.r
 const specialResource = ref('')
 const scopeOptions = ref<ScopeOptions>({enabled:false,workshops:[],crafts:[]})
 const scopeCode = ref(''), scopeSelection = ref<string[]>([]), scopeReturnDialog = ref('')
-const selectedScopeGrant = computed(() => grants.value.find(g=>g.permission===scopeCode.value && ['WORKSHOP','CRAFT'].includes(g.scope)))
-const resourceOptions = computed(() => selectedScopeGrant.value?.scope==='WORKSHOP' ? scopeOptions.value.workshops : scopeOptions.value.crafts)
+const resourceScopes: AccessScope[] = ['WORKSHOP', 'CRAFT', 'MATERIAL']
+const selectedScopeGrant = computed(() => grants.value.find(g=>g.permission===scopeCode.value && resourceScopes.includes(g.scope)))
+const resourceOptionsByScope = computed(() => ({
+  WORKSHOP: scopeOptions.value.workshops, CRAFT: scopeOptions.value.crafts, MATERIAL: scopeOptions.value.material_sections ?? [],
+}))
+const resourceNames = { WORKSHOP: '车间', CRAFT: '外协工艺', MATERIAL: '材料分区' }
+const resourceScope = computed(() => selectedScopeGrant.value?.scope as keyof typeof resourceNames | undefined)
+const resourceOptions = computed(() => resourceScope.value ? resourceOptionsByScope.value[resourceScope.value] : [])
 function resourceLabel(scope: AccessScope, ids: string[] = []) {
-  const options = scope==='WORKSHOP'?scopeOptions.value.workshops:scopeOptions.value.crafts
+  const options = resourceOptionsByScope.value[scope as keyof typeof resourceNames]
   return ids.length ? ids.map(id=>options.find(o=>o.id===id)?.name||'历史资源').join('、') : '未选择（无可访问资源）'
 }
 function configureScope(code: string) {
@@ -119,7 +125,7 @@ function applyScope() {
 }
 let effectiveRequest = 0
 const form = reactive({code:'', name:'', description:'', username:'', password:'', employeeId:'', managerId:'', departmentId:'', roleIds:[] as string[], memberIds:[] as string[]})
-const scopeNames: Record<string,string> = {OWN:'本人',TEAM:'所管团队',ALL:'全部',MODULE:'按模块',WORKSHOP:'指定车间',CRAFT:'指定工艺',STOCK:'库存来源',FOLLOWED:'本人跟单任务'}
+const scopeNames: Record<string,string> = {OWN:'本人',TEAM:'所管团队',ALL:'全部',MODULE:'按模块',WORKSHOP:'指定车间',CRAFT:'指定工艺',MATERIAL:'指定材料分区',STOCK:'库存来源',FOLLOWED:'本人跟单任务'}
 const operationColumns = [{key:'view',label:'查看'},{key:'add',label:'新增'},{key:'change',label:'编辑'},{key:'delete',label:'删除'},{key:'submit',label:'提交'},{key:'approve',label:'审批'}]
 const catalogByCode = computed(() => Object.fromEntries(catalog.value.map(c => [c.code,c])))
 const normalize = (rows: Grant[]) => JSON.stringify([...rows].sort((a,b) => (a.permission+a.scope).localeCompare(b.permission+b.scope)))
@@ -195,9 +201,9 @@ const changes = computed(() => {
   return [...codes].filter(code => normalize(before.filter(g=>g.permission===code)) !== normalize(grants.value.filter(g=>g.permission===code)))
     .map(code => ({label:catalogByCode.value[code]?.label || code, before:describe(before.filter(g=>g.permission===code)), after:describe(grants.value.filter(g=>g.permission===code))}))
 })
-function describe(rows: Grant[]) { return rows.length ? [...new Set(rows.map(g=>scopeNames[g.scope]+(['WORKSHOP','CRAFT'].includes(g.scope)?'：'+resourceLabel(g.scope,g.resource_ids):'')))].join(' + ') : '不允许' }
+function describe(rows: Grant[]) { return rows.length ? [...new Set(rows.map(g=>scopeNames[g.scope]+(resourceScopes.includes(g.scope)?'：'+resourceLabel(g.scope,g.resource_ids):'')))].join(' + ') : '不允许' }
 function effectiveDescription(entry: EffectiveAccess['actions'][string]) {
-  return entry.scopes.map(scope=>scopeNames[scope]+(['WORKSHOP','CRAFT'].includes(scope)?'：'+resourceLabel(scope,[...new Set(entry.sources.filter(s=>s.scope===scope).flatMap(s=>s.resource_ids||[]))]):'')).join(' + ')
+  return entry.scopes.map(scope=>scopeNames[scope]+(resourceScopes.includes(scope)?'：'+resourceLabel(scope,[...new Set(entry.sources.filter(s=>s.scope===scope).flatMap(s=>s.resource_ids||[]))]):'')).join(' + ')
 }
 function sourceDescription(code: string, source: EffectiveAccess['actions'][string]['sources'][number]) {
   const name = roles.value.find(r => r.id === source.role_id)?.display_name || '超级管理员'
@@ -216,8 +222,8 @@ function resetDraft() { grants.value=copyGrants(role.value?.grants) }
 function updateGrant(code: string, scopes: AccessScope[]) {
   if (!canManageAccess.value) return
   const previous=grants.value.filter(g=>g.permission===code)
-  grants.value=[...grants.value.filter(g=>g.permission!==code),...scopes.map(scope=>({permission:code,scope,...(['WORKSHOP','CRAFT'].includes(scope)?{resource_ids:[...(previous.find(g=>g.scope===scope)?.resource_ids||[])]}:{})}))]
-  if(scopes.some(s=>s==='WORKSHOP'||s==='CRAFT')) configureScope(code)
+  grants.value=[...grants.value.filter(g=>g.permission!==code),...scopes.map(scope=>({permission:code,scope,...(resourceScopes.includes(scope)?{resource_ids:[...(previous.find(g=>g.scope===scope)?.resource_ids||[])]}:{})}))]
+  if(scopes.some(s=>resourceScopes.includes(s))) configureScope(code)
 }
 function basic(entries: CatalogEntry[], action: string) { return entries.find(e=>e.action===action) }
 function specialCount(entries: CatalogEntry[]) { return entries.filter(e=>e.action==='special').length }
@@ -298,7 +304,7 @@ async function load(refreshAuth = false) {
   loading.value=true;error.value=''
   try {
     const [r,e,t,c,d]=await Promise.all([api.getRoles(),api.getEmployees(),canManageAccess.value ? api.getTeams() : Promise.resolve([]),api.getCatalog(),api.getDepartments()])
-    const options=c.some(item=>item.scopes.some(s=>s==='WORKSHOP'||s==='CRAFT')) ? await api.getScopeOptions() : {enabled:false,workshops:[],crafts:[]}
+    const options=c.some(item=>item.scopes.some(s=>resourceScopes.includes(s))) ? await api.getScopeOptions() : {enabled:false,workshops:[],crafts:[]}
     if (request !== loadRequest) return
     scopeOptions.value=options
     roles.value=r;employees.value=e;teams.value=t;catalog.value=c;departments.value=d;employeesLoaded=true
@@ -484,7 +490,7 @@ onBeforeUnmount(()=>{loadRequest++;form.password='';window.removeEventListener('
     <EmployeeDepartmentsDialog :employee="departmentEmployee" :departments="departments" @close="departmentEmployee=undefined" @saved="load(true)" />
     <AppWindowDialog :model-value="!!dialog" :title="dialog==='resources'?'选择操作范围':titles[dialog]||'权限管理'" :width="dialog==='effective'?900:720" :before-close="beforeClose" destroy-on-close @update:model-value="value=>{if(!value)close()}">
       <div class="access-dialog" :class="{ 'employee-role-dialog': dialog === 'assign', 'employee-name-dialog': ['employeeName','members'].includes(dialog) }">
-        <template v-if="dialog==='resources'"><p><b>{{ catalogByCode[scopeCode]?.label }}</b></p><p class="muted">选择此操作可访问的{{ selectedScopeGrant?.scope==='WORKSHOP'?'车间':'外协工艺' }}，其他操作独立配置。未选择任何资源时，此授权不提供访问范围。</p><div class="access-check-grid scope-resource-options"><label v-for="option in resourceOptions" :key="option.id"><input v-model="scopeSelection" type="checkbox" :value="option.id">{{ option.name }}{{ option.active?'':'（已停用）' }}</label></div><p v-if="!resourceOptions.length" class="muted">暂无可选资源</p></template>
+        <template v-if="dialog==='resources'"><p><b>{{ catalogByCode[scopeCode]?.label }}</b></p><p class="muted">选择此操作可访问的{{ resourceScope ? resourceNames[resourceScope] : '' }}，其他操作独立配置。未选择任何资源时，此授权不提供访问范围。</p><div class="access-check-grid scope-resource-options"><label v-for="option in resourceOptions" :key="option.id"><input v-model="scopeSelection" type="checkbox" :value="option.id">{{ option.name }}{{ option.active?'':'（已停用）' }}</label></div><p v-if="!resourceOptions.length" class="muted">暂无可选资源</p></template>
         <div v-if="dialogError" class="access-warning" role="alert">{{ dialogError }}<button v-if="stale" :disabled="saving" @click="close();load()">重新加载</button></div>
         <template v-if="dialog==='employeeName'"><label>姓名<input v-model="form.name" aria-label="员工姓名" maxlength="150" :disabled="saving"></label></template>
         <template v-if="dialog==='roleDepartment'"><p>角色：{{ role?.display_name }}</p><label>所属部门<ElSelect v-model="form.departmentId" filterable :empty-values="[null, undefined]" placeholder="请选择所属部门" aria-label="所属部门"><ElOption value="" label="未分类" /><ElOption v-for="item in departmentList" :key="item.id" :value="item.id" :label="`${item.unit_name}${item.status==='INACTIVE'?'（已停用）':''}`" :disabled="item.status!=='ACTIVE'" /></ElSelect></label><p class="muted">只调整分类，原有操作权限、车间/工序范围和员工兼岗保持不变。</p></template>

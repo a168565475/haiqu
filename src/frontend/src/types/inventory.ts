@@ -155,10 +155,14 @@ export interface EligibleMaterialPurchaseOrder {
 export interface ProcurementInboundProductSummary {
   product_line_id: string; product_name: string; item_number: string; specification: string; color_name: string; material: string
 }
+export type PurchaseReceivingSection = 'A' | 'B' | 'C'
+
 export interface ProcurementInboundOrder {
   id: string; order_number: string; source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string; sales_order_number: string
+  production_task_number: string
   batch_number: number | null
   supplier_names: string[]; line_count: number; remaining_line_count: number
+  receiving_sections?: { id: PurchaseReceivingSection; name: string }[]
   supplier_summary: { supplier_id: string | null; supplier_name: string; total_amount: string | null }[]
   currency_code: string
   product_summary: ProcurementInboundProductSummary[]
@@ -187,6 +191,37 @@ export interface EligibleMaterialLine {
   id: string; line_number: number; section_type: string; section_title: string; category: string
   material: string; part_name: string; specification: string; raw_material: string; unit: string
   supplier_name: string; purchased_quantity: string; remaining_quantity: string; pinyin_search: string
+}
+export interface EligibleMaterialLinesResponse {
+  data: EligibleMaterialLine[]
+  material_section_display?: string
+}
+export type PurchaseReceiptStatus = 'PENDING_QUALITY' | 'CONFIRMED' | 'RETURNED'
+export type ReceiptRecordSource = 'PURCHASE' | 'TRANSFER'
+export interface PurchaseReceiptRecord {
+  id: string
+  source: ReceiptRecordSource
+  production_task_number: string
+  inbound_number: string
+  purchase_order_number: string
+  material_section_display: string
+  product_summary: (Omit<ProcurementInboundProductSummary, 'product_line_id'> & { product_line_id: string | null })[]
+  supplier_names: string[]
+  batch_number: number | null
+  inbound_date: string
+  received_by_name: string
+  quality_confirmed_by_name: string
+  quality_confirmed_at: string | null
+  line_count: number
+  status: PurchaseReceiptStatus
+  can_quality_confirm: boolean
+}
+export type ReceiptRecordDetail =
+  | { source: 'PURCHASE'; data: import('./purchaseOrderReadDetail').PurchaseReadInbound & { purchase_order_id: string } }
+  | { source: 'TRANSFER'; data: MaterialTransferRecord }
+export interface PurchaseReceiptRecordsPage {
+  data: PurchaseReceiptRecord[]
+  total: number
 }
 export interface MaterialReceivingOptions {
   warehouses: (Pick<Warehouse, 'id' | 'warehouse_number' | 'warehouse_name'> & { warehouse_type?: WarehouseType })[]
@@ -229,6 +264,7 @@ export interface MaterialInbound {
   id: string; inbound_number: string; purchase_order_id: string | null; purchase_order_number: string | null
   source_type: 'PURCHASE' | 'MANUAL'; source_type_display: string
   inbound_date: string; status: 'PENDING_QUALITY' | 'CONFIRMED'; status_display: string; remark: string
+  material_section?: PurchaseReceivingSection | ''; material_section_display?: string
   received_by_name: string; quality_confirmed_by_name: string | null; quality_confirmed_at: string | null
   total_received_quantity: string; total_return_quantity: string; total_accepted_quantity: string
   created_at: string; updated_at: string; lines: MaterialInboundLine[]

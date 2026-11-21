@@ -544,7 +544,7 @@ def _lock_purchase_receipt_materials(purchase_lines, existing_identity_rows):
 
 @stock_write_transaction
 def create_material_inbound(*, inbound_date, remark, items, actor_employee, request,
-                            sample_direct=False, client_request_id=None):
+                            sample_direct=False, client_request_id=None, material_section=None):
     from apps.procurement.source_access import purchase_order_access
     from apps.production_tasks.selectors import accessible_production_tasks
     if inbound_date > timezone.localdate():
@@ -555,17 +555,20 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     # 与采购完成、品质确认统一先锁采购单，避免并发时读到过期状态。
     order_ids = PurchaseOrderLine.objects.filter(pk__in=line_ids).values_list("purchase_order_id", flat=True)
     list(PurchaseOrder.objects.select_for_update().filter(pk__in=order_ids).order_by("id"))
-    locked_lines = list(
+    locked_queryset = (
         PurchaseOrderLine.objects.select_for_update(of=("self",))
         .select_related("purchase_order", "purchase_order__production_task", "supplier")
         .filter(purchase_order_access(accessible_production_tasks(request).values_list("id", flat=True), request, "purchase_order__"),
                 pk__in=line_ids, purchase_order__archived_at__isnull=True)
         .order_by("id")
     )
+    from .purchase_receiving_sections import resolve_receiving_section, with_receiving_section
+    locked_lines = list(locked_queryset if sample_direct else with_receiving_section(locked_queryset))
     if len(locked_lines) != len(line_ids):
         raise ValidationError({"items": "部分采购明细不存在。"})
     if any((line.purchase_order.source_type == 'SAMPLE') != sample_direct for line in locked_lines):
         raise Conflict('样品采购请使用全部入库；普通采购仍须收货并完成品质确认。')
+    receipt_section = "" if sample_direct else resolve_receiving_section(request, locked_lines, material_section)
     line_map = {line.pk: line for line in locked_lines}
     existing_identity_rows = list(
         MaterialInboundLine.objects.filter(
@@ -705,6 +708,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         inbound_number=next_business_number("MATERIAL_INBOUND", business_date=inbound_date),
         purchase_order_id=purchase_order_ids.pop(),
         inbound_date=inbound_date,
+        material_section=receipt_section,
         status=MaterialInboundStatus.CONFIRMED if sample_direct else MaterialInboundStatus.PENDING_QUALITY,
         client_request_id=client_request_id,
         remark=remark,
@@ -754,6 +758,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         after_data={
             "inbound_number": inbound.inbound_number,
             "inbound_date": inbound.inbound_date,
+            "material_section": inbound.material_section,
             "line_count": len(created),
             "total_quantity": str(sum((line.received_quantity for line in created), Decimal("0"))),
         },

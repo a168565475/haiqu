@@ -199,7 +199,10 @@ async function load() {
   if (!canRead.value) return
   loading.value = true
   try {
-    const result = await fetchPurchaseOrderReadDetail(String(route.params.id || ''))
+    const id = String(route.params.id || '')
+    const result = fromInbound.value
+      ? await fetchPurchaseOrderReadDetail(id, { receiving: true })
+      : await fetchPurchaseOrderReadDetail(id)
     if (disposed || version !== requestVersion) return
     order.value = result
     if (result.purchase_group_id && canReadGroup.value) void loadGroupNumber(result.purchase_group_id, version)
@@ -270,7 +273,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <template v-if="order.completed_at"><dl><div><dt>采购状态</dt><dd><span class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span></dd></div><div><dt>完成人</dt><dd>{{ order.completed_by_name || '—' }}</dd></div><div><dt>完成时间</dt><dd>{{ formatTime(order.completed_at) }}</dd></div></dl><p><span>完成备注</span>{{ order.completion_remark || '—' }}</p></template>
           <p v-else class="empty-record">暂无完成记录</p>
         </div>
-        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :colors="inboundColors" embedded />
+        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :colors="inboundColors" :hide-material-section="order.source_type === 'SAMPLE'" embedded />
         <div v-else class="detail-table-scroll" tabindex="0" :aria-label="`${tabs.find(tab => tab.key === activeTab)?.label}表格`">
           <table class="detail-table" :style="{ minWidth: `${tableWidth}px` }" :data-testid="`detail-table-${activeTab}`">
             <colgroup><col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>

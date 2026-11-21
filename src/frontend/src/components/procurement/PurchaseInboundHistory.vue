@@ -9,7 +9,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import { formatTime, purchaseQuantityText, quantityValue } from '@/views/procurement/purchaseOrderDetailDisplay'
 import { isHardwareWeightLine, isKilogramUnit } from '@/views/procurement/purchaseWeight'
 
-const props = defineProps<{ purchaseOrderId: string; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean; showPipeRoots?: boolean }>()
+const props = defineProps<{ purchaseOrderId: string; materialSection?: string; hideMaterialSection?: boolean; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean; expandSingle?: boolean; showPipeRoots?: boolean }>()
 const accordionName = useId()
 const auth = useAuthStore()
 const records = ref<PurchaseReadInbound[]>([])
@@ -18,6 +18,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const hoveredRowId = ref('')
 const canRead = computed(() => auth.identityReady && (auth.user?.is_superuser === true
+  || (props.inbounds !== undefined && auth.hasPermission('inventory.view_material_receipt'))
   || ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'].some(permission => auth.hasPermission(permission))))
 let requestVersion = 0
 let disposed = false
@@ -66,7 +67,7 @@ async function load() {
   if (props.inbounds !== undefined) { records.value = sortRecords(props.inbounds); return }
   loading.value = true
   try {
-    const result = await fetchPurchaseOrderReadDetail(props.purchaseOrderId)
+    const result = await fetchPurchaseOrderReadDetail(props.purchaseOrderId, { receiving: true, materialSection: props.materialSection })
     if (disposed || version !== requestVersion) return
     records.value = sortRecords(result.inbounds)
     loadedColors.value = Object.fromEntries(result.lines.map(line => [line.id, line.color]))
@@ -80,7 +81,7 @@ async function load() {
     if (!disposed && version === requestVersion) loading.value = false
   }
 }
-watch([() => props.purchaseOrderId, () => props.refreshKey, () => props.inbounds, () => auth.user?.id,
+watch([() => props.purchaseOrderId, () => props.materialSection, () => props.refreshKey, () => props.inbounds, () => auth.user?.id,
   () => auth.identityGeneration, () => auth.identityRequestGeneration, canRead], () => { void load() }, { immediate: true })
 onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </script>
@@ -96,16 +97,17 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <div v-else-if="loading" class="history-state" role="status">正在加载入库记录…</div>
     <div v-else-if="!records.length" class="history-state">暂无入库记录，提交收货后将在这里按次显示。</div>
     <div v-else class="history-records">
-      <details v-for="(record, index) in records" :key="record.id" :name="accordionName" class="history-record" @toggle="hoveredRowId = ''">
+      <details v-for="(record, index) in records" :key="record.id" :name="accordionName" :open="expandSingle && records.length === 1" class="history-record" @toggle="hoveredRowId = ''">
         <summary :aria-label="`查看入库记录 ${record.inbound_number}`">
           <ElIcon class="expand-icon"><ArrowRight /></ElIcon>
           <span class="summary-main" tabindex="0" aria-label="批次信息，可横向滚动">
-          <strong class="batch-label">第 {{ records.length - index }} 批</strong>
+          <strong v-if="!expandSingle" class="batch-label">第 {{ records.length - index }} 批</strong>
           <strong>{{ record.inbound_number }}</strong>
+          <span v-if="!hideMaterialSection" class="summary-text" data-testid="inbound-material-section">材料分区 {{ record.material_section_display || '未登记' }}</span>
           <span class="summary-text">到货日期 {{ formatTime(record.inbound_date, true) }}</span>
           <span class="summary-text">{{ record.lines.length }} 项材料</span>
           <span class="summary-text">收货人 {{ record.received_by_name || '—' }}</span>
-          <ElTag :type="record.status === 'CONFIRMED' ? 'success' : 'warning'">{{ record.status_display }}</ElTag>
+          <ElTag :type="record.status_display === '全部退货' ? 'danger' : record.status === 'CONFIRMED' ? 'success' : 'warning'">{{ record.status_display }}</ElTag>
           <span class="record-metadata">
             <span><span>登记时间</span><time>{{ formatTime(record.created_at) }}</time></span>
             <span><span>品质确认人</span><span>{{ record.quality_confirmed_by_name || '—' }}</span></span>

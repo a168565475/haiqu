@@ -34,7 +34,12 @@ class RoleUpdateSerializer(StrictSerializer):
 class GrantSerializer(StrictSerializer):
     permission = serializers.CharField(max_length=180)
     scope = serializers.ChoiceField(choices=AccessScope.choices)
-    resource_ids = serializers.ListField(child=serializers.UUIDField(), max_length=500, required=False, default=list)
+    resource_ids = serializers.ListField(child=serializers.CharField(max_length=36), max_length=500, required=False, default=list)
+
+    def validate(self, attrs):
+        if attrs['scope'] != AccessScope.MATERIAL:
+            attrs['resource_ids'] = serializers.ListField(child=serializers.UUIDField()).run_validation(attrs['resource_ids'])
+        return attrs
 
 
 class GrantReplaceSerializer(StrictSerializer):

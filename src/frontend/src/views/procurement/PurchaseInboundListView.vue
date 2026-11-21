@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
 import type { ProcurementInboundOrder, ProcurementInboundProductSummary } from '@/types/inventory'
+import { formatInboundProductField } from './purchaseOrderDetailDisplay'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -68,14 +69,8 @@ function hasOpenReturn(row: ProcurementInboundOrder): boolean {
 function canOpenReceiving(row: ProcurementInboundOrder): boolean {
   return canReceive.value && row.workflow_status !== 'COMPLETED' && row.remaining_line_count > 0 && !hasOpenReturn(row)
 }
-function canOpenQuality(row: ProcurementInboundOrder): boolean {
-  return row.workflow_status !== 'COMPLETED' && canQuality.value && row.pending_quality_count > 0
-}
 function canOpenReturns(row: ProcurementInboundOrder): boolean {
   return row.workflow_status !== 'COMPLETED' && Boolean(returnActionLabel(row))
-}
-function hasRowActions(row: ProcurementInboundOrder): boolean {
-  return row.workflow_status !== 'COMPLETED' && canView.value
 }
 function openDetails(row: ProcurementInboundOrder) {
   void router.push({ name: 'purchase-inbound-detail', params: { id: row.id } })
@@ -89,8 +84,8 @@ function receiptProgress(row: ProcurementInboundOrder): number | null {
   const percent = Number(value)
   return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? percent : null
 }
-function displayProductField(row: ProcurementInboundOrder, field: keyof ProcurementInboundProductSummary): string {
-  return row.product_summary?.map(product => product[field]?.trim() || '—').join('、') || '—'
+function displayProductField(row: ProcurementInboundOrder, field: keyof Omit<ProcurementInboundProductSummary, 'product_line_id'>): string {
+  return formatInboundProductField(row.product_summary ?? [], field)
 }
 function returnActionLabel(row: ProcurementInboundOrder): string {
   if (row.return_status === 'QUALITY_GENERATED') return '查看品质情况'
@@ -101,12 +96,13 @@ function openReturns(row: ProcurementInboundOrder) {
   if (!returnActionLabel(row)) return
   void router.push({ name: 'purchase-returns', query: { purchase_order_id: row.id, from: 'inbound' } })
 }
-function openReceiving(row: ProcurementInboundOrder) {
+function openReceiving(row: ProcurementInboundOrder, section?: string) {
   if (!canOpenReceiving(row)) return
-  void router.push({ name: 'material-purchase-inbound', params: { purchaseOrderId: row.id } })
+  void router.push({ name: 'material-purchase-inbound', params: { purchaseOrderId: row.id },
+    ...(section ? { query: { material_section: section } } : {}) })
 }
 function rowClicked(row: ProcurementInboundOrder) {
-  if (row.workflow_status === 'COMPLETED') openDetails(row)
+  if (row.source_type !== 'SAMPLE' || row.workflow_status === 'COMPLETED') openDetails(row)
   else openReceiving(row)
 }
 
@@ -123,7 +119,7 @@ onMounted(() => { if (canView.value) void loadRows() })
       </header>
 
       <form class="filters erp-list-filters" @submit.prevent="loadRows">
-        <ElInput v-model="keyword" class="inbound-search" aria-label="搜索采购入库" clearable maxlength="200" placeholder="搜索采购单、来源单等" title="支持采购单、生产单、销售单、打样单或供应商名称" @keydown.enter="handleSearchEnter" @clear="loadRows">
+        <ElInput v-model="keyword" class="inbound-search" aria-label="搜索采购入库" clearable maxlength="200" placeholder="生产任务单号 / 采购单号" title="支持生产任务单号、采购单号、销售单、打样单或供应商名称" @keydown.enter="handleSearchEnter" @clear="loadRows">
           <template #suffix><button type="button" class="erp-list-search-button" aria-label="搜索采购入库列表" @click="loadRows"><ElIcon><Search /></ElIcon></button></template>
         </ElInput>
         <ElSelect v-model="workflowStatus" clearable aria-label="采购入库状态" placeholder="入库状态：全部">
@@ -144,9 +140,10 @@ onMounted(() => { if (canView.value) void loadRows() })
       <section class="list-card erp-list-data" aria-label="采购入库列表">
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="filteredRows" height="100%" class="purchase-table" row-key="id" :empty-text="loadError ? '采购入库列表加载失败' : loading ? '正在加载采购入库…' : '暂无采购入库订单'" @row-click="rowClicked">
-          <ElTableColumn label="采购单" min-width="174" show-overflow-tooltip><template #default="{ row }"><strong class="purchase-number">{{ row.order_number }}</strong></template></ElTableColumn>
+          <ElTableColumn label="生产任务单号" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="采购单号" min-width="174" show-overflow-tooltip><template #default="{ row }"><strong class="purchase-number">{{ row.order_number }}</strong></template></ElTableColumn>
           <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.batch_number ? `第 ${row.batch_number} 批` : '—' }}</template></ElTableColumn>
-          <ElTableColumn label="来源单号" min-width="126" show-overflow-tooltip><template #default="{ row }">{{ row.source_number || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="打样单号" min-width="126" show-overflow-tooltip><template #default="{ row }">{{ row.source_type === 'SAMPLE' ? row.source_number || '—' : '—' }}</template></ElTableColumn>
           <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'product_name') }}</template></ElTableColumn>
           <ElTableColumn label="货号" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'item_number') }}</template></ElTableColumn>
           <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'specification') }}</template></ElTableColumn>
@@ -162,18 +159,19 @@ onMounted(() => { if (canView.value) void loadRows() })
           <ElTableColumn label="当前状态" width="124" align="center"><template #default="{ row }"><span class="status-badge erp-list-tag" :class="[`status-${row.workflow_status}`, row.workflow_status === 'COMPLETED' ? 'erp-list-tag--success' : row.workflow_status === 'PARTIAL_RECEIVED' ? 'erp-list-tag--brand' : row.workflow_status === 'PENDING_QUALITY' ? 'erp-list-tag--warning' : row.workflow_status === 'PENDING_PROCUREMENT_CONFIRMATION' ? 'erp-list-tag--danger' : row.workflow_status === 'PENDING_RETURN' ? 'erp-list-tag--info' : 'erp-list-tag--neutral']">{{ row.workflow_status_display }}</span></template></ElTableColumn>
           <ElTableColumn label="更新时间" width="150"><template #default="{ row }">{{ formatTime(row.updated_at) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center"><template #default="{ row }">
-            <span v-if="hasRowActions(row)" class="more-action" @click.stop>
-              <ElDropdown trigger="click" placement="bottom-end">
+            <span class="more-action" @click.stop>
+              <ElDropdown :persistent="false" trigger="click" placement="bottom-end">
                 <ElButton link class="row-more-button" :icon="MoreFilled" :aria-label="`${row.order_number}的更多操作`" />
                 <template #dropdown><ElDropdownMenu>
-                  <ElDropdownItem @click="openDetails(row)">查看明细</ElDropdownItem>
-                  <ElDropdownItem v-if="canOpenReceiving(row)" @click="openReceiving(row)">{{ receivingActionLabel(row) }}</ElDropdownItem>
-                  <ElDropdownItem v-if="canOpenQuality(row)" @click="router.push({ name: 'material-quality-confirmation' })">品质确认</ElDropdownItem>
+                  <ElDropdownItem @click="openDetails(row)">查看详情</ElDropdownItem>
+                  <template v-if="canOpenReceiving(row)">
+                    <ElDropdownItem v-if="row.source_type === 'SAMPLE'" @click="openReceiving(row)">{{ receivingActionLabel(row) }}</ElDropdownItem>
+                    <ElDropdownItem v-for="section in row.receiving_sections" :key="section.id" @click="openReceiving(row, section.id)">{{ section.name }}入库</ElDropdownItem>
+                  </template>
                   <ElDropdownItem v-if="canOpenReturns(row)" @click="openReturns(row)">{{ returnActionLabel(row) }}</ElDropdownItem>
                 </ElDropdownMenu></template>
               </ElDropdown>
             </span>
-            <span v-else class="muted">—</span>
           </template></ElTableColumn>
         </ElTable>
         </div>

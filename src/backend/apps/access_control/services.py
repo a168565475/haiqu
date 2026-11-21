@@ -113,7 +113,8 @@ def replace_grants(request, pk, rows, *, reviewed_group_permission_ids=None):
     if reviewed_group_permission_ids is not None:
         before['reviewed_group_permission_ids'] = sorted(reviewed_group_permission_ids)
     permission_ids = projected_permission_ids(grants)
-    from .resource_scopes import configured
+    from .resource_scopes import configured, delete_material_grants
+    delete_material_grants(role)
     if configured():
         from .models import RoleGrantResource
         RoleGrantResource.objects.filter(grant__role=role).delete()

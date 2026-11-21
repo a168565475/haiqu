@@ -12,7 +12,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'employee-list') return auth.canReadAccessDirectory
   if (auth.user?.is_superuser) return true
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly) {

@@ -28,6 +28,19 @@ class MaterialInboundStatus(models.TextChoices):
     CONFIRMED = "CONFIRMED", "已入库"
 
 
+class PurchaseInboundSection(models.TextChoices):
+    A = "A", "A区"
+    B = "B", "B区"
+    C = "C", "C区"
+
+
+PURCHASE_INBOUND_SECTION_NAMES = {
+    PurchaseInboundSection.A: "管材",
+    PurchaseInboundSection.B: "五金件、塑料件、包材",
+    PurchaseInboundSection.C: "面料、辅料",
+}
+
+
 class MaterialTransferDirection(models.TextChoices):
     IN = "IN", "一般入库"
     OUT = "OUT", "一般出库"
@@ -306,6 +319,9 @@ class MaterialInbound(TimeStampedModel):
         related_name="material_inbounds",
     )
     inbound_date = models.DateField(default=timezone.localdate)
+    material_section = models.CharField(
+        max_length=1, choices=PurchaseInboundSection.choices, blank=True, default="", db_default="", editable=False,
+    )
     status = models.CharField(
         max_length=30,
         choices=MaterialInboundStatus.choices,
@@ -325,6 +341,10 @@ class MaterialInbound(TimeStampedModel):
         related_name="quality_confirmed_material_inbounds",
     )
     quality_confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def material_section_display(self):
+        return PURCHASE_INBOUND_SECTION_NAMES.get(self.material_section, "")
 
     class Meta:
         db_table = "inventory_material_inbound"

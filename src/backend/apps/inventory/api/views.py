@@ -9,8 +9,8 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
-from django.db.models import Count, Exists, OuterRef, Q, Sum
-from django.db.models.functions import Coalesce
+from django.db.models import CharField, Count, Exists, OuterRef, Prefetch, Q, Sum, Value
+from django.db.models.functions import Coalesce, NullIf
 from django.http import FileResponse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -19,6 +19,16 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from .purchase_receipt_records import (
+    PurchaseReceiptRecordDetailSerializer, PurchaseReceiptRecordQuerySerializer, PurchaseReceiptRecordResponseSerializer,
+    PurchaseReceiptRecordSerializer, PurchaseReceiptRecordsResponseSerializer, ReceiptRecordDetailQuerySerializer,
+)
+from ..material_transfers import serialize_material_transfer
+from ..purchase_receipt_records import (
+    RECEIPT_PERMISSIONS, UNASSIGNED_SECTION, purchase_receipt_scope, receipt_record_page, receipt_record_permissions,
+    transfer_receipt_scope,
+)
 
 from apps.organizations.selectors import active_department_employees
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
@@ -41,6 +51,9 @@ from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import AccessoryMaterial, FabricMaterial, ProductColor, ReferenceStatus
 from apps.reference_data.pinyin_search import build_pinyin_search
 from ..pipe_receipts import estimated_receipt_roots
+from ..purchase_receiving_sections import (
+    SECTION_BY_CATEGORY, assigned_receiving_sections, receiving_categories, receiving_lines_in_scope, with_receiving_section,
+)
 
 from ..models import (
     FinishedGoodsReceipt,
@@ -54,6 +67,7 @@ from ..models import (
     MaterialStockMovement,
     MaterialStockQuality,
     PublicStockBalance,
+    PURCHASE_INBOUND_SECTION_NAMES,
     RecordStatus,
     Warehouse,
     WarehouseLocation,
@@ -106,6 +120,7 @@ from .serializers import (
     MaterialQualityConfirmationInputSerializer,
     MaterialInboundSerializer,
     ProcurementInboundOrderListResponseSerializer,
+    ReceivingSectionQuerySerializer,
     WarehouseLocationSerializer,
     WarehouseSerializer,
     WarehouseZoneSerializer,
@@ -528,6 +543,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         "options": "inventory.view_materialinbound",
         "eligible_purchase_orders": "inventory.receive_material",
         "procurement_inbound_orders": ("inventory.receive_material", "inventory.quality_confirm_material"),
+        "purchase_receipt_records": RECEIPT_PERMISSIONS,
+        "purchase_receipt_record": RECEIPT_PERMISSIONS,
         "eligible_lines": "inventory.receive_material",
         "manual_material_options": "inventory.receive_material",
         "manual_receipts": "inventory.receive_material",
@@ -544,6 +561,14 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         "order_purchases": "inventory.view_materialinbound",
         "order_issues": "inventory.view_materialinbound",
     }
+
+    def get_permissions(self):
+        if self.action == "options" and self.request.method == "GET" and self.request.query_params.get("scope") == "receiving":
+            self.action_permission_map = {
+                **self.action_permission_map,
+                "options.GET": ("inventory.receive_material", "inventory.view_materialinbound"),
+            }
+        return super().get_permissions()
 
     @staticmethod
     def _optional_uuid(request, name):
@@ -895,7 +920,9 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         scope = request.query_params.get("scope", "full")
         if scope not in {"full", "receiving", "filters"}:
             raise ValidationError({"scope": "选项范围必须为 full、receiving 或 filters。"})
-        require_inventory_overview(request)
+        from apps.access_control.module_policy import has_permission
+        if scope != "receiving" or not has_permission(request, "inventory.receive_material"):
+            require_inventory_overview(request)
         catalog_semi = request.query_params.get("include_catalog_semi", "false")
         if catalog_semi not in {"true", "false"}:
             raise ValidationError({"include_catalog_semi": "请选择 true 或 false。"})
@@ -955,9 +982,15 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"], url_path="eligible-purchase-orders")
     def eligible_purchase_orders(self, request):
+        sections = assigned_receiving_sections(request)
+        lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), sections)
+        orders = PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request))
+        if sections is not None:
+            orders = orders.filter(Exists(lines.filter(purchase_order_id=OuterRef("pk"))))
         queryset = eligible_material_purchase_orders(
-            PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request)),
+            orders,
             read_optimized=True,
+            receiving_lines=lines,
         )
         production_task_id = request.query_params.get("production_task_id", "").strip()
         if production_task_id:
@@ -970,7 +1003,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             queryset = queryset.filter(
                 Q(order_number__icontains=keyword)
                 | Q(production_task_number_snapshot__icontains=keyword)
-                | Q(lines__supplier_name_snapshot__icontains=keyword)
+                | Q(Exists(lines.filter(purchase_order_id=OuterRef("pk"), supplier_name_snapshot__icontains=keyword)))
             ).distinct()
         orders = list(queryset[:500])
         totals = material_received_totals([line.pk for order in orders for line in order.lines.all()])
@@ -1001,30 +1034,41 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
     @extend_schema(responses=ProcurementInboundOrderListResponseSerializer)
     @action(detail=False, methods=["get"], url_path="procurement-inbound-orders")
     def procurement_inbound_orders(self, request):
+        sections = assigned_receiving_sections(request)
+        lines_in_scope = with_receiving_section(receiving_lines_in_scope(PurchaseOrderLine.objects.all(), sections))
         queryset = (
             PurchaseOrder.objects.filter(
                 purchase_order_access(self._accessible_task_ids(request), request),
                 status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED],
                 archived_at__isnull=True,
             )
-            .prefetch_related("lines")
+            .annotate(production_task_number=Coalesce(
+                NullIf('production_task_number_snapshot', Value('')), 'production_task__task_number', Value(''),
+                output_field=CharField(),
+            ))
+            .prefetch_related(Prefetch("lines", queryset=lines_in_scope))
             .order_by("-created_at", "-id")
         )
+        if sections is not None:
+            queryset = queryset.filter(Exists(lines_in_scope.filter(purchase_order_id=OuterRef("pk"))))
         keyword = request.query_params.get("q", "").strip()
         if keyword:
             queryset = queryset.filter(
                 Q(order_number__icontains=keyword)
-                | Q(production_task_number_snapshot__icontains=keyword)
+                | Q(production_task_number__icontains=keyword)
                 | Q(sample_number_snapshot__icontains=keyword)
                 | Q(sales_order_number_snapshot__icontains=keyword)
-                | Q(lines__supplier_name_snapshot__icontains=keyword)
+                | Q(Exists(lines_in_scope.filter(purchase_order_id=OuterRef("pk"), supplier_name_snapshot__icontains=keyword)))
             ).distinct()
         orders = list(queryset[:500])
         order_ids = [order.pk for order in orders]
         product_summaries = procurement_inbound_product_summaries(orders)
         purchase_lines = [line for order in orders for line in order.lines.all()]
         received_totals = material_received_totals([line.pk for line in purchase_lines])
-        batch_totals = material_inbound_order_totals(order_ids)
+        receipt_lines = receiving_lines_in_scope(
+            MaterialInboundLine.objects.all(), sections, order_field="inbound__purchase_order",
+        ) if sections is not None else None
+        batch_totals = material_inbound_order_totals(order_ids, receipt_lines=receipt_lines)
         receipt_progress_by_order = material_receipt_progress(purchase_lines)
         return_statuses_by_order = {order_id: set() for order_id in order_ids}
         for order_id, return_status in PurchaseReturn.objects.filter(
@@ -1067,12 +1111,14 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 return_status=current_return_status,
             )
             supplier_names = list(dict.fromkeys(line.supplier_name_snapshot for line in lines if line.supplier_name_snapshot))
+            remaining_sections = {SECTION_BY_CATEGORY.get(line.receiving_section) for line in remaining_lines}
             data.append({
                 "id": order.pk,
                 "order_number": order.order_number,
                 "source_type": order.source_type,
+                "production_task_number": order.production_task_number,
                 "batch_number": order.batch_number,
-                "source_number": order.sample_number_snapshot if order.source_type == "SAMPLE" else order.production_task_number_snapshot,
+                "source_number": order.sample_number_snapshot if order.source_type == "SAMPLE" else order.production_task_number,
                 "sales_order_number": order.sales_order_number_snapshot,
                 "product_summary": product_summaries.get(order.pk, []),
                 "supplier_summary": procurement_inbound_supplier_summaries(lines),
@@ -1080,6 +1126,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "supplier_names": supplier_names,
                 "line_count": len(lines),
                 "remaining_line_count": len(remaining_lines),
+                "receiving_sections": [{"id": key, "name": name} for key, name in PURCHASE_INBOUND_SECTION_NAMES.items()
+                    if order.source_type == "PRODUCTION" and key in remaining_sections],
                 "pending_quality_count": pending_count,
                 "confirmed_batch_count": confirmed_count,
                 "received_quantity": f"{received_quantity:.4f}",
@@ -1157,6 +1205,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         inbound = material_inbounds(MaterialInbound.objects.filter(pk=inbound.pk)).get()
         return Response({"data": MaterialInboundSerializer(inbound).data}, status=status.HTTP_201_CREATED)
 
+    @extend_schema(parameters=[ReceivingSectionQuerySerializer])
     @action(detail=False, methods=["get"], url_path="eligible-lines")
     def eligible_lines(self, request):
         purchase_order_id = request.query_params.get("purchase_order_id", "").strip()
@@ -1166,7 +1215,14 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         order = PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request), pk=order_id).first()
         if order is None:
             raise NotFound("采购单不存在或无权访问。")
-        lines = eligible_material_lines(order_id, read_optimized=True)
+        section_query = ReceivingSectionQuerySerializer(data=request.query_params)
+        section_query.is_valid(raise_exception=True)
+        section = section_query.validated_data.get("material_section")
+        sections = assigned_receiving_sections(request)
+        if order.source_type == "PRODUCTION":
+            sections = receiving_categories(sections, section)
+        visible_lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), sections)
+        lines = eligible_material_lines(order_id, read_optimized=True, receiving_lines=visible_lines)
         warehouse_suggestions = material_receiving_warehouse_suggestions([line for line, _remaining in lines])
         rows = []
         for line, remaining in lines:
@@ -1214,7 +1270,10 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "remaining_weight_kg": f"{remaining:.4f}" if weight_unit else None,
                 "pinyin_search": build_pinyin_search(text),
             })
-        return Response({"data": rows}, headers={"ETag": etag_for_instance(order)})
+        data = {"data": rows}
+        if order.source_type == "PRODUCTION" and section in PURCHASE_INBOUND_SECTION_NAMES:
+            data["material_section_display"] = PURCHASE_INBOUND_SECTION_NAMES[section]
+        return Response(data, headers={"ETag": etag_for_instance(order)})
 
     @action(detail=False, methods=["get", "post"])
     def receipts(self, request):
@@ -1287,6 +1346,55 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 | Q(lines__supplier_name_snapshot__icontains=keyword)
             ).distinct()
         return Response({"data": MaterialInboundSerializer(queryset[:500], many=True).data})
+
+    @extend_schema(operation_id='v1_material_inventory_purchase_receipt_records_list',
+                   parameters=[PurchaseReceiptRecordQuerySerializer], responses=PurchaseReceiptRecordsResponseSerializer)
+    @action(detail=False, methods=['get'], url_path='purchase-receipt-records')
+    def purchase_receipt_records(self, request):
+        query = PurchaseReceiptRecordQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        filters = query.validated_data
+        allowed = receipt_record_permissions(request)
+        records, purchase_lines, sections = purchase_receipt_scope(request, allowed)
+        transfers, _ = transfer_receipt_scope(request, allowed)
+        if records.filter(material_section='').exists() or transfers.filter(material_section='').exists():
+            sections.append({'id': UNASSIGNED_SECTION, 'name': '未登记'})
+        available = {entry['id'] for entry in sections}
+        section = filters.get('section')
+        if section and section not in available:
+            return Response({'data': [], 'sections': sections, 'section': section, 'total': 0})
+        rows, total = receipt_record_page(
+            records, transfers, purchase_lines, section='' if section == UNASSIGNED_SECTION else section, status=filters.get('status'),
+            keyword=filters['q'], page=filters['page'], page_size=filters['page_size'],
+        )
+        return Response({
+            'data': PurchaseReceiptRecordSerializer(rows, many=True).data,
+            'sections': sections, 'section': section or '', 'total': total,
+        })
+
+    @extend_schema(parameters=[OpenApiParameter('inbound_id', UUID, OpenApiParameter.PATH, required=True), ReceiptRecordDetailQuerySerializer],
+                   responses=PurchaseReceiptRecordResponseSerializer)
+    @action(detail=False, methods=['get'], url_path=r'purchase-receipt-records/(?P<inbound_id>[^/.]+)')
+    def purchase_receipt_record(self, request, inbound_id=None):
+        query = ReceiptRecordDetailQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        source = query.validated_data['source']
+        allowed = receipt_record_permissions(request)
+        record_id = uuid_value(inbound_id, 'inbound_id')
+        if source == 'TRANSFER':
+            records, lines = transfer_receipt_scope(request, allowed)
+            transfer = records.filter(pk=record_id).first()
+            if transfer is None:
+                raise NotFound('入库记录不存在或无权查看。')
+            visible = lines.filter(transfer=transfer).select_related('zone__warehouse')
+            return Response({'source': source, 'data': serialize_material_transfer(transfer, lines=visible)})
+
+        records, lines, _ = purchase_receipt_scope(request, allowed)
+        lines = lines.select_related('zone__warehouse', 'location')
+        inbound = records.filter(pk=record_id).prefetch_related(Prefetch('lines', queryset=lines)).first()
+        if inbound is None:
+            raise NotFound('入库记录不存在或无权查看。')
+        return Response({'source': source, 'data': PurchaseReceiptRecordDetailSerializer(inbound).data})
 
     @action(
         detail=False,

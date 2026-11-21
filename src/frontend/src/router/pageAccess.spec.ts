@@ -40,6 +40,17 @@ describe('岗位菜单与独立页面权限', () => {
     expect(canOpenMenu(item, receiver)).toBe(true)
     expect(canOpenPage('material-transfers', receiver)).toBe(true)
   })
+  it('采购入库记录允许仓管、品质和独立记录查看权限，跟单继续走关联单据', () => {
+    const key = 'purchase-receipt-records'
+    const warehouse = sidebarMenuItems.find(item => item.key === 'warehouse-management')!
+    const item = warehouse.children!.find(item => item.key === key)!
+    for (const permission of ['inventory.receive_material', 'inventory.quality_confirm_material', 'inventory.view_material_receipt']) {
+      expect(canOpenMenu(item, reader([permission]))).toBe(true)
+      expect(canOpenPage(key, reader([permission]))).toBe(true)
+      expect(canOpenPage(key, followedReader([permission]))).toBe(false)
+    }
+    expect(canOpenPage(key, reader())).toBe(false)
+  })
   it('仅跟单范围保留旧明细深链但不开放一般入库菜单，兼岗仍独立生效', () => {
     const permission = 'inventory.receive_material'
     const auth = followedReader([permission])

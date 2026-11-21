@@ -1277,6 +1277,20 @@ export const router = createRouter({
       },
     },
     {
+      path: '/purchase-inbound/records',
+      name: 'purchase-receipt-records',
+      component: () => import('@/views/inventory/PurchaseReceiptRecordsView.vue'),
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'purchase-receipt-records',
+        headerTitle: '仓库管理 / 入库记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '入库记录' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
       path: '/inventory/materials/:stockItemId',
       name: 'material-inventory-detail',
       component: MaterialInventoryDetailView,

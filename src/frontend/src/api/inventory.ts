@@ -1,7 +1,8 @@
 import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
-import type { MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchase, MaterialReceivingOptions, MaterialFilterOptions } from '@/types/inventory'
+import type { PurchaseReceiptRecordsPage, PurchaseReceiptStatus, ReceiptRecordDetail, ReceiptRecordSource } from '@/types/inventory'
+import type { EligibleMaterialLinesResponse, MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchase, MaterialReceivingOptions, MaterialFilterOptions } from '@/types/inventory'
 import type { ManualMaterialReceivingPayload, MaterialTransferPayload, MaterialTransferRecord, SampleMaterialReceivingPayload } from '@/types/inventory'
 import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, FinishedGoodsOutbound, FinishedGoodsOutboundDetail, FinishedGoodsReceipt, InventoryOptions, ManualMaterialOptions, MaterialInbound, MaterialInventoryOptions, PaginatedInventory, PaginatedMaterialInventory, ProcurementInboundOrder, Warehouse, WarehouseLocation, WarehouseZone } from '@/types/inventory'
 
@@ -52,9 +53,19 @@ export async function fetchFinishedGoodsFilterOptions() {
 }
 export async function fetchEligibleMaterialPurchaseOrders(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<EligibleMaterialPurchaseOrder[]>>(`${root}material-inventory/eligible-purchase-orders/`, { params }); return data.data }
 export async function fetchProcurementInboundOrders(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<ProcurementInboundOrder[]>>(`${root}material-inventory/procurement-inbound-orders/`, { params }); return data.data }
+export async function fetchPurchaseReceiptRecords(params: { status?: PurchaseReceiptStatus; q?: string; page: number }) {
+  const { data } = await apiClient.get<PurchaseReceiptRecordsPage>(`${root}material-inventory/purchase-receipt-records/`, { params })
+  return data
+}
+export async function fetchPurchaseReceiptRecord(id: string, source: ReceiptRecordSource) {
+  const { data } = await apiClient.get<ReceiptRecordDetail>(`${root}material-inventory/purchase-receipt-records/${id}/`, { params: { source } })
+  return data
+}
 export async function fetchEligibleMaterialLines(purchaseOrderId: string) { const { data } = await apiClient.get<DataResponse<EligibleMaterialLine[]>>(`${root}material-inventory/eligible-lines/`, { params: { purchase_order_id: purchaseOrderId } }); return data.data }
-export async function fetchEligibleMaterialLinesWithVersion(purchaseOrderId: string) {
-  return versioned(await apiClient.get<DataResponse<EligibleMaterialLine[]>>(`${root}material-inventory/eligible-lines/`, { params: { purchase_order_id: purchaseOrderId } }))
+export async function fetchEligibleMaterialLinesWithVersion(purchaseOrderId: string, materialSection?: string) {
+  const response = await apiClient.get<EligibleMaterialLinesResponse>(`${root}material-inventory/eligible-lines/`, { params: { purchase_order_id: purchaseOrderId, material_section: materialSection } })
+  const name = response.data.material_section_display
+  return { ...versioned(response), ...(name ? { materialSectionDisplay: name } : {}) }
 }
 export async function fetchManualMaterialOptions(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<ManualMaterialOptions>>(`${root}material-inventory/manual-material-options/`, { params }); return data.data }
 export async function fetchMaterialReceipts(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<MaterialInbound[]>>(`${root}material-inventory/receipts/`, { params }); return data.data }

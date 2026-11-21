@@ -49,6 +49,38 @@ class TransferFixture:
 
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True, MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=False)
 class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase):
+    def test_inbound_transfer_appears_in_shared_receipt_records_and_outbound_does_not(self):
+        received = self.post(self.payload())
+        self.assertEqual(received.status_code, 201, received.data)
+        outgoing = self.post(self.payload(self.item(quantity='1'), direction='OUT'))
+        self.assertEqual(outgoing.status_code, 201, outgoing.data)
+        inbound, outbound = received.data['data'], outgoing.data['data']
+        root = '/api/v1/material-inventory/purchase-receipt-records/'
+        filters = {'section': 'B', 'status': 'CONFIRMED', 'q': inbound['transfer_number']}
+        listing = self.client.get(root, filters)
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertEqual(listing.data['total'], 1)
+        record = listing.data['data'][0]
+        self.assertEqual((str(record['id']), record['source'], record['status'], record['purchase_order_number']),
+                         (inbound['id'], 'TRANSFER', 'CONFIRMED', ''))
+        self.assertFalse(record['can_quality_confirm'])
+        self.assertEqual(record['line_count'], 1)
+        self.assertEqual(record['production_task_number'], '')
+        self.assertEqual(record['material_section_display'], '五金件、塑料件、包材')
+        detail = self.client.get(root + f"{inbound['id']}/", {'source': 'TRANSFER'})
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['lines'], inbound['lines'])
+        self.assertEqual(self.client.get(root + f"{outbound['id']}/", {'source': 'TRANSFER'}).status_code, 404)
+        self.assertFalse(self.client.get(root, {**filters, 'status': 'PENDING_QUALITY'}).data['data'])
+
+        self.user.user_permissions.remove(Permission.objects.get(content_type__app_label='inventory', codename='view_material_receipt'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        self.assertEqual(self.client.get(root, filters).data['total'], 1)
+        self.scoped_actor()
+        self.grant('inventory.quality_confirm_material', 'MODULE')
+        self.assertEqual(self.client.get(root, filters).data['total'], 0)
+        self.assertEqual(self.client.get(root + f"{inbound['id']}/", {'source': 'TRANSFER'}).status_code, 404)
+
     def test_followed_cannot_read_manual_transfers_with_either_permission_switch(self):
         self.assertEqual(self.post(self.payload()).status_code, 201)
         self.scoped_actor()

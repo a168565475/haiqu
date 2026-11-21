@@ -51,6 +51,8 @@ export interface PurchaseReadInbound {
   id: string
   inbound_number: string
   inbound_date: string
+  material_section?: import('./inventory').PurchaseReceivingSection | ''
+  material_section_display?: string
   status: 'PENDING_QUALITY' | 'CONFIRMED'
   status_display: string
   remark: string

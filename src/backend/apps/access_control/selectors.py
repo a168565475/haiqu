@@ -74,7 +74,7 @@ def grant_rows(role, grants=None):
     if grants is None:
         grants = role_grants(role)
     return [{"permission": permission_code(g.permission), "scope": g.scope,
-             **({'resource_ids': selected_ids(g)} if g.scope in {'WORKSHOP', 'CRAFT'} else {})} for g in grants]
+             **({'resource_ids': selected_ids(g)} if g.scope in {'WORKSHOP', 'CRAFT', 'MATERIAL'} else {})} for g in grants]
 
 
 def role_snapshot(role):
@@ -118,7 +118,7 @@ def effective_access(user):
             if grant.scope not in entry["scopes"]:
                 entry["scopes"].append(grant.scope)
             entry["sources"].append({"type": "ROLE", "role_id": str(grant.role_id), "scope": grant.scope,
-                                     **({'resource_ids': selected_ids(grant)} if grant.scope in {'WORKSHOP', 'CRAFT'} else {})})
+                                     **({'resource_ids': selected_ids(grant)} if grant.scope in {'WORKSHOP', 'CRAFT', 'MATERIAL'} else {})})
         for permission in user.user_permissions.select_related("content_type").order_by("id"):
             legacy.append({"type": "DIRECT", "permission": permission_code(permission)})
         for group in user.groups.order_by("id"):

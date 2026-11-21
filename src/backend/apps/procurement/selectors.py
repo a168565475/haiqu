@@ -123,12 +123,14 @@ def filter_purchase_return_status(queryset, status):
     return queryset.filter(has_returns=True, quality_returns=False, confirmed_returns=False)
 
 
-def purchase_orders_with_context(queryset=None, *, read_optimized=False):
+def purchase_orders_with_context(queryset=None, *, read_optimized=False, receiving_sections=None):
     if queryset is None:
         queryset = PurchaseOrder.objects.all()
     # 读接口使用订单快照；写入服务仍保留原有关联对象。
     line_relations = ("sample_material_source",) if read_optimized else ("supplier", "bom", "bom_line", "sample_material_source")
-    lines = PurchaseOrderLine.objects.select_related(*line_relations).prefetch_related(
+    from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope
+    lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), receiving_sections)
+    lines = lines.select_related(*line_relations).prefetch_related(
         "material_inbound_lines__inbound",
         "material_inbound_lines__purchase_return_line__return_order",
     )

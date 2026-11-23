@@ -18,4 +18,4 @@
 
 - 仅重建并切换 ERP 的 `backend` 和 `web` 应用容器。迁移计划为空，数据库、缓存、文件扫描及通知进程沿用切换前的容器。服务器业务数据检查采用只读方式。
 - 正式运行目录和审计目录分别为 `/opt/haiqu-erp/releases/20261123-purchase-zero` 和 `/opt/haiqu-erp/deployment-logs/20261123-purchase-zero`。首轮制品对照证据保存在同名带 `-prepare1` 后缀的审计目录。服务器上传暂存已按三份文件的准确路径和 SHA-256 清理并复查。
-- 隔离测试资源均登记在本轮 `.tmp/release-20261123-purchase-zero` 下。Django 标准测试销毁三个本轮测试库，已核对库名并按名称移除本次创建的 Docker 容器和网络。发布记录同步 Git 后按登记路径清理本地工作树和暂存目录。
+- 隔离测试资源均登记在本轮 `.tmp/release-20261123-purchase-zero` 下。Django 标准测试销毁三个本轮测试库，已核对库名并按名称移除本次创建的 Docker 容器和网络。本地清理命令被执行策略拦截，复查确认本轮暂存目录及其独立 Git 工作树仍保留。

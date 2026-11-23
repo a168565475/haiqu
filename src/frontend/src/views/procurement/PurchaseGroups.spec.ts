@@ -1149,6 +1149,24 @@ describe('总单与批次页面契约', () => {
     const payload = vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1]
     expect(payload.lines).toEqual([expect.objectContaining({ purchase_group_line_id: vm.lines[1].purchase_group_line_id, unit_price: null })])
   })
+
+  it.each([['0', '1.5'], ['2', '0.0000']])('跳过单价 %s、米数 %s 的普通行，按表格行号提示其余采购行', async (price, meters) => {
+    const group = groupFixture()
+    Object.assign(group.progress.lines[0]!.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6.00' })
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
+    const vm = await mountPage(PurchaseOrderFormView)
+    vm.lines[0].unit_price = price
+    vm.setPipePurchaseMeters(vm.lines[0], meters)
+    Object.assign(vm.lines[1], { actual_purchase_quantity: '10', unit_price: '2' })
+    expect(vm.lineAmount(vm.lines[0])).toBe('本批不买')
+    expect(vm.validateConfirmation()).toBe('第 2 行缺少或填写错误：供应商、采购交期。')
+    Object.assign(vm.lines[1], { supplier_id: 'supplier-1', delivery_date: '2026-12-01' })
+    await vm.createOrder('confirm')
+    expect(groupsApi.createPurchaseBatch).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines).toEqual([
+      expect.objectContaining({ purchase_group_line_id: 'group-line-2', actual_purchase_quantity: '10', unit_price: '2' }),
+    ])
+  })
   it('重读需求保留其他输入，原套餐发起行改外供后不自动用另一行套数计价', async () => {
     const vm = await mountPage(PurchaseOrderFormView)
     const pricing = { anchor_id: vm.lines[0].purchase_group_line_id, quantity: 17, unit_price: '5' }

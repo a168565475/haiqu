@@ -1153,10 +1153,15 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
     )
     submitted_lines = validated_data["lines"]
     submitted_by_id = {str(item["id"]): item for item in submitted_lines}
+    skipped_ids = {str(item) for item in validated_data.get("skipped_line_ids", [])}
+    if skipped_ids and (order.status != PurchaseOrderStatus.DRAFT or not order.purchase_group_id):
+        raise Conflict("只有生产采购批次草稿可以跳过材料。")
+    if skipped_ids.intersection(submitted_by_id) or (set(submitted_by_id) | skipped_ids) != {str(line.pk) for line in lines}:
+        raise ValidationError({"lines": "采购明细必须对应本单的材料，每行只能保留或跳过一次。"})
+
+    lines = [line for line in lines if str(line.pk) in submitted_by_id]
     lock_bom_line_material_identities([line.bom_line for line in lines if line.bom_line_id and line.raw_bar_length_m],
                                       extra_raw_material_ids=[line.calculation_snapshot.get('raw_material_id') for line in lines if line.calculation_snapshot])
-    if set(submitted_by_id) != {str(line.pk) for line in lines}:
-        raise ValidationError({"lines": "采购明细归属已锁定，不能新增、删除或跨采购订单移动。"})
 
     supplier_ids = {item.get("supplier_id") for item in submitted_lines if item.get("supplier_id")}
     suppliers = {
@@ -1222,6 +1227,8 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         amounts.append(line.amount)
 
     validate_set_members(lines)
+    if skipped_ids:
+        order.lines.filter(pk__in=skipped_ids).delete()
     if "is_mailed" in validated_data:
         order.is_mailed = validated_data["is_mailed"]
     if "batch_type" in validated_data:

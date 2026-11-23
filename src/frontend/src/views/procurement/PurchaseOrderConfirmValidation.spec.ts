@@ -44,6 +44,37 @@ describe('采购订单确认校验', () => {
 
   afterEach(() => vi.restoreAllMocks())
 
+  it('生产批次草稿确认时跳过零价和零数量行，保留四位小数的实际采购行', async () => {
+    const original = await api.fetchVersionedPurchaseOrder('order-1')
+    const base = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, source_unit_text: '个' }
+    const active = { ...base, line_number: 3, id: 'buy', actual_purchase_quantity: '0.0001', unit_price: '2' }
+    const order = { ...original.data, purchase_group_id: 'g', lines: [
+      { ...base, id: 'skip-price', actual_purchase_quantity: '5', unit_price: '0.0000', supplier_id: null, delivery_date: null },
+      { ...base, id: 'skip-quantity', line_number: 2, actual_purchase_quantity: '0', supplier_id: null, delivery_date: null },
+      active,
+    ] }
+    vi.mocked(api.fetchVersionedPurchaseOrder).mockResolvedValue({ data: order, etag: 'version-1' })
+    vi.mocked(api.updatePurchaseOrder).mockResolvedValue({ data: { ...order, lines: [active] }, etag: 'version-2' })
+    vi.mocked(api.confirmVersionedPurchaseOrder).mockResolvedValue({ data: { ...order, status: 'SUBMITTED', lines: [active] }, etag: 'version-3' })
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel').mockResolvedValue('confirm' as never)
+    const wrapper = shallowMount(PurchaseOrderConfirmView, { global: { plugins: [ElementPlus] } })
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as any
+      expect(vm.confirmationErrors).toEqual([])
+      expect(vm.lineAmount(vm.order.lines[0])).toBe('本批不买')
+      await vm.confirmAndContinue()
+      expect(confirm.mock.calls[0]?.[0]).toContain('本批将跳过 2 项材料。')
+      expect(api.updatePurchaseOrder).not.toHaveBeenCalled()
+      await vm.confirmAndContinue()
+      expect(api.updatePurchaseOrder).toHaveBeenCalledExactlyOnceWith('order-1', expect.objectContaining({
+        skipped_line_ids: ['skip-price', 'skip-quantity'],
+        lines: [expect.objectContaining({ id: 'buy', actual_purchase_quantity: '0.0001' })],
+      }), 'version-1')
+      expect(api.confirmVersionedPurchaseOrder).toHaveBeenCalledExactlyOnceWith('order-1')
+    } finally { wrapper.unmount() }
+  })
+
   it('重开草稿保留手填套数与独立采购数量，拆开后要求分别报价', async () => {
     const original = await api.fetchVersionedPurchaseOrder('order-1')
     const pricing = { anchor_id: 'stock-1', quantity: 1500, unit_price: '5.0000' }

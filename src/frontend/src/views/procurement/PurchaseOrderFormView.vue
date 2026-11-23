@@ -69,8 +69,8 @@ const batchRequestId = ref('')
 let batchContentSignature = ''
 const batchConflict = ref('')
 const selectedLines = computed(() => isBatchMode.value
-  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line))
-    && (line.set_pricing || !isExplicitZeroPrice(line.unit_price)))
+  ? lines.value.filter(line => !skipBatchLine(line) && isPositiveDecimal(line.required_quantity || '')
+    && isPositiveDecimal(effectivePurchaseQuantity(line)))
   : lines.value)
 const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
 
@@ -639,9 +639,9 @@ function setPipeLength(line: PurchaseLineDraft, value: string): void {
   setPipePurchaseMeters(line, meters)
 }
 
-function pipeMeterError(line: PurchaseLineDraft, allowZero = false): string {
+function pipeMeterError(line: PurchaseLineDraft): string {
   const meters = effectivePurchaseQuantity(line)
-  if (!(allowZero ? isNonNegativeDecimal(meters) : isPositiveDecimal(meters))) return '实际采购米数应为大于 0、最多 4 位小数的数字。'
+  if (!isPositiveDecimal(meters)) return '实际采购米数应为大于 0、最多 4 位小数的数字。'
   if (!pipeRootsFromMeters(meters, line.raw_bar_length_m)) return '实际采购米数必须为每根长度的整数倍，请核对数量。'
   return ''
 }
@@ -670,9 +670,12 @@ function remainingForBatch(line: PurchaseGroupProgressLine, target: string | nul
   return line.remaining_purchase_quantity === null ? null : compactDecimal(line.remaining_purchase_quantity)
 }
 
+function skipBatchLine(line: PurchaseLineDraft): boolean {
+  return !line.set_pricing && (isExplicitZeroPrice(line.unit_price) || isExplicitZeroPrice(effectivePurchaseQuantity(line)))
+}
+
 function lineAmount(line: PurchaseLineDraft): string {
-  if (isBatchMode.value && !line.set_pricing && (isExplicitZeroPrice(line.unit_price)
-    || isExplicitZeroPrice(effectivePurchaseQuantity(line)))) return '本批不买'
+  if (isBatchMode.value && skipBatchLine(line)) return '本批不买'
   if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
   const amount = pricedAmount(line)
   return amount === null ? '—' : formatScaled(amount)
@@ -715,9 +718,9 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
 function validateDraft(): string {
   if (isBatchMode.value) {
     if (!canWriteLines.value || !groupEtag.value) return '采购需求不可用或版本信息缺失，请重新读取。'
-    // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
     for (const [index, line] of lines.value.entries()) {
-       const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
+      if (skipBatchLine(line)) continue
+      const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
       if (line.set_pricing && !isPositiveDecimal(quantity)) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
       if (!quantity) continue
        if (!isNonNegativeDecimal(quantity)) {
@@ -725,11 +728,11 @@ function validateDraft(): string {
           : `第 ${index + 1} 行实际采购数量应为大于或等于 0、最多 4 位小数的数字。`
       }
       if (!isWeightLine(line) && line.raw_bar_length_m) {
-        const error = pipeMeterError(line, true)
+        const error = pipeMeterError(line)
         if (error) return `第 ${index + 1} 行：${error}`
       }
     }
-    if (!selectedLines.value.length) return '本批没有需要采购的材料。请填写采购数量，明确填 0 的单价会跳过本行。'
+    if (!selectedLines.value.length) return '本批至少要采购一项材料。数量或单价填 0 的普通材料会跳过。'
   } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
@@ -741,7 +744,9 @@ function validateDraft(): string {
   }
   }
   if (!lines.value.length) return '当前生产订单没有可保存的采购明细。'
-  for (const [index, line] of selectedLines.value.entries()) {
+  const included = new Set(selectedLines.value)
+  for (const [index, line] of lines.value.entries()) {
+    if (!included.has(line)) continue
     if (isBatchMode.value && !isPositiveDecimal(effectivePurchaseQuantity(line))) return `第 ${index + 1} 项实际采购数量应大于 0。`
     if (isWeightLine(line)) {
       const samplePipe = isPipePurchaseLine(line) && isWeightPipeLine(line)
@@ -771,7 +776,9 @@ function validateConfirmation(): string {
   if (draftError) return draftError
   const selectedCurrency = options.value.currencies.find((item) => item.id === form.currencyId)
   if (!selectedCurrency || selectedCurrency.code !== 'CNY') return '系统未找到人民币（CNY）采购币种，请联系管理员检查基础资料。'
-  for (const [index, line] of selectedLines.value.entries()) {
+  const included = new Set(selectedLines.value)
+  for (const [index, line] of lines.value.entries()) {
+    if (!included.has(line)) continue
     const missing: string[] = []
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')

@@ -107,6 +107,7 @@ export async function updatePurchaseOrder(
   id: string,
   payload: {
     batch_type?: PurchaseBatchType
+    skipped_line_ids?: string[]
     is_mailed: boolean | null
     lines: Array<{
       id: string

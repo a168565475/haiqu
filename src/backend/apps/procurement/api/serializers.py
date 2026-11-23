@@ -261,6 +261,7 @@ class PurchaseOrderUpdateSerializer(serializers.Serializer):
     batch_type = serializers.ChoiceField(choices=["NORMAL", "SUPPLEMENT"], required=False)
     is_mailed = serializers.BooleanField(required=False, allow_null=True)
     lines = PurchaseOrderUpdateLineSerializer(many=True, allow_empty=False, max_length=5000)
+    skipped_line_ids = serializers.ListField(child=serializers.UUIDField(), required=False, max_length=5000)
 
     def validate_lines(self, value):
         line_ids = [item["id"] for item in value]

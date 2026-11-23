@@ -21,7 +21,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import { isHardwareWeightLine } from './purchaseWeight'
 import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
 import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
-import { applySetPricing, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { applySetPricing, isExplicitZeroPrice, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 import { formatScaled, scaledProduct } from './purchaseAmounts'
 
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
@@ -36,6 +36,7 @@ const confirming = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const order = ref<PurchaseOrderDetail | null>(null)
+const canSkipLines = computed(() => Boolean(order.value?.purchase_group_id && order.value.status === 'DRAFT'))
 const editingSetId = ref('')
 const defaultSetQuantity = ref<string | null>(null)
 const setCandidates = computed(() => editingSetId.value && order.value ? order.value.lines.map(line => {
@@ -83,7 +84,7 @@ const today = new Date()
 today.setHours(0, 0, 0, 0)
 
 const supplierCount = computed(() => new Set(
-  (order.value?.lines || []).map((line) => line.supplier_id).filter(Boolean),
+  includedLines.value.map((line) => line.supplier_id).filter(Boolean),
 ).size)
 
 function isWeightPipeLine(line: PurchaseOrderDetail['lines'][number]): boolean {
@@ -124,33 +125,35 @@ function suggestedWeight(line: PurchaseOrderDetail['lines'][number]): string {
   return line.suggested_purchase_weight_kg || line.required_quantity || ''
 }
 
+function purchaseQuantity(line: PurchaseOrderDetail['lines'][number]): string | null {
+  return line.raw_bar_length_m && !isWeightLine(line) ? pipePurchaseMeters(line) : line.actual_purchase_quantity
+}
+
+function skipLine(line: PurchaseOrderDetail['lines'][number]): boolean {
+  return canSkipLines.value && !line.set_pricing
+    && (isExplicitZeroPrice(line.unit_price ?? '') || isExplicitZeroPrice(purchaseQuantity(line) ?? ''))
+}
+
+const includedLines = computed(() => (order.value?.lines || []).filter(line => !skipLine(line)))
+
 function amountScaled(line: PurchaseOrderDetail['lines'][number]) {
   if (line.set_pricing) return line.set_pricing.anchor_id === line.purchase_group_line_id
     ? scaledProduct(String(line.set_pricing.quantity), line.set_pricing.unit_price) : 0n
-  const quantity = isWeightLine(line)
-    ? pipeWeight(line)
-    : line.raw_bar_length_m
-      ? pipePurchaseMeters(line)
-      : line.actual_purchase_quantity
-  return scaledProduct(quantity || '0', line.unit_price || '0')
+  return scaledProduct(purchaseQuantity(line) || '0', line.unit_price || '0')
 }
-const totalScaled = computed(() => (order.value?.lines || []).reduce((sum, line) => sum + (amountScaled(line) ?? 0n), 0n))
+const totalScaled = computed(() => includedLines.value.reduce((sum, line) => sum + (amountScaled(line) ?? 0n), 0n))
 
 const confirmationErrors = computed(() => {
   const errors: string[] = []
-  if (!order.value?.lines.length) errors.push('采购明细为空，请返回补充明细。')
-  for (const line of order.value?.lines || []) {
+  if (!includedLines.value.length) errors.push(canSkipLines.value ? '本批至少要采购一项材料。' : '采购明细为空，请返回补充明细。')
+  for (const line of includedLines.value) {
     const missing: string[] = []
     const weightPipe = isWeightLine(line)
     const rootError = line.raw_bar_length_m && !weightPipe ? pipeMeterError(line) : ''
     if (rootError) errors.push(`第 ${line.line_number} 行：${rootError}`)
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')
-    const actualQuantity = weightPipe
-      ? pipeWeight(line)
-      : line.raw_bar_length_m
-        ? pipePurchaseMeters(line)
-        : line.actual_purchase_quantity
+    const actualQuantity = purchaseQuantity(line)
     if (!rootError && (actualQuantity === null || actualQuantity === '' || !Number.isFinite(Number(actualQuantity)) || Number(actualQuantity) <= 0)) missing.push(weightPipe ? '实际采购重量' : '实际采购数量')
     if (!line.set_pricing && (line.unit_price === null || line.unit_price === '' || !Number.isFinite(Number(line.unit_price)) || Number(line.unit_price) < 0)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
@@ -188,6 +191,7 @@ function formatQuantityInput(value: string | number | null | undefined, precisio
 }
 
 function lineAmount(line: PurchaseOrderDetail['lines'][number]): string {
+  if (skipLine(line)) return '本批不买'
   if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
   const amount = amountScaled(line)
   return amount === null ? '—' : formatScaled(amount)
@@ -222,7 +226,7 @@ function updateOrder(result: { data: PurchaseOrderDetail; etag: string }): void 
       } : {}),
       actual_purchase_quantity: isWeightLine(line)
         ? formatQuantityInput(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity ?? (result.data.source_type === 'SAMPLE' ? line.calculation_snapshot?.actual_purchase_weight_kg : null), 4)
-        : formatQuantityInput(line.actual_purchase_quantity, line.set_pricing || line.raw_bar_length_m ? 4 : 2),
+        : formatQuantityInput(line.actual_purchase_quantity, result.data.purchase_group_id || line.set_pricing || line.raw_bar_length_m ? 4 : 2),
     })),
   }
   etag.value = result.etag
@@ -292,10 +296,12 @@ async function load(): Promise<void> {
 
 function updatePayload() {
   if (!order.value) return null
+  const skippedLineIds = order.value.lines.filter(skipLine).map(line => line.id)
   return {
     is_mailed: order.value.is_mailed,
     ...(order.value.purchase_group_id && order.value.status === 'DRAFT' && order.value.batch_type ? { batch_type: order.value.batch_type } : {}),
-    lines: order.value.lines.map((line) => ({
+    ...(skippedLineIds.length ? { skipped_line_ids: skippedLineIds } : {}),
+    lines: includedLines.value.map((line) => ({
       id: line.id,
       supplier_id: line.supplier_id || null,
       delivery_date: line.delivery_date || null,
@@ -318,7 +324,12 @@ function updatePayload() {
 
 async function saveChanges(showSuccess = true): Promise<boolean> {
   if (!canEdit.value || !order.value || saving.value || loading.value || !optionsReady.value) return false
-  const invalidPipe = order.value.lines.find(line => line.raw_bar_length_m && !isWeightLine(line) && pipeMeterError(line))
+  if (canSkipLines.value && !includedLines.value.length) {
+    actionError.value = '本批至少要采购一项材料。'
+    ElMessage.error(actionError.value)
+    return false
+  }
+  const invalidPipe = includedLines.value.find(line => line.raw_bar_length_m && !isWeightLine(line) && pipeMeterError(line))
   if (invalidPipe) {
     actionError.value = `第 ${invalidPipe.line_number} 行：${pipeMeterError(invalidPipe)}`
     ElMessage.error(actionError.value)
@@ -356,15 +367,12 @@ async function confirmAndContinue(): Promise<void> {
     return
   }
   confirming.value = true
-  const saved = await saveChanges(false)
-  if (!saved || !order.value) {
-    confirming.value = false
-    return
-  }
   if (order.value.status === 'DRAFT') {
+    const skippedCount = order.value.lines.length - includedLines.value.length
+    const skippedMessage = skippedCount ? `本批将跳过 ${skippedCount} 项材料。` : ''
     try {
       await ElMessageBox.confirm(
-        `确认采购订单 ${order.value.order_number} 后，将按默认模板生成供应商采购表草稿并直接打开。采购表发布仍需单独确认。`,
+        `${skippedMessage}确认采购订单 ${order.value.order_number} 后，将按默认模板生成供应商采购表草稿并直接打开。采购表发布仍需单独确认。`,
         '确认采购订单',
         { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消', customClass: 'purchase-confirm-message-box' },
       )
@@ -372,6 +380,13 @@ async function confirmAndContinue(): Promise<void> {
       confirming.value = false
       return
     }
+  }
+  const saved = await saveChanges(false)
+  if (!saved || !order.value) {
+    confirming.value = false
+    return
+  }
+  if (order.value.status === 'DRAFT') {
     try {
       updateOrder(await confirmVersionedPurchaseOrder(order.value.id))
       ElMessage.success('采购订单已确认。')
@@ -467,7 +482,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                 data-testid="confirm-quantity"
                 inputmode="decimal"
                 placeholder="请输入数量"
-                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, 4)"
+                @blur="!canSkipLines && (row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, 4))"
               ><template #append>kg</template></ElInput>
               <ElPopover v-if="order.source_type === 'SAMPLE' && isWeightPipeLine(row)" trigger="click" placement="top" :width="380" :teleported="true">
                 <template #reference><ElButton link type="primary" aria-label="修改管材单根参数">单根参数</ElButton></template>
@@ -483,7 +498,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                 data-testid="confirm-quantity"
                 inputmode="decimal"
                 placeholder="请输入数量"
-                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, row.set_pricing ? 4 : 2)"
+                @blur="!canSkipLines && (row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, order.purchase_group_id || row.set_pricing ? 4 : 2))"
               ><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
             </template>
           </ElTableColumn>
@@ -502,7 +517,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
       </section>
 
       <footer class="action-bar">
-        <div class="summary-counts">采购明细 <strong>{{ order.lines.length }}</strong> 项 <span>·</span> 已选供应商 <strong>{{ supplierCount }}</strong> 家</div>
+        <div class="summary-counts">采购明细 <strong>{{ includedLines.length }}</strong> 项 <span>·</span> 已选供应商 <strong>{{ supplierCount }}</strong> 家</div>
         <div class="summary-actions">
           <div class="mailing-panel"><span>是否邮寄</span><ElRadioGroup v-model="order.is_mailed" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></div>
           <div class="total"><span>采购总金额</span><strong>¥ {{ formatScaled(totalScaled) }}</strong></div>

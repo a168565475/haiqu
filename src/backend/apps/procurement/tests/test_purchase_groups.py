@@ -395,6 +395,38 @@ class PurchaseGroupApiTests(APITestCase):
         confirmed = self.client.post(f"/api/v1/purchase-orders/{batch['id']}/confirm/", {}, format="json")
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
+    def test_draft_batch_skips_unpurchased_line_and_releases_its_quantity(self):
+        child = self.extra_set_component("后续再买")
+        payload = self.batch_payload("12")
+        payload["lines"].append({"purchase_group_line_id": child, "actual_purchase_quantity": "6"})
+        batches_url = f"/api/v1/purchase-groups/{self.group_id}/batches/"
+        response = self.client.post(batches_url, payload, format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(response.status_code, 201, response.data)
+        batch = response.data["data"]
+        url = f"/api/v1/purchase-orders/{batch['id']}/"
+        active, skipped = batch["lines"]
+        active_input = {"id": active["id"], "actual_purchase_quantity": "12", "supplier_id": active["supplier_id"],
+                        "delivery_date": active["delivery_date"], "unit_price": "2"}
+        etag = self.client.get(url)["ETag"]
+        for invalid_ids in ([str(uuid4())], [active["id"], skipped["id"]]):
+            invalid = self.client.patch(url, {"lines": [active_input], "skipped_line_ids": invalid_ids},
+                                        format="json", HTTP_IF_MATCH=etag)
+            self.assertEqual(invalid.status_code, 400, invalid.data)
+        updated = self.client.patch(url, {"lines": [active_input], "skipped_line_ids": [skipped["id"]]},
+                                    format="json", HTTP_IF_MATCH=etag)
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual([line["id"] for line in updated.data["data"]["lines"]], [active["id"]])
+        self.assertEqual(updated.data["data"]["total_amount"], "24.0000")
+        confirmed = self.client.post(url + "confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        blocked = self.client.patch(url, {"lines": [active_input], "skipped_line_ids": [skipped["id"]]},
+                                    format="json", HTTP_IF_MATCH=self.client.get(url)["ETag"])
+        self.assertEqual(blocked.status_code, 409, blocked.data)
+        next_payload = self.batch_payload("6")
+        next_payload["lines"][0]["purchase_group_line_id"] = child
+        next_batch = self.client.post(batches_url, next_payload, format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(next_batch.status_code, 201, next_batch.data)
+
     def test_source_scope_and_warehouse_read_does_not_grant_purchase_write(self):
         outsider = get_user_model().objects.create_user(username="group-outsider")
         Employee.objects.create(user=outsider, employee_code="GROUP-OUT", display_name="范围外采购")

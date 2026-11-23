@@ -139,7 +139,7 @@ class SamplePipeWeightPurchaseApiTests(APITestCase):
         self.assertEqual(source['lines'][0]['sample_demand_unit'], '米')
         self.assertIsNone(source['lines'][0]['required_quantity'])
         result = self.client.post(self.root, {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk),
-            'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk), 'is_mailed': False,
+            'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk),
             'lines': [{'sample_line_key': self.key, 'supplier_id': str(self.supplier.pk),
                        'delivery_date': str(timezone.localdate()), 'unit_price': '2', **values}]}, format='json')
         self.assertEqual(result.status_code, 201, result.data)

@@ -147,7 +147,7 @@ describe('采购订单中的供应商入口与权限边界', () => {
         production_task_number: 'HT26001', delivery_date: '2026-09-30', is_historical_unlinked: false,
         product_summary: [], line_count: 1, supplier_assigned_line_count: 1, supplier_count: 1,
         supplier_summary: [{ id: 'supplier-1', supplier_number: 'GYS001', supplier_name: '测试供应商' }],
-        currency_code: 'CNY', total_amount: '100.00', is_mailed: false,
+        currency_code: 'CNY', total_amount: '100.00',
         status: 'PURCHASING', status_display: '采购中', created_at: '2026-09-17T00:00:00Z',
         completion: {
           can_complete: false, blocked_reason: '等待入库', inbound_status: 'PENDING_RECEIPT',

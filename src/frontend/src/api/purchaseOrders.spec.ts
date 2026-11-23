@@ -130,7 +130,6 @@ describe('采购订单 API', () => {
       bom_id: 'bom-1',
       source_revision: 'a'.repeat(64),
       currency_id: null,
-      is_mailed: null,
       lines: [{
         bom_line_id: 'bom-line-1',
         supplier_id: null,
@@ -169,7 +168,7 @@ describe('采购订单 API', () => {
   })
 
   it('编辑批次类型仍使用原采购明细接口及其版本', async () => {
-    const payload = { batch_type: 'SUPPLEMENT' as const, is_mailed: null, lines: [{
+    const payload = { batch_type: 'SUPPLEMENT' as const, lines: [{
       id: 'line-1', supplier_id: null, delivery_date: null, actual_purchase_quantity: '120.0001', unit_price: null,
     }] }
     mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'batch-1', batch_type: 'SUPPLEMENT' } }, headers: { etag: '"batch-v2"' } })
@@ -277,7 +276,6 @@ describe('采购订单 API', () => {
 
   it('已确认采购订单仍通过 ETag 保存当前采购明细', async () => {
     const payload = {
-      is_mailed: true,
       lines: [{
         id: 'line-1',
         supplier_id: 'supplier-1',

@@ -172,7 +172,7 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
         customer_name_snapshot=(sample.customer_account.account_name if sample.customer_account_id else ''), source_revision=source["source_revision"],
         currency=currency, currency_code_snapshot=currency.code if currency else "",
         currency_name_snapshot=currency.chinese_name if currency else "", currency_symbol_snapshot=currency.symbol if currency else "",
-        is_mailed=validated_data.get("is_mailed"), created_by_employee=actor_employee,
+        created_by_employee=actor_employee,
     )
     amounts = []
     for row in source["lines"]:

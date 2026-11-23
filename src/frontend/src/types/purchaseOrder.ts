@@ -263,7 +263,6 @@ export interface PurchaseOrderInput {
   bom_id?: string
   source_revision: string
   currency_id: string | null
-  is_mailed: boolean | null
   lines: PurchaseOrderLineInput[]
 }
 
@@ -328,7 +327,6 @@ export interface PurchaseOrderListItem {
   currency_code: string
   currency_symbol: string
   total_amount: string | null
-  is_mailed: boolean | null
   status: PurchaseOrderStatus
   status_display: string
   created_by_name: string
@@ -358,7 +356,6 @@ export interface PurchaseOrderQuery {
   production_task_id?: string
   supplier_id?: string
   status?: PurchaseOrderStatus | ''
-  is_mailed?: boolean | ''
   delivery_from?: string
   delivery_to?: string
   created_after?: string

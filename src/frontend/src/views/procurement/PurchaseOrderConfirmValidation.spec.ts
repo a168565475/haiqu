@@ -30,7 +30,6 @@ describe('采购订单确认校验', () => {
         order_number: 'CGDD2026091746',
         status: 'DRAFT',
         currency_code: 'CNY',
-        is_mailed: false,
         product_summary: [],
         lines: [{
           id: 'line-1', line_number: 1, raw_bar_length_m: '2.96', suggested_bar_count: 96,
@@ -46,7 +45,7 @@ describe('采购订单确认校验', () => {
 
   it('生产批次草稿确认时跳过留空或填零的行，保留四位小数的实际采购行', async () => {
     const original = await api.fetchVersionedPurchaseOrder('order-1')
-    const base = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, source_unit_text: '个' }
+    const base: typeof original.data.lines[number] = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, source_unit_text: '个' }
     const active = { ...base, line_number: 6, id: 'buy', actual_purchase_quantity: '0.0001', unit_price: '2' }
     const order = { ...original.data, purchase_group_id: 'g', lines: [
       { ...base, id: 'skip-price', actual_purchase_quantity: '5', unit_price: '0.0000', supplier_id: null, delivery_date: null },
@@ -81,7 +80,7 @@ describe('采购订单确认校验', () => {
   it('重开草稿保留手填套数与独立采购数量，拆开后要求分别报价', async () => {
     const original = await api.fetchVersionedPurchaseOrder('order-1')
     const pricing = { anchor_id: 'stock-1', quantity: 1500, unit_price: '5.0000' }
-    const base = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, set_pricing: pricing,
+    const base: typeof original.data.lines[number] = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, set_pricing: pricing,
       unit_price: null, source_unit_text: '米', supplier_id: 'supplier-1', delivery_date: '2026-11-28' }
     const order = { ...original.data, purchase_group_id: 'g', lines: [
       { ...base, id: 'line-1', purchase_group_line_id: 'stock-1', actual_purchase_quantity: '3200' },

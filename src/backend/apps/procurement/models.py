@@ -282,7 +282,6 @@ class PurchaseOrder(ArchivableModel):
     currency_code_snapshot = models.CharField(max_length=3, blank=True)
     currency_name_snapshot = models.CharField(max_length=150, blank=True)
     currency_symbol_snapshot = models.CharField(max_length=20, blank=True)
-    is_mailed = models.BooleanField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=PurchaseOrderStatus.choices,

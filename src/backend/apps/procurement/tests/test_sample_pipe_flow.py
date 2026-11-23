@@ -46,7 +46,7 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(source.status_code, 200, source.data)
         data = source.data['data']
         return {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk),
-                'source_revision': data['source_revision'], 'currency_id': str(self.currency.pk), 'is_mailed': False,
+                'source_revision': data['source_revision'], 'currency_id': str(self.currency.pk),
                 'lines': [{'sample_line_key': self.key, 'supplier_id': str(self.supplier.pk),
                            'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '10',
                            'raw_bar_length_m': '3.05', 'raw_bar_weight_kg': '2.5', 'unit_price': '2'}]}

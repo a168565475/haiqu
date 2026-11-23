@@ -353,17 +353,6 @@ class PurchaseOrderViewSet(
                 raise ValidationError({"created_after": "创建日期不是有效日期。"})
             queryset = queryset.filter(created_at__date__gte=parsed_date)
 
-        mailed_value = self.request.query_params.get("is_mailed", "").strip().lower()
-        if mailed_value:
-            if mailed_value in {"1", "true"}:
-                queryset = queryset.filter(is_mailed=True)
-            elif mailed_value in {"0", "false"}:
-                queryset = queryset.filter(is_mailed=False)
-            elif mailed_value in {"null", "pending"}:
-                queryset = queryset.filter(is_mailed__isnull=True)
-            else:
-                raise ValidationError({"is_mailed": "是否邮寄参数必须为 true、false 或 null。"})
-
         queryset = search_purchase_orders(queryset, self.request.query_params.get("q", "").strip())
         ordering = self.request.query_params.get("ordering", "-created_at").strip()
         allowed_ordering = {
@@ -700,9 +689,6 @@ class PurchaseOrderViewSet(
             submitted=Count("id", filter=Q(status=PurchaseOrderStatus.SUBMITTED)),
             purchasing=Count("id", filter=Q(status=PurchaseOrderStatus.PURCHASING)),
             completed=Count("id", filter=Q(status=PurchaseOrderStatus.COMPLETED)),
-            mailed=Count("id", filter=Q(is_mailed=True)),
-            unmailed=Count("id", filter=Q(is_mailed=False)),
-            mailing_pending=Count("id", filter=Q(is_mailed__isnull=True)),
             incomplete_amount=Count("id", filter=Q(total_amount__isnull=True)),
         )
         amounts = []

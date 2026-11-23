@@ -1899,7 +1899,6 @@ class Command(BaseCommand):
                     "bom_id": bom.pk,
                     "source_revision": source["source_revision"],
                     "currency_id": dependencies["cny"].pk,
-                    "is_mailed": False,
                     "lines": lines,
                 },
                 allowed_task_ids=allowed_task_ids,

@@ -134,7 +134,6 @@ let sourceRequestId = 0
 
 const form = reactive({
   currencyId: '',
-  isMailed: null as boolean | null,
 })
 
 const sourceOptions = computed<PurchaseOrderProductionTaskOption[]>(() => [
@@ -798,7 +797,6 @@ function buildPayload(): PurchaseOrderInput {
       : { production_task_id: selectedTaskId.value, bom_id: selectedBomId.value }),
     source_revision: source.value?.source_revision || '',
     currency_id: form.currencyId || null,
-    is_mailed: form.isMailed,
     lines: lines.value.map((line) => ({
       ...(isSampleSource.value ? { sample_line_key: line.sample_line_key } : { bom_line_id: line.bom_line_id }),
       supplier_id: line.supplier_id || null,
@@ -826,7 +824,6 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
       const content = {
         batch_type: batchType.value,
         currency_id: form.currencyId,
-        is_mailed: form.isMailed,
         lines: selectedLines.value.map(line => ({
           purchase_group_line_id: line.purchase_group_line_id!,
           supplier_id: line.supplier_id || null,
@@ -1412,7 +1409,6 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       <section v-if="isDetailStep" class="summary-card">
         <PurchaseGridCell><div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div></PurchaseGridCell>
         <div class="summary-actions">
-          <label class="mail-field"><span>是否邮寄</span><ElRadioGroup v-model="form.isMailed" :disabled="isBatchMode && saving" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></label>
           <PurchaseGridCell><div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div></PurchaseGridCell>
           <ElButton type="primary" :loading="saving" :disabled="saving" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
@@ -1570,11 +1566,6 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .summary-counts { gap: 14px; font-size: 16px; font-weight: 500; white-space: nowrap; }
 .summary-counts strong { color: crm.$crm-primary; margin: 0 6px; font-weight: 500; }
 .summary-actions { flex-wrap: wrap; gap: 14px; }
-.mail-field { display: flex; align-items: center; gap: 26px; white-space: nowrap; }
-.mail-field :deep(.el-radio) { margin-right: 28px; }
-.mail-field :deep(.el-radio:last-child) { margin: 0; }
-.mail-field :deep(.el-radio__inner) { width: 18px; height: 18px; border-color: crm.$crm-text-muted; }
-.mail-field :deep(.el-radio__input.is-checked .el-radio__inner) { border-color: crm.$crm-primary; }
 .summary-total { display: flex; align-items: center; gap: 18px; padding-left: 40px; border-left: 1px solid crm.$crm-border-default; white-space: nowrap; }
 .summary-total strong { min-width: 170px; font-size: 28px; color: crm.$crm-primary; font-weight: 700; }
 .summary-actions > :deep(.el-button) { width: 220px; height: 42px; }

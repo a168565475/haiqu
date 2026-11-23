@@ -67,7 +67,7 @@ class SamplePurchaseApiTests(APITestCase):
         self.assertEqual(source['bom_options'], [])
         self.assertNotIn('production_task', source)
         return {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk),
-                'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk), 'is_mailed': False,
+                'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk),
                 'lines': [{'sample_line_key': self.key, 'supplier_id': str(self.supplier.pk),
                            'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '4', 'unit_price': '2'}]}
 
@@ -147,11 +147,11 @@ class SamplePurchaseApiTests(APITestCase):
     def test_update_confirm_generate_and_direct_full_arrival(self):
         created = self.create_order()
         changed = self.client.patch(self.root + self.sample_order_id + '/', {
-            'is_mailed': False, 'lines': [{'id': str(self.purchase_line.pk), 'supplier_id': str(self.supplier.pk),
+            'lines': [{'id': str(self.purchase_line.pk), 'supplier_id': str(self.supplier.pk),
             'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '4', 'unit_price': '3'}],
         }, format='json', HTTP_IF_MATCH=created['ETag'])
         self.assertEqual(changed.status_code, 200, changed.data)
-        stale = self.client.patch(self.root + self.sample_order_id + '/', {'is_mailed': True, 'lines': []}, format='json', HTTP_IF_MATCH=created['ETag'])
+        stale = self.client.patch(self.root + self.sample_order_id + '/', {'lines': []}, format='json', HTTP_IF_MATCH=created['ETag'])
         self.assertIn(stale.status_code, [400, 409, 412])
         confirmed = self.client.post(self.root + self.sample_order_id + '/confirm/', {}, format='json')
         self.assertEqual(confirmed.status_code, 200, confirmed.data)

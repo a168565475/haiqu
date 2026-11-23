@@ -486,9 +486,6 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
           <ElTableColumn label="采购金额" width="146" show-overflow-tooltip>
             <template #default="{ row }"><span class="amount" :class="{ 'amount--pending erp-list-tag erp-list-tag--neutral': !row.currency_code || row.total_amount === null }">{{ row.currency_code && row.total_amount !== null ? `${row.currency_code} ${formatMoney(row.total_amount)}` : '待计算' }}</span></template>
           </ElTableColumn>
-          <ElTableColumn label="是否邮寄" width="88" align="center">
-            <template #default="{ row }">{{ row.is_mailed === null ? '待填写' : row.is_mailed ? '是' : '否' }}</template>
-          </ElTableColumn>
           <ElTableColumn label="订单来源" width="112" align="center">
             <template #default="{ row }"><span class="purchase-source-tag erp-list-tag" :class="row.source_type === 'SAMPLE' ? 'is-sample erp-list-tag--warning' : 'erp-list-tag--info'" data-testid="purchase-source-tag">{{ row.source_type === 'SAMPLE' ? '打样单' : '生产订单' }}</span></template>
           </ElTableColumn>

@@ -199,7 +199,6 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
     sample_procurement_request_id = serializers.UUIDField(required=False)
     source_revision = serializers.RegexField(regex=r"^[0-9a-f]{64}$", max_length=64)
     currency_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    is_mailed = serializers.BooleanField(required=False, allow_null=True, default=None)
     lines = PurchaseOrderLineInputSerializer(many=True, allow_empty=False, max_length=5000)
 
     def validate(self, value):
@@ -259,7 +258,6 @@ class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
 
 class PurchaseOrderUpdateSerializer(serializers.Serializer):
     batch_type = serializers.ChoiceField(choices=["NORMAL", "SUPPLEMENT"], required=False)
-    is_mailed = serializers.BooleanField(required=False, allow_null=True)
     lines = PurchaseOrderUpdateLineSerializer(many=True, allow_empty=False, max_length=5000)
     skipped_line_ids = serializers.ListField(child=serializers.UUIDField(), required=False, max_length=5000)
 
@@ -395,7 +393,6 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             "currency_code",
             "currency_name",
             "currency_symbol",
-            "is_mailed",
             "total_amount",
             "line_count",
             "supplier_count",

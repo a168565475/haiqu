@@ -572,7 +572,7 @@ class PurchaseOrderApiTests(APITestCase):
             unit_price="2.4000",
             amount="999999.0000",
         )
-        payload.update({"currency_id": str(self.cny.pk), "is_mailed": True, "total_amount": "1"})
+        payload.update({"currency_id": str(self.cny.pk), "total_amount": "1"})
 
         created = self.client.post("/api/v1/purchase-orders/", payload, format="json")
 
@@ -601,6 +601,7 @@ class PurchaseOrderApiTests(APITestCase):
         stats = self.client.get("/api/v1/purchase-orders/stats/")
         self.assertEqual(listed.status_code, 200, listed.data)
         self.assertEqual(listed.data["meta"]["total"], 1)
+        self.assertNotIn("is_mailed", listed.data["data"][0])
         self.assertEqual(listed.data["data"][0]["supplier_assigned_line_count"], 1)
         self.assertEqual(listed.data["data"][0]["supplier_count"], 1)
         self.assertEqual(listed.data["data"][0]["order_date"], task.order_date.isoformat())
@@ -1391,7 +1392,6 @@ class PurchaseOrderApiTests(APITestCase):
         edited_price = "2.5000"
         expected_delivery_date = timezone.localdate() + timedelta(days=10)
         order_update_payload = {
-            "is_mailed": True,
             "lines": [{
                 "id": confirmed_line["id"],
                 "supplier_id": str(self.supplier.pk),
@@ -1410,7 +1410,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(edited_order.data["data"]["status"], "SUBMITTED")
         self.assertEqual(edited_order.data["data"]["lines"][0]["actual_purchase_quantity"], edited_quantity)
         self.assertEqual(edited_order.data["data"]["lines"][0]["amount"], "32.5000")
-        self.assertTrue(edited_order.data["data"]["is_mailed"])
+        self.assertNotIn("is_mailed", edited_order.data["data"])
         options = self.client.get(f"/api/v1/purchase-orders/{order_id}/sheet-options/")
         self.assertEqual(options.status_code, 200, options.data)
         self.assertEqual(len(options.data["data"]["suppliers"]), 1)

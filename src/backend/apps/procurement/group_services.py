@@ -537,7 +537,7 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         sales_order_number_snapshot=group.sales_order_number_snapshot, customer_name_snapshot=group.customer_name_snapshot,
         source_revision=group.source_revision, currency=currency, currency_code_snapshot=currency.code,
         currency_name_snapshot=currency.chinese_name, currency_symbol_snapshot=currency.symbol,
-        is_mailed=validated_data.get("is_mailed"), created_by_employee=actor_employee,
+        created_by_employee=actor_employee,
     )
     created_lines = []
     for number, item in enumerate(inputs, 1):

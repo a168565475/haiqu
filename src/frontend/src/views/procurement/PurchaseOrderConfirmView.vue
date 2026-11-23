@@ -298,7 +298,6 @@ function updatePayload() {
   if (!order.value) return null
   const skippedLineIds = order.value.lines.filter(skipLine).map(line => line.id)
   return {
-    is_mailed: order.value.is_mailed,
     ...(order.value.purchase_group_id && order.value.status === 'DRAFT' && order.value.batch_type ? { batch_type: order.value.batch_type } : {}),
     ...(skippedLineIds.length ? { skipped_line_ids: skippedLineIds } : {}),
     lines: includedLines.value.map((line) => ({
@@ -519,7 +518,6 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
       <footer class="action-bar">
         <div class="summary-counts">采购明细 <strong>{{ includedLines.length }}</strong> 项 <span>·</span> 已选供应商 <strong>{{ supplierCount }}</strong> 家</div>
         <div class="summary-actions">
-          <div class="mailing-panel"><span>是否邮寄</span><ElRadioGroup v-model="order.is_mailed" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></div>
           <div class="total"><span>采购总金额</span><strong>¥ {{ formatScaled(totalScaled) }}</strong></div>
           <ElButton class="save-button" :loading="saving" :disabled="!canEdit || confirming || loading || !optionsReady" @click="saveChanges()">保存修改</ElButton>
           <ElButton class="confirm-button" data-testid="confirm-next" type="primary" :loading="confirming" :disabled="!canEdit || (order.status === 'DRAFT' && !canSubmit) || saving || loading || !optionsReady" @click="confirmAndContinue">
@@ -600,11 +598,6 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .summary-actions :deep(.el-button) { height: 42px; margin: 0; }
 .save-button { width: 134px; border-color: crm.$crm-primary; color: crm.$crm-primary; }
 .confirm-button { width: 200px; }
-.mailing-panel { display: flex; align-items: center; gap: 24px; width: 228px; white-space: nowrap; }
-.mailing-panel :deep(.el-radio) { margin-right: 24px; }
-.mailing-panel :deep(.el-radio:last-child) { margin: 0; }
-.mailing-panel :deep(.el-radio__inner) { width: 18px; height: 18px; border-color: crm.$crm-text-muted; }
-.mailing-panel :deep(.is-checked .el-radio__inner) { border-color: crm.$crm-primary; }
 .total { display: flex; align-items: center; gap: 12px; padding-left: 38px; margin-left: 16px; border-left: 1px solid crm.$crm-border-default; height: 44px; white-space: nowrap; }
 .total strong { font-size: 28px; color: crm.$crm-primary; font-weight: 500; }
 .load-error { display: flex; align-items: center; gap: 20px; padding: 30px; background: crm.$crm-color-surface; }
@@ -643,8 +636,6 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .pipe-meters { white-space: nowrap; }
 @media (max-width: 1300px) {
   .summary-actions { gap: 10px; }
-  .mailing-panel { width: 200px; gap: 12px; }
-  .mailing-panel :deep(.el-radio) { margin-right: 12px; }
   .total { padding-left: 20px; margin-left: 0; }
   .total strong { font-size: 24px; }
   .save-button { width: 118px; }

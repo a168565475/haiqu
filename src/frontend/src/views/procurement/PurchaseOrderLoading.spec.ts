@@ -12,7 +12,7 @@ vi.mock('@/api/purchaseOrders', async original => ({ ...await original<typeof im
   fetchVersionedPurchaseOrder: vi.fn(), fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSupplierOptions: vi.fn(),
   updatePurchaseOrder: vi.fn(),
 }))
-const order = { id: 'order-1', order_number: 'CGDD2026091601', status: 'DRAFT', currency_code: 'CNY', is_mailed: false, lines: [], product_summary: [] }
+const order = { id: 'order-1', order_number: 'CGDD2026091601', status: 'DRAFT', currency_code: 'CNY', total_amount: '1.0000', lines: [], product_summary: [] }
 const options = { suppliers: [] }
 const mount = (component: typeof PurchaseOrderListView | typeof PurchaseOrderConfirmView) => shallowMount(component, { global: { plugins: [ElementPlus] } })
 
@@ -85,10 +85,10 @@ describe('采购订单分区加载', () => {
     const wrapper = mount(PurchaseOrderConfirmView); await flushPromises()
     const vm = wrapper.vm as unknown as { order: typeof order; etag: string; optionsReady: boolean; optionsError: string; loadOptions: () => Promise<void> }
     expect(vm.order?.id).toBe('order-1'); expect(vm.optionsReady).toBe(false); expect(vm.optionsError).not.toBe('')
-    vm.order.is_mailed = true
+    vm.order.total_amount = '2.0000'
     await vm.loadOptions()
     expect(vm.optionsReady).toBe(true); expect(vm.optionsError).toBe('')
-    expect(vm.order.is_mailed).toBe(true); expect(vm.etag).toBe('version-1')
+    expect(vm.order.total_amount).toBe('2.0000'); expect(vm.etag).toBe('version-1')
     expect(api.fetchVersionedPurchaseOrder).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })

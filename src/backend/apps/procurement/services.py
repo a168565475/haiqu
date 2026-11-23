@@ -885,7 +885,6 @@ def purchase_order_snapshot(order):
         "production_task_number": order.production_task_number_snapshot,
         "source_revision": order.source_revision,
         "currency_code": order.currency_code_snapshot,
-        "is_mailed": order.is_mailed,
         "status": order.status,
         "total_amount": str(order.total_amount) if order.total_amount is not None else None,
         "lines": [
@@ -997,7 +996,6 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         currency_code_snapshot=currency.code if currency else "",
         currency_name_snapshot=currency.chinese_name if currency else "",
         currency_symbol_snapshot=currency.symbol if currency else "",
-        is_mailed=validated_data.get("is_mailed"),
         status=PurchaseOrderStatus.DRAFT,
         total_amount=None,
         created_by_employee=actor_employee,
@@ -1229,8 +1227,6 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
     validate_set_members(lines)
     if skipped_ids:
         order.lines.filter(pk__in=skipped_ids).delete()
-    if "is_mailed" in validated_data:
-        order.is_mailed = validated_data["is_mailed"]
     if "batch_type" in validated_data:
         if not order.purchase_group_id or order.source_type != "PRODUCTION":
             raise ValidationError({"batch_type": "只有生产采购需求的批次可以设置采购类型。"})
@@ -1244,7 +1240,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         errors = _purchase_order_confirmation_errors(order, lines)
         if errors:
             raise ValidationError({"lines": errors})
-    order.save(update_fields=["is_mailed", "batch_type", "total_amount", "updated_at"])
+    order.save(update_fields=["batch_type", "total_amount", "updated_at"])
     refresh_batch_demand_version(order.purchase_group_id)
     updated = purchase_orders_with_context().get(pk=order.pk)
     write_audit_log(

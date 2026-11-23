@@ -14,7 +14,8 @@ async function renderProgress(percent: string | null | undefined, receivingSecti
   vi.mocked(fetchProcurementInboundOrders).mockResolvedValue([{
     id: 'order', order_number: 'CGDD-1', supplier_names: [], product_summary: [], supplier_summary: [],
     quantity_unit: 'MIXED', received_quantity: '1020', receipt_progress_percent: percent,
-    receiving_sections: receivingSections, source_type: 'PRODUCTION', remaining_line_count: 1, return_status: 'NONE',
+    receiving_sections: receivingSections, source_type: 'PRODUCTION', remaining_line_count: workflowStatus === 'COMPLETED' ? 0 : 1, return_status: 'NONE',
+    receiving_status: workflowStatus === 'COMPLETED' ? 'COMPLETED' : 'PARTIAL_RECEIVED',
     workflow_status: workflowStatus, pending_quality_count: workflowStatus === 'PENDING_QUALITY' ? 1 : 0,
     workflow_status_display: workflowStatus === 'COMPLETED' ? '已完成' : '待品质确认', updated_at: '2026-11-14T00:00:00Z',
   }] as never)
@@ -50,19 +51,23 @@ describe('采购入库列表显示到货进度', () => {
   it('已完成采购单仍有操作菜单，菜单里只有查看详情', async () => {
     const wrapper = await renderProgress('100.0', [{ id: 'A', name: '管材' }], 'COMPLETED')
     try {
+      expect(wrapper.get('[data-testid="receiving-status"]').text()).toBe('已完成')
+      expect(wrapper.get('[data-testid="pending-quality-batches"]').text()).toBe('—')
       await wrapper.get('.more-action button').trigger('click')
       await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).map(item => item.text()))
         .toEqual(['查看详情']))
     } finally { wrapper.unmount() }
   })
-  it.each(['0.0', '37.5', '99.9', '100.0'])('显示真实百分比 %s，保留独立品质状态', async percent => {
+  it.each(['0.0', '37.5', '99.9', '100.0'])('显示真实百分比 %s 和独立的收货、质检状态', async percent => {
     const wrapper = await renderProgress(percent)
     try {
       const progress = wrapper.findComponent({ name: 'ElProgress' })
       expect(progress.props('percentage')).toBe(Number(percent))
       expect(progress.props('strokeWidth')).toBe(10)
       expect(wrapper.get('[data-testid="receipt-progress"]').text()).toBe(`${Number(percent)}%`)
-      expect(wrapper.text()).toContain('待品质确认')
+      expect(wrapper.get('[data-testid="receiving-status"]').text()).toBe('部分到货')
+      expect(wrapper.get('[data-testid="remaining-receipt-lines"]').text()).toBe('1 项')
+      expect(wrapper.get('[data-testid="pending-quality-batches"]').text()).toBe('1 批')
       expect(wrapper.text()).not.toContain('累计到货')
       expect(wrapper.text()).not.toContain('1,020')
       expect(wrapper.text()).not.toContain('多单位，查看明细')

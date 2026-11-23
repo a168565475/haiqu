@@ -26,3 +26,13 @@ def purchase_inbound_workflow_status(
     if has_lines and not has_remaining_lines:
         return "COMPLETED", "已完成"
     return "PENDING_RECEIPT", "等待入库"
+
+
+def purchase_receiving_status(*, line_count, remaining_line_count, has_received, has_pending_quality, has_open_return):
+    if remaining_line_count:
+        return "PARTIAL_RECEIVED" if has_received else "PENDING_RECEIPT"
+    if not line_count:
+        return "PENDING_RECEIPT"
+    if has_pending_quality or has_open_return:
+        return "RECEIPT_COMPLETE"
+    return "COMPLETED"

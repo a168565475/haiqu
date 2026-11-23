@@ -81,6 +81,25 @@ describe('供应商采购表只提供Excel导出', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('按采购需求查看各批采购表，只读列表并按关联采购单显示批次号', async () => {
+    state.query = { purchase_group_id: 'group-1' }
+    const items = [
+      { ...rows[0]!, purchase_batch_number: 2 },
+      { ...rows[1]!, purchase_batch_number: 2 },
+      { ...rows[0]!, id: 'third', purchase_batch_number: 3 },
+    ]
+    vi.mocked(api.fetchSupplierPurchaseSheets).mockResolvedValue({ data: items, meta: { total: 3 } } as never)
+    const wrapper = await renderList()
+    try {
+      expect(api.ensureDefaultPurchaseSheets).not.toHaveBeenCalled()
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenCalledWith(expect.objectContaining({ purchase_group_id: 'group-1' }))
+      const columns = wrapper.findAll('thead th')
+      const batchColumn = columns.findIndex(cell => cell.text() === '采购批次')
+      expect(batchColumn).toBeGreaterThanOrEqual(0)
+      expect(wrapper.findAll('tbody tr').map(row => row.findAll('td')[batchColumn]?.text())).toEqual(['第 2 批', '第 2 批', '第 3 批'])
+    } finally { wrapper.unmount() }
+  })
+
   it.each([false, true])('只读账号或无订单范围列表不自动生成：有权限=%s', async canGenerate => {
     state.canGenerate = canGenerate
     state.query = canGenerate ? {} : { purchase_order_id: 'order-1' }

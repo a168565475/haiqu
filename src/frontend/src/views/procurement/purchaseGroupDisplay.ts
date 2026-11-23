@@ -19,3 +19,7 @@ export function purchaseFabricColor(snapshot: PurchaseGroupSourceSnapshot): stri
   return materialAttributeFields(snapshot).filter(field => ['色卡', '颜色', '色号'].includes(field.label))
     .map(field => field.value).join(' / ')
 }
+
+export function purchaseGroupBatchCount(group: PurchaseGroup): number {
+  return new Set(group.batches.map(batch => batch.batch_number)).size
+}

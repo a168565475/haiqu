@@ -202,6 +202,7 @@ export async function fetchSupplierPurchaseSheets(query: {
   page?: number
   page_size?: number
   purchase_order_id?: string
+  purchase_group_id?: string
   status?: string
   supplier_id?: string
   q?: string

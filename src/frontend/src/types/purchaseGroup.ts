@@ -88,6 +88,14 @@ export interface PurchaseBatchSummary {
   total_amount: string | null
 }
 
+export interface PurchaseBatchPageDraft {
+  id: string
+  order_number: string
+  suppliers: string[]
+  line_count: number
+  total_amount: string | null
+}
+
 export interface PurchaseGroupProduct {
   product_line_id: string
   product_name: string
@@ -123,6 +131,12 @@ export interface PurchaseGroup {
   completion?: { can_complete: boolean; blocked_reason: string }
   deletion?: { can_delete: boolean; blocked_reason: string }
   batches: PurchaseBatchSummary[]
+  batch_page?: {
+    current_batch_number: number | null
+    next_batch_number: number
+    submitted_line_ids: string[]
+    draft_orders?: PurchaseBatchPageDraft[]
+  } | null
   created_at: string
   updated_at: string
 }
@@ -168,9 +182,16 @@ export interface PurchaseBatchLineInput {
 export interface PurchaseBatchInput {
   /** 同一次提交重试时保留UUID，由调用方管理，API层不重建。 */
   request_id: string
+  batch_session_id?: string
+  save_as_draft?: boolean
   batch_type: PurchaseBatchType
   currency_id: string
   lines: PurchaseBatchLineInput[]
+}
+
+export interface PurchaseBatchPageConfirmationInput {
+  batch_session_id: string
+  additional?: PurchaseBatchInput
 }
 
 export interface PurchaseSupplierBatchResult {

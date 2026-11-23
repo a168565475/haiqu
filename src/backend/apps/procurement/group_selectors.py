@@ -1,6 +1,6 @@
 from decimal import Decimal, localcontext
 
-from django.db.models import Exists, OuterRef, Prefetch, Q
+from django.db.models import Exists, Max, OuterRef, Prefetch, Q
 from rest_framework.exceptions import ValidationError
 
 from apps.inventory.models import MaterialInboundLine, MaterialInboundStatus
@@ -54,6 +54,15 @@ def purchase_groups_with_context(queryset=None):
         Prefetch("batches", queryset=PurchaseOrder.objects.filter(archived_at__isnull=True)
                  .prefetch_related(Prefetch("lines", queryset=display_lines)).order_by("batch_number", "id")),
     )
+
+
+def purchase_group_batch_numbers(group_id, batch_session_id=None):
+    # 已归档的采购单也占用发出的批次号。
+    aggregates = {"latest": Max("batch_number")}
+    if batch_session_id:
+        aggregates["current"] = Max("batch_number", filter=Q(batch_session_id=batch_session_id))
+    numbers = PurchaseOrder.objects.filter(purchase_group_id=group_id).aggregate(**aggregates)
+    return numbers.get("current"), (numbers["latest"] or 0) + 1
 
 
 def purchase_group_deletion_summary(group):

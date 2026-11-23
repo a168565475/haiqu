@@ -4,10 +4,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { deletePurchaseGroup, fetchPurchaseGroupFilterOptions, fetchPurchaseGroups, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
-import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { vHorizontalOverflow } from '@/directives/horizontalOverflow'
-import type { PurchaseBatchSummary, PurchaseGroup, PurchaseGroupFilterOptions, PurchaseGroupProgress } from '@/types/purchaseGroup'
-import { groupProductSummary } from '@/views/procurement/purchaseGroupDisplay'
+import type { PurchaseGroup, PurchaseGroupFilterOptions, PurchaseGroupProgress } from '@/types/purchaseGroup'
+import { groupProductSummary, purchaseGroupBatchCount } from '@/views/procurement/purchaseGroupDisplay'
 import { confirmPurchaseGroupDeletion, purchaseGroupDeletionBlock } from '@/views/procurement/purchaseGroupDeletion'
 
 const props = defineProps<{ canAdd: boolean; canDelete?: boolean }>()
@@ -23,12 +22,12 @@ const errorMessage = ref('')
 const optionsError = ref('')
 const deletingId = ref('')
 const deleteError = ref('')
-const batchChoices = ref<PurchaseBatchSummary[]>([])
 let requestVersion = 0
 const statusLabels = { PENDING: '待采购', PURCHASING: '采购中', COMPLETED: '采购完成', UNKNOWN: '来源待核对' }
 const displayRows = computed(() => rows.value.map(row => ({
   row, products: groupProductSummary(row), totalPercent: totalPurchaseProgress(row.progress),
-  sheetBatches: row.batches.filter(batch => batch.status !== 'DRAFT'), deletionBlock: purchaseGroupDeletionBlock(row),
+  batchCount: purchaseGroupBatchCount(row), hasConfirmedBatch: row.batches.some(batch => batch.status !== 'DRAFT'),
+  deletionBlock: purchaseGroupDeletionBlock(row),
 })))
 
 function totalPurchaseProgress(progress: PurchaseGroupProgress): number | null {
@@ -62,18 +61,13 @@ async function load(): Promise<void> {
   }
 }
 function search(): void { page.value = 1; void load() }
-function openSheets(batchId: string): void {
-  batchChoices.value = []
-  void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: batchId } })
-}
-function handleRowAction(command: string, row: PurchaseGroup, batches: PurchaseBatchSummary[]): void {
+function handleRowAction(command: string, row: PurchaseGroup): void {
   if (command === 'view') {
     void router.push({ name: 'purchase-group-detail', params: { id: row.id } })
   } else if (command === 'remove') {
     void removeGroup(row)
   } else if (command === 'sheets') {
-    if (batches.length === 1) openSheets(batches[0]!.id)
-    else batchChoices.value = batches
+    void router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: row.id } })
   }
 }
 async function removeGroup(row: PurchaseGroup): Promise<void> {
@@ -129,7 +123,7 @@ onBeforeUnmount(() => { requestVersion++ })
           <col style="width: 170px"><col style="width: 130px"><col style="width: 65px"><col style="width: 110px"><col style="width: 72px">
         </colgroup>
         <thead><tr><th>采购需求</th><th>来源订单</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead>
-        <tbody><tr v-for="{ row, products, totalPercent, sheetBatches, deletionBlock } in displayRows" :key="row.id">
+        <tbody><tr v-for="{ row, products, totalPercent, batchCount, hasConfirmedBatch, deletionBlock } in displayRows" :key="row.id">
           <td><strong>{{ row.group_number }}</strong><small v-if="row.combined_into_group_id">已并入合并需求</small></td>
           <td>{{ row.production_task_number_snapshot }}</td>
           <td class="product-values">{{ products.name }}</td>
@@ -139,16 +133,16 @@ onBeforeUnmount(() => { requestVersion++ })
           <td class="product-values">{{ products.quantity }}</td>
           <td>{{ row.order_delivery_date || '—' }}</td>
           <td data-testid="purchase-group-total-progress"><div v-if="totalPercent !== null" class="total-progress"><ElProgress :percentage="totalPercent" :show-text="false" :stroke-width="10" :status="row.progress.status === 'COMPLETED' ? 'success' : undefined" :aria-label="`总采购进度 ${totalPercent}%`" /><span>{{ totalPercent }}%</span></div><span v-else class="unknown">待核对</span></td>
-          <td>{{ row.progress.satisfied_line_count }} / {{ row.progress.line_count }} 项达标</td><td>{{ row.batches.length }}</td>
+          <td>{{ row.progress.satisfied_line_count }} / {{ row.progress.line_count }} 项达标</td><td>{{ batchCount }}</td>
             <td>{{ statusLabels[row.display_status ?? row.progress.status] }}</td>
           <td class="scroll-actions-cell"><div class="group-actions">
-            <ElDropdown trigger="click" placement="bottom-end" :persistent="false" @command="handleRowAction($event, row, sheetBatches)">
+            <ElDropdown trigger="click" placement="bottom-end" :persistent="false" @command="handleRowAction($event, row)">
               <ElButton link class="row-more-button" data-testid="group-more" :aria-label="`${row.group_number}的更多操作`" :loading="deletingId === row.id">
                 更多<ElIcon><ArrowDown /></ElIcon>
               </ElButton>
               <template #dropdown><ElDropdownMenu>
                 <ElDropdownItem command="view" data-testid="group-view">查看</ElDropdownItem>
-                <ElDropdownItem command="sheets" data-testid="group-sheets" :disabled="!sheetBatches.length" :title="sheetBatches.length ? undefined : '确认采购批次后可查看采购表格'">采购表格</ElDropdownItem>
+                <ElDropdownItem command="sheets" data-testid="group-sheets" :disabled="!hasConfirmedBatch" :title="hasConfirmedBatch ? undefined : '确认采购批次后可查看采购表格'">采购表格</ElDropdownItem>
                 <ElDropdownItem v-if="canDelete" command="remove" data-testid="group-remove" divided
                   :disabled="Boolean(deletionBlock || deletingId)" :title="deletionBlock || undefined">删除</ElDropdownItem>
               </ElDropdownMenu></template>
@@ -158,12 +152,6 @@ onBeforeUnmount(() => { requestVersion++ })
       </table>
     </div>
     <ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="search" />
-    <AppWindowDialog v-if="batchChoices.length" :model-value="true" title="选择采购批次" :width="420" :minimizable="false" @update:model-value="batchChoices = []">
-      <div class="sheet-batch-options">
-        <ElButton v-for="batch in batchChoices" :key="batch.id" data-testid="group-sheet-batch" @click="openSheets(batch.id)">第 {{ batch.batch_number }} 批 · {{ batch.order_number }}</ElButton>
-      </div>
-      <template #footer><ElButton data-testid="close-group-batches" @click="batchChoices = []">取消</ElButton></template>
-    </AppWindowDialog>
   </section>
 </template>
 
@@ -180,8 +168,6 @@ onBeforeUnmount(() => { requestVersion++ })
 .group-actions { display: flex; justify-content: center; }
 .row-more-button { height: 32px; color: var(--erp-table-text); }
 .row-more-button .el-icon { margin-left: 3px; }
-.sheet-batch-options { display: grid; gap: 8px; }
-.sheet-batch-options .el-button { margin: 0; justify-content: flex-start; }
 .total-progress { display: grid; grid-template-columns: 80px 44px; align-items: center; gap: 8px; }
 .total-progress > span { text-align: right; font-variant-numeric: tabular-nums; }
 </style>

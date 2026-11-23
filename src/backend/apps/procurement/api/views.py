@@ -15,7 +15,7 @@ from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -1075,6 +1075,7 @@ class PurchaseContractTemplateViewSet(
         return self._update(request, partial=True)
 
 
+@extend_schema_view(list=extend_schema(parameters=[OpenApiParameter("purchase_group_id", UUID)]))
 class SupplierPurchaseSheetViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -1135,6 +1136,12 @@ class SupplierPurchaseSheetViewSet(
         purchase_order_id = self.request.query_params.get("purchase_order_id", "").strip()
         if purchase_order_id:
             queryset = queryset.filter(purchase_order_id=PurchaseOrderViewSet._uuid_value(purchase_order_id, "purchase_order_id"))
+        purchase_group_id = self.request.query_params.get("purchase_group_id", "").strip()
+        if purchase_group_id:
+            queryset = queryset.filter(
+                purchase_order__purchase_group_id=PurchaseOrderViewSet._uuid_value(purchase_group_id, "purchase_group_id"),
+                purchase_order__purchase_group__archived_at__isnull=True,
+            )
         purchase_request_id = self.request.query_params.get("purchase_request_id", "").strip()
         if purchase_request_id:
             queryset = queryset.filter(

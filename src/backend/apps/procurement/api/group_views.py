@@ -14,12 +14,14 @@ from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..group_selectors import purchase_groups_with_context
 from ..group_services import (
-    complete_purchase_group, create_purchase_batch, create_purchase_group, delete_purchase_group, submit_supplier_purchase_batch,
+    complete_purchase_group, confirm_purchase_batch_page, create_purchase_batch, create_purchase_group,
+    delete_purchase_group, submit_supplier_purchase_batch,
 )
 from ..models import PurchaseGroup
 from .group_serializers import (
-    PurchaseBatchCreateSerializer, PurchaseGroupCreateSerializer, PurchaseGroupFilterOptionsSerializer,
-    PurchaseGroupCompleteSerializer, PurchaseGroupSerializer, PurchaseSupplierBatchSubmitSerializer,
+    PurchaseBatchCreateSerializer, PurchaseBatchPageConfirmSerializer, PurchaseGroupCreateSerializer, PurchaseGroupFilterOptionsSerializer,
+    PurchaseGroupBatchPageQuerySerializer, PurchaseGroupCompleteSerializer, PurchaseGroupSerializer,
+    PurchaseSupplierBatchSubmitSerializer,
 )
 from .serializers import PurchaseOrderDetailSerializer
 
@@ -40,6 +42,7 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         "filter_options": "procurement.view_purchaseorder",
         "create": "procurement.add_purchaseorder", "batches": "procurement.add_purchaseorder",
         "submit_supplier_batch": "procurement.submit_purchaseorder",
+        "confirm_batch_page": "procurement.submit_purchaseorder",
         "complete": "procurement.submit_purchaseorder",
         "destroy": "procurement.delete_purchaseorder",
     }
@@ -62,6 +65,8 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
             except (ValueError, TypeError) as exc:
                 raise ValidationError({"production_task_id": "生产任务参数必须为UUID。"}) from exc
             queryset = queryset.filter(production_task_id=task_id)
+        if self.action in {"submit_supplier_batch", "confirm_batch_page"}:
+            return queryset.only("id")
         return purchase_groups_with_context(queryset)
 
     @extend_schema(responses=inline_serializer(
@@ -78,9 +83,12 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         } for group in groups.only("production_task_id", "production_task_number_snapshot", "sales_order_number_snapshot")]}
         return Response({"data": PurchaseGroupFilterOptionsSerializer(data).data})
 
+    @extend_schema(parameters=[PurchaseGroupBatchPageQuerySerializer])
     def retrieve(self, request, *args, **kwargs):
         group = self.get_object()
-        response = Response({"data": PurchaseGroupSerializer(group).data})
+        query = PurchaseGroupBatchPageQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        response = Response({"data": PurchaseGroupSerializer(group, context=query.validated_data).data})
         response["ETag"] = etag_for_instance(group)
         return response
 
@@ -159,13 +167,7 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     )
     @action(detail=True, methods=["post"], url_path="submit-supplier-batch")
     def submit_supplier_batch(self, request, pk=None):
-        permissions = ["procurement.add_purchaseorder", "procurement.view_purchaseorder"]
-        has_permission = sales_policy.has_permission
-        if module_policy.enabled():
-            has_permission = module_policy.has_permission
-            permissions.append("access_control.generate_purchasesheets")
-        if not all(has_permission(request, code) for code in permissions):
-            raise PermissionDenied("当前账号缺少按供应商提交采购所需的权限。")
+        self._require_supplier_submit_permissions(request)
         group = self.get_object()
         serializer = PurchaseSupplierBatchSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -173,8 +175,38 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
             group_id=group.pk, validated_data=serializer.validated_data, allowed_task_ids=self._task_ids(),
             actor_employee=request.employee, request=request,
         )
+        context = {"batch_session_id": order.batch_session_id} if serializer.validated_data.get("save_as_draft") else {}
         response = Response({"data": {
-            "order_id": order.pk, "batch_number": order.batch_number, "group": PurchaseGroupSerializer(group).data,
+            "order_id": order.pk, "batch_number": order.batch_number, "group": PurchaseGroupSerializer(group, context=context).data,
         }}, status=201 if created else 200)
         response["ETag"] = etag_for_instance(group)
         return response
+
+    @extend_schema(
+        request=PurchaseBatchPageConfirmSerializer,
+        parameters=[OpenApiParameter("If-Match", str, OpenApiParameter.HEADER, required=True)],
+        responses={200: inline_serializer(name="ConfirmedPurchaseBatchPage", fields={"data": PurchaseGroupSerializer()})},
+    )
+    @action(detail=True, methods=["post"], url_path="confirm-batch-page")
+    def confirm_batch_page(self, request, pk=None):
+        self._require_supplier_submit_permissions(request)
+        group = self.get_object()
+        serializer = PurchaseBatchPageConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        group = confirm_purchase_batch_page(
+            group_id=group.pk, validated_data=serializer.validated_data, allowed_task_ids=self._task_ids(),
+            actor_employee=request.employee, request=request,
+        )
+        response = Response({"data": PurchaseGroupSerializer(group, context=serializer.validated_data).data})
+        response["ETag"] = etag_for_instance(group)
+        return response
+
+    @staticmethod
+    def _require_supplier_submit_permissions(request):
+        permissions = ["procurement.add_purchaseorder", "procurement.view_purchaseorder"]
+        has_permission = sales_policy.has_permission
+        if module_policy.enabled():
+            has_permission = module_policy.has_permission
+            permissions.append("access_control.generate_purchasesheets")
+        if not all(has_permission(request, code) for code in permissions):
+            raise PermissionDenied("当前账号缺少按供应商提交采购所需的权限。")

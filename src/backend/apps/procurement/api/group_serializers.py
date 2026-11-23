@@ -5,7 +5,10 @@ from rest_framework import serializers
 
 from apps.sales_orders.presentation import specification_display
 
-from ..group_selectors import purchase_batch_display_status, purchase_group_completion_summary, purchase_group_deletion_summary, purchase_group_progress
+from ..group_selectors import (
+    purchase_batch_display_status, purchase_group_batch_numbers, purchase_group_completion_summary,
+    purchase_group_deletion_summary, purchase_group_progress,
+)
 from ..models import PurchaseBatchType, PurchaseGroup, PurchaseOrderStatus
 from .serializers import PurchaseOrderUpdateLineSerializer
 
@@ -66,6 +69,7 @@ class PurchaseBatchLineSerializer(PurchaseOrderUpdateLineSerializer):
 
 class PurchaseBatchCreateSerializer(serializers.Serializer):
     request_id = serializers.UUIDField()
+    batch_session_id = serializers.UUIDField(required=False)
     batch_type = serializers.ChoiceField(choices=PurchaseBatchType.choices)
     currency_id = serializers.UUIDField()
     lines = PurchaseBatchLineSerializer(many=True, allow_empty=False, max_length=5000)
@@ -82,13 +86,12 @@ class PurchaseBatchCreateSerializer(serializers.Serializer):
         return lines
 
 
-class PurchaseSupplierBatchSubmitSerializer(PurchaseBatchCreateSerializer):
+class PurchaseBatchReadySerializer(PurchaseBatchCreateSerializer):
     def validate_lines(self, lines):
         lines = super().validate_lines(lines)
-        suppliers = {line["supplier_id"] for line in lines}
-        if None in suppliers or len(suppliers) != 1:
-            raise serializers.ValidationError("每次只提交同一家供应商的采购明细。")
         for line in lines:
+            if not line["supplier_id"]:
+                raise serializers.ValidationError("请选择本次采购的供应商。")
             if line["actual_purchase_quantity"] == 0 or (
                 not line.get("set_pricing") and not line["unit_price"]
             ):
@@ -96,6 +99,26 @@ class PurchaseSupplierBatchSubmitSerializer(PurchaseBatchCreateSerializer):
             if not line["delivery_date"]:
                 raise serializers.ValidationError("请填写本次采购明细的交期。")
         return lines
+
+
+class PurchaseSupplierBatchSubmitSerializer(PurchaseBatchReadySerializer):
+    save_as_draft = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        if attrs.get("save_as_draft") and not attrs.get("batch_session_id"):
+            raise serializers.ValidationError({"batch_session_id": "请重新打开新增采购批次页面。"})
+        return attrs
+
+    def validate_lines(self, lines):
+        lines = super().validate_lines(lines)
+        if len({line["supplier_id"] for line in lines}) != 1:
+            raise serializers.ValidationError("每次只提交同一家供应商的采购明细。")
+        return lines
+
+
+class PurchaseBatchPageConfirmSerializer(serializers.Serializer):
+    batch_session_id = serializers.UUIDField()
+    additional = PurchaseBatchReadySerializer(required=False)
 
 
 class PurchaseGroupProgressLineSerializer(serializers.Serializer):
@@ -168,6 +191,25 @@ class PurchaseGroupProductSerializer(serializers.Serializer):
     order_unit = serializers.CharField(allow_blank=True)
 
 
+class PurchaseGroupBatchPageQuerySerializer(serializers.Serializer):
+    batch_session_id = serializers.UUIDField(required=False)
+
+
+class PurchaseBatchPageDraftSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    order_number = serializers.CharField()
+    suppliers = serializers.ListField(child=serializers.CharField())
+    line_count = serializers.IntegerField()
+    total_amount = serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True)
+
+
+class PurchaseGroupBatchPageSerializer(serializers.Serializer):
+    current_batch_number = serializers.IntegerField(allow_null=True)
+    next_batch_number = serializers.IntegerField()
+    submitted_line_ids = serializers.ListField(child=serializers.UUIDField())
+    draft_orders = PurchaseBatchPageDraftSerializer(many=True, required=False)
+
+
 class PurchaseGroupSerializer(serializers.ModelSerializer):
     product = serializers.SerializerMethodField()
     products = serializers.SerializerMethodField()
@@ -175,6 +217,7 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
     order_delivery_date = serializers.DateField(source="production_task.delivery_date", read_only=True, allow_null=True)
     progress = serializers.SerializerMethodField()
     batches = PurchaseBatchSummarySerializer(many=True, read_only=True)
+    batch_page = serializers.SerializerMethodField()
     display_status = serializers.SerializerMethodField()
     completion = serializers.SerializerMethodField()
     deletion = serializers.SerializerMethodField()
@@ -187,13 +230,36 @@ class PurchaseGroupSerializer(serializers.ModelSerializer):
         fields = ["id", "group_number", "production_task_id", "product_line_id_snapshot", "source_bom_id_snapshot",
                   "production_task_number_snapshot", "sales_order_number_snapshot", "customer_name_snapshot",
                   "source_revision", "compatibility_issues", "product", "products", "combined_into_group_id", "order_delivery_date",
-                  "progress", "batches", "display_status", "completion", "deletion", "manual_completed_at",
+                  "progress", "batches", "batch_page", "display_status", "completion", "deletion", "manual_completed_at",
                   "manual_completed_by_name", "manual_completion_remark", "created_at", "updated_at"]
         read_only_fields = fields
 
     @extend_schema_field(PurchaseGroupProgressSerializer)
     def get_progress(self, instance):
         return PurchaseGroupProgressSerializer(self._progress(instance)).data
+
+    @extend_schema_field(PurchaseGroupBatchPageSerializer(allow_null=True))
+    def get_batch_page(self, instance):
+        session_id = self.context.get("batch_session_id")
+        if not session_id:
+            return None
+        current_batch, next_batch = purchase_group_batch_numbers(instance.pk, session_id)
+        orders = [order for order in instance.batches.all() if order.batch_session_id == session_id]
+        saved_lines = {line.purchase_group_line_id for order in orders
+                       for line in order.lines.all() if line.purchase_group_line_id}
+        drafts = [{
+            "id": order.pk, "order_number": order.order_number,
+            "suppliers": sorted({line.supplier_name_snapshot for line in order.lines.all() if line.supplier_name_snapshot}),
+            "line_count": len(order.lines.all()), "total_amount": order.total_amount,
+        } for order in orders if order.status == PurchaseOrderStatus.DRAFT]
+        page = {
+            "current_batch_number": current_batch,
+            "next_batch_number": next_batch,
+            "submitted_line_ids": sorted(saved_lines),
+        }
+        if drafts:
+            page["draft_orders"] = drafts
+        return PurchaseGroupBatchPageSerializer(page).data
 
     def _progress(self, instance):
         # 列表逐单序列化，仅复用当前单据的计算结果。

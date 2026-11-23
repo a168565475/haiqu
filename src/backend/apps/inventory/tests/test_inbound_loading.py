@@ -102,6 +102,7 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(rows[0]['return_quantity'],'1.0000')
         self.assertEqual(rows[0]['remaining_line_count'],1)
         self.assertEqual(rows[0]['workflow_status'],'PENDING_QUALITY')
+        self.assertEqual(rows[0]['receiving_status'], 'PARTIAL_RECEIVED')
         sql='\n'.join(q['sql'] for q in queries)
         for table in ['inventory_warehouse_zone','inventory_warehouse','procurement_supplier']:
             self.assertNotIn(f'FROM "{table}"', sql)
@@ -235,6 +236,8 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0]['workflow_status'], 'PARTIAL_RECEIVED')
         self.assertEqual(completed[0]['workflow_status_display'], '部分入库')
+        self.assertEqual(completed[0]['receiving_status'], 'PARTIAL_RECEIVED')
+        self.assertEqual(completed[0]['remaining_line_count'], 1)
         self.assertEqual(len(self.get('eligible-purchase-orders',{'purchase_order_id':str(self.order.pk)}).data['data']),1)
         self.assertEqual(self.get('eligible-lines',{'purchase_order_id':str(self.order.pk)}).data['data'][0]['remaining_quantity'],'2.0000')
 

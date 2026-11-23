@@ -72,6 +72,39 @@ class PurchaseReceivingSectionTests(ScopedActorMixin, APITestCase):
         denied = self.client.get(self.root + 'eligible-lines/', {**params, 'material_section': 'B'})
         self.assertEqual(denied.status_code, 403)
 
+    def test_receiving_status_and_quality_count_follow_assigned_sections(self):
+        def summary(expected):
+            row = self.get('procurement-inbound-orders').data['data'][0]
+            fields = ('receiving_status', 'remaining_line_count', 'pending_quality_count')
+            self.assertEqual(tuple(row[field] for field in fields), expected)
+
+        def receive(number, lines):
+            inbound = MaterialInbound.objects.create(
+                inbound_number=number, purchase_order=self.order, received_by_employee=self.employee,
+            )
+            for line, quantity in lines:
+                MaterialInboundLine.objects.create(
+                    inbound=inbound, purchase_order_line=line, raw_material_information=self.raw_material,
+                    zone=self.zone, received_quantity=quantity, accepted_quantity=quantity,
+                    purchased_quantity_snapshot=line.actual_purchase_quantity,
+                    section_title_snapshot=line.section_title_snapshot, category_snapshot=line.category_snapshot,
+                )
+            return inbound
+
+        receive('SECTION-HARDWARE', [(self.hardware, 10), (self.packaging, 2)])
+        summary(('PENDING_RECEIPT', 1, 0))
+
+        first = receive('SECTION-TUBE-1', [(self.line, 4)])
+        summary(('PARTIAL_RECEIVED', 1, 1))
+        second = receive('SECTION-TUBE-2', [(self.line, 6)])
+        summary(('RECEIPT_COMPLETE', 0, 2))
+        MaterialInbound.objects.filter(pk__in=[first.pk, second.pk]).update(status='CONFIRMED')
+        summary(('COMPLETED', 0, 0))
+
+        self.selection.sections = ['TUBE', 'HARDWARE', 'PACKAGING']
+        self.selection.save(update_fields=['sections'])
+        summary(('PARTIAL_RECEIVED', 1, 1))
+
     def test_detail_keeps_original_batch_and_filters_mixed_history(self):
         inbound = MaterialInbound.objects.create(
             inbound_number='RECEIVING-SECTION-OLD', purchase_order=self.order, received_by_employee=self.employee,

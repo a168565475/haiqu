@@ -10,7 +10,6 @@ from uuid import UUID
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
-from django.db.models import Max
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -26,7 +25,10 @@ from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import Currency, ReferenceStatus
 
 from .material_receipt_identity import build_purchase_material_snapshot, resolve_purchase_material
-from .group_selectors import purchase_group_completion_summary, purchase_group_deletion_summary, purchase_group_progress, purchase_groups_with_context
+from .group_selectors import (
+    purchase_group_batch_numbers, purchase_group_completion_summary, purchase_group_deletion_summary,
+    purchase_group_progress, purchase_groups_with_context,
+)
 from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
 from .multi_bom_sources import matches_combined_source, merge_purchase_snapshots, purchase_merge_key
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
@@ -459,8 +461,11 @@ def validate_group_line_source(line):
         raise Conflict("管材采购缺少有效的根制材料身份。")
 
 
-@transaction.atomic
-def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request=None):
+def _batch_request_fingerprint(validated_data):
+    return hashlib.sha256(json.dumps(validated_data, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
+
+
+def _lock_group_for_batch(group_id, allowed_task_ids):
     task_id = PurchaseGroup.objects.filter(pk=group_id, production_task_id__in=allowed_task_ids,
                                            archived_at__isnull=True).values_list("production_task_id", flat=True).first()
     if task_id is None:
@@ -472,7 +477,13 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     group = PurchaseGroup.objects.select_for_update().filter(pk=group_id, archived_at__isnull=True).first()
     if group is None:
         raise NotFound("采购需求不存在或已删除，请重新选择。")
-    fingerprint = hashlib.sha256(json.dumps(validated_data, cls=DjangoJSONEncoder, sort_keys=True).encode()).hexdigest()
+    return task, group
+
+
+@transaction.atomic
+def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request=None):
+    task, group = _lock_group_for_batch(group_id, allowed_task_ids)
+    fingerprint = _batch_request_fingerprint(validated_data)
     existing = group.batches.filter(batch_request_id=validated_data["request_id"]).first()
     if existing:
         if existing.batch_request_fingerprint != fingerprint:
@@ -529,8 +540,10 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         pk__in=supplier_ids, archived_at__isnull=True, is_disabled=False)}
     if {str(pk) for pk in supplier_ids} - set(suppliers):
         raise ValidationError({"lines": "采购明细包含不存在、禁用或归档的供应商。"})
+    batch_session_id = validated_data.get("batch_session_id")
+    current_batch, next_batch = purchase_group_batch_numbers(group.pk, batch_session_id)
     order = PurchaseOrder.objects.create(
-        purchase_group=group, batch_number=(group.batches.aggregate(number=Max("batch_number"))["number"] or 0) + 1,
+        purchase_group=group, batch_number=current_batch or next_batch, batch_session_id=batch_session_id,
         batch_type=validated_data["batch_type"], batch_request_id=validated_data["request_id"],
         batch_request_fingerprint=fingerprint, order_number=next_purchase_order_number(),
         production_task=task, production_task_number_snapshot=group.production_task_number_snapshot,
@@ -588,27 +601,72 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
     return order, True
 
 
-@transaction.atomic
-def submit_supplier_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
+def _confirm_orders_with_default_sheets(order_ids, allowed_task_ids, actor_employee, request):
     from .purchase_sheet_services import (
         active_purchase_sheet_template_versions, generate_supplier_purchase_sheets, recommended_purchase_sheet_template,
     )
 
+    versions = active_purchase_sheet_template_versions()
+    if not versions:
+        raise ValidationError({"template": "暂无可用采购合同模板，请先在合同模板管理中启用模板。"})
+    confirmed = []
+    for order_id in order_ids:
+        order = confirm_purchase_order(
+            order_id=order_id, allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
+        )
+        suppliers = {line.supplier_id: line.supplier_categories_snapshot for line in order.lines.all()}
+        assignments = [{
+            "supplier_id": supplier_id,
+            "template_version_id": (recommended_purchase_sheet_template(versions, categories) or versions[0]).pk,
+        } for supplier_id, categories in suppliers.items()]
+        generate_supplier_purchase_sheets(
+            order_id=order.pk, assignments=assignments,
+            allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
+        )
+        confirmed.append(order)
+    return confirmed
+
+
+@transaction.atomic
+def submit_supplier_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
     order, created = create_purchase_batch(
         group_id=group_id, validated_data={**validated_data, "supplier_submission": True},
         allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
     )
-    if created:
-        order = confirm_purchase_order(
-            order_id=order.pk, allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
-        )
-        line = next(iter(order.lines.all()))
-        versions = active_purchase_sheet_template_versions()
-        if not versions:
-            raise ValidationError({"template": "暂无可用采购合同模板，请先在合同模板管理中启用模板。"})
-        version = recommended_purchase_sheet_template(versions, line.supplier_categories_snapshot) or versions[0]
-        generate_supplier_purchase_sheets(
-            order_id=order.pk, assignments=[{"supplier_id": line.supplier_id, "template_version_id": version.pk}],
+    if created and not validated_data.get("save_as_draft"):
+        order, = _confirm_orders_with_default_sheets([order.pk], allowed_task_ids, actor_employee, request)
+    return order, purchase_groups_with_context().get(pk=group_id), created
+
+
+@transaction.atomic
+def confirm_purchase_batch_page(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
+    _, group = _lock_group_for_batch(group_id, allowed_task_ids)
+    session_id = validated_data["batch_session_id"]
+    additional = validated_data.get("additional")
+    if additional:
+        additional = {**additional, "batch_session_id": session_id}
+    orders = group.batches.filter(batch_session_id=session_id, archived_at__isnull=True)
+    pending_ids = list(orders.filter(status=PurchaseOrderStatus.DRAFT).order_by("id").values_list("pk", flat=True))
+    confirmed = orders.exclude(status=PurchaseOrderStatus.DRAFT)
+    if not pending_ids and not additional and confirmed.exists():
+        return purchase_groups_with_context().get(pk=group_id)
+    if not pending_ids and additional:
+        previous = confirmed.filter(batch_request_id=additional["request_id"]).first()
+        if previous:
+            if previous.batch_request_fingerprint != _batch_request_fingerprint(additional):
+                raise Conflict("同一请求编号不能用于不同的采购批次内容。")
+            return purchase_groups_with_context().get(pk=group_id)
+
+    require_matching_etag(request, group)
+    if additional:
+        order, _ = create_purchase_batch(
+            group_id=group_id, validated_data=additional,
             allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
         )
-    return order, purchase_groups_with_context().get(pk=group_id), created
+        if order.status == PurchaseOrderStatus.DRAFT and order.pk not in pending_ids:
+            pending_ids.append(order.pk)
+    if not pending_ids:
+        raise Conflict("本批暂无待确认采购，请先按供应商保存。")
+    _confirm_orders_with_default_sheets(pending_ids, allowed_task_ids, actor_employee, request)
+    group.save(update_fields=["updated_at"])
+    return purchase_groups_with_context().get(pk=group_id)

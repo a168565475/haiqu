@@ -10,7 +10,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import type { PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
 import { formatMoney, formatTime } from './purchaseOrderDetailDisplay'
 import { isHardwareWeightLine } from './purchaseWeight'
-import { groupProductSummary, purchaseFabricColor } from './purchaseGroupDisplay'
+import { groupProductSummary, purchaseFabricColor, purchaseGroupBatchCount } from './purchaseGroupDisplay'
 import { confirmPurchaseGroupDeletion, purchaseGroupDeletionBlock } from './purchaseGroupDeletion'
 import PurchaseQuantitySources from './PurchaseQuantitySources.vue'
 
@@ -42,6 +42,7 @@ let version = 0
 const statusLabels = { PENDING: '待采购', PURCHASING: '采购中', COMPLETED: '采购完成', UNKNOWN: '来源待核对' }
 const batchStatusLabels = { DRAFT: '草稿', SUBMITTED: '已确认', PURCHASING: '采购中', COMPLETED: '采购完成' }
 const products = computed(() => group.value ? groupProductSummary(group.value) : null)
+const batchCount = computed(() => group.value ? purchaseGroupBatchCount(group.value) : 0)
 function isWeightPipeLine(line: PurchaseGroupProgressLine): boolean {
   const snapshot = line.source_snapshot
   return snapshot.section_type_snapshot === 'PROFILE' && (
@@ -212,7 +213,7 @@ onBeforeUnmount(() => { version++ })
         <div><dt>材质</dt><dd>{{ products?.material }}</dd></div>
         <div><dt>订单量</dt><dd>{{ products?.quantity }}</dd></div>
         <div><dt>订单交期</dt><dd>{{ group.order_delivery_date || '—' }}</dd></div>
-        <div><dt>采购批次</dt><dd>{{ group.batches.length }} 批</dd></div>
+        <div><dt>采购批次</dt><dd>{{ batchCount }} 批</dd></div>
         <div><dt>材料达标</dt><dd>{{ group.progress.satisfied_line_count }}/{{ group.progress.line_count }} 项 · {{ statusLabels[group.display_status ?? group.progress.status] }}</dd></div>
         <div v-if="group.manual_completed_at" class="group-completion-record"><dt>完成记录</dt><dd>{{ group.manual_completed_by_name || '—' }} · {{ formatTime(group.manual_completed_at) }}<span v-if="group.manual_completion_remark"> · {{ group.manual_completion_remark }}</span></dd></div>
       </dl>
@@ -230,7 +231,7 @@ onBeforeUnmount(() => { version++ })
           </tr><tr v-if="!group.progress.lines.length"><td colspan="9" class="empty">{{ group.progress.status === 'COMPLETED' ? '本单材料已全部改为外供' : '暂无材料明细，来源待核对' }}</td></tr></tbody>
         </table></div>
       </section>
-      <section class="group-content-card"><h2>采购批次 <small>{{ group.batches.length }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
+      <section class="group-content-card"><h2>采购批次 <small>{{ batchCount }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
         <tr v-for="batch in group.batches" :key="batch.id"><td>第 {{ batch.batch_number }} 批</td><td>{{ batch.order_number }}</td><td>{{ batch.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</td><td>{{ batchStatusLabels[batch.display_status ?? batch.status] }}</td><td>{{ formatMoney(batch.total_amount) }} {{ batch.currency_code_snapshot }}</td><td><ElButton link type="primary" @click="router.push({ name: 'purchase-order-detail', params: { id: batch.id } })">查看明细</ElButton><ElButton v-if="batch.status === 'DRAFT'" link @click="router.push({ name: 'purchase-order-confirm', params: { id: batch.id } })">编辑 / 确认</ElButton></td></tr>
         <tr v-if="!group.batches.length"><td colspan="6" class="empty">暂无批次，可从本采购需求选择材料创建首批采购。</td></tr>
       </tbody></table></div></section>

@@ -1660,6 +1660,11 @@ export const router = createRouter({
       path: '/purchase-groups/:groupId/batches/new',
       name: 'purchase-batch-create',
       component: PurchaseOrderFormView,
+      beforeEnter: (to) => {
+        const sessionId = to.query.batch_session_id
+        if (typeof sessionId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) return
+        return { name: 'purchase-batch-create', params: to.params, query: { ...to.query, batch_session_id: crypto.randomUUID() } }
+      },
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 新增采购批次',

@@ -18,7 +18,7 @@ from apps.production_tasks.cost_selectors import task_cost_summary
 from apps.production_tasks.models import ProductionTaskStatus
 from apps.reference_data.models import ProductCategory, ProductionUnit
 
-from ..models import PurchaseContractTemplate, PurchaseContractTemplateStatus, PurchaseGroup, PurchaseOrder, PurchaseReturn, SupplierPurchaseSheet
+from ..models import PurchaseContractTemplate, PurchaseContractTemplateStatus, PurchaseGroup, PurchaseOrder, PurchaseReturn, Supplier, SupplierPurchaseSheet
 from . import test_purchase_order_api as order_tests
 
 
@@ -260,6 +260,125 @@ class PurchaseGroupApiTests(APITestCase):
         self.assertEqual(retry.data["data"]["order_id"], result["order_id"])
         self.assertEqual(SupplierPurchaseSheet.objects.filter(purchase_order=order).count(), 1)
         self.assertEqual(PurchaseOrder.objects.filter(purchase_group_id=self.group_id).count(), 1)
+
+    def test_supplier_submissions_share_the_page_batch_and_group_sheets_include_all_batches(self):
+        legacy = self.batch("10")
+        other_line = self.extra_set_component("同批的另一家供应商")
+        another_supplier = Supplier.objects.create(
+            supplier_number="GYS90003", supplier_name="同批供应商", supplier_type="MATERIAL",
+            supplier_categories=["TUBE"], payment_cycle="MONTHLY", phone="13800000003",
+        )
+        group_url = f"/api/v1/purchase-groups/{self.group_id}/"
+        submit_url = f"{group_url}submit-supplier-batch/"
+        session = str(uuid4())
+        fresh_page = self.client.get(group_url, {"batch_session_id": session})
+        self.assertEqual(fresh_page.status_code, 200, fresh_page.data)
+        self.assertEqual(fresh_page.data["data"]["batch_page"], {
+            "current_batch_number": None, "next_batch_number": 2, "submitted_line_ids": [],
+        })
+        self.assertEqual(fresh_page["ETag"], self.detail()["ETag"])
+        self.assertEqual(PurchaseOrder.objects.filter(purchase_group_id=self.group_id).count(), 1)
+        self.assertEqual(self.client.get(group_url, {"batch_session_id": "invalid"}).status_code, 400)
+
+        first = self.client.post(submit_url, self.batch_payload("90", batch_session_id=session),
+                                 format="json", HTTP_IF_MATCH=fresh_page["ETag"])
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["data"]["batch_number"], 2)
+        refreshed = self.client.get(group_url, {"batch_session_id": session})
+        self.assertEqual(refreshed.data["data"]["batch_page"], {
+            "current_batch_number": 2, "next_batch_number": 3, "submitted_line_ids": [self.line_id],
+        })
+
+        new_session = str(uuid4())
+        new_page = self.client.get(group_url, {"batch_session_id": new_session})
+        self.assertEqual(new_page.data["data"]["batch_page"], {
+            "current_batch_number": None, "next_batch_number": 3, "submitted_line_ids": [],
+        })
+        new_purchase = self.batch_payload("20", batch_session_id=new_session)
+        new_purchase["lines"][0]["purchase_group_line_id"] = other_line
+        third_batch = self.client.post(submit_url, new_purchase, format="json", HTTP_IF_MATCH=new_page["ETag"])
+        self.assertEqual(third_batch.status_code, 201, third_batch.data)
+        self.assertEqual(third_batch.data["data"]["batch_number"], 3)
+
+        second_purchase = self.batch_payload("80", batch_session_id=session)
+        second_purchase["lines"][0].update(purchase_group_line_id=other_line, supplier_id=str(another_supplier.pk))
+        second = self.client.post(submit_url, second_purchase, format="json", HTTP_IF_MATCH=third_batch["ETag"])
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(second.data["data"]["batch_number"], 2)
+        self.assertNotEqual(first.data["data"]["order_id"], second.data["data"]["order_id"])
+        self.assertEqual(PurchaseOrder.objects.get(pk=legacy["id"]).batch_number, 1)
+
+        group_id = self.group_id
+        self.use_another_group()
+        unrelated = self.client.post(f"/api/v1/purchase-groups/{self.group_id}/submit-supplier-batch/",
+                                     self.batch_payload("10", batch_session_id=session),
+                                     format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(unrelated.status_code, 201, unrelated.data)
+        sheets_url = "/api/v1/supplier-purchase-sheets/"
+        sheets = self.client.get(sheets_url, {"purchase_group_id": group_id})
+        self.assertEqual(sheets.status_code, 200, sheets.data)
+        self.assertCountEqual(
+            [(row["purchase_order_id"], row["purchase_batch_number"]) for row in sheets.json()["data"]],
+            [(str(result.data["data"]["order_id"]), number) for result, number in [(first, 2), (second, 2), (third_batch, 3)]],
+        )
+        self.assertEqual(self.client.get(sheets_url, {"purchase_group_id": "invalid"}).status_code, 400)
+
+
+    def test_saved_supplier_orders_confirm_together_and_preserve_drafts_on_failure(self):
+        other_line = self.extra_set_component("第二家供应商材料")
+        additional_line = self.extra_set_component("确认时一同带入")
+        other_supplier = Supplier.objects.create(
+            supplier_number="GYS90003", supplier_name="待确认供应商", supplier_type="MATERIAL",
+            supplier_categories=["TUBE"], payment_cycle="MONTHLY", phone="13800000003",
+        )
+        session = str(uuid4())
+        group_url = f"/api/v1/purchase-groups/{self.group_id}/"
+        submit_url = f"{group_url}submit-supplier-batch/"
+        confirm_url = f"{group_url}confirm-batch-page/"
+        first_payload = self.batch_payload("100", batch_session_id=session, save_as_draft=True)
+        second_payload = self.batch_payload("60", batch_session_id=session, save_as_draft=True)
+        second_payload["lines"][0].update(purchase_group_line_id=other_line, supplier_id=str(other_supplier.pk))
+        additional = self.batch_payload("20")
+        additional["lines"][0]["purchase_group_line_id"] = additional_line
+        first = self.client.post(submit_url, first_payload, format="json", HTTP_IF_MATCH=self.detail()["ETag"])
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post(submit_url, second_payload, format="json", HTTP_IF_MATCH=first["ETag"])
+        self.assertEqual(second.status_code, 201, second.data)
+
+        refreshed = self.client.get(group_url, {"batch_session_id": session})
+        page = refreshed.json()["data"]["batch_page"]
+        self.assertEqual(page["current_batch_number"], 1)
+        self.assertCountEqual(page["submitted_line_ids"], [self.line_id, other_line])
+        self.assertCountEqual([row["suppliers"][0] for row in page["draft_orders"]],
+                              [self.supplier.supplier_name, other_supplier.supplier_name])
+        self.assertEqual(len(page["draft_orders"]), 2)
+        self.assertEqual(set(PurchaseOrder.objects.filter(purchase_group_id=self.group_id).values_list("status", flat=True)), {"DRAFT"})
+        self.assertFalse(SupplierPurchaseSheet.objects.exists())
+        remaining = {line["id"]: (line["remaining_purchase_quantity"], line["purchased_quantity"])
+                     for line in refreshed.json()["data"]["progress"]["lines"]}
+        self.assertEqual(remaining[self.line_id], ("0.0000", "0.0000"))
+        self.assertEqual(remaining[other_line], ("40.0000", "0.0000"))
+
+        payload = {"batch_session_id": session, "additional": additional}
+        etag = refreshed["ETag"]
+        self.assertEqual(self.client.post(confirm_url, payload, format="json").status_code, 428)
+        active = list(PurchaseContractTemplate.objects.filter(status=PurchaseContractTemplateStatus.ACTIVE).values_list("pk", flat=True))
+        PurchaseContractTemplate.objects.filter(pk__in=active).update(status=PurchaseContractTemplateStatus.INACTIVE)
+        failed = self.client.post(confirm_url, payload, format="json", HTTP_IF_MATCH=etag)
+        self.assertEqual(failed.status_code, 400, failed.data)
+        self.assertEqual(PurchaseOrder.objects.filter(purchase_group_id=self.group_id, status="DRAFT").count(), 2)
+        self.assertFalse(SupplierPurchaseSheet.objects.exists())
+        self.assertEqual(self.detail()["ETag"], etag)
+        PurchaseContractTemplate.objects.filter(pk__in=active).update(status=PurchaseContractTemplateStatus.ACTIVE)
+
+        result = self.client.post(confirm_url, payload, format="json", HTTP_IF_MATCH=etag)
+        self.assertEqual(result.status_code, 200, result.data)
+        replay = self.client.post(confirm_url, payload, format="json", HTTP_IF_MATCH=etag)
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(PurchaseOrder.objects.filter(purchase_group_id=self.group_id, status="SUBMITTED", batch_number=1).count(), 3)
+        self.assertEqual(SupplierPurchaseSheet.objects.filter(status="DRAFT").count(), 3)
+        self.assertNotIn("draft_orders", result.json()["data"]["batch_page"])
+
 
     def test_submit_supplier_batch_requires_existing_permissions_and_valid_rows(self):
         child_id = self.extra_set_component("第二条材料")

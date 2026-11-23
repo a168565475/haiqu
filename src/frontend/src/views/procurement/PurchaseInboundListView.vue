@@ -22,10 +22,26 @@ const loadError = ref('')
 let requestId = 0
 const keyword = ref('')
 const workflowStatus = ref('')
+const receivingStates = {
+  PENDING_RECEIPT: { label: '待收货', color: 'neutral' },
+  PARTIAL_RECEIVED: { label: '部分到货', color: 'brand' },
+  RECEIPT_COMPLETE: { label: '已到齐', color: 'info' },
+  COMPLETED: { label: '已完成', color: 'success' },
+} satisfies Record<ProcurementInboundOrder['receiving_status'], { label: string; color: string }>
 
-const filteredRows = computed(() => workflowStatus.value
-  ? rows.value.filter(row => row.workflow_status === workflowStatus.value)
-  : rows.value)
+const filteredRows = computed(() => {
+  switch (workflowStatus.value) {
+    case '': return rows.value
+    case 'PENDING_QUALITY': return rows.value.filter(row => row.pending_quality_count > 0)
+    case 'PENDING_PROCUREMENT_CONFIRMATION': return rows.value.filter(row => row.return_status === 'QUALITY_GENERATED')
+    case 'PENDING_RETURN': return rows.value.filter(row => row.return_status === 'PROCUREMENT_CONFIRMED')
+    default: return rows.value.filter(row => row.receiving_status === workflowStatus.value)
+  }
+})
+
+function receivingState(row: ProcurementInboundOrder) {
+  return receivingStates[row.receiving_status]
+}
 
 function apiMessage(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string }; detail?: string } } })?.response?.data
@@ -123,12 +139,10 @@ onMounted(() => { if (canView.value) void loadRows() })
           <template #suffix><button type="button" class="erp-list-search-button" aria-label="搜索采购入库列表" @click="loadRows"><ElIcon><Search /></ElIcon></button></template>
         </ElInput>
         <ElSelect v-model="workflowStatus" clearable aria-label="采购入库状态" placeholder="入库状态：全部">
-          <ElOption label="等待入库" value="PENDING_RECEIPT" />
-          <ElOption label="部分入库" value="PARTIAL_RECEIVED" />
-          <ElOption label="待品质确认" value="PENDING_QUALITY" />
+          <ElOption v-for="(state, value) in receivingStates" :key="value" :label="state.label" :value="value" />
+          <ElOption label="有待质检批次" value="PENDING_QUALITY" />
           <ElOption label="等待确认退货" value="PENDING_PROCUREMENT_CONFIRMATION" />
           <ElOption label="等待退货完成" value="PENDING_RETURN" />
-          <ElOption label="已完成" value="COMPLETED" />
         </ElSelect>
         <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="reset">重置</ElButton><ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton></div>
       </form>
@@ -154,9 +168,16 @@ onMounted(() => { if (canView.value) void loadRows() })
             <span v-else>{{ row.supplier_names.length > 1 ? `共 ${row.supplier_names.length} 家供应商` : row.supplier_names[0] || '—' }}</span>
           </template></ElTableColumn>
           <ElTableColumn label="采购明细" width="100" align="center"><template #default="{ row }">{{ row.line_count }} 项</template></ElTableColumn>
-          <ElTableColumn label="待入库" width="92" align="center"><template #default="{ row }">{{ row.remaining_line_count }} 项</template></ElTableColumn>
+          <ElTableColumn label="待收项数" width="92" align="center"><template #default="{ row }"><span data-testid="remaining-receipt-lines">{{ row.remaining_line_count }} 项</span></template></ElTableColumn>
           <ElTableColumn label="到货进度" width="160"><template #default="{ row }"><div v-if="receiptProgress(row) !== null" class="receipt-progress" data-testid="receipt-progress"><ElProgress :percentage="receiptProgress(row) ?? 0" :show-text="false" :stroke-width="10" :status="receiptProgress(row) === 100 ? 'success' : undefined" :aria-label="`到货进度 ${receiptProgress(row)}%`" /><span>{{ receiptProgress(row) }}%</span></div><span v-else class="muted" data-testid="receipt-progress-unknown">待核对</span></template></ElTableColumn>
-          <ElTableColumn label="当前状态" width="124" align="center"><template #default="{ row }"><span class="status-badge erp-list-tag" :class="[`status-${row.workflow_status}`, row.workflow_status === 'COMPLETED' ? 'erp-list-tag--success' : row.workflow_status === 'PARTIAL_RECEIVED' ? 'erp-list-tag--brand' : row.workflow_status === 'PENDING_QUALITY' ? 'erp-list-tag--warning' : row.workflow_status === 'PENDING_PROCUREMENT_CONFIRMATION' ? 'erp-list-tag--danger' : row.workflow_status === 'PENDING_RETURN' ? 'erp-list-tag--info' : 'erp-list-tag--neutral']">{{ row.workflow_status_display }}</span></template></ElTableColumn>
+          <ElTableColumn label="收货状态" width="132" align="center"><template #default="{ row }">
+            <span class="status-badge erp-list-tag" :class="`erp-list-tag--${receivingState(row).color}`" data-testid="receiving-status">{{ receivingState(row).label }}</span>
+            <small v-if="row.return_status === 'QUALITY_GENERATED'" class="return-note">等待确认退货</small>
+            <small v-else-if="row.return_status === 'PROCUREMENT_CONFIRMED'" class="return-note">等待退货完成</small>
+          </template></ElTableColumn>
+          <ElTableColumn label="待质检" width="88" align="center"><template #default="{ row }">
+            <span data-testid="pending-quality-batches" :class="row.pending_quality_count > 0 ? 'erp-list-tag erp-list-tag--warning' : 'muted'">{{ row.pending_quality_count > 0 ? `${row.pending_quality_count} 批` : '—' }}</span>
+          </template></ElTableColumn>
           <ElTableColumn label="更新时间" width="150"><template #default="{ row }">{{ formatTime(row.updated_at) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center"><template #default="{ row }">
             <span class="more-action" @click.stop>
@@ -193,5 +214,6 @@ onMounted(() => { if (canView.value) void loadRows() })
 .row-more-button { width: 36px; height: 32px; margin: 0; color: var(--erp-table-text); }
 .purchase-table :deep(.el-table__row) { cursor: pointer; }
 .status-badge { min-width: 88px; }
+.return-note { display: block; color: var(--erp-color-text-secondary); }
 .empty-state { padding: 80px; text-align: center; color: var(--erp-color-text-secondary); }
 </style>

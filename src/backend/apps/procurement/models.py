@@ -243,6 +243,7 @@ class PurchaseOrder(ArchivableModel):
         PurchaseGroup, null=True, blank=True, on_delete=models.PROTECT, related_name="batches",
     )
     batch_number = models.PositiveIntegerField(null=True, blank=True)
+    batch_session_id = models.UUIDField(null=True, blank=True)
     batch_type = models.CharField(max_length=20, choices=PurchaseBatchType.choices, default=PurchaseBatchType.NORMAL)
     batch_request_id = models.UUIDField(null=True, blank=True)
     batch_request_fingerprint = models.CharField(max_length=64, blank=True)
@@ -309,7 +310,10 @@ class PurchaseOrder(ArchivableModel):
             ("submit_purchaseorder", "Can submit purchase order"),
         ]
         constraints = [
-            models.UniqueConstraint(fields=["purchase_group", "batch_number"], name="purchase_group_batch_number_uniq"),
+            models.UniqueConstraint(
+                fields=["purchase_group", "batch_number"], condition=Q(batch_session_id__isnull=True),
+                name="purchase_group_batch_number_uniq",
+            ),
             models.UniqueConstraint(fields=["purchase_group", "batch_request_id"], name="purchase_group_request_uniq"),
             models.CheckConstraint(condition=Q(batch_type__in=PurchaseBatchType.values), name="purchase_batch_type_valid"),
             models.CheckConstraint(
@@ -332,6 +336,7 @@ class PurchaseOrder(ArchivableModel):
             ),
         ]
         indexes = [
+            models.Index(fields=["purchase_group", "batch_session_id"], name="po_group_batch_session_idx"),
             models.Index(fields=["status", "-created_at"], name="purchase_order_status_idx"),
             models.Index(fields=["currency", "-created_at"], name="purchase_order_currency_idx"),
         ]

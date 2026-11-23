@@ -68,3 +68,7 @@ export function isBlankOrZeroPurchaseValue(value: string | null): boolean {
   const text = value?.trim()
   return !text || /^0+(?:\.0{1,4})?$/.test(text)
 }
+
+export function isExplicitZeroPrice(price: string) {
+  return /^0+(?:\.0{1,4})?$/.test(price.trim())
+}

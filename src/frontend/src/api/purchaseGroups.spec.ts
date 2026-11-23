@@ -73,7 +73,14 @@ describe('采购总单 API 契约', () => {
     const result = await fetchVersionedPurchaseGroup('group-1')
 
     expect(result).toEqual({ data: group, etag: '"group-v1"' })
-    expect(mockedGet).toHaveBeenCalledWith('/api/v1/purchase-groups/group-1/')
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/purchase-groups/group-1/', undefined)
+  })
+
+  it('读取指定采购批次页面的批次号和已提交材料', async () => {
+    const batchPage = { current_batch_number: 2, next_batch_number: 3, submitted_line_ids: ['line-1'] }
+    mockedGet.mockResolvedValueOnce({ data: { data: { id: 'group-1', batch_page: batchPage } }, headers: { etag: '"group-v2"' } })
+    expect((await fetchVersionedPurchaseGroup('group-1', '7302e9cf-b54a-4dbf-a947-5078253ef045')).data.batch_page).toEqual(batchPage)
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/purchase-groups/group-1/', { params: { batch_session_id: '7302e9cf-b54a-4dbf-a947-5078253ef045' } })
   })
 
   it('建立总单提交完整来源版本并接收父ETag', async () => {

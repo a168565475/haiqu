@@ -148,8 +148,8 @@ describe('采购入库读取', () => {
   })
   it('采购入库搜索支持回车、放大镜和清空，并保留入库状态', async () => {
     vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([
-      { ...order, id: 'pending', workflow_status: 'PENDING_QUALITY', pending_quality_count: 1 },
-      { ...order, id: 'completed', workflow_status: 'COMPLETED', pending_quality_count: 0 },
+      { ...order, id: 'pending', receiving_status: 'PARTIAL_RECEIVED', workflow_status: 'PENDING_PROCUREMENT_CONFIRMATION', pending_quality_count: 1 },
+      { ...order, id: 'completed', receiving_status: 'COMPLETED', workflow_status: 'COMPLETED', pending_quality_count: 0 },
     ] as never)
     const wrapper = shallowMount(PurchaseInboundListView, { global: { plugins: [ElementPlus], stubs: { ElInput: false } } })
     await flushPromises()
@@ -176,6 +176,9 @@ describe('采购入库读取', () => {
     expect(api.fetchProcurementInboundOrders).toHaveBeenCalledExactlyOnceWith({ q: undefined })
     const vm = wrapper.vm as unknown as { workflowStatus: string; filteredRows: Array<{ id: string }> }
     expect(vm.workflowStatus).toBe('PENDING_QUALITY')
+    expect(vm.filteredRows.map(row => row.id)).toEqual(['pending'])
+    wrapper.getComponent({ name: 'ElSelect' }).vm.$emit('update:modelValue', 'PARTIAL_RECEIVED')
+    await flushPromises()
     expect(vm.filteredRows.map(row => row.id)).toEqual(['pending'])
     wrapper.unmount()
   })

@@ -615,6 +615,7 @@ class PurchaseContractTemplateSerializer(serializers.ModelSerializer):
 
 class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
     purchase_order_number = serializers.SerializerMethodField()
+    purchase_batch_number = serializers.IntegerField(source="purchase_order.batch_number", read_only=True, allow_null=True)
     purchase_request_number = serializers.CharField(source="purchase_request.request_number", read_only=True, allow_null=True)
     production_task_number = serializers.SerializerMethodField()
     sales_order_number = serializers.SerializerMethodField()
@@ -637,6 +638,7 @@ class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
             "series_id",
             "purchase_order_id",
             "purchase_order_number",
+            "purchase_batch_number",
             "purchase_request_id",
             "purchase_request_number",
             "production_task_number",

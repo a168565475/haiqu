@@ -476,6 +476,7 @@ class ProcurementInboundOrderSerializer(serializers.Serializer):
     weight_unit = serializers.BooleanField()
     quantity_unit = serializers.CharField(allow_blank=True)
     receipt_progress_percent = serializers.CharField(allow_null=True)
+    receiving_status = serializers.ChoiceField(choices=["PENDING_RECEIPT", "PARTIAL_RECEIVED", "RECEIPT_COMPLETE", "COMPLETED"])
     return_status = serializers.CharField()
     workflow_status = serializers.CharField()
     workflow_status_display = serializers.CharField()

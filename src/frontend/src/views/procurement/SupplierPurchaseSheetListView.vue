@@ -35,6 +35,7 @@ const page = ref(1)
 const pageSize = ref(50)
 const loadError = ref('')
 const purchaseOrderId = computed(() => String(route.query.purchase_order_id || ''))
+const purchaseGroupId = computed(() => String(route.query.purchase_group_id || ''))
 const publishedSelected = computed(() => selected.value.filter((item) => item.status === 'PUBLISHED'))
 const draftSelected = computed(() => selected.value.filter((item) => item.status === 'DRAFT'))
 
@@ -89,6 +90,7 @@ async function load(): Promise<void> {
       page: page.value,
       page_size: pageSize.value,
       purchase_order_id: purchaseOrderId.value || undefined,
+      ...(purchaseGroupId.value ? { purchase_group_id: purchaseGroupId.value } : {}),
       is_current: true,
     })
     if (sequence !== loadSequence) return
@@ -184,7 +186,7 @@ async function confirmBatchPublish(): Promise<void> {
   }
 }
 
-watch(purchaseOrderId, () => {
+watch([purchaseOrderId, purchaseGroupId], () => {
   page.value = 1
   void load()
 })
@@ -220,6 +222,7 @@ onMounted(() => {
         <ElTableColumn type="selection" width="46" align="center" header-align="center" :selectable="() => !busy && !loading" />
         <ElTableColumn prop="sheet_number" label="采购表编号" width="152" show-overflow-tooltip />
         <ElTableColumn label="订单来源" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : (row.production_task_number || row.sales_order_number || '—') }}</template></ElTableColumn>
+        <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.purchase_batch_number == null ? '—' : `第 ${row.purchase_batch_number} 批` }}</template></ElTableColumn>
         <ElTableColumn prop="supplier_name_snapshot" label="供应商" min-width="200" show-overflow-tooltip />
         <ElTableColumn prop="template_name" label="模板" width="126" show-overflow-tooltip />
         <ElTableColumn label="金额" width="110" align="right" header-align="center"><template #default="{ row }"><strong>{{ money(row.total_amount) }}</strong></template></ElTableColumn>

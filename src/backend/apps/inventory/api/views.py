@@ -104,7 +104,7 @@ from ..services import (
     save_warehouse,
     save_zone,
 )
-from ..workflow import purchase_inbound_workflow_status
+from ..workflow import purchase_inbound_workflow_status, purchase_receiving_status
 from ..sample_receiving_services import receive_sample_purchase
 from ..public_stock_mode import public_flow_enabled
 from ..public_inventory_queries import public_pipe_summary, public_raw_inventory_page, public_semi_inventory_page
@@ -1108,10 +1108,16 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         batch_totals = material_inbound_order_totals(order_ids, receipt_lines=receipt_lines)
         receipt_progress_by_order = material_receipt_progress(purchase_lines, root_ids=root_ids)
         return_statuses_by_order = {order_id: set() for order_id in order_ids}
-        for order_id, return_status in PurchaseReturn.objects.filter(
+        orders_with_open_scoped_returns = set()
+        scoped_return = Value(True) if receipt_lines is None else Exists(
+            receipt_lines.filter(purchase_return_line__return_order_id=OuterRef('pk')),
+        )
+        for order_id, return_status, in_scope in PurchaseReturn.objects.filter(
             inbound__purchase_order_id__in=order_ids,
-        ).values_list("inbound__purchase_order_id", "status"):
+        ).annotate(in_receiving_scope=scoped_return).values_list("inbound__purchase_order_id", "status", "in_receiving_scope"):
             return_statuses_by_order.setdefault(order_id, set()).add(return_status)
+            if in_scope and return_status in (PurchaseReturnStatus.QUALITY_GENERATED, PurchaseReturnStatus.PROCUREMENT_CONFIRMED):
+                orders_with_open_scoped_returns.add(order_id)
 
         data = []
         for order in orders:
@@ -1150,6 +1156,13 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 received_quantity=received_weight_quantity if weight_unit and received_weight_quantity is not None else received_quantity,
                 return_status=current_return_status,
             )
+            receiving_status = purchase_receiving_status(
+                line_count=len(lines),
+                remaining_line_count=len(remaining_lines),
+                has_received=any(received_totals.get(line.pk, 0) > 0 for line in lines),
+                has_pending_quality=bool(pending_count),
+                has_open_return=order.pk in orders_with_open_scoped_returns,
+            )
             supplier_names = list(dict.fromkeys(line.supplier_name_snapshot for line in lines if line.supplier_name_snapshot))
             remaining_sections = {SECTION_BY_CATEGORY.get(line.receiving_section) for line in remaining_lines}
             data.append({
@@ -1177,6 +1190,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "weight_unit": weight_unit,
                 "quantity_unit": quantity_unit,
                 "receipt_progress_percent": receipt_progress_by_order.get(order.pk),
+                "receiving_status": receiving_status,
                 "return_status": current_return_status,
                 "workflow_status": workflow_status,
                 "workflow_status_display": workflow_status_display,

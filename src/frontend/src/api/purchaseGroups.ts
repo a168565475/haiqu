@@ -5,6 +5,7 @@ import type { DataResponse } from '@/types/referenceData'
 import type {
   PaginatedPurchaseGroups,
   PurchaseBatchInput,
+  PurchaseBatchPageConfirmationInput,
   PurchaseGroup,
   PurchaseGroupFilterOptions,
   PurchaseGroupInput,
@@ -33,8 +34,10 @@ export async function fetchPurchaseGroupFilterOptions(): Promise<PurchaseGroupFi
   return data.data
 }
 
-export async function fetchVersionedPurchaseGroup(id: string): Promise<VersionedPurchaseGroup> {
-  return versionedGroup(await apiClient.get<DataResponse<PurchaseGroup>>(`${basePath}${id}/`))
+export async function fetchVersionedPurchaseGroup(id: string, batchSessionId?: string): Promise<VersionedPurchaseGroup> {
+  return versionedGroup(await apiClient.get<DataResponse<PurchaseGroup>>(`${basePath}${id}/`,
+    batchSessionId ? { params: { batch_session_id: batchSessionId } } : undefined,
+  ))
 }
 
 export async function createPurchaseGroup(payload: PurchaseGroupInput): Promise<VersionedPurchaseGroup> {
@@ -84,4 +87,14 @@ export async function submitPurchaseSupplierBatch(
     data: response.data.data,
     etag: typeof response.headers?.etag === 'string' ? response.headers.etag : '',
   }
+}
+
+export async function confirmPurchaseBatchPage(
+  groupId: string,
+  payload: PurchaseBatchPageConfirmationInput,
+  groupEtag: string,
+): Promise<VersionedPurchaseGroup> {
+  return versionedGroup(await apiClient.post<DataResponse<PurchaseGroup>>(
+    `${basePath}${groupId}/confirm-batch-page/`, payload, { headers: { 'If-Match': groupEtag }, timeout: 30000 },
+  ))
 }

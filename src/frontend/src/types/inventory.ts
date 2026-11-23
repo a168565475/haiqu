@@ -171,6 +171,7 @@ export interface ProcurementInboundOrder {
   received_quantity: string | null; return_quantity: string | null
   received_weight_quantity: string | null; return_weight_quantity: string | null; weight_unit: boolean; quantity_unit?: string
   receipt_progress_percent?: string | null
+  receiving_status: 'PENDING_RECEIPT' | 'PARTIAL_RECEIVED' | 'RECEIPT_COMPLETE' | 'COMPLETED'
   workflow_status: 'PENDING_RECEIPT' | 'PARTIAL_RECEIVED' | 'PENDING_QUALITY' | 'PENDING_PROCUREMENT_CONFIRMATION' | 'PENDING_RETURN' | 'COMPLETED'
   return_status: 'NONE' | 'QUALITY_GENERATED' | 'PROCUREMENT_CONFIRMED' | 'COMPLETED'
   workflow_status_display: string; updated_at: string

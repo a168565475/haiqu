@@ -481,6 +481,7 @@ export interface SupplierPurchaseSheet {
   series_id: string
   purchase_order_id: string | null
   purchase_order_number: string | null
+  purchase_batch_number?: number | null
   purchase_request_id: string | null
   purchase_request_number: string | null
   production_task_number: string | null

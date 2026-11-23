@@ -145,16 +145,25 @@ function focusQuantity(row: ReceivingRow, event: FocusEvent) {
   focusedQuantity.value = { row, input: input.closest<HTMLElement>('.quantity-input') ?? input }
 }
 function validQuantity(row: ReceivingRow) {
+  if (isSample.value && Number(row.receivedQuantity) > Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)) return false
   if (isHardware(row.line)) return (!hardwarePieces(row.line) || referencePieces(row) !== null)
     && quantityPattern.test(row.receivedQuantity) && Number(row.receivedQuantity) > 0
-    && Number(row.receivedQuantity) <= Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)
   if (row.line.material_catalog_id && ['根', '支', '套'].includes(row.line.unit) && pipeRootError(row.receivedQuantity)) return false
   if (isWeightPipe(row.line)) return quantityPattern.test(row.receivedQuantity)
     && !pipeRootError(receivedRoots(row))
-    && Number(row.receivedQuantity) > 0 && Number(row.receivedQuantity) <= Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)
-  if (isPipe(row.line)) return !pipeRootError(receivedRoots(row)) && Number(row.receivedQuantity) <= Number(row.line.remaining_quantity)
-  return quantityPattern.test(row.receivedQuantity)
-    && Number(row.receivedQuantity) > 0 && Number(row.receivedQuantity) <= Number(row.line.remaining_quantity)
+    && Number(row.receivedQuantity) > 0
+  if (isPipe(row.line)) return !pipeRootError(receivedRoots(row))
+  return quantityPattern.test(row.receivedQuantity) && Number(row.receivedQuantity) > 0
+}
+function requiresOverReceiptRemark(row: ReceivingRow) {
+  return !isSample.value && row.included
+    && Number(row.receivedQuantity) > Number(row.line.remaining_weight_kg ?? row.line.remaining_quantity)
+}
+function missingOverReceiptRemark(row: ReceivingRow) {
+  return requiresOverReceiptRemark(row) && !row.remark.trim()
+}
+function readyRow(row: ReceivingRow) {
+  return validRowZone(row) && validQuantity(row) && !missingOverReceiptRemark(row)
 }
 function validDate(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -165,7 +174,7 @@ const zoneReadyCount = computed(() => selectedRows.value.filter(validRowZone).le
 const readyToSubmit = computed(() => canReceive.value && !locked.value && !loadError.value && !!selectedOrder.value && validDate(form.inboundDate)
   && (!isSample.value || !!receivingVersion.value)
   && selectedRows.value.length > 0 && selectedRows.value.length <= 100
-  && selectedRows.value.every((row) => validRowZone(row) && validQuantity(row)))
+  && selectedRows.value.every(readyRow))
 const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
   set: (value: boolean) => { if (!locked.value && !isSample.value) rows.value.forEach((row) => { row.included = value }) },
@@ -198,12 +207,12 @@ function remainingQuantityText(line: EligibleMaterialLine): string {
   return `${formatQuantity(line.remaining_quantity)} ${line.unit}`
 }
 function quantityInputTitle(row: ReceivingRow): string | undefined {
-  if (row.line.receipt_quantity_mode === 'ROOTS') return `请填写实收整根数，最多 ${row.line.remaining_quantity} 根。`
+  if (row.line.receipt_quantity_mode === 'ROOTS') return '请填写实际到货的整根数。'
   if (focusedQuantity.value?.row === row && focusedWeightConversion.value) return undefined
   const error = weightConversionError(row)
   if (error) return error
-  if (isPipe(row.line) && !isWeightPipe(row.line)) return `大于0且不超过剩余${row.line.remaining_quantity} ${row.line.unit}；按原长${row.line.raw_bar_length_m}米的整数倍填写。`
-  return `大于0且不超过剩余${row.line.remaining_weight_kg ?? row.line.remaining_quantity} ${isWeightPipe(row.line) ? 'kg' : row.line.unit}，最多4位小数。`
+  if (isPipe(row.line) && !isWeightPipe(row.line)) return `请按原长 ${row.line.raw_bar_length_m} 米的整数倍填写实际到货数量。`
+  return '填写大于 0 的实际到货数量，最多 4 位小数。'
 }
 function initialQuantity(value: string): string {
   const number = Number(value)
@@ -460,8 +469,13 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
               </td>
               <td><ElSelect v-model="row.warehouseId" :aria-label="`第 ${number} 项材料仓`" placeholder="选择仓库" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in rowWarehouses(row.line)" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect><small v-if="rowWarehouseHint(row)" class="warehouse-hint">{{ rowWarehouseHint(row) }}</small></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="`第 ${number} 项库区`" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
-              <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="`第 ${number} 项差异说明`" :maxlength="3000" :disabled="locked" /></td>
-              <td><ElTag :type="validRowZone(row) && validQuantity(row) ? 'success' : 'warning'" round>{{ validRowZone(row) && validQuantity(row) ? '已完善' : '待完善' }}</ElTag></td>
+              <td class="remark-cell">
+                <ElInput v-model="row.remark" :aria-label="`第 ${number} 项差异说明`" :maxlength="3000" :disabled="locked"
+                  :aria-required="requiresOverReceiptRemark(row)" :aria-invalid="missingOverReceiptRemark(row)"
+                  :class="{ 'invalid-field': missingOverReceiptRemark(row) }" />
+                <small v-if="missingOverReceiptRemark(row)" class="over-receipt-hint">超出待收量，备注必填</small>
+              </td>
+              <td><ElTag :type="readyRow(row) ? 'success' : 'warning'" round>{{ readyRow(row) ? '已完善' : '待完善' }}</ElTag></td>
             </tr><tr v-if="!table.rows.length"><td :colspan="isSample ? sampleColumnWidths.length : leadingColumnWidths.length + trailingColumnWidths.length" class="table-empty">{{ loadError || (selectedOrder ? '该采购单暂无待收货明细。' : '请先选择采购单') }}</td></tr></tbody>
           </table>
           </section>
@@ -550,6 +564,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .inventory-workflow :deep(.el-tag--warning) { background: var(--erp-tag-warning-background); color: var(--erp-color-text-inverse); }
 .inventory-workflow :deep(.el-checkbox__inner) { width: 14px; height: 14px; border-radius: 2px; }
 .inventory-workflow :deep(.invalid-field .el-input__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; }
+.over-receipt-hint { display: block; margin-top: 4px; color: token.$crm-danger; font-size: 12px; }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
 @media (max-width: 1400px) {
   .bulk-row { gap: 12px; }

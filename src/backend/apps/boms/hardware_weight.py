@@ -9,7 +9,11 @@ from rest_framework.exceptions import ValidationError
 from .hardware_weight_data import (
     DENSITY_REFERENCE_URLS,
     REFERENCE_VERSION,
+    RIVET_CALCULATOR_URL,
+    RIVET_GEOMETRY_SOURCE_URL,
+    RIVET_GEOMETRY_VERSION,
     RIVET_SOURCE_URL,
+    RIVET_STEEL_GEOMETRY_MM,
     RIVET_STEEL_WEIGHT_G,
     WASHER_DIMENSIONS_MM,
     WASHER_SOURCE_URL,
@@ -107,6 +111,27 @@ def _rivet_dimensions(data, specification):
     raise ValidationError({"specification": "请填写明确的杆径×长度，例如 5×30，或分别填写杆径和长度。"})
 
 
+def _estimate_rivet_weight(diameter, length, density):
+    profile = RIVET_STEEL_GEOMETRY_MM.get(_compact(diameter))
+    if profile is None:
+        raise ValidationError({"diameter_mm": "这个杆径缺少钉头和尾孔尺寸，请手填单重。"})
+    head_diameter, head_height, hole_diameter, hole_depth = map(Decimal, profile)
+    hole_radius = hole_diameter / 2
+    if length <= hole_depth + hole_radius:
+        raise ValidationError({"length_mm": "这款短铆钉的尾孔深度无法确定，请手填单重。"})
+    shank_volume = PI * (diameter / 2) ** 2 * length
+    head_volume = PI * head_height * (3 * (head_diameter / 2) ** 2 + head_height ** 2) / 6
+    # 球冠近似钉头，直孔末端按 90° 锥尖估算，锥高等于孔半径。
+    hole_volume = PI * hole_radius ** 2 * (hole_depth + hole_radius / 3)
+    grams = (shank_volume + head_volume - hole_volume) * density / 1000
+    geometry = {
+        "head_diameter_mm": _compact(head_diameter), "head_height_mm": _compact(head_height),
+        "hole_diameter_mm": _compact(hole_diameter), "hole_depth_mm": _compact(hole_depth),
+        "assumed_hole_tip_angle_deg": "90", "density_g_cm3": _compact(density),
+    }
+    return grams.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), geometry
+
+
 def _washer_dimensions(data, specification):
     standard_dimensions = None
     size_dimensions = []
@@ -157,6 +182,7 @@ def calculate_hardware_weight(data):
     if kind not in ("RIVET_GB873_STEEL", "PLAIN_WASHER"):
         raise ValidationError({"kind": "暂不支持该五金重量计算方式。"})
     material_kind, reference_density = _material_reference(material)
+    reference_version = REFERENCE_VERSION
     normalized_input = {"kind": kind, "material": material, "specification": specification}
     notes = ["理论重量未计镀层、制造公差及实际批次差异。"]
 
@@ -164,22 +190,28 @@ def calculate_hardware_weight(data):
         context.prec = 64
         if kind == "RIVET_GB873_STEEL":
             if material_kind not in {"CARBON_STEEL", "STEEL"}:
-                raise ValidationError({"material": "此表仅用于明确的钢制扁圆头半空心铆钉，不能用于不锈钢、铝、铜或未知材质。"})
+                raise ValidationError({"material": "此方式仅用于钢制扁圆头半空心铆钉，请核对材质或手填单重。"})
             if _provided(data, "density_g_cm3"):
                 density = _positive_decimal(data["density_g_cm3"], "density_g_cm3")
                 if density != reference_density:
-                    raise ValidationError({"density_g_cm3": "钢制铆钉按参考表查重，不支持使用其他密度换算。"})
+                    raise ValidationError({"density_g_cm3": "钢制铆钉采用参考密度 7.85 g/cm³，请核对材质或手填单重。"})
                 normalized_input["density_g_cm3"] = _compact(density)
             diameter, length = _rivet_dimensions(data, specification)
             parameters = {"diameter_mm": _compact(diameter), "length_mm": _compact(length)}
             weight = RIVET_STEEL_WEIGHT_G.get((parameters["diameter_mm"], parameters["length_mm"]))
-            if weight is None:
-                raise ValidationError({"specification": "该杆径和长度没有已核对的钢制铆钉重量；38/39 mm 存在来源疑点，均不自动计算。"})
-            unit_weight_g = Decimal(weight)
-            standard, method, source_url = "GB/T 873-1986", "STANDARD_TABLE", RIVET_SOURCE_URL
-            extra = {"table_weight_kg_per_1000": weight}
-            if material_kind == "STEEL":
-                notes.append("65Mn 按钢制 GB/T 873-1986 标准表查重，未按牌号密度缩放。")
+            standard = "GB/T 873-1986"
+            if weight is not None:
+                unit_weight_g = Decimal(weight)
+                method, source_url = "STANDARD_TABLE", RIVET_SOURCE_URL
+                extra = {"table_weight_kg_per_1000": weight}
+                if material_kind == "STEEL":
+                    notes.append("65Mn 按钢制 GB/T 873-1986 标准表查重，未按牌号密度缩放。")
+            else:
+                unit_weight_g, geometry = _estimate_rivet_weight(diameter, length, reference_density)
+                method, source_url = "RIVET_GEOMETRY_ESTIMATE", RIVET_GEOMETRY_SOURCE_URL
+                reference_version = RIVET_GEOMETRY_VERSION
+                extra = {"geometry": geometry, "comparison_source_url": RIVET_CALCULATOR_URL}
+                notes.append("尺寸估算按杆身和球冠钉头体积扣除尾孔，孔底按 90° 锥尖近似，单重取到 0.01 克。")
         else:
             dimensions, standard = _washer_dimensions(data, specification)
             parameters = {field: _compact(value) for field, value in zip(_WASHER_FIELDS, dimensions, strict=True)}
@@ -216,7 +248,7 @@ def calculate_hardware_weight(data):
         weight_kg_text = format(weight_kg, ".8f")
         normalized_input.update({key: value for key, value in parameters.items() if key != "density_g_cm3"})
         snapshot = {
-            "version": 1, "reference_version": REFERENCE_VERSION,
+            "version": 1, "reference_version": reference_version,
             "kind": kind, "method": method, "standard": standard, "source_url": source_url,
             "material": material, "specification": specification, "input": normalized_input,
             "parameters": parameters, "unit_weight_g": weight_g_text,

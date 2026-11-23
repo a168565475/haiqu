@@ -2,6 +2,9 @@
 
 REFERENCE_VERSION = "2026-11-09"
 RIVET_SOURCE_URL = "https://www.jlcfa.com/mcbook/GBT873-1986.htm"
+RIVET_GEOMETRY_SOURCE_URL = "https://m.forrun.cn/gb/638.html"
+RIVET_CALCULATOR_URL = "https://www.164580.com/cal/volume.php?lang=cn&standard_id=594&table_id=594"
+RIVET_GEOMETRY_VERSION = "2026-11-23"
 WASHER_SOURCE_URL = "https://www.164580.com/info_29155.html"
 
 # GB/T 873—1986 扁圆头半空心铆钉：每 1000 件钢制品质量约 kg。
@@ -52,6 +55,17 @@ RIVET_STEEL_WEIGHT_G = {
     for values in [row.split()]
     for diameter, weight in zip(RIVET_DIAMETERS, values[1:], strict=True)
     if weight != "_"
+}
+
+# GB/T 873—1986 黑色金属尺寸上下限的中值，单位 mm。
+# 公称杆径 -> (头径、头高、尾孔直径、直孔深度)。钢制和有色金属的尾孔尺寸不同。
+RIVET_STEEL_GEOMETRY_MM = {
+    "1.2": ("2.4", "0.5", "0.61", "1.2"), "1.4": ("2.8", "0.6", "0.71", "1.4"),
+    "1.6": ("3.2", "0.7", "0.81", "1.6"), "2": ("4", "0.8", "1.03", "2"),
+    "2.5": ("5", "0.8", "1.53", "2.5"), "3": ("6", "1", "2.03", "3"),
+    "3.5": ("7", "1.2", "2.23", "3.5"), "4": ("8", "1.3", "2.53", "4"),
+    "5": ("10", "1.7", "3.54", "5"), "6": ("12", "2.2", "4.54", "6"),
+    "8": ("16", "3", "6.04", "8"), "10": ("20", "4", "7.55", "10"),
 }
 
 # GB/T 97.1—2002 A 级平垫圈：公称规格 -> (外径、内孔直径、公称厚度)，mm。

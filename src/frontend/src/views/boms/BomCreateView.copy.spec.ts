@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import BomCreateView from './BomCreateView.vue'
 
-const api = vi.hoisted(() => ({ fetchBomOptions: vi.fn(), createBom: vi.fn() }))
+const api = vi.hoisted(() => ({ fetchBomOptions: vi.fn(), fetchBoms: vi.fn(), createBom: vi.fn() }))
 vi.mock('@/api/boms', () => api)
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { method: 'COPY', production_task_product_id: 'target-navy' } }),
@@ -23,10 +23,10 @@ const navy = {
 }
 let page: VueWrapper
 
-async function openCopy(batchQuantity: string | null = null, history = [black, navy]) {
+async function openCopy(batchQuantity: string | null = null, history = [black, navy], catalogId: string | null = 'bed') {
   api.fetchBomOptions.mockResolvedValue({
     production_task_products: [{
-      id: 'target-navy', product_catalog_id: 'bed', task_number: 'QA-COPY-01', task_etag: 'task-etag',
+      id: 'target-navy', product_catalog_id: catalogId, task_number: 'QA-COPY-01', task_etag: 'task-etag',
       product_name: '测试产品A', product_code: 'BED', order_quantity: '700',
       batch_quantity: batchQuantity, existing_bom_count: 0,
     }],
@@ -98,5 +98,25 @@ it('本次任务的批次数量也不一致时，须填说明才可创建', asyn
   await create.trigger('click')
   expect(api.createBom).toHaveBeenCalledWith(expect.objectContaining({
     quantityDifferenceReason: '本次按任务 700 把执行',
+  }))
+})
+
+it('未关联产品也能按生产任务单搜索较早的不同产品 BOM，并带到创建草稿', async () => {
+  const olderBom = { ...black, id: 'older-bom', production_task_number: 'QA-OLD-182', product_catalog_id: 'chair', product_name_snapshot: '旧款椅' }
+  api.fetchBoms.mockResolvedValue({ data: [olderBom], meta: { total: 1 } })
+
+  const select = await openCopy(null, [black], null)
+  expect(select.findAllComponents(ElOption).map(option => option.props('value'))).toEqual([black.id])
+  await select.get('input').setValue('qa-old')
+  await vi.waitFor(() => expect(api.fetchBoms).toHaveBeenCalledWith(expect.objectContaining({ q: 'qa-old' })))
+  await flushPromises()
+  const choices = select.findAllComponents(ElOption)
+  expect(choices.map(option => option.props('value'))).toEqual([olderBom.id])
+  await choices[0]!.trigger('click')
+  await page.get('.wizard-actions .el-button--primary').trigger('click')
+  expect(page.get('.review-meta').text()).toContain('QA-OLD-182 · 旧款椅')
+  await page.get('button.el-button--primary').trigger('click')
+  expect(api.createBom).toHaveBeenCalledWith(expect.objectContaining({
+    productionTaskProductId: 'target-navy', sourceBomId: olderBom.id,
   }))
 })

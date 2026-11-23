@@ -949,6 +949,62 @@ class BomApiTests(APITestCase):
                 self.assertIn("PMC", str(created.data))
                 self.assertFalse(Bom.objects.exists())
 
+    def test_copy_from_a_different_product_to_an_unbound_task_line(self):
+        source = self.client.post(
+            "/api/v1/boms/",
+            {
+                "production_task_product_id": str(self.product_line.pk),
+                "creation_method": "IMPORT",
+                "workbook": self.workbook_bytes(),
+            },
+            format="multipart",
+        )
+        self.assertEqual(source.status_code, 201, source.data)
+        source_bom = source.data["data"]
+        target = ProductionTaskProduct.objects.create(
+            production_task=self.task,
+            line_number=2,
+            product_name_snapshot="另一款待建 BOM 产品",
+            quantity=12,
+            unit=self.product.unit,
+            currency=self.currency,
+            unit_price=Decimal("1"),
+            total_amount=Decimal("12"),
+            exchange_rate=Decimal("1"),
+        )
+
+        matches = self.client.get("/api/v1/boms/", {"q": self.task.task_number.lower()})
+        self.assertEqual(matches.status_code, 200, matches.data)
+        self.assertEqual([item["id"] for item in matches.data["data"]], [source_bom["id"]])
+
+        payload = {
+            "production_task_product_id": target.pk,
+            "creation_method": "COPY",
+            "source_bom_id": source_bom["id"],
+        }
+        copied = self.client.post("/api/v1/boms/", payload, format="json")
+        self.assertEqual(copied.status_code, 201, copied.data)
+        new_bom = Bom.objects.get(pk=copied.data["data"]["id"])
+        self.assertEqual(new_bom.product_line_id, target.pk)
+        self.assertEqual(new_bom.product_name_snapshot, target.product_name_snapshot)
+        self.assertIsNone(new_bom.product_id)
+        self.assertEqual(new_bom.order_quantity, target.quantity)
+        self.assertEqual(str(new_bom.copied_from_id), source_bom["id"])
+        self.assertEqual(new_bom.line_count, source_bom["line_count"])
+        self.assertEqual(new_bom.status, "PENDING_CONFIRMATION")
+
+        Bom.objects.filter(pk=source_bom["id"]).update(archived_at=timezone.now())
+        hidden = self.client.post("/api/v1/boms/", payload, format="json")
+        self.assertEqual(hidden.status_code, 404, hidden.data)
+
+        Bom.objects.filter(pk=source_bom["id"]).update(archived_at=None)
+        self.user.user_permissions.remove(Permission.objects.get(
+            content_type__app_label="boms", codename="view_bom",
+        ))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        denied = self.client.post("/api/v1/boms/", payload, format="json")
+        self.assertEqual(denied.status_code, 403, denied.data)
+
     def test_copy_and_blank_creation_keep_real_source_rules(self):
         imported = self.client.post(
             "/api/v1/boms/",

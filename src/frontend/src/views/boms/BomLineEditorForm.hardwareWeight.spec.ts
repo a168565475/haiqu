@@ -1,35 +1,42 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { reactive } from 'vue'
+import { nextTick, reactive } from 'vue'
 import ElementPlus from 'element-plus'
 import { describe, expect, it, vi } from 'vitest'
 import { blankLine } from './bomEditorHelpers'
+import { hardwareWeightKey, selectHardwareWeight } from './useHardwareWeightPreview'
+import type { BomLineInput } from '@/types/bom'
 import BomLineEditorForm from './BomLineEditorForm.vue'
 
 vi.mock('@/api/boms', () => ({ previewBomHardwareWeight: vi.fn() }))
 
+function mountHardwareForm(line: BomLineInput) {
+  const target = document.createElement('div')
+  document.body.appendChild(target)
+  const noop = () => {}
+  const wrapper = mount(BomLineEditorForm, {
+    attachTo: target,
+    props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      editorReferenceOptionsError: '', ensureEditorReferenceOptions: noop,
+      tubeCoatingColors: [], tubeOptionsLoading: false,
+      normalizeTubeCutPieceCount: noop, openLineImageManager: noop, auxiliaryLineHasActiveProduct: () => false,
+      auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: noop, auxiliaryColorOptions: () => [], setAuxiliaryColor: noop,
+      auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: noop, fabricSpecificationOptions: () => [], setFabricSpecification: noop,
+      fabricColorSnapshot: () => ({}), fabricColorOptions: () => [], setFabricColor: noop, fabricMaterialOptions: () => [], setFabricMaterial: noop,
+      fabricWidthOptions: () => [], setFabricWidth: noop, isPipeCuttingLine: () => false, editingFabricSourceKey: '', fabricSourceLines: [],
+      legacyPipeCuttingValues: () => null, editingCuttingCalculation: null, bom: null, number: Number,
+      catalogMode: false, editingSection: { title: '五金件', section_type: 'ACCESSORY', lines: [line] },
+      editingLineDraft: line, editingLineCalculations: null,
+    },
+    global: { plugins: [ElementPlus], stubs: { MaterialSelectionPanel: true, BomCuttingCatalogSelect: true } },
+  })
+  return { wrapper, target }
+}
+
 describe('五金重量表单真实 Element Plus 控件', () => {
   it('可选择平垫并填写明确参数，展示计算和错误状态，手动改重量退出自动', async () => {
     const line = reactive({ ...blankLine('个'), part_name: '平垫片', material: '钢', specification: 'M6' })
-    const target = document.createElement('div')
-    document.body.appendChild(target)
-    const noop = () => {}
-    const wrapper = mount(BomLineEditorForm, {
-      attachTo: target,
-      props: {
-        displayLineImages: () => [], formatHardwareColor: String,
-        editorReferenceOptionsError: '', ensureEditorReferenceOptions: noop,
-        tubeCoatingColors: [], tubeOptionsLoading: false,
-        normalizeTubeCutPieceCount: noop, openLineImageManager: noop, auxiliaryLineHasActiveProduct: () => false,
-        auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: noop, auxiliaryColorOptions: () => [], setAuxiliaryColor: noop,
-        auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: noop, fabricSpecificationOptions: () => [], setFabricSpecification: noop,
-        fabricColorSnapshot: () => ({}), fabricColorOptions: () => [], setFabricColor: noop, fabricMaterialOptions: () => [], setFabricMaterial: noop,
-        fabricWidthOptions: () => [], setFabricWidth: noop, isPipeCuttingLine: () => false, editingFabricSourceKey: '', fabricSourceLines: [],
-        legacyPipeCuttingValues: () => null, editingCuttingCalculation: null, bom: null, number: Number,
-        catalogMode: false, editingSection: { title: '五金件', section_type: 'ACCESSORY', lines: [line] },
-        editingLineDraft: line, editingLineCalculations: null,
-      },
-      global: { plugins: [ElementPlus], stubs: { MaterialSelectionPanel: true, BomCuttingCatalogSelect: true } },
-    })
+    const { wrapper, target } = mountHardwareForm(line)
     try {
       await wrapper.find('[aria-label="重量计算方式"]').trigger('click')
       await flushPromises()
@@ -52,6 +59,39 @@ describe('五金重量表单真实 Element Plus 控件', () => {
       await wrapper.find('input[aria-label="单个材料重量"]').setValue('0.00102')
       expect(line.hardware_weight_mode).toBe('MANUAL')
       expect(line.unit_material_weight_kg).toBe('0.00102')
+    } finally {
+      wrapper.unmount()
+      target.remove()
+    }
+  })
+
+  it('表外铆钉在预览和重新打开时显示估算，切换规格或手填后移除标记', async () => {
+    const line = reactive({ ...blankLine('个'), part_name: '铆钉', material: '铁', specification: '5*53' })
+    selectHardwareWeight(line, 'RIVET_GB873_STEEL')
+    const { wrapper, target } = mountHardwareForm(line)
+    const input_key = hardwareWeightKey(line)
+    const unit_material_weight_kg = '0.00828000'
+    const snapshot = { method: 'RIVET_GEOMETRY_ESTIMATE' }
+    const label = () => wrapper.get('input[aria-label="单个材料重量"]').element.closest('label')!.textContent
+    try {
+      line.unit_material_weight_kg = unit_material_weight_kg
+      line.hardware_weight_preview = { input_key, unit_material_weight_kg, unit_weight_g: '8.28', calculation_snapshot: snapshot }
+      await nextTick()
+      expect(label()).toContain('估算')
+      line.hardware_weight_preview = undefined
+      line.hardware_weight_saved = { input_key, unit_material_weight_kg }
+      line.hardware_weight_snapshot = snapshot
+      await nextTick()
+      expect(label()).toContain('估算')
+      line.specification = '5*50'
+      await nextTick()
+      expect(label()).not.toContain('估算')
+      line.hardware_weight_preview = { input_key: hardwareWeightKey(line), unit_material_weight_kg: '0.00773000', unit_weight_g: '7.73', calculation_snapshot: { method: 'STANDARD_TABLE' } }
+      await nextTick()
+      expect(label()).not.toContain('估算')
+      line.specification = '5*53'
+      await wrapper.get('input[aria-label="单个材料重量"]').setValue('0.008')
+      expect(label()).not.toContain('估算')
     } finally {
       wrapper.unmount()
       target.remove()

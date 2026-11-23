@@ -26,6 +26,7 @@ class HardwareWeightCalculationTests(unittest.TestCase):
             ("4×20", "2", "0.00200000"),
             ("5×30", "4.67", "0.00467000"),
             ("6×30", "6.69", "0.00669000"),
+            ("5×50", "7.73", "0.00773000"),
         ):
             with self.subTest(specification=specification):
                 result = self.rivet(specification=specification)
@@ -41,11 +42,34 @@ class HardwareWeightCalculationTests(unittest.TestCase):
         self.assertEqual(RIVET_STEEL_WEIGHT_G[("1.4", "7")], "0.09")
         self.assertNotIn(("1.2", "7"), RIVET_STEEL_WEIGHT_G)
         self.assertFalse(any(length in ("38", "39") for _, length in RIVET_STEEL_WEIGHT_G))
+        for (diameter, length), weight in RIVET_STEEL_WEIGHT_G.items():
+            with self.subTest(diameter=diameter, length=length):
+                result = self.rivet(specification=f"{diameter}×{length}")
+                self.assertEqual(Decimal(result["unit_weight_g"]), Decimal(weight))
+                self.assertEqual(result["calculation_snapshot"]["method"], "STANDARD_TABLE")
 
-    def test_rivet_rejects_missing_entries_without_interpolation(self):
-        for specification in ("5×38", "5×39", "5×21", "5.5×30", "1.2×7"):
+    def test_unlisted_rivet_lengths_are_estimated_from_steel_dimensions(self):
+        for specification, grams in (("5*53", "8.28"), ("4×21", "2.16"), ("4×38", "3.84"),
+                                     ("4×39", "3.94"), ("1.2×7", "0.07"), ("5×65", "10.13")):
+            with self.subTest(specification=specification):
+                result = self.rivet(specification=specification)
+                self.assertEqual(result["unit_weight_g"], grams)
+                self.assertEqual(Decimal(result["unit_material_weight_kg"]), Decimal(grams) / 1000)
+                snapshot = result["calculation_snapshot"]
+                self.assertEqual(snapshot["method"], "RIVET_GEOMETRY_ESTIMATE")
+                self.assertNotIn("table_weight_kg_per_1000", snapshot)
+                self.assertEqual(calculate_hardware_weight(snapshot["input"]), result)
+        geometry = self.rivet(specification="5×53")["calculation_snapshot"]["geometry"]
+        self.assertEqual(geometry["head_diameter_mm"], "10")
+        self.assertEqual(geometry["hole_diameter_mm"], "3.54")
+        self.assertEqual(geometry["density_g_cm3"], "7.85")
+
+    def test_rivet_estimate_requires_known_steel_profile_and_room_for_the_hole(self):
+        for specification in ("5.5×30", "5×1", "1.5mm", "110*16*1.8"):
             with self.subTest(specification=specification), self.assertRaises(ValidationError):
                 self.rivet(specification=specification)
+        with self.assertRaises(ValidationError):
+            self.rivet(material="PE", specification="5×53")
 
     def test_rivet_requires_explicit_carbon_steel_identity(self):
         for material in ("", "未知", "不锈钢", "304", "铝", "铜", "304钢", "铝合金"):

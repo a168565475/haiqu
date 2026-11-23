@@ -26,7 +26,7 @@ const lines = [
 ]
 const receipt = { id: 'inbound', status: 'CONFIRMED', inbound_number: 'CLRK-1' }
 type View = {
-  rows: Array<{ included: boolean; receivedQuantity: string; warehouseId: string; zoneId: string }>
+  rows: Array<{ included: boolean; receivedQuantity: string; warehouseId: string; zoneId: string; remark: string }>
   selectedRows: unknown[]; allSelected: boolean; readyToSubmit: boolean; receiptCreated: boolean
   bulk: { warehouseId: string; zoneId: string }; form: { remark: string }
   applyBulkZone: () => void; submitReceiving: () => Promise<void>
@@ -139,6 +139,32 @@ describe('采购收货和样品采购全部入库', () => {
     ])
     expect(api.createMaterialReceiving).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+
+  it('生产采购待收100件时，登记到货105件须填写该行备注', async () => {
+    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, source_type: 'PRODUCTION' }] as never)
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [
+      { ...lines[1], purchased_quantity: '100', remaining_quantity: '100' },
+    ] } as never)
+    vi.mocked(api.createMaterialReceiving).mockResolvedValue(receipt as never)
+    const wrapper = mount(); await flushPromises()
+    try {
+      const vm = wrapper.vm as unknown as View
+      assignZone(vm)
+      expect(vm.readyToSubmit).toBe(true)
+      vm.rows[0]!.receivedQuantity = '105'
+      await flushPromises()
+      expect(wrapper.get('.remark-cell').text()).toContain('超出待收量，备注必填')
+      expect(vm.readyToSubmit).toBe(false)
+      vm.rows[0]!.remark = '   '
+      expect(vm.readyToSubmit).toBe(false)
+      vm.rows[0]!.remark = '供应商实际送来105件'
+      expect(vm.readyToSubmit).toBe(true)
+      await vm.submitReceiving()
+      expect(api.createMaterialReceiving).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        items: [expect.objectContaining({ received_quantity: '105', expected_remaining_quantity: '100', remark: '供应商实际送来105件' })],
+      }))
+    } finally { wrapper.unmount() }
   })
 
   it('忽略旧草稿的部分选择和数量，全部明细只读显示采购单位', async () => {

@@ -5,9 +5,10 @@ import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadInstance } from 'element-plus'
 
-import { createBom, fetchBomOptions, previewBomWorkbook } from '@/api/boms'
+import { createBom, fetchBomOptions, fetchBoms, previewBomWorkbook } from '@/api/boms'
 import { productEntryUnitName } from '@/utils/productEntryDraft'
 import type {
+  Bom,
   BomCreationMethod,
   BomOptions,
   BomProductionTaskProduct,
@@ -37,13 +38,17 @@ const creationMethod = ref<BomCreationMethod>(
   requestedCreationMethod === 'COPY' || requestedCreationMethod === 'BLANK' ? requestedCreationMethod : 'IMPORT',
 )
 const selectedFile = ref<File | null>(null)
-const sourceBomId = ref('')
+const selectedHistoryBom = ref<{ bom: Bom; label: string } | null>(null)
+const historySearchResults = ref<Bom[] | null>(null)
+const historySearchLoading = ref(false)
+const historyHasMoreResults = ref(false)
+let historySearchRequestId = 0
 const preview = ref<BomWorkbookPreview | null>(null)
 const previewError = ref('')
 const quantityDifferenceReason = ref('')
 const methodCards: Array<{ value: BomCreationMethod; title: string; description: string }> = [
   { value: 'IMPORT', title: '从 Excel BOM 导入', description: '读取本地 Excel 文件，自动识别物料、分类、规格和用量等信息' },
-  { value: 'COPY', title: '复制历史 BOM', description: '选择同产品的历史 BOM，复制结构后再调整' },
+  { value: 'COPY', title: '复制历史 BOM', description: '选择历史 BOM，复制结构后再调整' },
   { value: 'BLANK', title: '空白建立', description: '只带出任务与产品信息，手工新增物料' },
 ]
 
@@ -97,18 +102,7 @@ const filteredProducts = computed(() => {
     : matchedProducts.slice(0, 20)
 })
 
-const copyCandidates = computed(() => {
-  if (!selectedProduct.value) return []
-  const productCode = selectedProduct.value.product_code
-  const productNumber = selectedProduct.value.product_number
-  const catalogId = selectedProduct.value.product_catalog_id
-  return (options.value?.history_boms || []).filter((item) => (
-    catalogId
-      ? item.product_catalog_id === catalogId
-      : !item.product_catalog_id && (item.product_code_snapshot === productCode
-        || (!productCode && item.product_number_snapshot === productNumber))
-  ))
-})
+const copyCandidates = computed(() => historySearchResults.value ?? options.value?.history_boms ?? [])
 
 const historyBomLabels = computed(() => {
   const choices = copyCandidates.value.map(bom => {
@@ -127,20 +121,20 @@ const historyBomLabels = computed(() => {
 
 const sourceReady = computed(() => {
   if (creationMethod.value === 'IMPORT') return Boolean(preview.value && !preview.value.identity_errors.length)
-  if (creationMethod.value === 'COPY') return Boolean(sourceBomId.value)
+  if (creationMethod.value === 'COPY') return Boolean(selectedHistoryBom.value)
   return Boolean(selectedProduct.value)
 })
 
 const canSubmit = computed(() => {
   if (!selectedProduct.value || submitting.value || previewLoading.value) return false
   if (creationMethod.value === 'IMPORT' && !(selectedFile.value && sourceReady.value)) return false
-  if (creationMethod.value === 'COPY' && !sourceBomId.value) return false
+  if (creationMethod.value === 'COPY' && !sourceReady.value) return false
   return !quantityRequiresReason.value || Boolean(quantityDifferenceReason.value.trim())
 })
 
 const reviewSource = computed(() => (
   creationMethod.value === 'COPY'
-    ? copyCandidates.value.find((item) => item.id === sourceBomId.value) || null
+    ? selectedHistoryBom.value?.bom ?? null
     : null
 ))
 
@@ -182,7 +176,7 @@ const expectedResult = computed(() => {
     return `${preview.value.section_count} 个用料分类 · ${preview.value.line_count} 行明细 · ${preview.value.calculation_summary.calculation_row_count} 行计算 / 汇总`
   }
   if (creationMethod.value === 'COPY') {
-    const source = copyCandidates.value.find((item) => item.id === sourceBomId.value)
+    const source = reviewSource.value
     return source ? `${source.section_count} 个用料分类 · ${source.line_count} 行明细` : '选择历史 BOM 后显示预计结果'
   }
   if (creationMethod.value === 'BLANK') return '仅生成 BOM 主记录，暂不生成用料明细'
@@ -197,6 +191,31 @@ function apiError(error: unknown) {
   if (Array.isArray(data.workbook)) return data.workbook[0] || 'Excel 文件校验失败。'
   if (typeof data.workbook === 'string') return data.workbook
   return data.error?.message || data.detail || '操作失败，请检查填写内容。'
+}
+
+async function searchHistoryBoms(keyword: string) {
+  const query = keyword.trim()
+  const requestId = ++historySearchRequestId
+  historyHasMoreResults.value = false
+  historySearchResults.value = query ? [] : null
+  historySearchLoading.value = Boolean(query)
+  if (!query) return
+
+  try {
+    const result = await fetchBoms({ q: query, page_size: 100 })
+    if (requestId !== historySearchRequestId) return
+    historySearchResults.value = result.data
+    historyHasMoreResults.value = result.meta.total > result.data.length
+  } catch (error) {
+    if (requestId === historySearchRequestId) ElMessage.error(apiError(error))
+  } finally {
+    if (requestId === historySearchRequestId) historySearchLoading.value = false
+  }
+}
+
+function selectHistoryBom(id: string) {
+  const bom = copyCandidates.value.find(item => item.id === id)
+  selectedHistoryBom.value = bom ? { bom, label: historyBomLabels.value.get(bom.id) ?? bom.bom_number } : null
 }
 
 function number(value: string | number | null | undefined) {
@@ -391,7 +410,7 @@ async function submit() {
       productionTaskProductId: selectedProduct.value.id,
       creationMethod: creationMethod.value,
       workbook: creationMethod.value === 'IMPORT' ? selectedFile.value : null,
-      sourceBomId: creationMethod.value === 'COPY' ? sourceBomId.value : undefined,
+      sourceBomId: reviewSource.value?.id,
       taskEtag: selectedProduct.value.task_etag,
       quantityDifferenceReason: quantityDifferenceReason.value,
     })
@@ -410,18 +429,24 @@ function cancel() {
 
 watch(selectedProductId, () => {
   clearUpload()
-  sourceBomId.value = ''
+  selectedHistoryBom.value = null
   quantityDifferenceReason.value = ''
 })
 
 watch(creationMethod, () => {
   if (creationMethod.value !== 'IMPORT') clearUpload()
-  if (creationMethod.value !== 'COPY') sourceBomId.value = ''
+  if (creationMethod.value !== 'COPY') {
+    selectedHistoryBom.value = null
+    void searchHistoryBoms('')
+  }
   quantityDifferenceReason.value = ''
 })
 
 onMounted(() => { void loadOptions() })
-onBeforeUnmount(cancelPendingTaskSearch)
+onBeforeUnmount(() => {
+  cancelPendingTaskSearch()
+  historySearchRequestId += 1
+})
 </script>
 
 <template>
@@ -507,7 +532,22 @@ onBeforeUnmount(cancelPendingTaskSearch)
                 <ElTableColumn prop="notes" label="备注" min-width="110"><template #default="{ row }">{{ row.notes || '—' }}</template></ElTableColumn>
               </ElTable>
             </div>
-            <div v-else-if="creationMethod === 'COPY'" class="alternative-source"><ElSelect v-model="sourceBomId" placeholder="请选择同产品历史BOM" clearable><ElOption v-for="item in copyCandidates" :key="item.id" :label="historyBomLabels.get(item.id)" :value="item.id" /></ElSelect><span v-if="selectedProduct && !copyCandidates.length">当前产品没有可复制的历史BOM</span></div>
+            <div v-else-if="creationMethod === 'COPY'" class="alternative-source">
+              <ElSelect
+                :model-value="selectedHistoryBom?.bom.id || ''"
+                filterable remote clearable
+                placeholder="输入生产任务单号或 BOM 编号搜索"
+                no-data-text="没有找到可复制的历史 BOM"
+                :loading="historySearchLoading"
+                :remote-method="searchHistoryBoms"
+                @change="selectHistoryBom"
+                @clear="searchHistoryBoms('')"
+              >
+                <template #label>{{ selectedHistoryBom?.label }}</template>
+                <ElOption v-for="item in copyCandidates" :key="item.id" :label="historyBomLabels.get(item.id)" :value="item.id" />
+              </ElSelect>
+              <span v-if="historyHasMoreResults">可输入更完整的生产任务单号或 BOM 编号缩小范围</span>
+            </div>
             <div v-else-if="creationMethod === 'BLANK'" class="blank-source">仅建立BOM主记录和默认分区，不生成虚构用料数据；创建后在编辑页新增物料。</div>
           </section>
         </section>
@@ -515,7 +555,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
         <section v-else class="content-card review-content">
           <h2>检查并创建BOM草稿</h2>
           <dl class="review-meta">
-            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${historyBomLabels.get(sourceBomId) || '—'}` : '空白建立' }}</dd></div>
+            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${selectedHistoryBom?.label || '—'}` : '空白建立' }}</dd></div>
             <div><dt>识别结果</dt><dd>{{ expectedResult }}</dd></div>
             <div><dt>来源产品</dt><dd>{{ selectedProduct?.product_code || selectedProduct?.product_number }} {{ selectedProduct?.product_name }}</dd></div>
           </dl>

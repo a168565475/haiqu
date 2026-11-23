@@ -53,6 +53,50 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.assertEqual(movement.quantity, Decimal('4.2500'))
         self.assertFalse(MaterialStockMovement.objects.filter(balance__raw_material=other).exists())
 
+    def test_purchase_of_100_receives_and_credits_all_105_pieces(self):
+        self.purchase_line.actual_purchase_quantity = Decimal('100')
+        self.purchase_line.save(update_fields=['actual_purchase_quantity'])
+        url = '/api/v1/material-inventory/receivings/'
+        payload = self.payload(quantity='105', expected='100')
+        item = payload['items'][0]
+        item['remark'] = '   '
+        missing = self.client.post(url, payload, format='json')
+        self.assertEqual(missing.status_code, 400, missing.data)
+        self.assertIn('请填写该行备注', str(missing.data))
+
+        split = {**payload, 'items': [
+            {**item, 'received_quantity': '60'},
+            {**item, 'received_quantity': '45', 'location_id': self.second_location_id},
+        ]}
+        missing = self.client.post(url, split, format='json')
+        self.assertEqual(missing.status_code, 400, missing.data)
+        self.assertIn('请填写该行备注', str(missing.data))
+        self.assertFalse(MaterialInbound.objects.exists())
+
+        item['remark'] = '供应商实际送来105件'
+        response = self.client.post(url, payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        line = MaterialInboundLine.objects.get(inbound_id=response.data['data']['id'])
+        self.assertEqual(line.received_quantity, Decimal('105'))
+        self.assertEqual(line.purchased_quantity_snapshot, Decimal('100'))
+        self.assertEqual(line.remark, item['remark'])
+        self.assertFalse(MaterialStockMovement.objects.filter(source_line_id=line.pk).exists())
+
+        confirmed = self.confirm_quality(response)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        line.refresh_from_db()
+        self.assertEqual(line.accepted_quantity, Decimal('105'))
+        movement = MaterialStockMovement.objects.select_related('balance').get(source_line_id=line.pk)
+        self.assertEqual(movement.quantity, Decimal('105'))
+        self.assertEqual(movement.balance.quantity, Decimal('105'))
+        eligible = self.client.get('/api/v1/material-inventory/eligible-lines/', {
+            'purchase_order_id': self.purchase_line.purchase_order_id,
+        })
+        self.assertEqual(eligible.status_code, 200, eligible.data)
+        self.assertEqual(eligible.data['data'], [])
+        self.assertEqual(self.receive(quantity='105', expected='100').status_code, 409)
+        self.assertEqual(MaterialInbound.objects.count(), 1)
+
     def test_legacy_saved_material_number_works_without_bom(self):
         PurchaseOrderLine.objects.filter(pk=self.purchase_line.pk).update(
             calculation_snapshot={}, bom_line=None, bom=None, part_name_snapshot='部件名称与原料名称不同')

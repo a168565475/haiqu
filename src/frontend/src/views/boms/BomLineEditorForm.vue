@@ -3,7 +3,7 @@ import { computed, ref, toRefs } from 'vue'
 import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import BomCuttingCatalogSelect from './BomCuttingCatalogSelect.vue'
 import BomPurchaseRequiredField from './BomPurchaseRequiredField.vue'
-import { selectHardwareWeight, setManualHardwareWeight } from './useHardwareWeightPreview'
+import { hardwareWeightKey, selectHardwareWeight, setManualHardwareWeight } from './useHardwareWeightPreview'
 import type { MaterialCatalog, PublicMaterialOptions } from '@/types/materialCatalog'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { packagingQuantity } from '@/utils/bomPackagingQuantity'
@@ -80,6 +80,15 @@ const hardwareWeightMethod = computed({
   set: (value: HardwareWeightKind | 'MANUAL') => {
     if (props.editingLineDraft) selectHardwareWeight(props.editingLineDraft, value)
   },
+})
+const isEstimatedHardwareWeight = computed(() => {
+  const line = props.editingLineDraft
+  if (!line || line.hardware_weight_mode !== 'AUTO') return false
+  const key = hardwareWeightKey(line)
+  if (line.hardware_weight_preview?.input_key === key) {
+    return line.hardware_weight_preview.calculation_snapshot.method === 'RIVET_GEOMETRY_ESTIMATE'
+  }
+  return line.hardware_weight_saved?.input_key === key && line.hardware_weight_snapshot?.method === 'RIVET_GEOMETRY_ESTIMATE'
 })
 const catalogSprayOptions = ref<PublicMaterialOptions>()
 const selectedPurchaseAllowance = computed(() => props.editingLineDraft?.purchase_allowance_mode === 'MANUAL'
@@ -225,7 +234,7 @@ const {
             <label class="drawer-field"><span>重量计算方式</span><ElSelect v-model="hardwareWeightMethod" aria-label="重量计算方式"><ElOption label="手填重量" value="MANUAL" /><ElOption label="钢制 GB/T 873 铆钉" value="RIVET_GB873_STEEL" /><ElOption label="普通平垫片" value="PLAIN_WASHER" /></ElSelect></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
             <BomPurchaseRequiredField v-model="editingLineDraft.purchase_required" />
-            <label class="drawer-field"><span>单个材料重量（kg）</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" :placeholder="hardwareWeightLoading ? '计算中…' : '填写'" aria-label="单个材料重量" @input="setManualHardwareWeight(editingLineDraft)" /></label>
+            <label class="drawer-field"><span>单个材料重量（kg）{{ isEstimatedHardwareWeight ? ' · 估算' : '' }}</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" :placeholder="hardwareWeightLoading ? '计算中…' : '填写'" aria-label="单个材料重量" @input="setManualHardwareWeight(editingLineDraft)" /></label>
             <template v-if="editingLineDraft.hardware_weight_mode === 'AUTO' && editingLineDraft.hardware_weight_input">
               <template v-if="hardwareWeightMethod === 'RIVET_GB873_STEEL'">
                 <label class="drawer-field"><span>杆身直径（mm）</span><ElInput v-model="editingLineDraft.hardware_weight_input.diameter_mm" inputmode="decimal" placeholder="可从杆径×杆长规格识别" aria-label="铆钉杆身直径" /></label>

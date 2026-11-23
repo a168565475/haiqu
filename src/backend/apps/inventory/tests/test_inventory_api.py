@@ -672,14 +672,13 @@ class MaterialInventoryApiTests(APITestCase):
         self.assertEqual(inventory.data["results"][0]["inventory_quantity"], Decimal("5.2500"))
         self.assertEqual(inventory.data["results"][0]["inbound_count"], 2)
 
-    def test_over_receipt_rolls_back_and_stale_remaining_returns_conflict(self):
-        over = self.client.post("/api/v1/material-inventory/batch-receipts/", self.payload(quantity="11.0000"), format="json")
-        self.assertEqual(over.status_code, 400, over.data)
-        self.assertEqual(MaterialInbound.objects.count(), 0)
+    def test_stale_remaining_returns_conflict(self):
+        self.use_general_material()
         first = self.client.post("/api/v1/material-inventory/receipts/", self.payload(), format="json")
         self.assertEqual(first.status_code, 201, first.data)
         stale = self.client.post("/api/v1/material-inventory/receipts/", self.payload(quantity="1.0000", expected="10.5000"), format="json")
         self.assertEqual(stale.status_code, 409, stale.data)
+        self.assertEqual(MaterialInbound.objects.count(), 1)
 
     def test_future_date_is_rejected(self):
         future = (timezone.localdate() + timedelta(days=1)).isoformat()

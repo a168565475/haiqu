@@ -640,6 +640,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     )
     submitted_totals = {}
     expected_values = {}
+    remarked_lines = set()
     for item in items:
         line_id = item["purchase_order_line_id"]
         line = line_map[line_id]
@@ -665,6 +666,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         expected = item["expected_remaining_quantity"]
         if expected != current_remaining:
             raise Conflict(f"采购单第 {line.line_number} 行剩余数量已变化，请刷新后重试。")
+        if current_remaining <= 0:
+            raise ValidationError({"items": f"采购单第 {line.line_number} 行已收齐。"})
         if line_id in expected_values and expected_values[line_id] != expected:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
@@ -685,6 +688,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             else item["received_quantity"]
         )
         submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + submitted_quantity
+        if item.get("remark"):
+            remarked_lines.add(line_id)
 
         zone = zone_map[item["zone_id"]]
         if (
@@ -700,12 +705,16 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             if location.status != RecordStatus.ACTIVE or location.zone_id != zone.pk:
                 raise Conflict("入库库位必须是所选库区下的正常库位。")
 
+    # 同一采购明细可拆分到多个库位，按本批合计判断是否超收。
     for line_id, submitted in submitted_totals.items():
+        remaining = expected_values[line_id]
+        if submitted <= remaining:
+            continue
         line = line_map[line_id]
-        current_received = Decimal(received_totals.get(line_id, 0))
-        if current_received + submitted > ordered_quantities[line_id]:
-            remaining = ordered_quantities[line_id] - current_received
+        if sample_direct or line.purchase_order.status == PurchaseOrderStatus.COMPLETED:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行最多还能入库 {remaining}。"})
+        if line_id not in remarked_lines:
+            raise ValidationError({"items": f"采购单第 {line.line_number} 行超出待收量，请填写该行备注。"})
 
     inbound = MaterialInbound.objects.create(
         stock_mode=stock_mode,

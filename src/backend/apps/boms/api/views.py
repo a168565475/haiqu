@@ -15,6 +15,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.access_control import module_policy, sales_policy
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
@@ -315,11 +316,18 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 raise ValidationError({"production_task_product_update": "颜色明细编号与当前生产任务不一致。"})
             if product_update["currency"].pk != product_line.production_task.currency_id:
                 raise ValidationError({"production_task_product_update": "币种必须与生产任务基础信息一致。"})
+        creation_method = serializer.validated_data["creation_method"]
         source_bom = None
-        source_bom_id = serializer.validated_data.get("source_bom_id")
-        if source_bom_id:
+        if creation_method == BomCreationMethod.COPY:
+            can_view = module_policy.has_permission if module_policy.enabled() else sales_policy.has_permission
+            if not can_view(request, "boms.view_bom"):
+                raise PermissionDenied("当前账号没有查看历史 BOM 的权限。")
             try:
-                source_bom = boms_with_context(accessible_boms(request), include_lines=True).get(pk=source_bom_id)
+                source_bom = boms_with_context(
+                    accessible_boms(request, permission="boms.view_bom"), include_lines=True,
+                ).get(
+                    pk=serializer.validated_data["source_bom_id"],
+                )
             except Bom.DoesNotExist as exc:
                 raise NotFound("未找到可复制的历史 BOM。") from exc
         with transaction.atomic():
@@ -342,14 +350,9 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                     actor_employee=getattr(request, "employee", None),
                     request=request,
                 )
-            if source_bom and (
-                source_bom.product_line.product_id != locked_line.product_id
-                or source_bom.product_catalog_id != locked_line.product_catalog_id
-            ):
-                raise ValidationError({"source_bom_id": "历史 BOM 必须与更换后的产品一致。"})
             bom = create_bom(
                 product_line=locked_line,
-                creation_method=serializer.validated_data["creation_method"],
+                creation_method=creation_method,
                 actor_employee=getattr(request, "employee", None),
                 uploaded_file=serializer.validated_data.get("workbook"),
                 source_bom=source_bom,

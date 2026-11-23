@@ -102,7 +102,7 @@ class HardwareWeightApiTests(TestCase):
     def test_preview_rejects_missing_unsupported_and_invalid_parameters(self):
         invalid = [
             {}, self.rivet_input(specification=""), self.rivet_input(material="铝"),
-            self.rivet_input(specification="Φ5×39"), self.rivet_input(kind="UNKNOWN"),
+            self.rivet_input(specification="Φ5.5×39"), self.rivet_input(kind="UNKNOWN"),
             self.washer_input(inner_diameter_mm="12"), self.washer_input(thickness_mm="-1"),
             self.washer_input(outer_diameter_mm="NaN"), self.washer_input(density_g_cm3="0"),
         ]
@@ -171,6 +171,17 @@ class HardwareWeightApiTests(TestCase):
         self.assertEqual(saved["specification"], "Φ4-40 / 4×40")
         self.assertEqual(saved["hardware_weight_input"], preview_input)
         self.assertEqual(saved["unit_material_weight_kg"], preview.data["data"]["unit_material_weight_kg"])
+
+    def test_estimated_rivet_preview_save_and_reopen_use_the_same_weight(self):
+        preview = self.client.post(self.endpoint, self.rivet_input(specification="5*53"), format="json")
+        self.assertEqual(preview.status_code, 200, preview.data)
+        snapshot = preview.data["data"]["calculation_snapshot"]
+        self.assertEqual(snapshot["method"], "RIVET_GEOMETRY_ESTIMATE")
+        self.assertEqual(snapshot["unit_material_weight_kg"], "0.00828000")
+        saved = self.save_hardware(specification="5*53")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(self.line().raw_values["hardware_weight_snapshot"], snapshot)
+        self.assertEqual(self.detail_line()["hardware_weight_snapshot"], snapshot)
 
     def test_multiple_washer_catalog_attributes_preview_save_and_reopen_match(self):
         preview_input = {"kind": "PLAIN_WASHER", "material": "碳钢", "specification": "M6 / 12×6.4×1.6"}
@@ -279,7 +290,7 @@ class HardwareWeightApiTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         line = self.line()
         before = (line.specification, deepcopy(line.raw_values))
-        response = self.save_hardware(specification="Φ5×39")
+        response = self.save_hardware(specification="Φ5.5×39")
         self.assertEqual(response.status_code, 400, response.data)
         line.refresh_from_db()
         self.assertEqual((line.specification, line.raw_values), before)

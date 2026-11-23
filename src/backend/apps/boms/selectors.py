@@ -9,11 +9,11 @@ from apps.production_tasks.selectors import accessible_production_tasks
 from .models import Bom, BomSection
 
 
-def accessible_boms(request):
+def accessible_boms(request, *, permission=None):
     queryset = Bom.objects.filter(archived_at__isnull=True)
     if request.user.is_superuser or request.user.has_perm("boms.view_all_bom"):
         return queryset
-    accessible_task_ids = accessible_production_tasks(request).values("id")
+    accessible_task_ids = accessible_production_tasks(request, permission=permission).values("id")
     return queryset.filter(production_task_id__in=accessible_task_ids)
 
 

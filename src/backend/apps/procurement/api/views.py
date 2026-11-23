@@ -78,11 +78,13 @@ from ..purchase_sheet_xlsx import build_supplier_purchase_sheet_xlsx
 from ..purchase_sheet_preview import build_purchase_sheet_preview
 from ..fabric_purchase_sheet_template import FabricPurchaseSheetTemplateError
 from ..purchase_sheet_services import (
+    active_purchase_sheet_template_versions,
     create_purchase_contract_template,
     create_supplier_purchase_sheet_version,
     generate_supplier_purchase_sheets,
     publish_supplier_purchase_sheets,
     publish_supplier_purchase_sheet,
+    recommended_purchase_sheet_template,
     remove_supplier_purchase_sheet_line_image,
     remove_supplier_purchase_sheet_seal_image,
     replace_supplier_purchase_sheet_line_image,
@@ -575,23 +577,10 @@ class PurchaseOrderViewSet(
             if line.supplier_id is None:
                 continue
             grouped.setdefault(line.supplier_id, []).append(line)
-        templates = list(
-            PurchaseContractTemplate.objects.filter(
-                archived_at__isnull=True,
-                status=PurchaseContractTemplateStatus.ACTIVE,
-            )
-            .prefetch_related("versions")
-            .order_by("template_code", "id")
-        )
+        versions = active_purchase_sheet_template_versions()
         template_rows = []
-        for template in templates:
-            versions = list(template.versions.all())
-            current = next(
-                (item for item in versions if item.version_number == template.current_version_number),
-                versions[0] if versions else None,
-            )
-            if current is None:
-                continue
+        for current in versions:
+            template = current.template
             template_rows.append(
                 {
                     "id": str(template.pk),
@@ -605,14 +594,7 @@ class PurchaseOrderViewSet(
             )
         for supplier_id, supplier_lines in sorted(grouped.items(), key=lambda item: item[1][0].supplier_number_snapshot):
             categories = list(supplier_lines[0].supplier_categories_snapshot)
-            recommended = next(
-                (
-                    item["version_id"]
-                    for item in template_rows
-                    if set(item["supplier_categories"]) & set(categories)
-                ),
-                None,
-            )
+            recommended = recommended_purchase_sheet_template(versions, categories)
             suppliers.append(
                 {
                     "supplier_id": str(supplier_id),
@@ -621,7 +603,7 @@ class PurchaseOrderViewSet(
                     "supplier_categories": categories,
                     "line_count": len(supplier_lines),
                     "total_amount": format(sum((line.amount or 0 for line in supplier_lines)), "f"),
-                    "recommended_template_version_id": recommended,
+                    "recommended_template_version_id": str(recommended.pk) if recommended else None,
                 }
             )
         existing_sheets = SupplierPurchaseSheet.objects.filter(

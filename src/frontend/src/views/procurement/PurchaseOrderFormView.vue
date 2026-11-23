@@ -8,7 +8,8 @@ import refreshIcon from '@/assets/procurement/create-refresh.svg'
 import calendarIcon from '@/assets/procurement/create-calendar.svg'
 import expandIcon from '@/assets/procurement/create-expand.svg'
 import rightIcon from '@/assets/procurement/create-right.svg'
-import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -18,7 +19,7 @@ import {
   fetchSamplePurchaseOrderSource,
   fetchVersionedPurchaseOrder,
 } from '@/api/purchaseOrders'
-import { createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
+import { createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup, submitPurchaseSupplierBatch } from '@/api/purchaseGroups'
 import type { PurchaseBatchInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
 import type { SupplierCategory } from '@/types/supplier'
 import { useAuthStore } from '@/stores/auth'
@@ -55,6 +56,13 @@ interface PurchaseLineDraft extends PurchaseOrderSourceLine {
   unit_price: string
 }
 
+interface PendingSupplierBatch {
+  groupId: string
+  groupEtag: string
+  supplierName: string
+  payload: PurchaseBatchInput
+}
+
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
 const router = useRouter()
 const route = useRoute()
@@ -68,11 +76,19 @@ const batchType = ref<PurchaseBatchType>('NORMAL')
 const batchRequestId = ref('')
 let batchContentSignature = ''
 const batchConflict = ref('')
+const pendingSupplierBatch = ref<PendingSupplierBatch | null>(null)
+const lastSupplierBatch = ref<{ id: string; number: number; supplierName: string; lineCount: number } | null>(null)
+const fulfilledSupplierLineIds = new Set<string>()
 const selectedLines = computed(() => isBatchMode.value
   ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '')
     && isPositiveDecimal(effectivePurchaseQuantity(line)) && (line.set_pricing || isPositiveDecimal(line.unit_price)))
   : lines.value)
-const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
+const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value && !pendingSupplierBatch.value) : Boolean(source.value?.can_create))
+const canSubmitSupplierBatch = computed(() => isBatchMode.value && (isSuperuser.value || (
+  canAdd.value && authStore.hasPermission('procurement.submit_purchaseorder')
+  && authStore.hasPermission('procurement.view_purchaseorder')
+  && authStore.moduleCan('access_control.generate_purchasesheets', 'procurement.add_purchaseorder')
+)))
 
 const options = ref<PurchaseOrderOptions>({
   production_tasks: [], suppliers: [], currencies: [], default_currency_id: null,
@@ -172,6 +188,14 @@ const existingGroupLinks = computed(() => {
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
 const selectedSupplierCount = computed(() => new Set(selectedLines.value.map((line) => line.supplier_id).filter(Boolean)).size)
+const supplierBatchOptions = computed(() => {
+  const counts = new Map<string, number>()
+  for (const line of selectedLines.value) {
+    if (line.supplier_id) counts.set(line.supplier_id, (counts.get(line.supplier_id) ?? 0) + 1)
+  }
+  return options.value.suppliers.filter(supplier => counts.has(supplier.id))
+    .map(supplier => ({ id: supplier.id, name: supplier.supplier_name, count: counts.get(supplier.id)! }))
+})
 const supplierCategories = computed(() => [...new Set(lines.value.map((line) => line.category || '未分类'))])
 const bulkSupplierLines = computed(() => {
   if (!bulkSupplierCategory.value) return []
@@ -714,10 +738,16 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
   )
 }
 
-function validateDraft(): string {
+function batchSelection(supplierId?: string): PurchaseLineDraft[] {
+  return supplierId ? selectedLines.value.filter(line => line.supplier_id === supplierId) : selectedLines.value
+}
+
+function validateDraft(supplierId?: string): string {
+  const selection = batchSelection(supplierId)
   if (isBatchMode.value) {
     if (!canWriteLines.value || !groupEtag.value) return '采购需求不可用或版本信息缺失，请重新读取。'
     for (const [index, line] of lines.value.entries()) {
+      if (supplierId && line.supplier_id !== supplierId) continue
       if (skipBatchLine(line)) continue
       if (!isPositiveDecimal(effectivePurchaseQuantity(line))) {
         if (line.set_pricing) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
@@ -728,7 +758,7 @@ function validateDraft(): string {
         return `第 ${index + 1} 行采购单价应为大于 0、最多 4 位小数的数字。`
       }
     }
-    if (!selectedLines.value.length) return '本批暂无采购材料。普通材料的采购数量和单价都大于 0 才计入本批。'
+    if (!selection.length) return '本批暂无采购材料。普通材料的采购数量和单价都大于 0 才计入本批。'
   } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
@@ -740,7 +770,7 @@ function validateDraft(): string {
   }
   }
   if (!lines.value.length) return '当前生产订单没有可保存的采购明细。'
-  const included = new Set(selectedLines.value)
+  const included = new Set(selection)
   for (const [index, line] of lines.value.entries()) {
     if (!included.has(line)) continue
     if (isWeightLine(line)) {
@@ -766,12 +796,12 @@ function validateDraft(): string {
   return ''
 }
 
-function validateConfirmation(): string {
-  const draftError = validateDraft()
+function validateConfirmation(supplierId?: string): string {
+  const draftError = validateDraft(supplierId)
   if (draftError) return draftError
   const selectedCurrency = options.value.currencies.find((item) => item.id === form.currencyId)
   if (!selectedCurrency || selectedCurrency.code !== 'CNY') return '系统未找到人民币（CNY）采购币种，请联系管理员检查基础资料。'
-  const included = new Set(selectedLines.value)
+  const included = new Set(batchSelection(supplierId))
   for (const [index, line] of lines.value.entries()) {
     if (!included.has(line)) continue
     const missing: string[] = []
@@ -810,8 +840,23 @@ function buildPayload(): PurchaseOrderInput {
   }
 }
 
+function batchContent(selection: PurchaseLineDraft[]): Omit<PurchaseBatchInput, 'request_id'> {
+  return {
+    batch_type: batchType.value,
+    currency_id: form.currencyId,
+    lines: selection.map(line => ({
+      purchase_group_line_id: line.purchase_group_line_id!,
+      supplier_id: line.supplier_id || null,
+      delivery_date: line.delivery_date || null,
+      ...(isWeightLine(line) ? { actual_purchase_quantity: effectivePurchaseQuantity(line), actual_purchase_weight_kg: effectivePurchaseQuantity(line), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
+      unit_price: line.set_pricing ? null : line.unit_price.trim() || null,
+      ...(line.set_pricing ? { set_pricing: line.set_pricing } : {}),
+    })),
+  }
+}
+
 async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
-  if (saving.value) return
+  if (saving.value || pendingSupplierBatch.value) return
   const validationMessage = nextStep === 'confirm' ? validateConfirmation() : validateDraft()
   if (validationMessage) {
     showActionError(validationMessage)
@@ -821,18 +866,7 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
   try {
     let batchInput: PurchaseBatchInput | null = null
     if (isBatchMode.value) {
-      const content = {
-        batch_type: batchType.value,
-        currency_id: form.currencyId,
-        lines: selectedLines.value.map(line => ({
-          purchase_group_line_id: line.purchase_group_line_id!,
-          supplier_id: line.supplier_id || null,
-          delivery_date: line.delivery_date || null,
-          ...(isWeightLine(line) ? { actual_purchase_quantity: effectivePurchaseQuantity(line), actual_purchase_weight_kg: effectivePurchaseQuantity(line), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
-          unit_price: line.set_pricing ? null : line.unit_price.trim() || null,
-          ...(line.set_pricing ? { set_pricing: line.set_pricing } : {}),
-        })),
-      }
+      const content = batchContent(selectedLines.value)
       const signature = JSON.stringify(content)
       if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = crypto.randomUUID()
       batchContentSignature = signature
@@ -855,6 +889,80 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
       batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回采购需求核对是否已创建批次。'
     }
     ElMessage.error(message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function confirmSupplierBatch(supplierId: string): Promise<void> {
+  const supplier = supplierBatchOptions.value.find(item => item.id === supplierId)
+  const currentGroup = group.value
+  if (!canSubmitSupplierBatch.value || !canWriteLines.value || !supplier || !currentGroup || sourceLoading.value) return
+  const error = validateConfirmation(supplierId)
+  if (error) {
+    showActionError(error)
+    return
+  }
+  const selection = batchSelection(supplierId)
+  const payload = { ...batchContent(selection), request_id: crypto.randomUUID() }
+  const etag = groupEtag.value
+  const total = selection.reduce((sum, line) => sum + (pricedAmount(line) ?? 0n), 0n)
+  const confirmed = await ElMessageBox.confirm(
+    h('div', [
+      h('p', `${supplier.name} · ${selection.length} 项`),
+      h('ul', selection.map(line => h('li', `${materialTitle(line)}　${materialSpecificationValue(line)}　${effectivePurchaseQuantity(line)} ${isWeightLine(line) ? 'kg' : line.source_unit_text}`))),
+      h('strong', `采购金额 ¥ ${formatScaled(total)}`),
+    ]),
+    '确认提交采购',
+    { confirmButtonText: '确认提交', cancelButtonText: '取消', customClass: 'purchase-confirm-message-box' },
+  ).then((action) => action === 'confirm', () => false)
+  if (!confirmed || !canWriteLines.value || group.value?.id !== currentGroup.id || groupEtag.value !== etag) return
+  pendingSupplierBatch.value = { groupId: currentGroup.id, groupEtag: etag, supplierName: supplier.name, payload }
+  await submitPendingSupplierBatch()
+}
+
+function hasNoRemainingPurchase(source: PurchaseGroupProgressLine): boolean {
+  return compactDecimal(source.remaining_purchase_quantity, '') === '0'
+}
+
+async function submitPendingSupplierBatch(): Promise<void> {
+  const submission = pendingSupplierBatch.value
+  if (!submission || saving.value) return
+  saving.value = true
+  try {
+    const result = await submitPurchaseSupplierBatch(submission.groupId, submission.payload, submission.groupEtag)
+    if (pendingSupplierBatch.value !== submission) return
+    group.value = result.data.group
+    groupEtag.value = result.etag
+    const submitted = new Set(submission.payload.lines.map(line => line.purchase_group_line_id))
+    const remaining = new Map(result.data.group.progress.lines.map(line => [line.id, line]))
+    lines.value = lines.value.flatMap(line => {
+      const id = line.purchase_group_line_id!
+      if (!submitted.has(id)) return [line]
+      const source = remaining.get(id)
+      if (source && hasNoRemainingPurchase(source)) {
+        fulfilledSupplierLineIds.add(id)
+        return []
+      }
+      const draft = source ? groupDraft(source) : { ...line, actual_purchase_quantity: '', actual_bar_count: '' }
+      return [{ ...draft, supplier_id: line.supplier_id, delivery_date: line.delivery_date, unit_price: '', set_pricing: null }]
+    })
+    refreshBulkSupplier()
+    refreshBulkDeliveryDate()
+    lastSupplierBatch.value = {
+      id: result.data.order_id, number: result.data.batch_number, supplierName: submission.supplierName, lineCount: submitted.size,
+    }
+    pendingSupplierBatch.value = null
+    batchConflict.value = ''
+  } catch (error) {
+    if (pendingSupplierBatch.value !== submission) return
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (!status || status >= 500) {
+      batchConflict.value = '提交结果尚未确认，输入已保留。请重试本次提交。'
+    } else {
+      pendingSupplierBatch.value = null
+      batchConflict.value = apiErrorMessage(error, '采购提交失败，请核对后重试。')
+    }
   } finally {
     saving.value = false
   }
@@ -1059,7 +1167,7 @@ async function loadGroup(preserveInput = false): Promise<void> {
     group.value = result.data
     groupEtag.value = result.etag
     // 首次读取失败时没有可保留的草稿；重试成功必须初始化材料。
-    if (!preserveInput || !lines.value.length) {
+    if (!preserveInput || (!lines.value.length && !fulfilledSupplierLineIds.size)) {
       lines.value = result.data.progress.lines.map(groupDraft)
       batchRequestId.value = ''
       batchContentSignature = ''
@@ -1072,6 +1180,8 @@ async function loadGroup(preserveInput = false): Promise<void> {
       lines.value = lines.value.filter(line => !external.has(line.purchase_group_line_id!))
       for (const source of result.data.progress.lines) {
         const existingLine = previous.get(source.id)
+        if (fulfilledSupplierLineIds.has(source.id) && hasNoRemainingPurchase(source)) continue
+        fulfilledSupplierLineIds.delete(source.id)
         if (!existingLine) lines.value.push(groupDraft(source))
         else existingLine.batch_source = source
       }
@@ -1105,6 +1215,9 @@ watch(() => route.fullPath, () => {
   editingSetId.value = ''
   sourceRequestId++
   resetSource()
+  pendingSupplierBatch.value = null
+  lastSupplierBatch.value = null
+  fulfilledSupplierLineIds.clear()
   group.value = null
   groupEtag.value = ''
   void initializePage()
@@ -1145,7 +1258,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           <div class="page-actions">
             <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回采购需求' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
             <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">{{ selectedBom?.existing_purchase_group_id ? '进入已有采购需求' : '下一步：填写明细' }}<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
-            <ElButton v-if="isDetailStep" type="primary" plain :loading="saving" :disabled="saving" @click="saveDraft">保存草稿</ElButton>
+            <ElButton v-if="isDetailStep" type="primary" plain :loading="saving" :disabled="saving || !!pendingSupplierBatch" @click="saveDraft">保存草稿</ElButton>
           </div>
         </div>
       </header>
@@ -1157,7 +1270,8 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         <ElButton link :disabled="sourceLoading || optionsLoading" @click="initializePage">重新读取来源</ElButton>
       </ElAlert>
       <ElAlert v-if="isBatchMode && (batchConflict || sourceError)" type="warning" :title="batchConflict || sourceError" :closable="false" show-icon>
-        <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取采购需求版本（保留输入）</ElButton>
+        <ElButton v-if="pendingSupplierBatch" link type="primary" :disabled="saving" @click="submitPendingSupplierBatch">重试本次提交</ElButton>
+        <ElButton v-else link :disabled="sourceLoading" @click="loadGroup(true)">重新读取采购需求版本（保留输入）</ElButton>
         <ElButton link @click="back">查看采购需求已有批次</ElButton>
       </ElAlert>
       <ElAlert v-if="isBatchMode && group?.combined_into_group_id" type="info" title="后续批次请在合并采购需求中填写。" :closable="false">
@@ -1397,8 +1511,11 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           <template #empty>
             <div class="detail-empty">
               <div>!</div>
-              <strong>{{ isSampleSource ? '暂无可采购的样品需求' : selectedTaskId ? selectedBomId ? '所选 BOM 暂无明细' : '请选择本次采购的产品 BOM' : '请先选择采购来源' }}</strong>
-              <p>{{ sourceError || '选择生产订单或打样单后加载对应采购需求' }}</p>
+              <strong v-if="isBatchMode && lastSupplierBatch">当前列表已买足</strong>
+              <template v-else>
+                <strong>{{ isSampleSource ? '暂无可采购的样品需求' : selectedTaskId ? selectedBomId ? '所选 BOM 暂无明细' : '请选择本次采购的产品 BOM' : '请先选择采购来源' }}</strong>
+                <p>{{ sourceError || '选择生产订单或打样单后加载对应采购需求' }}</p>
+              </template>
             </div>
           </template>
         </ElTable>
@@ -1410,9 +1527,27 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         <PurchaseGridCell><div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div></PurchaseGridCell>
         <div class="summary-actions">
           <PurchaseGridCell><div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div></PurchaseGridCell>
-          <ElButton type="primary" :loading="saving" :disabled="saving" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
+          <ElDropdown v-if="canSubmitSupplierBatch" trigger="click" placement="top-end" @command="confirmSupplierBatch">
+            <ElButton plain type="primary" data-testid="purchase-submit-supplier" :disabled="!canWriteLines || sourceLoading || !supplierBatchOptions.length">
+              按供应商提交<ElIcon><ArrowDown /></ElIcon>
+            </ElButton>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem v-for="supplier in supplierBatchOptions" :key="supplier.id" :command="supplier.id">
+                  {{ supplier.name }} · {{ supplier.count }} 项
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
+          </ElDropdown>
+          <ElButton type="primary" :loading="saving" :disabled="saving || !!pendingSupplierBatch" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
       </section>
+      <ElAlert v-if="isBatchMode && lastSupplierBatch" class="supplier-submit-result" type="success" :closable="false" show-icon
+        :title="`第 ${lastSupplierBatch.number} 批已确认 · ${lastSupplierBatch.supplierName} · ${lastSupplierBatch.lineCount} 项`">
+        <a v-if="isSuperuser || authStore.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder')"
+          class="el-link el-link--primary" target="_blank" rel="noopener"
+          :href="router.resolve({ name: 'supplier-purchase-sheets', query: { purchase_order_id: lastSupplierBatch.id } }).href">查看采购表草稿</a>
+      </ElAlert>
     </template>
     <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates"
       :suppliers="options.suppliers" :default-quantity="orderSetQuantity(group)" @apply="saveSet" @close="editingSetId = ''" />
@@ -1569,6 +1704,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .summary-total { display: flex; align-items: center; gap: 18px; padding-left: 40px; border-left: 1px solid crm.$crm-border-default; white-space: nowrap; }
 .summary-total strong { min-width: 170px; font-size: 28px; color: crm.$crm-primary; font-weight: 700; }
 .summary-actions > :deep(.el-button) { width: 220px; height: 42px; }
+.purchase-form-page > .supplier-submit-result { margin: 10px 0 0; }
 .state-page { display: grid; min-height: 520px; place-content: center; text-align: center; }
 .state-page p { color: crm.$crm-text-secondary; }
 

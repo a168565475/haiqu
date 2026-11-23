@@ -34,7 +34,7 @@ from .selectors import production_tasks_with_purchase_sources, purchase_orders_w
 from .set_pricing import apply_set_pricing, material_calculation_snapshot, validate_set_members
 from .services import (
     PURCHASABLE_TASK_STATUSES, PurchaseSourceChanged, PurchaseSourceUnavailable, _money, evaluate_purchase_source,
-    _validate_hardware_actual_weight, is_hardware_weight_snapshot, next_purchase_order_number, purchase_order_snapshot,
+    _validate_hardware_actual_weight, confirm_purchase_order, is_hardware_weight_snapshot, next_purchase_order_number, purchase_order_snapshot,
 )
 
 
@@ -586,3 +586,29 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
                     context_id=task.pk, action="CREATED", actor_employee=actor_employee,
                     after_data=purchase_order_snapshot(order), request=request)
     return order, True
+
+
+@transaction.atomic
+def submit_supplier_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
+    from .purchase_sheet_services import (
+        active_purchase_sheet_template_versions, generate_supplier_purchase_sheets, recommended_purchase_sheet_template,
+    )
+
+    order, created = create_purchase_batch(
+        group_id=group_id, validated_data={**validated_data, "supplier_submission": True},
+        allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
+    )
+    if created:
+        order = confirm_purchase_order(
+            order_id=order.pk, allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
+        )
+        line = next(iter(order.lines.all()))
+        versions = active_purchase_sheet_template_versions()
+        if not versions:
+            raise ValidationError({"template": "暂无可用采购合同模板，请先在合同模板管理中启用模板。"})
+        version = recommended_purchase_sheet_template(versions, line.supplier_categories_snapshot) or versions[0]
+        generate_supplier_purchase_sheets(
+            order_id=order.pk, assignments=[{"supplier_id": line.supplier_id, "template_version_id": version.pk}],
+            allowed_task_ids=allowed_task_ids, actor_employee=actor_employee, request=request,
+        )
+    return order, purchase_groups_with_context().get(pk=group_id), created

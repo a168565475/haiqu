@@ -9,6 +9,7 @@ import type {
   PurchaseGroupFilterOptions,
   PurchaseGroupInput,
   PurchaseGroupQuery,
+  PurchaseSupplierBatchResult,
   VersionedPurchaseGroup,
 } from '@/types/purchaseGroup'
 import type { PurchaseOrderDetail, VersionedPurchaseOrder } from '@/types/purchaseOrder'
@@ -62,6 +63,22 @@ export async function createPurchaseBatch(
     `${basePath}${groupId}/batches/`,
     payload,
     { headers: groupEtag ? { 'If-Match': groupEtag } : {}, timeout: 30000 },
+  )
+  return {
+    data: response.data.data,
+    etag: typeof response.headers?.etag === 'string' ? response.headers.etag : '',
+  }
+}
+
+export async function submitPurchaseSupplierBatch(
+  groupId: string,
+  payload: PurchaseBatchInput,
+  groupEtag: string,
+): Promise<PurchaseSupplierBatchResult> {
+  const response = await apiClient.post<DataResponse<PurchaseSupplierBatchResult['data']>>(
+    `${basePath}${groupId}/submit-supplier-batch/`,
+    payload,
+    { headers: { 'If-Match': groupEtag }, timeout: 30000 },
   )
   return {
     data: response.data.data,

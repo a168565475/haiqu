@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { DOMWrapper, flushPromises, mount, shallowMount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as groupsApi from '@/api/purchaseGroups'
 import * as ordersApi from '@/api/purchaseOrders'
@@ -17,10 +17,16 @@ import PurchaseOrderDetailView from './PurchaseOrderDetailView.vue'
 import PurchaseOrderConfirmView from './PurchaseOrderConfirmView.vue'
 
 const state = vi.hoisted(() => ({ route: {} as Record<string, any>, push: vi.fn(), replace: vi.fn(), permissions: [] as string[] }))
-vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: state.push, replace: state.replace }) }))
+vi.mock('vue-router', () => ({
+  useRoute: () => state.route,
+  useRouter: () => ({
+    push: state.push, replace: state.replace,
+    resolve: (target: { query: { purchase_order_id: string } }) => ({ href: `/supplier-purchase-sheets?purchase_order_id=${target.query.purchase_order_id}` }),
+  }),
+}))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 'u', is_superuser: false }, hasPermission: (permission: string) => state.permissions.includes(permission), moduleCan: (permission: string) => state.permissions.includes(permission) }) }))
 vi.mock('@/stores/pageTabs', () => ({ usePageTabsStore: () => ({ accountId: 'u', setTabTitle: vi.fn() }) }))
-vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), completePurchaseGroup: vi.fn(), deletePurchaseGroup: vi.fn() }))
+vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), submitPurchaseSupplierBatch: vi.fn(), completePurchaseGroup: vi.fn(), deletePurchaseGroup: vi.fn() }))
 vi.mock('@/api/purchaseOrderReadDetail', () => ({ fetchPurchaseOrderReadDetail: vi.fn() }))
 vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSource: vi.fn(), fetchSamplePurchaseOrderSource: vi.fn(), createPurchaseOrder: vi.fn(), fetchPurchaseOrders: vi.fn(), fetchPurchaseOrderFilterOptions: vi.fn(), fetchVersionedPurchaseOrder: vi.fn(), deletePurchaseOrder: vi.fn(), completePurchaseOrder: vi.fn(), fetchPurchaseOrderSupplierOptions: vi.fn(), updatePurchaseOrder: vi.fn(), confirmVersionedPurchaseOrder: vi.fn() }))
 
@@ -49,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(groupsApi.completePurchaseGroup).mockReset()
   vi.mocked(groupsApi.deletePurchaseGroup).mockReset()
+  vi.mocked(groupsApi.submitPurchaseSupplierBatch).mockReset()
   state.permissions = ['procurement.view_purchaseorder', 'procurement.add_purchaseorder', 'procurement.change_purchaseorder', 'procurement.delete_purchaseorder', 'procurement.submit_purchaseorder']
   state.route = reactive({ name: 'purchase-batch-create', fullPath: '/purchase-groups/group-1/batches/new', params: { groupId: 'group-1', id: 'group-1' }, query: {} })
   vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: groupFixture(), etag: 'parent-v1' })
@@ -1221,6 +1228,79 @@ describe('总单与批次页面契约', () => {
     await vm.createOrder('list'); expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines[0]).toMatchObject({
       purchase_group_line_id: 'group-line-2', actual_purchase_quantity: '10', supplier_id: null, delivery_date: null, unit_price: '2',
     })
+  })
+
+  it('按供应商提交只更新这家供应商的行，其他已填内容保留', async () => {
+    state.permissions.push('access_control.generate_purchasesheets', 'procurement.view_supplierpurchasesheet')
+    const original = groupFixture()
+    original.progress.lines.push({ ...original.progress.lines[0]!, id: 'other-line', line_number: 3 })
+    const updated = { ...original, progress: { ...original.progress, lines: original.progress.lines.map((row, index) => ({
+      ...row, remaining_purchase_quantity: ['0.0000', '40.0000', '100.0000'][index]!,
+    })) } }
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: original, etag: 'parent-v1' })
+    vi.mocked(groupsApi.submitPurchaseSupplierBatch).mockResolvedValue({
+      data: { order_id: 'confirmed-batch', batch_number: 2, group: updated }, etag: 'parent-v2',
+    })
+    const supplierOptions = options()
+    supplierOptions.suppliers.push({ id: 'supplier-2', supplier_number: 'S2', supplier_name: '其他供应商', supplier_categories: ['AUXILIARY'] })
+    vi.mocked(ordersApi.fetchPurchaseOrderOptions).mockResolvedValue(supplierOptions as never)
+    const approve = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    wrapper = mount(PurchaseOrderFormView, { global: { plugins: [ElementPlus], stubs: { ElDatePicker: true } } })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    const filled = { supplier_id: 'supplier-1', unit_price: '2', delivery_date: '2026-12-05' }
+    Object.assign(vm.lines[0], filled, { actual_purchase_quantity: '100' })
+    Object.assign(vm.lines[1], filled, { actual_purchase_quantity: '60' })
+    const otherInput = { supplier_id: 'supplier-2', actual_purchase_quantity: '150.125', unit_price: '3.5', delivery_date: '' }
+    Object.assign(vm.lines[2], otherInput)
+    expect(vm.supplierBatchOptions).toEqual([
+      { id: 'supplier-1', name: '供应商', count: 2 }, { id: 'supplier-2', name: '其他供应商', count: 1 },
+    ])
+    await vm.confirmSupplierBatch('supplier-1')
+    expect(approve).toHaveBeenCalledOnce()
+    expect(groupsApi.submitPurchaseSupplierBatch).toHaveBeenCalledExactlyOnceWith('group-1', expect.objectContaining({
+      lines: [expect.objectContaining({ purchase_group_line_id: 'group-line-1', actual_purchase_quantity: '100' }),
+        expect.objectContaining({ purchase_group_line_id: 'group-line-2', actual_purchase_quantity: '60' })],
+    }), 'parent-v1')
+    expect(vm.lines.map((row: any) => row.purchase_group_line_id)).toEqual(['group-line-2', 'other-line'])
+    expect(vm.lines[0]).toMatchObject({ ...filled, actual_purchase_quantity: '40', unit_price: '' })
+    expect(vm.lines[1]).toMatchObject(otherInput)
+    expect(vm.groupEtag).toBe('parent-v2')
+    expect(state.push).not.toHaveBeenCalled()
+    expect(wrapper!.get('a[target="_blank"]').attributes('href')).toContain('confirmed-batch')
+
+    vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: updated, etag: 'parent-v2' })
+    await vm.loadGroup(true)
+    expect(vm.lines.map((row: any) => row.purchase_group_line_id)).toEqual(['group-line-2', 'other-line'])
+    expect(vm.lines[1]).toMatchObject(otherInput)
+  })
+
+  it('取消或交期缺失时保留整表，结果未确认时沿用同一批次请求重试', async () => {
+    state.permissions.push('access_control.generate_purchasesheets')
+    const vm = await mountPage(PurchaseOrderFormView)
+    Object.assign(vm.lines[0], { supplier_id: 'supplier-1', actual_purchase_quantity: '25', unit_price: '2' })
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const approve = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel').mockResolvedValue('confirm' as never)
+    await vm.confirmSupplierBatch('supplier-1')
+    expect(warning).toHaveBeenCalledWith('第 1 行缺少或填写错误：采购交期。')
+    expect(approve).not.toHaveBeenCalled()
+    vm.lines[0].delivery_date = '2026-12-05'
+    await vm.confirmSupplierBatch('supplier-1')
+    expect(groupsApi.submitPurchaseSupplierBatch).not.toHaveBeenCalled()
+    expect(vm.lines[0].actual_purchase_quantity).toBe('25')
+    const updated = groupFixture()
+    updated.progress.lines[0]!.remaining_purchase_quantity = '0.0000'
+    vi.mocked(groupsApi.submitPurchaseSupplierBatch)
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValue({ data: { order_id: 'confirmed-batch', batch_number: 2, group: updated }, etag: 'parent-v2' })
+    await vm.confirmSupplierBatch('supplier-1')
+    expect(vm.lines).toHaveLength(2)
+    expect(vm.canWriteLines).toBe(false)
+    expect(vm.batchConflict).toContain('提交结果尚未确认')
+    await vm.submitPendingSupplierBatch()
+    expect(vi.mocked(groupsApi.submitPurchaseSupplierBatch).mock.calls[1]).toEqual(vi.mocked(groupsApi.submitPurchaseSupplierBatch).mock.calls[0])
+    expect(vm.lines.map((row: any) => row.purchase_group_line_id)).toEqual(['group-line-2'])
+    expect(vm.canWriteLines).toBe(true)
   })
   it.each([['TUBE', 'TUBE'], ['HARDWARE', 'HARDWARE'], ['PLASTIC', 'PLASTIC_PART'], ['PACKAGING', 'PACKAGING'], ['FABRIC', 'FABRIC'], ['AUXILIARY', 'AUXILIARY']])('冻结目录类别%s优先于名称关键词', async (category, expected) => {
     const group = groupFixture()

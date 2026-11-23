@@ -172,3 +172,8 @@ export interface PurchaseBatchInput {
   currency_id: string
   lines: PurchaseBatchLineInput[]
 }
+
+export interface PurchaseSupplierBatchResult {
+  data: { order_id: string; batch_number: number; group: PurchaseGroup }
+  etag: string
+}

@@ -1,24 +1,36 @@
 from uuid import UUID
 
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, inline_serializer
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.access_control import module_policy, sales_policy
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..group_selectors import purchase_groups_with_context
-from ..group_services import complete_purchase_group, create_purchase_batch, create_purchase_group, delete_purchase_group
+from ..group_services import (
+    complete_purchase_group, create_purchase_batch, create_purchase_group, delete_purchase_group, submit_supplier_purchase_batch,
+)
 from ..models import PurchaseGroup
 from .group_serializers import (
     PurchaseBatchCreateSerializer, PurchaseGroupCreateSerializer, PurchaseGroupFilterOptionsSerializer,
-    PurchaseGroupCompleteSerializer, PurchaseGroupSerializer,
+    PurchaseGroupCompleteSerializer, PurchaseGroupSerializer, PurchaseSupplierBatchSubmitSerializer,
 )
 from .serializers import PurchaseOrderDetailSerializer
+
+
+supplier_batch_response = inline_serializer(name="PurchaseSupplierBatchSubmitResponse", fields={
+    "data": inline_serializer(name="SubmittedPurchaseSupplierBatch", fields={
+        "order_id": serializers.UUIDField(),
+        "batch_number": serializers.IntegerField(),
+        "group": PurchaseGroupSerializer(),
+    }),
+})
 
 
 class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
@@ -27,6 +39,7 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         "list": "procurement.view_purchaseorder", "retrieve": "procurement.view_purchaseorder",
         "filter_options": "procurement.view_purchaseorder",
         "create": "procurement.add_purchaseorder", "batches": "procurement.add_purchaseorder",
+        "submit_supplier_batch": "procurement.submit_purchaseorder",
         "complete": "procurement.submit_purchaseorder",
         "destroy": "procurement.delete_purchaseorder",
     }
@@ -127,4 +140,41 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
             allowed_task_ids=self._task_ids(), actor_employee=request.employee, request=request)
         response = Response({"data": PurchaseOrderDetailSerializer(order).data}, status=201 if created else 200)
         response["ETag"] = etag_for_instance(order)
+        return response
+
+    @extend_schema(
+        request=PurchaseSupplierBatchSubmitSerializer,
+        parameters=[
+            OpenApiParameter("If-Match", str, OpenApiParameter.HEADER, required=True),
+            OpenApiParameter("ETag", str, OpenApiParameter.HEADER, response=[200, 201], description="采购需求当前版本"),
+        ],
+        responses={
+            200: supplier_batch_response, 201: supplier_batch_response,
+            400: OpenApiResponse(description="采购明细或默认采购模板无效。"),
+            403: OpenApiResponse(description="缺少采购权限、员工无效或 CSRF 校验失败。"),
+            409: OpenApiResponse(description="采购来源、当前状态或请求编号冲突。"),
+            412: OpenApiResponse(description="采购需求版本已变化。"),
+            428: OpenApiResponse(description="缺少 If-Match 版本标识。"),
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="submit-supplier-batch")
+    def submit_supplier_batch(self, request, pk=None):
+        permissions = ["procurement.add_purchaseorder", "procurement.view_purchaseorder"]
+        has_permission = sales_policy.has_permission
+        if module_policy.enabled():
+            has_permission = module_policy.has_permission
+            permissions.append("access_control.generate_purchasesheets")
+        if not all(has_permission(request, code) for code in permissions):
+            raise PermissionDenied("当前账号缺少按供应商提交采购所需的权限。")
+        group = self.get_object()
+        serializer = PurchaseSupplierBatchSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order, group, created = submit_supplier_purchase_batch(
+            group_id=group.pk, validated_data=serializer.validated_data, allowed_task_ids=self._task_ids(),
+            actor_employee=request.employee, request=request,
+        )
+        response = Response({"data": {
+            "order_id": order.pk, "batch_number": order.batch_number, "group": PurchaseGroupSerializer(group).data,
+        }}, status=201 if created else 200)
+        response["ETag"] = etag_for_instance(group)
         return response

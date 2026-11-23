@@ -620,6 +620,25 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
     }, total
 
 
+def active_purchase_sheet_template_versions():
+    templates = PurchaseContractTemplate.objects.filter(
+        archived_at__isnull=True, status=PurchaseContractTemplateStatus.ACTIVE,
+    ).prefetch_related("versions").order_by("template_code", "id")
+    current_versions = []
+    for template in templates:
+        versions = list(template.versions.all())
+        if versions:
+            current_versions.append(next(
+                (version for version in versions if version.version_number == template.current_version_number), versions[0],
+            ))
+    return current_versions
+
+
+def recommended_purchase_sheet_template(versions, supplier_categories):
+    categories = set(supplier_categories)
+    return next((version for version in versions if categories.intersection(version.template.supplier_categories)), None)
+
+
 @transaction.atomic
 def generate_supplier_purchase_sheets(*, order_id, assignments, allowed_task_ids, actor_employee, request=None):
     from .source_access import purchase_order_access

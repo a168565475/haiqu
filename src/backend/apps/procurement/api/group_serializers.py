@@ -82,6 +82,22 @@ class PurchaseBatchCreateSerializer(serializers.Serializer):
         return lines
 
 
+class PurchaseSupplierBatchSubmitSerializer(PurchaseBatchCreateSerializer):
+    def validate_lines(self, lines):
+        lines = super().validate_lines(lines)
+        suppliers = {line["supplier_id"] for line in lines}
+        if None in suppliers or len(suppliers) != 1:
+            raise serializers.ValidationError("每次只提交同一家供应商的采购明细。")
+        for line in lines:
+            if line["actual_purchase_quantity"] == 0 or (
+                not line.get("set_pricing") and not line["unit_price"]
+            ):
+                raise serializers.ValidationError("采购数量和单价必须大于 0。")
+            if not line["delivery_date"]:
+                raise serializers.ValidationError("请填写本次采购明细的交期。")
+        return lines
+
+
 class PurchaseGroupProgressLineSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     line_number = serializers.IntegerField()

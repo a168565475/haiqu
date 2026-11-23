@@ -82,6 +82,23 @@ class CatalogPipeWeightFlowTests(APITestCase):
             **({'return_bar_count': roots} if roots is not None else {}),
         } for row in batch['lines']]}, format='json')
 
+    def test_supplier_submission_keeps_pipe_remaining_weight_and_sheet_in_kg(self):
+        source = self.get_source(self.task).data['data']
+        group = self.client.post('/api/v1/purchase-groups/', {'production_task_id': str(self.task.pk),
+            'bom_id': str(self.bom.pk), 'source_revision': source['source_revision']}, format='json')
+        self.assertEqual(group.status_code, 201, group.data)
+        self.group_id = group.data['data']['id']
+        self.line_id = group.data['data']['progress']['lines'][0]['id']
+        result = self.client.post(f'/api/v1/purchase-groups/{self.group_id}/submit-supplier-batch/',
+            self.batch_payload('4.1001'), format='json', HTTP_IF_MATCH=group['ETag'])
+        self.assertEqual(result.status_code, 201, result.data)
+        data = result.data['data']
+        self.assertEqual(data['group']['progress']['lines'][0]['remaining_purchase_quantity'], '5.8999')
+        sheet = SupplierPurchaseSheet.objects.get(purchase_order_id=data['order_id'])
+        self.assertEqual(sheet.status, 'DRAFT')
+        line = sheet.content_snapshot['lines'][0]
+        self.assertEqual((line['unit'], Decimal(line['quantity'])), ('kg', Decimal('4.1001')))
+
     def test_catalog_group_purchase_prices_kg_and_credits_counted_roots(self):
         batch = self.create_batch()
         purchase = PurchaseOrder.objects.get(pk=batch['id']).lines.get()

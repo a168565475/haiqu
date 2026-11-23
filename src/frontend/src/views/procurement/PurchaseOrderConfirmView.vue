@@ -21,7 +21,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import { isHardwareWeightLine } from './purchaseWeight'
 import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
 import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
-import { applySetPricing, isExplicitZeroPrice, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { applySetPricing, isBlankOrZeroPurchaseValue, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 import { formatScaled, scaledProduct } from './purchaseAmounts'
 
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
@@ -131,7 +131,7 @@ function purchaseQuantity(line: PurchaseOrderDetail['lines'][number]): string | 
 
 function skipLine(line: PurchaseOrderDetail['lines'][number]): boolean {
   return canSkipLines.value && !line.set_pricing
-    && (isExplicitZeroPrice(line.unit_price ?? '') || isExplicitZeroPrice(purchaseQuantity(line) ?? ''))
+    && (isBlankOrZeroPurchaseValue(line.unit_price) || isBlankOrZeroPurchaseValue(purchaseQuantity(line)))
 }
 
 const includedLines = computed(() => (order.value?.lines || []).filter(line => !skipLine(line)))

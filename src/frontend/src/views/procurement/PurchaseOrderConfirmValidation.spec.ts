@@ -44,13 +44,16 @@ describe('采购订单确认校验', () => {
 
   afterEach(() => vi.restoreAllMocks())
 
-  it('生产批次草稿确认时跳过零价和零数量行，保留四位小数的实际采购行', async () => {
+  it('生产批次草稿确认时跳过留空或填零的行，保留四位小数的实际采购行', async () => {
     const original = await api.fetchVersionedPurchaseOrder('order-1')
     const base = { ...original.data.lines[0]!, raw_bar_length_m: null, actual_bar_count: null, source_unit_text: '个' }
-    const active = { ...base, line_number: 3, id: 'buy', actual_purchase_quantity: '0.0001', unit_price: '2' }
+    const active = { ...base, line_number: 6, id: 'buy', actual_purchase_quantity: '0.0001', unit_price: '2' }
     const order = { ...original.data, purchase_group_id: 'g', lines: [
       { ...base, id: 'skip-price', actual_purchase_quantity: '5', unit_price: '0.0000', supplier_id: null, delivery_date: null },
       { ...base, id: 'skip-quantity', line_number: 2, actual_purchase_quantity: '0', supplier_id: null, delivery_date: null },
+      { ...base, id: 'blank-price', line_number: 3, actual_purchase_quantity: '5', unit_price: null, supplier_id: null, delivery_date: null },
+      { ...base, id: 'blank-quantity', line_number: 4, actual_purchase_quantity: null, unit_price: '2', supplier_id: null, delivery_date: null },
+      { ...base, id: 'blank-both', line_number: 5, actual_purchase_quantity: null, unit_price: null, supplier_id: null, delivery_date: null },
       active,
     ] }
     vi.mocked(api.fetchVersionedPurchaseOrder).mockResolvedValue({ data: order, etag: 'version-1' })
@@ -64,11 +67,11 @@ describe('采购订单确认校验', () => {
       expect(vm.confirmationErrors).toEqual([])
       expect(vm.lineAmount(vm.order.lines[0])).toBe('本批不买')
       await vm.confirmAndContinue()
-      expect(confirm.mock.calls[0]?.[0]).toContain('本批将跳过 2 项材料。')
+      expect(confirm.mock.calls[0]?.[0]).toContain('本批将跳过 5 项材料。')
       expect(api.updatePurchaseOrder).not.toHaveBeenCalled()
       await vm.confirmAndContinue()
       expect(api.updatePurchaseOrder).toHaveBeenCalledExactlyOnceWith('order-1', expect.objectContaining({
-        skipped_line_ids: ['skip-price', 'skip-quantity'],
+        skipped_line_ids: ['skip-price', 'skip-quantity', 'blank-price', 'blank-quantity', 'blank-both'],
         lines: [expect.objectContaining({ id: 'buy', actual_purchase_quantity: '0.0001' })],
       }), 'version-1')
       expect(api.confirmVersionedPurchaseOrder).toHaveBeenCalledExactlyOnceWith('order-1')
@@ -90,15 +93,20 @@ describe('采购订单确认校验', () => {
     try {
       const vm = wrapper.vm as unknown as {
         totalScaled: bigint; confirmationErrors: string[]
-        order: typeof order; updatePayload: () => { lines: typeof order.lines }
+        order: typeof order; updatePayload: () => { lines: typeof order.lines; skipped_line_ids?: string[] }
         saveSet: (change: import('./purchaseSetPricing').SetPricingChange) => void
       }
       expect(vm.totalScaled).toBe(75000000n)
       expect(vm.confirmationErrors).toEqual([])
       expect(vm.updatePayload().lines[1]).toMatchObject({ actual_purchase_quantity: '1600.1234', unit_price: null, set_pricing: pricing })
       vm.saveSet({ anchorId: 'stock-1', members: [], pricing: null, supplierId: null, deliveryDate: '' })
+      expect(vm.updatePayload().skipped_line_ids).toEqual(['line-1', 'line-2'])
+      expect(vm.confirmationErrors).toEqual(['本批至少要采购一项材料。'])
+      vm.order.lines[0]!.unit_price = '2'
+      vm.order.lines[1]!.unit_price = '3'
+      expect(vm.updatePayload().lines).toHaveLength(2)
       expect(vm.updatePayload().lines.every(line => line.set_pricing === null)).toBe(true)
-      expect(vm.confirmationErrors).toHaveLength(2)
+      expect(vm.updatePayload().skipped_line_ids).toBeUndefined()
     } finally { wrapper.unmount() }
   })
 

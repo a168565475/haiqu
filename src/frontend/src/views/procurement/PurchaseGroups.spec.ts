@@ -149,7 +149,7 @@ describe('同一生产任务合并采购', () => {
     expect(vm.lines.map((line: any) => [line.fabric_color, line.actual_purchase_quantity])).toEqual([['红色 / R00', '500'], ['红色 / R01', '']])
     expect(vm.batchRemainingQuantities.get(one!.id).primary).toBe('500')
     expect(vm.batchRemainingQuantities.get(two!.id).primary).toBe('待核对')
-    vm.lines[0].actual_purchase_quantity = '480'
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '480', unit_price: '2' })
     await vm.createOrder('list')
     expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]?.[1].lines).toMatchObject([{ actual_purchase_quantity: '480' }])
   })
@@ -643,7 +643,8 @@ describe('总单与批次页面契约', () => {
     expect(vm.lines).toEqual([]); expect(vm.batchConflict).not.toBe('')
     await vm.loadGroup(true)
     expect(vm.lines).toHaveLength(2); expect(vm.canWriteLines).toBe(true)
-    vm.lines[0].actual_purchase_quantity = '10'; expect(vm.validateDraft()).toBe('')
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '10', unit_price: '2' })
+    expect(vm.validateDraft()).toBe('')
   })
   it('初次选项失败通过页面重新加载完成总单初始化', async () => {
     vi.mocked(ordersApi.fetchPurchaseOrderOptions).mockRejectedValueOnce(new Error('options unavailable'))
@@ -947,6 +948,8 @@ describe('总单与批次页面契约', () => {
     const vm = await mountPage(PurchaseOrderFormView)
     expect(vm.lines[0].actual_purchase_quantity).toBe('')
     expect(vm.lines[1].actual_purchase_quantity).toBe('60')
+    expect(vm.selectedLines).toEqual([])
+    vm.lines[1].unit_price = '2'
     expect(vm.selectedLines).toHaveLength(1)
     vm.lines[1].actual_purchase_quantity = ''
     expect(vm.effectivePurchaseQuantity(vm.lines[1])).toBe('')
@@ -1014,7 +1017,8 @@ describe('总单与批次页面契约', () => {
     expect(vm.lines[0].required_quantity).toBe('100.0000')
     expect(wrapper.get('[data-testid="purchase-line-quantity"] input').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
-    vm.lines[0].actual_purchase_quantity = '150.1234'; vm.batchType = 'SUPPLEMENT'
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '150.1234', unit_price: '2' })
+    vm.batchType = 'SUPPLEMENT'
     await vm.createOrder('list')
     expect(groupsApi.createPurchaseBatch).toHaveBeenCalledWith('group-1', expect.objectContaining({ batch_type: 'SUPPLEMENT', lines: [expect.objectContaining({ purchase_group_line_id: 'group-line-1', actual_purchase_quantity: '150.1234' })] }), 'parent-v1')
     expect(ordersApi.fetchPurchaseOrderSource).not.toHaveBeenCalled()
@@ -1027,7 +1031,7 @@ describe('总单与批次页面契约', () => {
     const vm = await mountPage(PurchaseOrderFormView)
     expect(vm.lines[0].actual_bar_count).toBe('14')
     expect(vm.effectivePurchaseQuantity(vm.lines[0])).toBe('84.00')
-    vm.lines[0].actual_bar_count = '30'
+    Object.assign(vm.lines[0], { actual_bar_count: '30', unit_price: '2' })
     expect(vm.isPipePurchaseLine(vm.lines[0])).toBe(false)
     expect(wrapper!.find('[aria-label="采购每根长度（米）"]').exists()).toBe(false)
     expect(vm.effectivePurchaseQuantity(vm.lines[0])).toBe('180.00')
@@ -1037,7 +1041,7 @@ describe('总单与批次页面契约', () => {
   })
   it('失败后内容改变使用新UUID，409保留输入且不自动重试', async () => {
     const vm = await mountPage(PurchaseOrderFormView)
-    vm.lines[0].actual_purchase_quantity = '150'
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '150', unit_price: '2' })
     vi.mocked(groupsApi.createPurchaseBatch).mockRejectedValueOnce(new Error('timeout'))
     await vm.createOrder('list')
     const firstId = vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].request_id
@@ -1051,7 +1055,7 @@ describe('总单与批次页面契约', () => {
   })
   it('提交中冻结批次控件并拒绝重复提交', async () => {
     const vm = await mountPage(PurchaseOrderFormView)
-    vm.lines[0].actual_purchase_quantity = '100'
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '100', unit_price: '2' })
     let resolve: (value: any) => void = () => undefined
     vi.mocked(groupsApi.createPurchaseBatch).mockReturnValue(new Promise(done => { resolve = done }))
     const pending = vm.createOrder('list'); await flushPromises()
@@ -1141,16 +1145,16 @@ describe('总单与批次页面契约', () => {
     await flushPromises()
     expect(wrapper!.getComponent({ name: 'PurchaseSetPricingDialog' }).props('defaultQuantity')).toBe(expected)
   })
-  it('普通行明确填零价才跳过，空单价仍可保存为草稿', async () => {
+  it('没有同时填写正数量和正单价时不创建批次草稿', async () => {
     const vm = await mountPage(PurchaseOrderFormView)
     Object.assign(vm.lines[0], { actual_purchase_quantity: '3200', unit_price: '0.0000' })
     Object.assign(vm.lines[1], { actual_purchase_quantity: '1600', unit_price: '' })
     await vm.createOrder('list')
-    const payload = vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1]
-    expect(payload.lines).toEqual([expect.objectContaining({ purchase_group_line_id: vm.lines[1].purchase_group_line_id, unit_price: null })])
+    expect(groupsApi.createPurchaseBatch).not.toHaveBeenCalled()
+    expect(vm.selectedLines).toEqual([])
   })
 
-  it.each([['0', '1.5'], ['2', '0.0000']])('跳过单价 %s、米数 %s 的普通行，按表格行号提示其余采购行', async (price, meters) => {
+  it.each([['0', '1.5'], ['2', '0.0000'], ['', '12'], ['2', ''], ['', '']])('跳过单价 %s、米数 %s 的普通行，按表格行号提示其余采购行', async (price, meters) => {
     const group = groupFixture()
     Object.assign(group.progress.lines[0]!.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6.00' })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
@@ -1184,28 +1188,38 @@ describe('总单与批次页面契约', () => {
   })
   it.each(['-1', 'abc', '1e3', '1.00001'])('其他行填写非法数量%s时不能静默跳过', async quantity => {
     const vm = await mountPage(PurchaseOrderFormView)
-    vm.lines[0].actual_purchase_quantity = '10'; vm.lines[1].actual_purchase_quantity = quantity
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '10', unit_price: '2' })
+    Object.assign(vm.lines[1], { actual_purchase_quantity: quantity, unit_price: '2' })
     expect(vm.validateDraft()).toContain('第 2 行实际采购数量')
     await vm.createOrder('list'); expect(groupsApi.createPurchaseBatch).not.toHaveBeenCalled()
+  })
+  it('正数量配非法单价时不计入，并提示修正单价', async () => {
+    const vm = await mountPage(PurchaseOrderFormView)
+    Object.assign(vm.lines[0], { actual_purchase_quantity: '10', unit_price: '-2' })
+    expect(vm.selectedLines).toEqual([])
+    expect(vm.validateDraft()).toContain('第 1 行采购单价应为大于 0')
+    await vm.createOrder('list')
+    expect(groupsApi.createPurchaseBatch).not.toHaveBeenCalled()
   })
   it('管材非整倍米数拒绝，零米不提交；已完成总单仍可超量补批', async () => {
     const group = groupFixture(); group.progress.status = 'COMPLETED'
     Object.assign(group.progress.lines[0]!.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6.00', suggested_bar_count: 17 })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     const vm = await mountPage(PurchaseOrderFormView)
+    vm.lines[0].unit_price = '2'
     vm.setPipePurchaseMeters(vm.lines[0], '1.5'); expect(vm.validateDraft()).toContain('每根长度的整数倍')
     vm.setPipePurchaseMeters(vm.lines[0], '0'); expect(vm.selectedLines).toEqual([])
     vm.setPipePurchaseMeters(vm.lines[0], '180'); await vm.createOrder('list')
     expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines[0]!.actual_bar_count).toBe('30')
   })
-  it('正数量缺供应商交期单价仍计入，草稿可保存而确认继续提示', async () => {
+  it('正数量正单价计入，草稿可保存而确认仍需供应商和交期', async () => {
     const vm = await mountPage(PurchaseOrderFormView)
-    vm.lines[1].actual_purchase_quantity = '10'
+    Object.assign(vm.lines[1], { actual_purchase_quantity: '10', unit_price: '2' })
     expect(vm.selectedLines).toHaveLength(1); expect(vm.validateDraft()).toBe('')
-    expect(vm.validateConfirmation()).toContain('供应商、采购交期、采购单价')
+    expect(vm.validateConfirmation()).toContain('供应商、采购交期')
     await vm.createOrder('confirm'); expect(groupsApi.createPurchaseBatch).not.toHaveBeenCalled()
     await vm.createOrder('list'); expect(vi.mocked(groupsApi.createPurchaseBatch).mock.calls[0]![1].lines[0]).toMatchObject({
-      purchase_group_line_id: 'group-line-2', actual_purchase_quantity: '10', supplier_id: null, delivery_date: null, unit_price: null,
+      purchase_group_line_id: 'group-line-2', actual_purchase_quantity: '10', supplier_id: null, delivery_date: null, unit_price: '2',
     })
   })
   it.each([['TUBE', 'TUBE'], ['HARDWARE', 'HARDWARE'], ['PLASTIC', 'PLASTIC_PART'], ['PACKAGING', 'PACKAGING'], ['FABRIC', 'FABRIC'], ['AUXILIARY', 'AUXILIARY']])('冻结目录类别%s优先于名称关键词', async (category, expected) => {
@@ -1393,7 +1407,7 @@ describe('总单与批次页面契约', () => {
   })
   it('编辑草稿只传原批次行和类型，不提供新增材料集合', async () => {
     const vm = await mountPage(PurchaseOrderConfirmView)
-    vm.order.batch_type = 'SUPPLEMENT'; vm.order.lines = [{ id: 'existing-line', supplier_id: null, delivery_date: null, actual_purchase_quantity: '150', unit_price: null }]
+    vm.order.batch_type = 'SUPPLEMENT'; vm.order.lines = [{ id: 'existing-line', supplier_id: null, delivery_date: null, actual_purchase_quantity: '150', unit_price: '2' }]
     await vm.saveChanges()
     expect(ordersApi.updatePurchaseOrder).toHaveBeenCalledWith('batch-1', expect.objectContaining({ batch_type: 'SUPPLEMENT', lines: [expect.objectContaining({ id: 'existing-line' })] }), 'child-v1')
     expect(groupsApi.fetchVersionedPurchaseGroup).not.toHaveBeenCalled()

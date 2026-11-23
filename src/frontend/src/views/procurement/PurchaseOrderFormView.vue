@@ -41,7 +41,7 @@ import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
 import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
 import PurchaseQuantitySources from './PurchaseQuantitySources.vue'
 import { purchaseFabricColor } from './purchaseGroupDisplay'
-import { applySetPricing, isExplicitZeroPrice, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { applySetPricing, isBlankOrZeroPurchaseValue, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
   batch_source?: PurchaseGroupProgressLine
@@ -69,8 +69,8 @@ const batchRequestId = ref('')
 let batchContentSignature = ''
 const batchConflict = ref('')
 const selectedLines = computed(() => isBatchMode.value
-  ? lines.value.filter(line => !skipBatchLine(line) && isPositiveDecimal(line.required_quantity || '')
-    && isPositiveDecimal(effectivePurchaseQuantity(line)))
+  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '')
+    && isPositiveDecimal(effectivePurchaseQuantity(line)) && (line.set_pricing || isPositiveDecimal(line.unit_price)))
   : lines.value)
 const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
 
@@ -671,7 +671,7 @@ function remainingForBatch(line: PurchaseGroupProgressLine, target: string | nul
 }
 
 function skipBatchLine(line: PurchaseLineDraft): boolean {
-  return !line.set_pricing && (isExplicitZeroPrice(line.unit_price) || isExplicitZeroPrice(effectivePurchaseQuantity(line)))
+  return !line.set_pricing && (isBlankOrZeroPurchaseValue(line.unit_price) || isBlankOrZeroPurchaseValue(effectivePurchaseQuantity(line)))
 }
 
 function lineAmount(line: PurchaseLineDraft): string {
@@ -720,19 +720,16 @@ function validateDraft(): string {
     if (!canWriteLines.value || !groupEtag.value) return '采购需求不可用或版本信息缺失，请重新读取。'
     for (const [index, line] of lines.value.entries()) {
       if (skipBatchLine(line)) continue
-      const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
-      if (line.set_pricing && !isPositiveDecimal(quantity)) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
-      if (!quantity) continue
-       if (!isNonNegativeDecimal(quantity)) {
-          return isWeightLine(line) ? `第 ${index + 1} 行采购重量应为大于或等于 0、最多 4 位小数的数字。`
-          : `第 ${index + 1} 行实际采购数量应为大于或等于 0、最多 4 位小数的数字。`
+      if (!isPositiveDecimal(effectivePurchaseQuantity(line))) {
+        if (line.set_pricing) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
+        return isWeightLine(line) ? `第 ${index + 1} 行采购重量应为大于 0、最多 4 位小数的数字。`
+          : `第 ${index + 1} 行实际采购数量应为大于 0、最多 4 位小数的数字。`
       }
-      if (!isWeightLine(line) && line.raw_bar_length_m) {
-        const error = pipeMeterError(line)
-        if (error) return `第 ${index + 1} 行：${error}`
+      if (!line.set_pricing && !isPositiveDecimal(line.unit_price)) {
+        return `第 ${index + 1} 行采购单价应为大于 0、最多 4 位小数的数字。`
       }
     }
-    if (!selectedLines.value.length) return '本批至少要采购一项材料。数量或单价填 0 的普通材料会跳过。'
+    if (!selectedLines.value.length) return '本批暂无采购材料。普通材料的采购数量和单价都大于 0 才计入本批。'
   } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
@@ -747,7 +744,6 @@ function validateDraft(): string {
   const included = new Set(selectedLines.value)
   for (const [index, line] of lines.value.entries()) {
     if (!included.has(line)) continue
-    if (isBatchMode.value && !isPositiveDecimal(effectivePurchaseQuantity(line))) return `第 ${index + 1} 项实际采购数量应大于 0。`
     if (isWeightLine(line)) {
       const samplePipe = isPipePurchaseLine(line) && isWeightPipeLine(line)
       if ((!samplePipe || pipeActualWeight(line)) && !isPositiveDecimal(pipeActualWeight(line))) return `第 ${index + 1} 行实际采购重量应为大于 0、最多 4 位小数的数字。`

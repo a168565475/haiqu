@@ -478,21 +478,24 @@ async function submitReview() {
     </section>
 
     <AppWindowDialog v-if="review" :model-value="true" :title="review.action === 'save' ? '保存供应商采购草稿' : '统一确认包材采购'"
-      :width="840" :minimizable="false" :show-close="!busy && !review.uncertain"
+      :width="1480" :min-width="288" :auto-max-height-ratio="0.9" :minimizable="false" :show-close="!busy && !review.uncertain"
       :close-on-click-modal="false" :close-on-press-escape="!busy && !review.uncertain"
       @update:model-value="value => { if (!value && !busy && !review?.uncertain) review = null }">
-      <div v-if="review.rows.length" class="packaging-form__review-scroll">
+      <div v-if="review.rows.length" class="packaging-form__review-frame">
         <table class="packaging-form__review">
-          <thead><tr><th>生产任务单号</th><th>品名</th>
-            <th v-for="column in reviewAttributes.columns" :key="column">{{ column }}</th>
-            <th>单位</th><th>供应商</th><th>数量</th><th>单价</th><th>采购交期</th>
+          <thead><tr><th scope="col">生产任务单号</th><th scope="col">品名</th>
+            <th v-for="column in reviewAttributes.columns" :key="column" scope="col">{{ column }}</th>
+            <th scope="col">单位</th><th scope="col">供应商</th><th scope="col">采购数量</th>
+            <th scope="col">采购单价</th><th scope="col">采购交期</th>
           </tr></thead>
           <tbody>
             <tr v-for="(row, index) in review.rows" :key="row.purchase_group_line_id">
-              <td>{{ row.task_number }}</td><td>{{ row.material_name }}</td>
+              <td class="packaging-form__review-value">{{ row.task_number }}</td><td>{{ row.material_name }}</td>
               <td v-for="column in reviewAttributes.columns" :key="column">{{ reviewAttributes.cells[index]?.get(column) || '—' }}</td>
-              <td>{{ row.source.source_unit_text }}</td><td>{{ supplierNames.get(row.supplier_id!) }}</td>
-              <td>{{ row.actual_purchase_quantity }}</td><td>{{ row.unit_price }}</td><td>{{ row.delivery_date }}</td>
+              <td class="packaging-form__review-value">{{ row.source.source_unit_text }}</td><td>{{ supplierNames.get(row.supplier_id!) }}</td>
+              <td class="packaging-form__review-value">{{ row.actual_purchase_quantity }}</td>
+              <td class="packaging-form__review-value">{{ row.unit_price }}</td>
+              <td class="packaging-form__review-value">{{ row.delivery_date }}</td>
             </tr>
           </tbody>
         </table>
@@ -584,10 +587,13 @@ async function submitReview() {
 .summary-total { display: flex; align-items: center; gap: 18px; padding-left: 40px; border-left: 1px solid crm.$crm-border-default; white-space: nowrap; }
 .summary-total strong { min-width: 170px; color: crm.$crm-primary; font-size: 28px; }
 .packaging-form__error { margin: 0; color: var(--el-color-danger); }
-.packaging-form__review-scroll { max-height: min(46vh, 460px); overflow: auto; border: 1px solid crm.$crm-border-subtle; border-radius: 6px; }
-.packaging-form__review { width: 100%; border-collapse: collapse; white-space: nowrap; }
-.packaging-form__review :is(th, td) { padding: 8px 12px; text-align: left; border-bottom: 1px solid crm.$crm-border-subtle; }
-.packaging-form__review th { position: sticky; top: 0; background: crm.$crm-color-subtle; }
+.packaging-form__review-frame { min-width: 940px; border: 1px solid crm.$crm-border-subtle; border-radius: 6px; }
+.packaging-form__review { width: 100%; border-spacing: 0; font-size: 14px; line-height: 1.5; }
+.packaging-form__review :is(th, td) { padding: 9px 12px; text-align: left; border-bottom: 1px solid crm.$crm-border-subtle; }
+.packaging-form__review th { position: sticky; top: 0; z-index: 1; background: crm.$crm-color-subtle; white-space: nowrap; }
+.packaging-form__review td { overflow-wrap: anywhere; }
+.packaging-form__review tr:last-child td { border-bottom: 0; }
+.packaging-form__review-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .packaging-form__drafts { padding-left: 20px; }
 
 @media (max-width: 980px) {

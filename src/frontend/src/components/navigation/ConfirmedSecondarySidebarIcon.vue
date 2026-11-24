@@ -1,5 +1,12 @@
 <script setup lang="ts">
 defineProps<{ name: string }>()
+
+const inboundIconTitles: Record<string, string> = {
+  'purchase-inbounds': '采购入库',
+  'material-inbound-details': '一般入库',
+  'material-transfers': '材料收发',
+  'semi-receipt-records': '车间入库',
+}
 </script>
 
 <template>
@@ -33,6 +40,24 @@ defineProps<{ name: string }>()
       <path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Z" class="finance-statement-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
       <path d="M8 7h8m-8 4h8" class="finance-statement-lines"/>
       <path d="m8 15 2 2 5-4" class="accent part finance-statement-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-purchase-payables'">
+      <title>采购应付</title>
+      <path d="M5 3h10l4 4v14H5V3Z" class="finance-payable-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M15 3v5h4M8 7h3" class="finance-payable-lines"/>
+      <path d="m9 11 3 3 3-3m-3 3v5m-3-5h6m-6 3h6" class="accent part finance-payable-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-supplier-ledger'">
+      <title>供应商往来明细</title>
+      <rect x="3" y="4" width="18" height="16" rx="2" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M3 9h18M9 9v11M9 14h12"/>
+      <path d="M12 7h5" class="accent part" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-supplier-payments'">
+      <title>供应商付款</title>
+      <rect x="3" y="4" width="18" height="16" rx="2" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M3 9h18M6 6.5h3"/>
+      <path d="M7 15h10m-3-3 3 3-3 3" class="accent part" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
     </g>
     <g v-else-if="name === 'finance-receipts'">
       <title>收款确认单</title>
@@ -196,18 +221,32 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28);fill:var(--icon-accent,#c84e28)"><circle cx="12" cy="19" r="2.5"/></g>
     </g>
 
-    <g v-else-if="name === 'purchase-orders'">
-      <title>采购订单</title>
+    <g v-else-if="name === 'packaging-purchases'">
+      <title>包材采购</title>
+      <path d="M3 8l3-5h12l3 5v12H3Z" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M3 8h18m-14 8h4"/>
+      <path d="m10 3-1 5v4h6V8l-1-5" class="accent part" style="stroke:var(--icon-accent,#c84e28)"/>
+    </g>
+
+    <g v-else-if="name === 'purchase-orders' || name === 'purchase-tracking' || name === 'purchase-alerts'">
+      <title>{{ name === 'purchase-tracking' ? '采购跟踪' : name === 'purchase-alerts' ? '采购提醒' : '采购订单' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M6 9h16l-2 8H7L5 6H2"/><path d="M11 9V2h8v7"/></g>
       <circle cx="8" cy="21" r="1.3"/><circle cx="18" cy="21" r="1.3"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M13.5 5h3m-3 2h2"/></g>
     </g>
 
-    <g v-else-if="name === 'purchase-inbounds'">
-      <title>采购入库</title>
+    <g v-else-if="inboundIconTitles[name]">
+      <title>{{ inboundIconTitles[name] }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M3 11v10h18V11l-4-4h-2M3 11l4-4h2"/></g>
       <path d="M3 14h6m6 0h6"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M12 2v13m-3-3 3 3 3-3"/></g>
+    </g>
+
+    <g v-else-if="name === 'purchase-receipt-records'">
+      <title>入库记录</title>
+      <rect x="4" y="3" width="16" height="18" rx="2" style="fill:var(--icon-muted,#e7e9e4)" />
+      <path d="M7 8h4m-4 4h4m-4 4h3" />
+      <path class="accent part" d="M15 8v8m-2.5-2.5 2.5 2.5 2.5-2.5" style="stroke:var(--icon-accent,#c84e28)" />
     </g>
 
     <g v-else-if="name === 'purchase-returns' || name === 'purchase-return-records'">
@@ -240,7 +279,7 @@ defineProps<{ name: string }>()
     </g>
 
     <g v-else-if="name === 'material-issues'">
-      <title>生产领料</title>
+      <title>车间领料</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M3 13V3h4v10m2 0V5h4v8M2 13h12v8H2Z"/></g>
       <path d="M5 16v2m4-2v2"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M16 16h6m-3-3 3 3-3 3"/></g>
@@ -338,6 +377,8 @@ defineProps<{ name: string }>()
 :global(.app-sidebar__flyout-link.is-active .finance-bank-roof) { fill: var(--erp-menu-accent); }
 :global(.app-sidebar__flyout-link.is-active .finance-statement-body) { fill: var(--erp-menu-accent) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-statement-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-payable-body) { fill: var(--erp-menu-accent) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-payable-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-receipt-body) { fill: var(--erp-menu-accent) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-receipt-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
 </style>

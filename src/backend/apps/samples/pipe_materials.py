@@ -175,21 +175,34 @@ def sample_pipe_snapshot(procurement, row, *, validate_current_material=True):
 
 def sample_pipe_arrival_quantity(line, procurement, row):
     # 到货沿用采购时已冻结的身份和参数；基础资料改名不能改写历史合同。
+    frozen = line.calculation_snapshot
+    unit = '米'
+    if line.source_unit_text_snapshot == 'KG':
+        unit = 'KG'
+        weights = (line.received_weight_kg, line.accepted_weight_kg, line.return_weight_kg)
+        if (frozen.get('schema_version') != 4 or frozen.get('source') != 'SAMPLE'
+                or frozen.get('measurement_unit') != 'kg'
+                or not isinstance(frozen.get('sample_demand_snapshot'), dict)
+                or line.bar_weight_kg is None or not line.bar_weight_kg.is_finite() or line.bar_weight_kg <= 0
+                or any(value is None or not value.is_finite() or value < 0 for value in weights)
+                or weights[1] <= 0 or weights[0] != weights[1] + weights[2]):
+            raise ValidationError({'lines': '样品管材KG到货缺少有效采购单重、实际重量或原需求快照，请核对原入库。'})
+        frozen = frozen['sample_demand_snapshot']
     if row.get('material_catalog_id'):
         from .catalog_materials import sample_saved_selection
         if str(line.material_catalog_id) != str(row['material_catalog_id']) or line.material_selection_snapshot != sample_saved_selection(row):
             raise ValidationError({'lines': '样品管材到货与保存需求材料不一致。'})
         snapshot = sample_pipe_snapshot(procurement, row, validate_current_material=False)
-        if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != '米'
-                or any(line.calculation_snapshot.get(key) != value for key, value in snapshot.items())
+        if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != unit
+                or any(frozen.get(key) != value for key, value in snapshot.items())
                 or line.accepted_bar_count is None or not line.raw_bar_length_m
                 or line.accepted_quantity != line.raw_bar_length_m * line.accepted_bar_count):
             raise ValidationError({'lines': '样品管材到货须保留实际根数、单根长度及对应米数。'})
         return Decimal(line.accepted_quantity)
     snapshot = sample_pipe_snapshot(procurement, row, validate_current_material=False)
-    if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != '米'
+    if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != unit
             or str(line.raw_material_information_id) != snapshot['raw_material_id']
-            or any(line.calculation_snapshot.get(key) != value for key, value in snapshot.items())
+            or any(frozen.get(key) != value for key, value in snapshot.items())
             or line.accepted_bar_count is None
             or not line.raw_bar_length_m
             or line.accepted_quantity != line.raw_bar_length_m * line.accepted_bar_count):

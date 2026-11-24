@@ -7,7 +7,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { createSupplier, fetchSupplier, fetchSupplierOptions, updateSupplier } from '@/api/suppliers'
 import { useAuthStore } from '@/stores/auth'
-import type { Supplier, SupplierInput, SupplierOptions } from '@/types/supplier'
+import type { SupplierDetail, SupplierInput, SupplierOptions, SupplierPaymentTermMonths } from '@/types/supplier'
 
 const props = defineProps<{ visible: boolean; supplierId?: string }>()
 const emit = defineEmits<{ 'update:visible': [value: boolean]; created: [] }>()
@@ -15,12 +15,20 @@ const auth = useAuthStore()
 const isEditing = computed(() => Boolean(props.supplierId))
 const title = computed(() => isEditing.value ? '编辑供应商' : '新建供应商')
 const canCreate = computed(() => auth.user?.is_superuser === true || (auth.hasPermission('procurement.view_supplier') && auth.hasPermission(isEditing.value ? 'procurement.change_supplier' : 'procurement.add_supplier')))
-const supplier = ref<Supplier | null>(null)
+const supplier = ref<SupplierDetail | null>(null)
 const editTargetId = ref('')
 const etag = ref('')
 const versionConflict = ref(false)
-const emptyForm = (): SupplierInput => ({ supplier_type: 'MATERIAL', supplier_categories: [], supplier_name: '', payment_cycle: '', phone: '', is_disabled: false, remark: '' })
-const form = reactive<SupplierInput>(emptyForm())
+const emptyPaymentTerm = (): { months: SupplierPaymentTermMonths | null; effective_month: string; basis: string } => ({
+  months: null, effective_month: '', basis: '',
+})
+type SupplierForm = Omit<SupplierInput, 'payment_term'> & { payment_term: ReturnType<typeof emptyPaymentTerm> }
+const emptyForm = (): SupplierForm => ({
+  supplier_type: 'MATERIAL', supplier_categories: [],
+  supplier_name: '', payment_cycle: '', phone: '', is_disabled: false, remark: '',
+  payment_term: emptyPaymentTerm(),
+})
+const form = reactive(emptyForm())
 const formRef = ref<FormInstance>()
 const options = ref<SupplierOptions>({ supplier_types: [], supplier_categories: [], payment_cycles: [], next_supplier_number: '' })
 const loading = ref(false)
@@ -73,6 +81,7 @@ async function loadOptions(): Promise<void> {
         supplier_type: detail.data.supplier_type, supplier_categories: [...detail.data.supplier_categories],
         supplier_name: detail.data.supplier_name, payment_cycle: detail.data.payment_cycle || '',
         phone: detail.data.phone || '', remark: detail.data.remark || '', is_disabled: detail.data.is_disabled,
+        payment_term: emptyPaymentTerm(),
       })
       baseline.value = JSON.stringify(form)
     }
@@ -148,6 +157,15 @@ async function save(): Promise<void> {
       supplier_type: form.supplier_type, supplier_categories: [...form.supplier_categories], supplier_name: form.supplier_name.trim(),
       payment_cycle: form.payment_cycle || '', phone: form.phone.trim(), is_disabled: form.is_disabled, remark: form.remark.trim(),
     }
+    const { months, effective_month } = form.payment_term
+    const basis = form.payment_term.basis.trim()
+    if (form.supplier_type === 'MATERIAL' && (months || effective_month || basis)) {
+      if (!months || !effective_month || !basis) {
+        saveError.value = '请填写账期月数、生效收货月份和条款依据。'
+        return
+      }
+      payload.payment_term = { months, effective_month, basis }
+    }
     if (isEditing.value) await updateSupplier(editTargetId.value, payload, etag.value)
     else await createSupplier(payload)
     if (disposed) return
@@ -214,6 +232,38 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
         <ElFormItem label="付款周期" prop="payment_cycle"><ElSelect v-model="form.payment_cycle" clearable :aria-label="isEditing ? '编辑付款周期' : '新建付款周期'" placeholder="请选择付款周期" popper-class="supplier-create-select"><ElOption v-for="item in options.payment_cycles" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem>
         <ElFormItem label="联系电话" prop="phone"><ElInput v-model="form.phone" maxlength="100" placeholder="请输入联系电话" /></ElFormItem>
       </div>
+      <div v-if="form.supplier_type === 'MATERIAL'" class="supplier-drawer-row payment-term-fields">
+        <ElFormItem label="账期月数">
+          <ElSelect v-model="form.payment_term.months" aria-label="账期月数" clearable :value-on-clear="null"
+            :placeholder="supplier?.payment_term_versions.length ? '新增约定' : '未设置'" popper-class="supplier-create-select">
+            <ElOption label="1 个月" :value="1" />
+            <ElOption label="3 个月" :value="3" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="生效收货月份">
+          <ElDatePicker v-model="form.payment_term.effective_month" type="month" value-format="YYYY-MM" format="YYYY-MM"
+            aria-label="生效收货月份" placeholder="选择月份" />
+        </ElFormItem>
+        <ElFormItem label="条款依据">
+          <ElInput v-model="form.payment_term.basis" aria-label="条款依据" maxlength="255" />
+        </ElFormItem>
+      </div>
+      <section v-if="supplier?.payment_term_versions.length" class="erp-glass-list payment-term-history" aria-label="账期历史">
+        <h3>账期历史</h3>
+        <div class="erp-list-table-frame">
+          <ElTable :data="supplier.payment_term_versions" row-key="id" :max-height="200">
+            <ElTableColumn prop="months" label="账期月数" width="88">
+              <template #default="{ row }">{{ row.months }} 个月</template>
+            </ElTableColumn>
+            <ElTableColumn prop="effective_month" label="生效收货月份" width="120" />
+            <ElTableColumn prop="basis" label="条款依据" min-width="152" show-overflow-tooltip />
+            <ElTableColumn prop="recorded_by_name" label="维护人" width="100" show-overflow-tooltip />
+            <ElTableColumn prop="recorded_at" label="维护时间" width="152">
+              <template #default="{ row }">{{ formatDateTime(row.recorded_at) }}</template>
+            </ElTableColumn>
+          </ElTable>
+        </div>
+      </section>
       <ElFormItem label="是否禁用" prop="is_disabled" class="supplier-disabled-field"><ElSwitch v-model="form.is_disabled" inline-prompt active-text="是" inactive-text="否" aria-label="是否禁用" /></ElFormItem>
       <ElFormItem label="备注" prop="remark" class="supplier-remark-field"><ElInput v-model="form.remark" type="textarea" :rows="3" maxlength="2000" show-word-limit resize="none" placeholder="请输入备注信息" /></ElFormItem>
     </ElForm>
@@ -249,6 +299,15 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
   .supplier-number-preview .el-input__wrapper { background: var(--erp-input-surface); }
   .supplier-number-preview .el-input__inner { color: token.$crm-text-muted; }
   .name-category-row, .payment-phone-row, .supplier-disabled-field, .supplier-remark-field { margin-top: 12px; }
+  .payment-term-fields {
+    margin-top: 12px; grid-template-columns: minmax(84px, 120px) minmax(106px, 140px) minmax(0, 1fr); white-space: nowrap;
+    .el-date-editor { width: 100%; }
+  }
+  .payment-term-history {
+    height: auto; gap: 8px; margin-top: 12px;
+    h3 { margin: 0; font-size: 13px; }
+    .el-table .cell { white-space: nowrap; }
+  }
   .supplier-category-help { margin-left: 12px; color: token.$crm-text-secondary; font-weight: 400; }
   .supplier-category-field { min-height: 0; }
   .supplier-category-field .el-tag { height: 22px !important; min-height: 22px !important; font-size: 12px; }

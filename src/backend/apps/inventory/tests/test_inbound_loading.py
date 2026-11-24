@@ -4,14 +4,16 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.db import connection
+from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APITestCase
 
 from apps.procurement.tests import test_loading_read_api as purchase_tests
 from apps.procurement.models import PurchaseOrderLine, PurchaseReturn, PurchaseReturnLine, Supplier
 from apps.inventory.models import Warehouse, WarehouseZone, MaterialInbound, MaterialInboundLine
-from apps.inventory.selectors import material_received_totals
+from apps.inventory.selectors import material_received_totals, material_receipt_progress
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductCategory, ProductionUnit
 
@@ -100,6 +102,7 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(rows[0]['return_quantity'],'1.0000')
         self.assertEqual(rows[0]['remaining_line_count'],1)
         self.assertEqual(rows[0]['workflow_status'],'PENDING_QUALITY')
+        self.assertEqual(rows[0]['receiving_status'], 'PARTIAL_RECEIVED')
         sql='\n'.join(q['sql'] for q in queries)
         for table in ['inventory_warehouse_zone','inventory_warehouse','procurement_supplier']:
             self.assertNotIn(f'FROM "{table}"', sql)
@@ -117,6 +120,82 @@ class InboundLoadingTests(APITestCase):
         hidden=self.get('eligible-purchase-orders',{'purchase_order_id':str(self.hidden.pk)})
         self.assertEqual(hidden.data['data'],[])
         self.assertEqual(self.client.get(self.root+'eligible-lines/',{'purchase_order_id':str(self.hidden.pk)},HTTP_HOST='localhost').status_code,404)
+
+    def test_receipt_progress_averages_capped_rows_without_mixing_units(self):
+        self.line.source_unit_text = 'KG'
+        self.line.section_type_snapshot = 'ACCESSORY'
+        self.line.calculation_snapshot = {'measurement_kind': 'HARDWARE_WEIGHT'}
+        self.line.save(update_fields=['source_unit_text', 'section_type_snapshot', 'calculation_snapshot'])
+        inbound = self.batch(1, 'CONFIRMED', [(1000, 0)])
+        hardware = inbound.lines.get()
+        hardware.source_unit_text_snapshot = 'KG'
+        hardware.calculation_snapshot = {'measurement_kind': 'HARDWARE_WEIGHT'}
+        hardware.received_weight_kg = Decimal('5')
+        hardware.accepted_weight_kg = Decimal('5')
+        hardware.return_weight_kg = Decimal('0')
+        hardware.save()
+        for number, unit, quantity, purchased in [(2, '个', Decimal('20'), 10), (3, '公斤', Decimal('2.5'), 5)]:
+            line = PurchaseOrderLine.objects.create(purchase_order=self.order, line_number=number,
+                source_unit_text=unit, actual_purchase_quantity=purchased, quantity_parse_status='READY')
+            MaterialInboundLine.objects.create(inbound=inbound, purchase_order_line=line,
+                raw_material_information=self.raw_material, zone=self.zone,
+                received_quantity=quantity, accepted_quantity=quantity, return_quantity=0,
+                source_unit_text_snapshot=unit, purchased_quantity_snapshot=purchased)
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row['receipt_progress_percent'], '66.7')  # (50% + 100% + 50%) / 3
+        self.assertNotIn('received_quantities', row)
+        hardware.received_weight_kg = None
+        hardware.save(update_fields=['received_weight_kg'])
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertIsNone(row['receipt_progress_percent'])
+
+    def test_receipt_progress_zero_unknown_and_nonpositive_purchase(self):
+        self.assertEqual(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'], '0.0')
+        for invalid in [None, Decimal('0'), Decimal('-1')]:
+            self.line.actual_purchase_quantity = invalid
+            self.assertIsNone(material_receipt_progress([self.line])[self.order.pk])
+        self.line.actual_purchase_quantity = None
+        self.line.save(update_fields=['actual_purchase_quantity'])
+        self.assertIsNone(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'])
+        self.line.delete()
+        self.assertIsNone(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'])
+
+    def test_receipt_progress_never_rounds_incomplete_receipt_to_100(self):
+        inbound = self.batch(1, 'PENDING_QUALITY', [(Decimal('9.9999'), 0)])
+        self.assertEqual(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'], '99.9')
+        item = inbound.lines.get()
+        item.received_quantity = item.accepted_quantity = Decimal('10')
+        item.save(update_fields=['received_quantity', 'accepted_quantity'])
+        self.assertEqual(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'], '100.0')
+
+    def test_receipt_progress_counts_arrivals_even_when_quality_returns_them(self):
+        self.batch(1, 'CONFIRMED', [(10, 2)])
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row['receipt_progress_percent'], '100.0')
+        self.assertEqual(row['received_quantity'], '10.0000')
+        self.assertEqual(material_received_totals([self.line.pk])[self.line.pk], Decimal('8'))
+
+    def test_receipt_progress_uses_saved_meters_and_actual_pipe_weight(self):
+        self.line.source_unit_text = '米'
+        self.line.actual_purchase_quantity = Decimal('12')
+        self.line.save(update_fields=['source_unit_text', 'actual_purchase_quantity'])
+        inbound = self.batch(1, 'CONFIRMED', [(6, 0)])
+        pipe = inbound.lines.get()
+        pipe.measurement_kind = 'PIPE'
+        pipe.raw_bar_length_m = Decimal('3')
+        pipe.received_bar_count = pipe.accepted_bar_count = 2
+        pipe.return_bar_count = 0
+        pipe.source_unit_text_snapshot = '米'
+        pipe.save()
+        self.assertEqual(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'], '50.0')
+        self.line.source_unit_text = 'KG'
+        self.line.actual_purchase_quantity = Decimal('20')
+        self.line.save(update_fields=['source_unit_text', 'actual_purchase_quantity'])
+        pipe.source_unit_text_snapshot = 'KG'
+        pipe.received_weight_kg = pipe.accepted_weight_kg = Decimal('5')
+        pipe.return_weight_kg = Decimal('0')
+        pipe.save()
+        self.assertEqual(self.get('procurement-inbound-orders').json()['data'][0]['receipt_progress_percent'], '25.0')
 
     def test_supplier_summary_groups_by_id_and_preserves_unknown_amounts(self):
         self.line.unit_price = Decimal('1.2345')
@@ -157,9 +236,12 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0]['workflow_status'], 'PARTIAL_RECEIVED')
         self.assertEqual(completed[0]['workflow_status_display'], '部分入库')
+        self.assertEqual(completed[0]['receiving_status'], 'PARTIAL_RECEIVED')
+        self.assertEqual(completed[0]['remaining_line_count'], 1)
         self.assertEqual(len(self.get('eligible-purchase-orders',{'purchase_order_id':str(self.order.pk)}).data['data']),1)
         self.assertEqual(self.get('eligible-lines',{'purchase_order_id':str(self.order.pk)}).data['data'][0]['remaining_quantity'],'2.0000')
 
+    @override_settings(MODULE_ACCESS_ENABLED=True)
     def test_inbound_list_uses_sample_number_as_sample_order_source(self):
         from apps.samples.models import SampleMaterialProcurementRequest, SampleMaterialRequest, SampleRequest
 
@@ -181,6 +263,9 @@ class InboundLoadingTests(APITestCase):
             actual_purchase_quantity=1, supplier_name_snapshot='打样供应商',
         )
 
+        self.assertNotIn(str(sample_order.pk), [str(row['id']) for row in self.get('procurement-inbound-orders').data['data']])
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label='samples', codename='view_samplerequest'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         rows = self.get('procurement-inbound-orders').data['data']
         sample_row = next(row for row in rows if str(row['id']) == str(sample_order.pk))
         self.assertEqual(sample_row['source_type'], 'SAMPLE')
@@ -223,13 +308,24 @@ class InboundLoadingTests(APITestCase):
             product_line_id_snapshot=self.order.production_task.products.get(line_number=3).pk,
             quantity_parse_status='MISSING',
         )
-        row = self.get('procurement-inbound-orders').json()['data'][0]
+        row = self.get('procurement-inbound-orders', {'q': self.order.production_task_number_snapshot}).json()['data'][0]
+        self.assertEqual(row['production_task_number'], self.order.production_task_number_snapshot)
         self.assertEqual(row.get('product_summary'), [
             {'product_line_id': str(second.pk), 'product_name': '采购时产品二', 'item_number': 'ITEM-2',
              'specification': '60*70', 'color_name': '黑色', 'material': '铝'},
             {'product_line_id': str(first.pk), 'product_name': '采购时产品一', 'item_number': 'ITEM-1',
              'specification': '47*55*79', 'color_name': '酒红色', 'material': 'PE'},
         ])
+        inbound = self.batch('PRODUCT-CHECK', 'CONFIRMED', [(2, 0)])
+        inbound.quality_confirmed_at = timezone.now()
+        inbound.save(update_fields=['quality_confirmed_at'])
+        inbound.lines.update(supplier_name_snapshot='收货记载的供应商', product_name_snapshot='采购时产品二')
+        records = self.get('purchase-receipt-records', {'q': '收货记载的供应商'}).json()['data']
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['id'], str(inbound.pk))
+        self.assertEqual(records[0]['product_summary'], row['product_summary'][:1])
+        self.assertEqual(records[0]['supplier_names'], ['收货记载的供应商'])
+        self.assertEqual(parse_datetime(records[0]['quality_confirmed_at']), inbound.quality_confirmed_at)
 
     def test_inbound_product_uses_linked_bom_snapshots_and_does_not_query_per_product(self):
         from apps.boms.models import Bom
@@ -264,6 +360,7 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(len(row['product_summary']), 5)
         self.assertEqual(len(queries), original_count)
 
+    @override_settings(MODULE_ACCESS_ENABLED=True)
     def test_inbound_sample_products_keep_each_color_and_missing_fields_empty(self):
         from apps.samples.models import SampleItem, SampleMaterialProcurementRequest, SampleMaterialRequest, SampleProduct, SampleRequest
         sample = SampleRequest.objects.create(
@@ -298,6 +395,9 @@ class InboundLoadingTests(APITestCase):
             sample_number_snapshot=sample.request_number, status='PURCHASING', created_by_employee=self.employee,
         )
         PurchaseOrderLine.objects.create(purchase_order=order, line_number=1, actual_purchase_quantity=1, quantity_parse_status='READY')
+        self.assertNotIn(str(order.pk), [row['id'] for row in self.get('procurement-inbound-orders').json()['data']])
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label='samples', codename='view_samplerequest'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         rows = self.get('procurement-inbound-orders').json()['data']
         row = next(row for row in rows if row['id'] == str(order.pk))
         self.assertEqual(row.get('product_summary'), expected)

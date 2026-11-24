@@ -22,7 +22,7 @@ class TubeLegacyMetricMergeTests(SimpleTestCase):
         result = _merged_raw_values(before, {"part_name": "只改名称"}, "PROFILE", "管材类", {})
         self.assertEqual({key: result[key] for key in before}, before)
 
-    def test_manual_metrics_clear_unusable_automatic_values_and_preserve_single_weight(self):
+    def test_manual_metrics_preserve_independent_long_weight_and_recalculate_total(self):
         from ..tube_metrics import apply_tube_metrics
         line = SimpleNamespace(line_number=1, length_value="500", raw_bar_length_m=Decimal("3.05"),
             suggested_bar_count=2, raw_values={"tube_shape": "圆管", "tube_diameter": "25", "tube_thickness": "1",
@@ -30,8 +30,8 @@ class TubeLegacyMetricMergeTests(SimpleTestCase):
                 "tube_formula_pending": True, "long_material_unit_weight_kg": "2", "long_material_total_weight_kg": "4"})
         apply_tube_metrics(line, require_complete=True)
         self.assertEqual(line.raw_values["tube_unit_weight_kg"], "0.3400")
-        self.assertEqual(line.raw_values["long_material_unit_weight_kg"], "")
-        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "")
+        self.assertEqual(line.raw_values["long_material_unit_weight_kg"], "2.0000")
+        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "4.0000")
         self.assertNotIn("tube_formula_pending", line.raw_values)
 
 
@@ -103,7 +103,7 @@ class TubeFormulaBomApiTests(TestCase):
         self.assertEqual(Decimal(line.raw_values["coating_unit_area_sqm"]), Decimal("0.0393"))
         self.assertEqual(line.raw_values["tube_unit_weight_kg"], line.raw_values["purchase_unit_weight_kg"])
         self.assertIn("tube_formula_snapshot", line.raw_values)
-        self.assertEqual((line.suggested_bar_count, line.raw_bar_length_m), (334, Decimal("3.05")))
+        self.assertEqual((line.suggested_bar_count, line.raw_bar_length_m), (339, Decimal("3.05")))
 
     def test_formula_edit_keeps_old_values_until_explicit_recalculation_or_geometry_edit(self):
         from apps.reference_data.models import TubeCalculationFormula
@@ -146,7 +146,7 @@ class TubeFormulaBomApiTests(TestCase):
         line = self.line()
         self.assertEqual(line.raw_values["tube_formula_snapshot"], before["tube_formula_snapshot"])
         self.assertEqual(Decimal(line.raw_values["purchase_unit_weight_kg"]), Decimal("0.2959"))
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1218.5100"))
 
     def test_new_incomplete_geometry_saves_empty_metrics_and_cannot_confirm(self):
         response = self.save_pipe(tube_diameter="")
@@ -202,7 +202,7 @@ class TubeFormulaBomApiTests(TestCase):
         line = BomLine.objects.get(section__bom=copied)
         self.assertEqual(line.raw_values["tube_formula_snapshot"], before["tube_formula_snapshot"])
         self.assertEqual(Decimal(line.raw_values["purchase_unit_weight_kg"]), Decimal("0.2959"))
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1218.5100"))
         explicit = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=copied,
                               actor_employee=self.employee)
         self.assertEqual(Decimal(BomLine.objects.get(section__bom=explicit).raw_values["purchase_unit_weight_kg"]), Decimal("99"))
@@ -232,9 +232,96 @@ class TubeFormulaBomApiTests(TestCase):
                     self.assertEqual(response.status_code, 400, response.data)
                     self.assertEqual(self.line().raw_values, before)
 
+    def test_manual_long_weight_reopens_and_enters_weight_purchase_with_allowance(self):
+        response = self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12",
+                                  purchase_unit_weight_kg="0.34", long_material_unit_weight_kg="2.5")
+        self.assertEqual(response.status_code, 200, response.data)
+        reopened = next(section for section in self.get().data["data"]["sections"] if section["section_type"] == "PROFILE")["lines"][0]
+        self.assertEqual((reopened["long_material_unit_weight_kg"], reopened["long_material_total_weight_kg"]),
+                         ("2.5000", "847.5000"))
+        self.assertEqual((reopened["base_purchase_bar_count"], reopened["purchase_allowance_bar_count"]), (334, 5))
+        self.assertEqual(self.verify().status_code, 200)
+        self.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="procurement"))
+        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
+        source = self.client.get("/api/v1/purchase-orders/source/", {"production_task_id": str(self.task.pk), "bom_id": str(self.bom.pk)})
+        self.assertEqual(source.status_code, 200, source.data)
+        data = source.data["data"]
+        self.assertTrue(data["can_create"], data)
+        created = self.client.post("/api/v1/purchase-orders/", {
+            "production_task_id": str(self.task.pk), "bom_id": data["selected_bom_id"],
+            "source_revision": data["source_revision"], "lines": [{"bom_line_id": str(self.line().pk),
+                "actual_purchase_quantity": "4.1", "unit_price": "2"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        purchased = created.data["data"]["lines"][0]
+        self.assertEqual((purchased["source_unit_text"], purchased["actual_bar_count"]), ("KG", 2))
+        self.assertEqual(Decimal(purchased["actual_purchase_quantity"]), Decimal("4.1"))
+        self.assertEqual(Decimal(purchased["amount"]), Decimal("8.2"))
+        self.assertEqual(Decimal(purchased["suggested_purchase_weight_kg"]), Decimal("847.5"))
+
+    def test_missing_manual_long_weight_still_blocks_new_weight_purchase(self):
+        from apps.procurement.services import _source_quantity
+        self.assertEqual(self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12",
+            purchase_unit_weight_kg="0.34", long_material_unit_weight_kg="").status_code, 200)
+        self.assertEqual(self.verify().status_code, 200)
+        quantity, _, _, unit, status = _source_quantity(self.line(), self.bom)
+        self.assertEqual((quantity, unit, status), (None, "KG", "MISSING"))
+
+    def test_manual_long_weight_validation_and_explicit_clearing_are_atomic(self):
+        self.assertEqual(self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12",
+            purchase_unit_weight_kg="0.34", long_material_unit_weight_kg="2.5").status_code, 200)
+        before = deepcopy(self.line().raw_values)
+        for value in ("0", "-1", "NaN", "Infinity", "1e2", "0.12345", "1000000000000"):
+            with self.subTest(value=value):
+                response = self.save_pipe(long_material_unit_weight_kg=value)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(self.line().raw_values, before)
+        response = self.save_pipe(long_material_unit_weight_kg="")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.line().raw_values["long_material_total_weight_kg"], "")
+
+    def test_unsupported_shape_uses_manual_long_weight_without_manual_flag(self):
+        from apps.procurement.services import _source_quantity
+        response = self.save_pipe(tube_shape="D形管", tube_diameter="25*15", coating_unit_area_sqm="",
+                                  purchase_unit_weight_kg="", long_material_unit_weight_kg="2.5")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.line().raw_values["long_material_total_weight_kg"], "847.5000")
+        self.assertEqual(self.save_pipe(tube_shape="D形管", tube_diameter="25*15", part_name="保留手工长料单重").status_code, 200)
+        self.assertEqual(self.line().raw_values["long_material_unit_weight_kg"], "2.5000")
+        self.assertNotIn("tube_formula_snapshot", self.line().raw_values)
+        self.assertEqual(self.verify().status_code, 200)
+        quantity, _, _, unit, status = _source_quantity(self.line(), self.bom)
+        self.assertEqual((quantity, unit, status), (Decimal("847.5"), "KG", "READY"))
+
+    def test_switching_from_auto_does_not_reuse_unconfirmed_long_weight(self):
+        self.assertEqual(self.save_pipe().status_code, 200)
+        response = self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12", purchase_unit_weight_kg="0.34")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.line().raw_values["long_material_unit_weight_kg"], "")
+        self.assertEqual(self.save_pipe(manual_tube_metrics=False, long_material_unit_weight_kg="99").status_code, 200)
+        self.assertEqual(self.line().raw_values["long_material_unit_weight_kg"], "1.8052")
+        self.assertEqual(self.save_pipe(tube_shape="D形管", tube_diameter="25*15", coating_unit_area_sqm="0.12",
+            purchase_unit_weight_kg="0.34").status_code, 200)
+        self.assertEqual(self.line().raw_values["long_material_unit_weight_kg"], "")
+
+    def test_manual_long_weight_requires_reconfirmation_after_geometry_changes(self):
+        for changes in ({"length_value": "600"}, {"tube_cut_piece_count": "8"}, {"tube_diameter": "26"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12",
+                    purchase_unit_weight_kg="0.34", long_material_unit_weight_kg="2.5").status_code, 200)
+                response = self.save_pipe(**changes)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(self.line().raw_values["long_material_unit_weight_kg"], "")
+                self.assertEqual(self.line().raw_values["long_material_total_weight_kg"], "")
+                response = self.save_pipe(**changes, long_material_unit_weight_kg="3")
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(Decimal(self.line().raw_values["long_material_total_weight_kg"]),
+                                 Decimal("3") * self.line().suggested_bar_count)
+
     def test_manual_mode_survives_omitted_flag_save_quantity_sync_and_copy(self):
         from apps.reference_data.models import TubeCalculationFormula
-        self.assertEqual(self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12", purchase_unit_weight_kg="0.34").status_code, 200)
+        self.assertEqual(self.save_pipe(manual_tube_metrics=True, coating_unit_area_sqm="0.12", purchase_unit_weight_kg="0.34",
+            long_material_unit_weight_kg="2.5").status_code, 200)
         TubeCalculationFormula.objects.filter(group_key="ROUND").update(weight_expression="1/0")
         self.assertEqual(self.save_pipe(part_name="仅改名称").status_code, 200)
         self.bom.order_quantity = 2000
@@ -247,7 +334,8 @@ class TubeFormulaBomApiTests(TestCase):
         for line in (self.line(), BomLine.objects.get(section__bom=copied)):
             self.assertIs(line.raw_values["tube_metrics_manual"], True)
             self.assertEqual(line.raw_values["purchase_unit_weight_kg"], "0.3400")
-            self.assertEqual(line.raw_values["long_material_total_weight_kg"], "")
+            self.assertEqual(line.raw_values["long_material_unit_weight_kg"], "2.5000")
+            self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("2.5") * line.suggested_bar_count)
             self.assertNotIn("tube_formula_snapshot", line.raw_values)
 
     def test_explicit_auto_mode_recalculates_unchanged_geometry(self):

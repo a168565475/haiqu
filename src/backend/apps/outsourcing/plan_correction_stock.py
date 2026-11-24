@@ -11,6 +11,8 @@ from apps.core.api.exceptions import Conflict
 from apps.inventory.models import MaterialStockBalance, MaterialStockMovement, PublicStockBalance, PublicStockMovement
 from apps.inventory.public_stock_identity import validate_public_identity
 from apps.inventory.public_stock_services import _lock_source, credit_public_stock, debit_public_stock, lock_public_stock_locations
+from apps.inventory.pipe_weight_quantities import returned_pipe_weight
+from apps.inventory.hardware_receipts import KG_UNITS
 from apps.inventory.stock_services import credit_material_stock
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine
 from apps.material_issues.public_issue_services import public_issue_quantity_context
@@ -139,12 +141,22 @@ def apply_stock_events(order, correction, events, request):
             production_task=original.production_task_id, snapshot=snapshot)
         if event['identity'] is not None:
             kwargs.update(product_line=original.product_line_id, bom_line=original.bom_line_id)
+            if delta > 0 and original.direction == 'OUT' and (original.balance.raw_bar_length_m is not None or original.weight_quantity is not None):
+                history = PublicStockMovement.objects.filter(source_type=event['source_type'],
+                    balance_id=original.balance_id, snapshot__original_movement_id=str(original.pk)).order_by('occurred_at', 'id')
+                weight = delta if original.balance.unit.unit_name.upper() in KG_UNITS else returned_pipe_weight(original=original, adjustments=history, returned_roots=delta)
+                kwargs.update(weight_quantity=weight,
+                    bar_weight_kg=original.balance.bar_weight_kg if weight is not None else None)
             movement = (credit_public_stock(identity=event['identity'], zone=zone, **kwargs) if delta > 0
                         else debit_public_stock(balance_id=original.balance_id, **kwargs))
         else:
             if delta <= 0 or zone.warehouse.warehouse_type != 'MATERIAL':
                 raise Conflict('附带材料只支持按原库区退回，不能修改辅料数量。')
             kwargs['production_task'] = order.product_line.production_task
+            if original.weight_quantity is not None:
+                history = MaterialStockMovement.objects.filter(source_type=event['source_type'],
+                    balance_id=original.balance_id, snapshot__original_movement_id=str(original.pk)).order_by('occurred_at', 'id')
+                kwargs['weight_quantity'] = delta if original.balance.unit.unit_name.upper() in KG_UNITS else returned_pipe_weight(original=original, adjustments=history, returned_roots=delta)
             movement = credit_material_stock(raw_material=original.balance.raw_material,
                 unit=original.balance.unit, zone=zone, **kwargs)
         result.append({'id': str(movement.pk), 'source_type': event['source_type'],

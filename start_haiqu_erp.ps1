@@ -132,9 +132,11 @@ function Invoke-Docker {
         [switch]$AllowFailure
     )
 
-    if ($CodexBridgeEnabled -and $Arguments.Count -ge 4 -and $Arguments[0] -eq 'compose' -and
+    if ($Arguments.Count -ge 4 -and $Arguments[0] -eq 'compose' -and
         $Arguments[1] -eq '-f' -and $Arguments[2] -eq $ComposeFile) {
-        $Arguments = @('compose', '-f', $ComposeFile, '-f', $CodexComposeFile) + $Arguments[3..($Arguments.Count - 1)]
+        $composeArguments = @('compose', '-f', $ComposeFile)
+        if ($CodexBridgeEnabled) { $composeArguments += @('-f', $CodexComposeFile) }
+        $Arguments = $composeArguments + $Arguments[3..($Arguments.Count - 1)]
     }
     $commandText = 'docker ' + ($Arguments -join ' ')
     if (-not $Quiet) {
@@ -981,6 +983,12 @@ try {
     ) | Out-Null
     Write-StartupLog '数据库增量迁移检查完成。' 'OK'
 
+    Write-StartupLog '启动本地 BOM DXF 排料进程。'
+    Invoke-Docker -Arguments @('compose', '-f', $ComposeFile, 'up', '-d', '--no-deps', 'bom-nesting-worker') | Out-Null
+    if ((Get-ContainerHealth -ContainerName 'haiqu-bom-nesting-worker') -notin @('running', 'healthy')) {
+        throw 'BOM DXF 排料进程未运行。'
+    }
+
     Write-StartupLog '启动业务通知自动发送进程。'
     Invoke-Docker -Arguments @(
         'compose', '-f', $ComposeFile,
@@ -992,13 +1000,36 @@ try {
     }
     Write-StartupLog '通知发送进程已运行；缺少企业微信配置时自动等待配置。' 'OK'
 
+    $purchaseTrackingEnvironment = Invoke-Docker -Arguments @(
+        'compose', '-f', $ComposeFile, 'exec', '-T', 'backend',
+        'python', '-c', "import os; print(os.getenv('PURCHASE_TRACKING_ENABLED', 'false'))"
+    ) -Quiet
+    if ($purchaseTrackingEnvironment.Output.Count -ne 1) {
+        throw '无法读取后端采购跟踪开关，未启动采购跟踪进程。'
+    }
+    $purchaseTrackingEnabled = ([string]$purchaseTrackingEnvironment.Output[0]).Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on')
+    if ($purchaseTrackingEnabled) {
+        Write-StartupLog '启动已启用的采购跟踪提醒扫描进程。'
+        Invoke-Docker -Arguments @(
+            'compose', '-f', $ComposeFile, 'up', '-d', '--no-deps', 'purchase-tracking-worker'
+        ) | Out-Null
+        $purchaseTrackingWorkerState = Get-ContainerHealth -ContainerName 'haiqu-purchase-tracking-worker'
+        if ($purchaseTrackingWorkerState -notin @('running', 'healthy')) {
+            throw "采购跟踪提醒扫描进程未运行：$purchaseTrackingWorkerState"
+        }
+        Write-StartupLog '采购跟踪提醒扫描进程已运行。' 'OK'
+    }
+    else {
+        Write-StartupLog '采购跟踪开关未启用，跳过提醒扫描进程。'
+    }
+
     if ($CodexBridgeEnabled) {
-        Write-StartupLog '启动已启用的生产任务导入与 Codex 后台处理。'
+        Write-StartupLog '启动已启用的 Codex 后台处理。'
         Invoke-Docker -Arguments @('compose', '-f', $ComposeFile, 'up', '-d', '--no-deps',
-            'codex-worker', 'production-import-worker') | Out-Null
-        foreach ($CodexWorker in @('haiqu-codex-worker', 'haiqu-production-import-worker')) {
+            'codex-worker') | Out-Null
+        foreach ($CodexWorker in @('haiqu-codex-worker')) {
             if ((Get-ContainerHealth -ContainerName $CodexWorker) -notin @('running', 'healthy')) {
-                throw "Codex/导入后台处理进程未运行：$CodexWorker"
+                throw "Codex 后台处理进程未运行：$CodexWorker"
             }
         }
         & (Join-Path $ProjectRoot 'deploy\codex\local_codex_bridge.ps1') -Action Start
@@ -1047,6 +1078,13 @@ try {
         }
     }
     Write-Host "日志      : $LogFile" -ForegroundColor Green
+
+    $syncBridge = Join-Path $ProjectRoot 'deploy\local_production_sync\serve.py'
+    $syncPython = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($syncPython -and (Test-Path -LiteralPath $syncBridge -PathType Leaf) -and
+        -not (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 18724 -State Listen -ErrorAction SilentlyContinue)) {
+        Start-Process -FilePath $syncPython.Source -ArgumentList @('-X', 'utf8', '-B', ('"' + $syncBridge + '"')) -WindowStyle Hidden
+    }
 
     if (-not $NoBrowser) {
         Write-StartupLog "打开浏览器：$FrontendUrl"

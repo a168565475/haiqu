@@ -11,15 +11,15 @@ import { useAuthStore } from '@/stores/auth'
 import { createClientUuid } from '@/utils/clientUuid'
 import {
   archiveMaterialCatalog, createMaterialCatalog, fetchMaterialCatalog, fetchMaterialCatalogOptions,
-  fetchMaterialCatalogs, fetchPublicMaterialOptions, materialCatalogError, materialCatalogErrorStatus, saveMaterialCatalog,
+  fetchMaterialCatalogs, materialCatalogError, materialCatalogErrorStatus, saveMaterialCatalog,
 } from '@/api/materialCatalog'
 import type {
-  MaterialAttributeValue, MaterialCatalog, MaterialCatalogDraft, MaterialCatalogOptions, MaterialCatalogSummary,
-  MaterialFieldDefinition, MaterialScope, PublicMaterialOptions, VersionedMaterialCatalog,
+  MaterialAttributeValue, MaterialCatalog, MaterialCatalogDraft, MaterialCatalogList, MaterialCatalogOptions, MaterialCatalogSummary,
+  MaterialFieldDefinition, MaterialScope, VersionedMaterialCatalog,
 } from '@/types/materialCatalog'
 
 type AttributeEditor = { flushDraft: () => Promise<boolean>; hasPendingEdit: () => boolean }
-const props = defineProps<{ fixedCategory?: string }>()
+const props = defineProps<{ fixedCategory?: string; initialCatalogId?: string; initialCatalogName?: string; fromBom?: boolean }>()
 const emit = defineEmits<{ saved: [] }>()
 const auth = useAuthStore()
 const canView = computed(() => auth.hasPermission('material_catalog.view_materialcatalog'))
@@ -49,17 +49,21 @@ const listError = ref('')
 const detailError = ref('')
 const saveError = ref('')
 const versionWarning = ref('')
-const publicOptions = ref<Partial<Record<MaterialScope, PublicMaterialOptions>>>({})
-const publicOptionsLoading = ref(false)
-const publicOptionsError = ref('')
-const usesPublicColorTable = computed(() => catalog.value?.category_key === 'FABRIC' &&
-  publicOptions.value.BASE?.fields.some(field => field.key === 'color' && field.source === 'product-colors'))
+const listedNames = computed(() => {
+  const active = catalog.value
+  return props.fromBom && active && !addingName.value && !names.value.some(item => item.id === active.id)
+    ? [active, ...names.value] : names.value
+})
 const colorOptions = computed(() => (catalog.value?.values || []).filter(value => value.scope === 'BASE' && value.field_key === 'color'))
-const publicColorOptions = computed(() => (publicOptions.value.BASE?.values || []).filter(value => value.field_key === 'color'))
 const editorGeneration = ref(0)
 const editors = shallowRef(new Map<string, AttributeEditor>())
 const primaryWarehouseField = computed(() => catalog.value?.category_key === 'FABRIC_SEMI' ? 'semi_warehouse_id' : 'base_warehouse_id')
 const warehouseOptions = computed(() => (definitions.value?.warehouses ?? []).map(row => ({ value: row.id, label: row.warehouse_name })))
+const unitOptions = computed(() => {
+  const registered = props.fromBom ? [] : definitions.value?.units ?? []
+  const units = [...registered, ...(catalog.value?.units.filter(row => row.selectable !== false) ?? [])]
+  return [...new Map(units.map(unit => [unit.unit_name, unit])).values()]
+})
 const categoryDefinition = computed(() => definitions.value?.categories.find(item => item.key === category.value))
 const categoryOptions = computed(() => definitions.value?.categories.map(item => ({ value: item.key, label: item.label })) ?? [])
 const templateOptions = computed(() => categoryDefinition.value?.templates.map(item => ({ value: item.key, label: item.label })) ?? [])
@@ -71,13 +75,12 @@ const shapes = computed(() => catalog.value?.values.filter(value => value.scope 
   template.value?.fields.some(field => field.key === value.field_key && field.kind === 'shape')) ?? [])
 const navigationLocked = computed(() => saving.value || collecting.value || deleting.value || confirming.value)
 const canEdit = computed(() => addingName.value ? canAdd.value : canChange.value)
-const editingDisabled = computed(() => navigationLocked.value || detailLoading.value || publicOptionsLoading.value || !!versionWarning.value || (!addingName.value && !etag.value))
+const editingDisabled = computed(() => navigationLocked.value || detailLoading.value || !!versionWarning.value || (!addingName.value && !etag.value))
 const hasPendingEditors = computed(() => [...editors.value.values()].some(editor => editor.hasPendingEdit()))
 const hasUnsavedChanges = computed(() => !!catalog.value && (addingName.value || hasPendingEditors.value || serializeDraft(catalog.value) !== baseline.value))
 let detailSequence = 0
 let listSequence = 0
 let optionsSequence = 0
-let publicOptionsSequence = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let appliedSearch = ''
 
@@ -85,7 +88,7 @@ function draftPayload(item: MaterialCatalog): MaterialCatalogDraft {
   return {
     name: item.name, spray_enabled: item.spray_enabled,
     base_warehouse_id: item.base_warehouse_id || null, semi_warehouse_id: item.semi_warehouse_id || null,
-    values: item.values.map(value => ({ ...value })),
+    values: item.values.map(({ selectable: _selectable, ...value }) => value),
     units: item.units.map(({ id, scope, unit_name }) => ({ id, scope, unit_name })),
   }
 }
@@ -120,7 +123,6 @@ async function canLeave(): Promise<boolean> {
 }
 function resetDetail() {
   ++detailSequence
-  ++publicOptionsSequence
   ++editorGeneration.value
   selectedId.value = ''
   catalog.value = undefined
@@ -131,9 +133,6 @@ function resetDetail() {
   detailError.value = ''
   saveError.value = ''
   detailLoading.value = false
-  publicOptions.value = {}
-  publicOptionsLoading.value = false
-  publicOptionsError.value = ''
 }
 function applyDetail(result: VersionedMaterialCatalog) {
   catalog.value = { ...result.data, values: result.data.values.map(item => ({ ...item })), units: result.data.units.map(item => ({ ...item })) }
@@ -153,42 +152,14 @@ async function readCatalog(id: string) {
   detailError.value = ''
   try {
     const result = await fetchMaterialCatalog(id)
-    if (sequence === detailSequence) { applyDetail(result); await loadPublicOptions() }
+    if (sequence !== detailSequence) return
+    if (result.data.id !== id || (props.fixedCategory && result.data.category_key !== props.fixedCategory)) {
+      throw new Error('品名与当前分区或所选档案不符，请重新选择。')
+    }
+    applyDetail(result)
   } catch (issue) {
     if (sequence === detailSequence) { detailError.value = materialCatalogError(issue); etag.value = '' }
   } finally { if (sequence === detailSequence) detailLoading.value = false }
-}
-async function loadPublicOptions() {
-  const item = catalog.value
-  if (!item) return
-  const sequence = ++publicOptionsSequence
-  publicOptions.value = {}
-  publicOptionsLoading.value = true
-  publicOptionsError.value = ''
-  const query = { category_key: item.category_key, template_key: item.template_key }
-  try {
-    const [base, spray] = await Promise.all([
-      fetchPublicMaterialOptions({ ...query, scope: 'BASE' }),
-      template.value?.supports_spray ? fetchPublicMaterialOptions({ ...query, scope: 'SPRAY' }) : Promise.resolve(undefined),
-    ])
-    if (sequence !== publicOptionsSequence) return
-    if (base.category_key !== query.category_key || base.template_key !== query.template_key || base.scope !== 'BASE' ||
-      (spray && (spray.category_key !== query.category_key || spray.template_key !== query.template_key || spray.scope !== 'SPRAY'))) {
-      throw new Error('公共属性与当前品名模板不一致，请重新读取。')
-    }
-    publicOptions.value = { BASE: base, SPRAY: spray }
-  } catch (issue) {
-    if (sequence === publicOptionsSequence) publicOptionsError.value = materialCatalogError(issue)
-  } finally { if (sequence === publicOptionsSequence) publicOptionsLoading.value = false }
-}
-function publicOptionItems(field: MaterialFieldDefinition, scope: MaterialScope, parentId?: string) {
-  const candidates = publicOptions.value[scope]
-  if (!candidates) return []
-  if (field.kind === 'unit') return candidates.units.map(unit => unit.unit_name)
-  const parent = catalog.value?.values.find(value => value.id === parentId)
-  const publicParent = candidates.values.find(value => value.field_key === 'shape' && value.value === parent?.value)
-  return [...new Set(candidates.values.filter(value => value.field_key === field.key &&
-    (field.kind !== 'dimension' || (publicParent && value.parent_id === publicParent.id))).map(value => value.value))]
 }
 async function selectCatalog(id: string, reload = false) {
   if (navigationLocked.value || listLoading.value || (!reload && id === selectedId.value)) return
@@ -197,7 +168,21 @@ async function selectCatalog(id: string, reload = false) {
   if (!reload) resetDetail()
   await readCatalog(id)
 }
-async function loadList(preserveSelection = false) {
+async function findInitialName(name: string, visiblePage: MaterialCatalogList, sequence: number) {
+  const exact = (row: MaterialCatalogSummary) => row.name === name && row.category_key === category.value
+  const visible = visiblePage.data.find(exact)
+  // 旧 BOM 可有 300 字的品名，原料档案和查询接口都只接受 200 字。
+  if (visible || visiblePage.meta.total_pages <= 1 || [...name].length > 200) return visible
+  let pages = 1
+  for (let next = 1; next <= pages; next++) {
+    const matches = await fetchMaterialCatalogs({ category: category.value, q: name, page: next, page_size: 50 })
+    if (sequence !== listSequence) return
+    const match = matches.data.find(exact)
+    if (match) return match
+    pages = matches.meta.total_pages
+  }
+}
+async function loadList(preserveSelection = false, initialName = '') {
   if (!category.value) return
   const sequence = ++listSequence
   listLoading.value = true
@@ -210,8 +195,11 @@ async function loadList(preserveSelection = false) {
     appliedSearch = query
     names.value = result.data
     totalPages.value = result.meta.total_pages
+    let target = !props.fromBom && !preserveSelection ? result.data[0] : undefined
+    if (initialName) target = await findInitialName(initialName, result, sequence)
+    if (sequence !== listSequence) return
     listLoading.value = false
-    if (!preserveSelection && result.data[0]) await readCatalog(result.data[0].id)
+    if (target) await readCatalog(target.id)
   } catch (issue) {
     if (sequence === listSequence) { names.value = []; listError.value = materialCatalogError(issue) }
   } finally { if (sequence === listSequence) listLoading.value = false }
@@ -222,11 +210,14 @@ async function initialize() {
   optionsLoading.value = true
   optionsError.value = ''
   try {
-    const result = await fetchMaterialCatalogOptions()
+    const result = await fetchMaterialCatalogOptions(!props.fromBom)
     if (sequence !== optionsSequence) return
     definitions.value = result
     category.value = props.fixedCategory || result.categories[0]?.key || ''
-    await loadList()
+    if (props.initialCatalogId) {
+      resetDetail()
+      await Promise.all([loadList(true), readCatalog(props.initialCatalogId)])
+    } else await loadList(false, props.initialCatalogName?.trim())
   } catch (issue) { if (sequence === optionsSequence) optionsError.value = materialCatalogError(issue) }
   finally { if (sequence === optionsSequence) optionsLoading.value = false }
 }
@@ -338,7 +329,6 @@ async function startName() {
     id: createClientUuid(), category_key: category.value, template_key: categoryDefinition.value.templates[0]?.key || '',
     name: '', spray_enabled: false, base_warehouse_id: null, semi_warehouse_id: null, values: [], units: [], updated_at: '',
   }
-  await loadPublicOptions()
 }
 async function changeTemplate(nextTemplate: string) {
   if (!catalog.value || !addingName.value || !canAdd.value || navigationLocked.value || catalog.value.template_key === nextTemplate) return
@@ -349,7 +339,6 @@ async function changeTemplate(nextTemplate: string) {
   catalog.value.units = []
   catalog.value.spray_enabled = false
   ++editorGeneration.value
-  await loadPublicOptions()
 }
 async function saveDraft() {
   if (!catalog.value || !canEdit.value || editingDisabled.value) return
@@ -383,7 +372,6 @@ async function saveDraft() {
     if (sequence !== detailSequence) return
     applyDetail(result)
     emit('saved')
-    await loadPublicOptions()
     if (creating) { search.value = ''; page.value = 1 }
     await loadList(true)
     if (!names.value.some(item => item.id === result.data.id)) names.value.unshift(result.data)
@@ -425,7 +413,7 @@ watch(() => props.fixedCategory, nextCategory => {
 })
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void initialize() })
 onBeforeUnmount(() => {
-  ++detailSequence; ++listSequence; ++optionsSequence; ++publicOptionsSequence
+  ++detailSequence; ++listSequence; ++optionsSequence
   clearTimeout(searchTimer)
   window.removeEventListener('beforeunload', beforeUnload)
 })
@@ -445,12 +433,12 @@ defineExpose({ canLeave })
         <button v-if="canAdd" type="button" class="erp-list-button erp-button-motion add-name" data-testid="create-name" :disabled="!category || optionsLoading || navigationLocked" @click="startName">新增品名</button>
         <div v-if="listError" class="error-message" role="alert">{{ listError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked" @click="reloadList">重试</button></div>
         <nav class="material-names erp-list-catalog-nav" data-testid="material-names" aria-label="原料品名列表" tabindex="0" :aria-busy="listLoading">
-          <div v-for="item in names" :key="item.id" class="material-name-row">
+          <div v-for="item in listedNames" :key="item.id" class="material-name-row">
             <button type="button" class="material-name-button" :title="item.name" :data-catalog-id="item.id" :class="{ selected: selectedId === item.id }"
               :aria-current="selectedId === item.id ? 'true' : undefined" :disabled="navigationLocked || listLoading" @click="selectCatalog(item.id)">{{ item.name }}</button>
             <button v-if="canChange" type="button" class="delete-name" :aria-label="`删除品名${item.name}`" :title="`删除${item.name}`" :disabled="navigationLocked || listLoading" @click="archiveName(item)"><Delete aria-hidden="true" /></button>
           </div>
-          <span v-if="!names.length && !listLoading && !optionsLoading && !listError" class="list-empty">暂无品名</span>
+          <span v-if="!listedNames.length && !listLoading && !optionsLoading && !listError" class="list-empty">暂无品名</span>
           <span v-if="listLoading" class="list-empty" role="status">加载中…</span>
         </nav>
         <div v-if="totalPages > 1" class="list-pagination erp-list-footer">
@@ -471,7 +459,6 @@ defineExpose({ canLeave })
           </div>
           <MaterialCatalogSelect v-if="addingName && templateOptions.length > 1" class="catalog-template" :model-value="catalog.template_key" ariaLabel="品名模板" :options="templateOptions" :disabled="!canEdit || editingDisabled" @change="changeTemplate" />
           <p v-if="saveError" class="error-message" role="alert">{{ saveError }}</p>
-          <p v-if="publicOptionsError" class="error-message" role="alert">公共选项读取失败：{{ publicOptionsError }} <button type="button" class="erp-list-button" :disabled="navigationLocked || publicOptionsLoading" @click="loadPublicOptions">重试公共选项</button></p>
         </template>
         <template v-if="catalog && template">
           <section :key="`${catalog.id}:${editorGeneration}`" class="base-attributes" aria-label="品名属性">
@@ -483,23 +470,23 @@ defineExpose({ canLeave })
                   <div class="shape-dimensions">
                     <template v-for="dimension in dimensionFields" :key="dimension.key">
                       <MaterialAttributeOptions v-for="shape in shapes" :key="shape.id" :ref="instance => setEditor(`BASE:${dimension.key}:${shape.id}`, instance)" :data-shape-id="shape.id" :label="shape.value" :field-key="dimension.key" :kind="dimension.kind" scope="BASE" :parent-id="shape.id"
-                        :options="optionItems(dimension, 'BASE', shape.id)" :public-options="publicOptionItems(dimension, 'BASE', shape.id)" :parent-options="publicOptionItems(field, 'BASE')" :available-units="[]" :readonly="!canEdit" :disabled="editingDisabled"
+                        :options="optionItems(dimension, 'BASE', shape.id)" :parent-options="shapes.map(item => item.value)" :readonly="!canEdit" :disabled="editingDisabled"
                         :on-save="value => saveOption(dimension, 'BASE', value, shape.id)" :on-update="(id, value) => updateOption(dimension, id, value)" :on-remove="id => removeOption(dimension, id)">
                         <template #label="{ remove, edit, busy, pending }"><span class="shape-label"><button v-if="canEdit" type="button" class="edit-shape" data-action="edit" :aria-label="`修改${shape.value}`" :disabled="editingDisabled || busy" @click="edit({ id: shape.id, label: shape.value }, field.label)">{{ shape.value }}</button><span v-else>{{ shape.value }}</span><button v-if="canEdit" type="button" class="erp-list-button erp-button-motion delete-shape" data-action="delete" :aria-label="`删除${shape.value}`" :title="`删除${shape.value}`" :disabled="editingDisabled || busy || pending" @click.stop="remove(shape.id)"><Delete aria-hidden="true" /></button></span></template>
                       </MaterialAttributeOptions>
                       <p v-if="!shapes.length" class="dimension-hint">先添加{{ field.label }}，再维护对应{{ dimension.label }}。</p>
                     </template>
                     <MaterialAttributeOptions v-show="canEdit" :ref="instance => setEditor(`BASE:${field.key}`, instance)" class="shape-heading" :label="field.label" :field-key="field.key" :kind="field.kind" scope="BASE"
-                      :options="[]" :public-options="publicOptionItems(field, 'BASE')" :available-units="[]" :readonly="!canEdit" :disabled="editingDisabled"
+                      :options="[]" :readonly="!canEdit" :disabled="editingDisabled"
                       :on-save="value => saveOption(field, 'BASE', value)" :on-update="(id, value) => updateOption(field, id, value)" :on-remove="id => removeOption(field, id)" />
                   </div>
                 </div>
               </div>
-              <MaterialColorOptions v-else-if="field.key === 'color' && usesPublicColorTable" :ref="instance => setEditor(`BASE:${field.key}`, instance)" :label="field.label"
-                :options="colorOptions" :public-options="publicColorOptions" :readonly="!canEdit" :disabled="editingDisabled"
+              <MaterialColorOptions v-else-if="field.key === 'color' && catalog.category_key === 'FABRIC'" :ref="instance => setEditor(`BASE:${field.key}`, instance)" :label="field.label"
+                :options="colorOptions" :readonly="!canEdit" :disabled="editingDisabled"
                 :on-save="saveColorOption" :on-update="updateColorOption" :on-remove="id => removeOption(field, id)" />
               <MaterialAttributeOptions v-else :ref="instance => setEditor(`BASE:${field.key}`, instance)" :label="field.label" :field-key="field.key" :kind="field.kind" scope="BASE"
-                :options="optionItems(field, 'BASE')" :public-options="publicOptionItems(field, 'BASE')" :available-units="[]" :readonly="!canEdit" :disabled="editingDisabled"
+                :options="optionItems(field, 'BASE')" :available-units="unitOptions" :readonly="!canEdit" :disabled="editingDisabled"
                 :on-save="value => saveOption(field, 'BASE', value)" :on-update="(id, value) => updateOption(field, id, value)" :on-remove="id => removeOption(field, id)" />
             </template>
           </section>
@@ -508,7 +495,7 @@ defineExpose({ canLeave })
             <div class="warehouse-row erp-flat-form"><label>半成品仓库</label><MaterialCatalogSelect :model-value="catalog.semi_warehouse_id || ''" @update:model-value="catalog.semi_warehouse_id = $event || null" ariaLabel="半成品仓库" :options="warehouseOptions" filterable clearable placeholder="选择现有仓库" :disabled="!canEdit || editingDisabled" /></div>
             <div v-show="catalog.spray_enabled">
               <MaterialAttributeOptions v-for="field in definitions?.spray_fields" :key="field.key" :ref="instance => setEditor(`SPRAY:${field.key}`, instance)" :label="field.label" :field-key="field.key" :kind="field.kind" scope="SPRAY"
-                :options="optionItems(field, 'SPRAY')" :public-options="publicOptionItems(field, 'SPRAY')" :available-units="[]" :readonly="!canEdit" :disabled="editingDisabled"
+                :options="optionItems(field, 'SPRAY')" :available-units="unitOptions" :readonly="!canEdit" :disabled="editingDisabled"
                 :on-save="value => saveOption(field, 'SPRAY', value)" :on-update="(id, value) => updateOption(field, id, value)" :on-remove="id => removeOption(field, id)" />
             </div>
           </section>

@@ -30,10 +30,14 @@ def encode_response(value):
 
 async def read_frame(reader, timeout=5):
     try:
-        async with asyncio.timeout(timeout):
+        started = asyncio.get_running_loop().time()
+        async with asyncio.timeout(timeout) as deadline:
             header = await reader.readexactly(4)
             size = struct.unpack('!I', header)[0]
             require(0 < size <= MAX_FRAME, 'INVALID_REQUEST')
+            # 头部仍限 5 秒；完整读取前无法识别方法，仅大帧正文允许文件传输预算。
+            if size > 256 * 1024:
+                deadline.reschedule(started + max(timeout, 30))
             return await reader.readexactly(size)
     except (TimeoutError, asyncio.IncompleteReadError, OSError):
         raise RuntimeErrorCode('INVALID_REQUEST') from None
@@ -44,12 +48,15 @@ async def create_server(runtime, path):
 
     async def handle(reader, writer):
         acquired = False
+        response_timeout = 5
         try:
             try:
                 require(not capacity.locked(), 'BUSY')
                 await capacity.acquire()
                 acquired = True
                 method, params = decode_request(await read_frame(reader))
+                if method == 'artifact' or (method == 'start' and params.get('action') == 'nest'):
+                    response_timeout = 30
                 data = await runtime.dispatch(method, params)
                 response = {'ok': True, 'data': data}
             except RuntimeErrorCode as error:
@@ -58,7 +65,7 @@ async def create_server(runtime, path):
                 report_error('bridge_request', error)
                 response = {'ok': False, 'error': {'code': 'UPSTREAM_UNAVAILABLE'}}
             writer.write(encode_response(response))
-            await asyncio.wait_for(writer.drain(), 5)
+            await asyncio.wait_for(writer.drain(), response_timeout)
         except (RuntimeErrorCode, OSError, TimeoutError):
             # 对端关闭后不再次发送错误；连接结束不等于取消已受理操作。
             return

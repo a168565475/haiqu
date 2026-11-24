@@ -35,6 +35,11 @@ class SupplierPaymentCycle(models.TextChoices):
     MONTHLY = "MONTHLY", "月结"
 
 
+class SupplierPaymentTermMonths(models.IntegerChoices):
+    ONE = 1, "1 个月"
+    THREE = 3, "3 个月"
+
+
 class PurchaseOrderStatus(models.TextChoices):
     DRAFT = "DRAFT", "草稿"
     # 保留已投入使用的数据库值，业务界面统一称为“已确认”。
@@ -164,6 +169,24 @@ class Supplier(ArchivableModel):
         return f"{self.supplier_number} - {self.supplier_name}"
 
 
+class SupplierPaymentTerm(TimeStampedModel):
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="payment_term_versions")
+    months = models.PositiveSmallIntegerField(choices=SupplierPaymentTermMonths.choices)
+    effective_month = models.DateField()
+    basis = models.CharField(max_length=255)
+    recorded_by_employee = models.ForeignKey("organizations.Employee", on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        db_table = "procurement_supplier_payment_term"
+        ordering = ["-effective_month"]
+        default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(fields=["supplier", "effective_month"], name="supplier_payment_term_month_unique"),
+            models.CheckConstraint(condition=Q(effective_month__day=1), name="supplier_payment_term_month_start"),
+            models.CheckConstraint(condition=Q(months__in=SupplierPaymentTermMonths.values), name="supplier_payment_term_months_valid"),
+        ]
+
+
 class PurchaseOrderSourceType(models.TextChoices):
     PRODUCTION = "PRODUCTION", "生产订单"
     SAMPLE = "SAMPLE", "打样单"
@@ -174,9 +197,15 @@ class PurchaseBatchType(models.TextChoices):
     SUPPLEMENT = "SUPPLEMENT", "补料采购"
 
 
+class PurchaseScope(models.TextChoices):
+    STANDARD = "STANDARD", "普通采购"
+    PACKAGING = "PACKAGING", "包材采购"
+
+
 class PurchaseGroup(ArchivableModel):
     """生产采购来源容器；保留真实入库进度与独立的手动完成记录。"""
     group_number = models.CharField(max_length=50, unique=True)
+    purchase_scope = models.CharField(max_length=12, choices=PurchaseScope.choices, default=PurchaseScope.STANDARD, db_default=PurchaseScope.STANDARD)
     production_task = models.ForeignKey(
         "production_tasks.ProductionTask", on_delete=models.PROTECT, related_name="purchase_groups",
     )
@@ -201,6 +230,21 @@ class PurchaseGroup(ArchivableModel):
     class Meta:
         db_table = "procurement_purchase_group"
         ordering = ["-created_at", "-id"]
+        permissions = [("manage_packagingpurchase", "办理包材采购")]
+
+
+class PurchaseGroupBomSource(TimeStampedModel):
+    purchase_group = models.ForeignKey(PurchaseGroup, on_delete=models.CASCADE, related_name="bom_sources")
+    previous_group = models.ForeignKey(PurchaseGroup, null=True, blank=True, on_delete=models.PROTECT, related_name="combined_into_sources")
+    bom_id_snapshot = models.UUIDField(db_index=True)
+    product_line_id_snapshot = models.UUIDField(db_index=True)
+    source_revision = models.CharField(max_length=64)
+
+    class Meta:
+        db_table = "procurement_purchase_group_bom_source"
+        constraints = [
+            models.UniqueConstraint(fields=["purchase_group", "product_line_id_snapshot"], name="purchase_group_product_source_uniq"),
+        ]
 
 
 class PurchaseGroupLine(TimeStampedModel):
@@ -229,6 +273,7 @@ class PurchaseOrder(ArchivableModel):
         PurchaseGroup, null=True, blank=True, on_delete=models.PROTECT, related_name="batches",
     )
     batch_number = models.PositiveIntegerField(null=True, blank=True)
+    batch_session_id = models.UUIDField(null=True, blank=True)
     batch_type = models.CharField(max_length=20, choices=PurchaseBatchType.choices, default=PurchaseBatchType.NORMAL)
     batch_request_id = models.UUIDField(null=True, blank=True)
     batch_request_fingerprint = models.CharField(max_length=64, blank=True)
@@ -268,7 +313,6 @@ class PurchaseOrder(ArchivableModel):
     currency_code_snapshot = models.CharField(max_length=3, blank=True)
     currency_name_snapshot = models.CharField(max_length=150, blank=True)
     currency_symbol_snapshot = models.CharField(max_length=20, blank=True)
-    is_mailed = models.BooleanField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=PurchaseOrderStatus.choices,
@@ -296,7 +340,10 @@ class PurchaseOrder(ArchivableModel):
             ("submit_purchaseorder", "Can submit purchase order"),
         ]
         constraints = [
-            models.UniqueConstraint(fields=["purchase_group", "batch_number"], name="purchase_group_batch_number_uniq"),
+            models.UniqueConstraint(
+                fields=["purchase_group", "batch_number"], condition=Q(batch_session_id__isnull=True),
+                name="purchase_group_batch_number_uniq",
+            ),
             models.UniqueConstraint(fields=["purchase_group", "batch_request_id"], name="purchase_group_request_uniq"),
             models.CheckConstraint(condition=Q(batch_type__in=PurchaseBatchType.values), name="purchase_batch_type_valid"),
             models.CheckConstraint(
@@ -319,6 +366,7 @@ class PurchaseOrder(ArchivableModel):
             ),
         ]
         indexes = [
+            models.Index(fields=["purchase_group", "batch_session_id"], name="po_group_batch_session_idx"),
             models.Index(fields=["status", "-created_at"], name="purchase_order_status_idx"),
             models.Index(fields=["currency", "-created_at"], name="purchase_order_currency_idx"),
         ]
@@ -367,11 +415,15 @@ class PurchaseOrderLine(models.Model):
     purchase_group_line = models.ForeignKey(
         PurchaseGroupLine, null=True, blank=True, on_delete=models.PROTECT, related_name="batch_lines",
     )
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
+    # 新管材采购口径：每根长料理论重量；旧米制记录保持为空并继续兼容。
+    raw_bar_weight_kg = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     suggested_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
-    suggested_purchase_meters = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    suggested_purchase_meters = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    suggested_purchase_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     actual_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
-    actual_purchase_meters = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    actual_purchase_meters = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
+    actual_purchase_weight_kg = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     quantity_difference_reason = models.TextField(blank=True)
     calculation_snapshot = models.JSONField(default=dict, blank=True)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -471,23 +523,36 @@ class PurchaseOrderLine(models.Model):
         ordering = ["purchase_order", "line_number"]
         constraints = [
             models.CheckConstraint(
-                condition=(Q(raw_bar_length_m__isnull=True, suggested_bar_count__isnull=True,
-                             suggested_purchase_meters__isnull=True, actual_bar_count__isnull=True,
-                             actual_purchase_meters__isnull=True)
+                condition=(Q(raw_bar_length_m__isnull=True, raw_bar_weight_kg__isnull=True,
+                             suggested_bar_count__isnull=True, suggested_purchase_meters__isnull=True,
+                             suggested_purchase_weight_kg__isnull=True, actual_bar_count__isnull=True,
+                             actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True)
                            | (Q(raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0,
-                                suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
-                                suggested_purchase_meters__isnull=False, source_unit_text='米',
-                                suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
-                              & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_quantity__isnull=True)
-                                 | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
-                                     actual_purchase_meters__isnull=False, actual_purchase_quantity__isnull=False,
-                                     actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
-                                     actual_purchase_quantity=F('actual_purchase_meters'))))
+                                 suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
+                                 suggested_purchase_meters__isnull=False, source_unit_text='米',
+                                 suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True, actual_purchase_quantity__isnull=True)
+                                  | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
+                                      actual_purchase_meters__isnull=False, actual_purchase_quantity__isnull=False,
+                                      actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
+                                      actual_purchase_quantity=F('actual_purchase_meters'))))
+                           | (Q(raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0,
+                                 raw_bar_weight_kg__isnull=False, raw_bar_weight_kg__gt=0,
+                                 suggested_bar_count__isnull=False, suggested_bar_count__gt=0,
+                                 suggested_purchase_weight_kg__isnull=False, source_unit_text='KG',
+                                 suggested_purchase_weight_kg=F('suggested_bar_count') * F('raw_bar_weight_kg'))
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True, actual_purchase_weight_kg__isnull=True, actual_purchase_quantity__isnull=True)
+                                  | Q(actual_bar_count__isnull=False, actual_bar_count__gt=0,
+                                      actual_purchase_meters__isnull=False, actual_purchase_weight_kg__isnull=False,
+                                      actual_purchase_quantity__isnull=False,
+                                      actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'),
+                                      actual_purchase_quantity=F('actual_purchase_weight_kg'))))
                            | (Q(material_catalog__isnull=False, section_type_snapshot="PROFILE",
-                                raw_bar_length_m__gt=0, suggested_bar_count__gt=0,
-                                suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
-                              & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True)
-                                 | Q(actual_bar_count__gt=0, actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'))))),
+                                 raw_bar_length_m__gt=0, suggested_bar_count__gt=0,
+                                 suggested_purchase_meters=F('suggested_bar_count') * F('raw_bar_length_m'))
+                                & ~Q(source_unit_text='KG')
+                               & (Q(actual_bar_count__isnull=True, actual_purchase_meters__isnull=True)
+                                  | Q(actual_bar_count__gt=0, actual_purchase_meters=F('actual_bar_count') * F('raw_bar_length_m'))))),
                 name='purchase_pipe_root_meter_consistent',
             ),
             models.UniqueConstraint(
@@ -511,6 +576,18 @@ class PurchaseOrderLine(models.Model):
                 name="purchase_actual_qty_positive",
             ),
             models.CheckConstraint(
+                condition=Q(raw_bar_weight_kg__isnull=True) | Q(raw_bar_weight_kg__gt=0),
+                name="purchase_pipe_root_weight_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(suggested_purchase_weight_kg__isnull=True) | Q(suggested_purchase_weight_kg__gt=0),
+                name="purchase_pipe_suggested_weight_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(actual_purchase_weight_kg__isnull=True) | Q(actual_purchase_weight_kg__gt=0),
+                name="purchase_pipe_actual_weight_positive",
+            ),
+            models.CheckConstraint(
                 condition=Q(unit_price__isnull=True) | Q(unit_price__gte=0),
                 name="purchase_unit_price_nonnegative",
             ),
@@ -521,6 +598,8 @@ class PurchaseOrderLine(models.Model):
             models.CheckConstraint(
                 condition=(
                     Q(material_catalog__isnull=False, section_type_snapshot="PROFILE", actual_purchase_meters__isnull=True, amount__isnull=True)
+                    | Q(calculation_snapshot__has_key="set_pricing", purchase_group_line__isnull=False,
+                        actual_purchase_quantity__gt=0, unit_price__isnull=True, amount__isnull=False)
                     | Q(actual_purchase_quantity__isnull=True, amount__isnull=True)
                     | Q(unit_price__isnull=True, amount__isnull=True)
                     | Q(
@@ -956,3 +1035,6 @@ class SupplierPurchaseSheetSealImage(TimeStampedModel):
 
     def __str__(self):
         return f"{self.sheet} - 甲方盖章"
+
+
+from .tracking_models import PurchaseTrackingContent, PurchaseTrackingDigest, PurchaseTrackingIssue, PurchaseTrackingNotice, PurchaseTrackingPolicy  # noqa: E402,F401

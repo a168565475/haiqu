@@ -2,9 +2,17 @@ import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
+import { createDevelopmentProxy } from './devProxy'
+
+const proxyTransport = createDevelopmentProxy(process.env.VITE_PROXY_TARGET)
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), {
+    name: 'development-proxy-connections',
+    configureServer(server) {
+      server.httpServer?.once('close', () => proxyTransport.agent.destroy())
+    },
+  }],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -24,10 +32,12 @@ export default defineConfig({
     allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/api': {
-        target: process.env.VITE_PROXY_TARGET || 'http://backend:8000',
+        target: proxyTransport.target,
+        agent: proxyTransport.agent,
       },
       '/media': {
-        target: process.env.VITE_PROXY_TARGET || 'http://backend:8000',
+        target: proxyTransport.target,
+        agent: proxyTransport.agent,
       },
     },
   },

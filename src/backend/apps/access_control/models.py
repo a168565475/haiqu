@@ -12,6 +12,7 @@ class AccessScope(models.TextChoices):
     MODULE = "MODULE", "按模块"
     WORKSHOP = "WORKSHOP", "指定车间"
     CRAFT = "CRAFT", "指定外协工艺"
+    MATERIAL = "MATERIAL", "指定材料分区"
     STOCK = "STOCK", "库存来源"
     FOLLOWED = "FOLLOWED", "本人跟单任务"
 
@@ -47,6 +48,15 @@ class RoleGrantResource(TimeStampedModel):
             models.UniqueConstraint(fields=['grant', 'workshop'], name='grant_workshop_unique'),
             models.UniqueConstraint(fields=['grant', 'craft'], name='grant_craft_unique'),
         ]
+
+
+class MaterialSectionGrant(models.Model):
+    grant = models.OneToOneField(RoleActionGrant, primary_key=True, on_delete=models.DO_NOTHING)
+    sections = models.JSONField(default=list)
+
+    class Meta:
+        db_table = "role_grant_material_section"
+        default_permissions = ()
 
 
 class RoleSuperuserState(TimeStampedModel):

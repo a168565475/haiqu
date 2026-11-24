@@ -40,6 +40,36 @@ def purchase_line(**values):
 
 
 class PlanPurchaseReferenceTests(SimpleTestCase):
+    def test_weight_purchased_tube_uses_confirmed_net_roots_for_piece_reference(self):
+        for unit in ('KG', 'kg', '千克'):
+            with self.subTest(unit=unit):
+                purchases = [purchase_line(source_unit_text=unit, inbounds=[
+                    inbound_line(source_unit_text_snapshot=unit, accepted_bar_count=130,
+                        accepted_quantity=Decimal('578.5'), return_quantity=Decimal('50')),
+                    inbound_line(source_unit_text_snapshot=unit, accepted_bar_count=20),
+                    inbound_line(source_unit_text_snapshot=unit, accepted_bar_count=900,
+                        inbound=SimpleNamespace(status='DRAFT', purchase_order_id='purchase')),
+                ])]
+                result = purchase_reference(bom_line(pieces_per_bar=6), purchases, cutting=False)
+                self.assertEqual((result['purchased_quantity'], result['purchase_unit'], result['quantity'], result['unit']),
+                    ('150', '根', '900', '支'))
+                self.assertIn('150根', result['conversion_note'])
+
+    def test_weight_purchase_does_not_guess_roots_or_convert_fabric_weight(self):
+        tube = bom_line()
+        cutting = bom_line(fabric_source_line=tube)
+        for line, inbound, is_cutting in (
+            (tube, inbound_line(source_unit_text_snapshot='KG', accepted_bar_count=None), False),
+            (tube, inbound_line(source_unit_text_snapshot='KG', accepted_bar_count=-1), False),
+            (cutting, inbound_line(source_unit_text_snapshot='KG'), True),
+            (tube, inbound_line(source_unit_text_snapshot='KG', raw_material_information_id='different'), False),
+            (tube, inbound_line(source_unit_text_snapshot='米'), False),
+        ):
+            with self.subTest(cutting=is_cutting, inbound=inbound):
+                result = purchase_reference(line, [purchase_line(source_unit_text='KG', inbounds=[inbound])], cutting=is_cutting)
+                self.assertIsNone(result['quantity'])
+                self.assertTrue(result['conversion_note'])
+
     def test_tube_combines_purchase_batches_by_component_and_old_bom_reference(self):
         line = bom_line()
         purchases = [purchase_line(), purchase_line(calculation_snapshot={'raw_material_id': 'raw'},

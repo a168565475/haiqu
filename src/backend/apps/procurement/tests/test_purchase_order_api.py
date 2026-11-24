@@ -6,6 +6,7 @@ import tempfile
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
@@ -21,6 +22,8 @@ from apps.boms.material_flow_calculations import pipe_plan
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomLineImage, BomSection, BomSectionType, BomStatus
 from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.files.models import BusinessFile, FileScanStatus
+from apps.material_catalog.models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog
+from apps.material_catalog.snapshots import build_material_snapshot
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.production_tasks.models import (
@@ -569,7 +572,7 @@ class PurchaseOrderApiTests(APITestCase):
             unit_price="2.4000",
             amount="999999.0000",
         )
-        payload.update({"currency_id": str(self.cny.pk), "is_mailed": True, "total_amount": "1"})
+        payload.update({"currency_id": str(self.cny.pk), "total_amount": "1"})
 
         created = self.client.post("/api/v1/purchase-orders/", payload, format="json")
 
@@ -598,6 +601,7 @@ class PurchaseOrderApiTests(APITestCase):
         stats = self.client.get("/api/v1/purchase-orders/stats/")
         self.assertEqual(listed.status_code, 200, listed.data)
         self.assertEqual(listed.data["meta"]["total"], 1)
+        self.assertNotIn("is_mailed", listed.data["data"][0])
         self.assertEqual(listed.data["data"][0]["supplier_assigned_line_count"], 1)
         self.assertEqual(listed.data["data"][0]["supplier_count"], 1)
         self.assertEqual(listed.data["data"][0]["order_date"], task.order_date.isoformat())
@@ -830,6 +834,139 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertIn("PMC", str(created.data))
         self.assertFalse(PurchaseOrder.objects.filter(production_task=task).exists())
 
+    def make_catalog_hardware_bom(self, task, name, *, status=BomStatus.VERIFIED, unit_name="个"):
+        catalog = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name=name)
+        unit, _ = ProductionUnit.objects.get_or_create(unit_name=unit_name, defaults={"unit_code": f"QA-{unit_name}"})
+        MaterialAllowedUnit.objects.create(catalog=catalog, scope="BASE", unit=unit)
+        MaterialAttributeValue.objects.create(catalog=catalog, scope="BASE", field_key="specification", value="M8")
+        selected = build_material_snapshot(catalog=catalog, scope="BASE", processing_state="RAW",
+            attributes={"specification": "M8"}, unit_id=unit.pk, required_fields=["specification"])
+        bom, line = self.make_bom(self.make_product_line(task), status=status, section_type=BomSectionType.ACCESSORY,
+            part_name=name, material_catalog=catalog, material_selection_snapshot=selected, unit=unit_name, budget_quantity="12")
+        line.section.title = "五金件"
+        line.section.save(update_fields=["title"])
+        line.line_number = 7
+        line.raw_values = {}
+        line.save(update_fields=["line_number", "raw_values"])
+        return bom, line
+
+    def test_ordinary_hardware_empty_manual_weight_purchases_and_prices_by_bom_unit(self):
+        task = self.make_task("ORDINARY-HARDWARE")
+        bom, line = self.make_catalog_hardware_bom(task, "S形铁件-上")
+        line.raw_values = {"hardware_weight_mode": "MANUAL", "unit_material_weight_kg": ""}
+        line.save(update_fields=["raw_values"])
+
+        source = self.get_source(task, bom).data["data"]
+        self.assertTrue(source["can_create"], source["blockers"])
+        source_line, = source["lines"]
+        self.assertEqual((Decimal(source_line["required_quantity"]), source_line["source_unit_text"]), (12, "个"))
+        self.assert_group_prices_hardware(task, bom, line, source, Decimal("12"), "个", Decimal("30"))
+
+    def assert_group_prices_hardware(self, task, bom, line, source, quantity, unit, amount, *, weight_purchase=False):
+        group = self.client.post("/api/v1/purchase-groups/", {
+            "production_task_id": str(task.pk), "bom_id": str(bom.pk), "source_revision": source["source_revision"],
+        }, format="json")
+        self.assertEqual(group.status_code, 201, group.data)
+        data = group.data["data"]
+        group_line, = data["progress"]["lines"]
+        self.assertEqual(str(group_line["source_bom_line_id_snapshot"]), str(line.pk))
+        self.assertEqual((Decimal(group_line["required_quantity"]), group_line["source_unit_text"]), (quantity, unit))
+        calculation = group_line["source_snapshot"]["calculation_snapshot"]
+        self.assertEqual(calculation.get("measurement_kind") == "HARDWARE_WEIGHT", weight_purchase)
+        batch = self.client.post(f"/api/v1/purchase-groups/{data['id']}/batches/", {
+            "request_id": str(uuid4()), "batch_type": "NORMAL", "currency_id": str(self.cny.pk),
+            "lines": [{"purchase_group_line_id": group_line["id"], "actual_purchase_quantity": str(quantity),
+                       "supplier_id": str(self.supplier.pk), "delivery_date": timezone.localdate().isoformat(),
+                       "unit_price": "2.50"}],
+        }, format="json", HTTP_IF_MATCH=group["ETag"])
+        self.assertEqual(batch.status_code, 201, batch.data)
+        order = PurchaseOrder.objects.get(pk=batch.data["data"]["id"])
+        self.assertEqual(order.total_amount, amount)
+        saved = order.lines.get()
+        self.assertEqual(saved.calculation_snapshot, calculation)
+        self.assertEqual((saved.actual_purchase_quantity, saved.source_unit_text, saved.unit_price, saved.amount),
+                         (quantity, unit, Decimal("2.50"), amount))
+
+    def test_rivet_sleeve_without_unit_weight_keeps_the_piece_unit(self):
+        task = self.make_task("RIVET-SLEEVE")
+        bom, line = self.make_catalog_hardware_bom(task, "铆钉套")
+        line.raw_values = {"hardware_weight_mode": "MANUAL"}
+        line.save(update_fields=["raw_values"])
+
+        source = self.get_source(task, bom).data["data"]
+        self.assertTrue(source["can_create"], source["blockers"])
+        source_line, = source["lines"]
+        self.assertEqual((Decimal(source_line["required_quantity"]), source_line["source_unit_text"]), (12, "个"))
+
+    def test_ordinary_hardware_with_unit_weight_keeps_the_selected_purchase_unit_and_price(self):
+        for index, (unit, mode) in enumerate((("个", "MANUAL"), ("套", ""), ("KG", "MANUAL"), ("件", "AUTO"))):
+            with self.subTest(unit=unit, mode=mode):
+                task = self.make_task(f"WEIGHED-ORDINARY-{index}")
+                bom, line = self.make_catalog_hardware_bom(task, f"S形铁件-{index}", unit_name=unit)
+                line.raw_values = {"unit_material_weight_kg": "0.025"}
+                if mode:
+                    line.raw_values["hardware_weight_mode"] = mode
+                line.save(update_fields=["raw_values"])
+
+                source = self.get_source(task, bom).data["data"]
+                self.assertTrue(source["can_create"], source["blockers"])
+                source_line, = source["lines"]
+                self.assertEqual((Decimal(source_line["required_quantity"]), source_line["source_unit_text"]), (12, unit))
+                self.assert_group_prices_hardware(task, bom, line, source, Decimal("12"), unit, Decimal("30"))
+
+    def test_catalog_hardware_purchase_reports_missing_weight_or_pieces_on_the_bom_line(self):
+        task = self.make_task("CATALOG-WEIGHT")
+        bom, line = self.make_catalog_hardware_bom(task, "铆钉", status=BomStatus.PENDING_CONFIRMATION)
+        catalog = line.material_catalog
+        for quantity, unit_weight, missing in (("12", "", "单重|重量"), ("", "0.025", "用量|件数")):
+            with self.subTest(missing=missing):
+                line.budget_quantity = quantity
+                line.raw_values = {"hardware_weight_mode": "MANUAL", "unit_material_weight_kg": unit_weight}
+                line.save(update_fields=["line_number", "budget_quantity", "raw_values"])
+                source = self.get_source(task, bom)
+                self.assertEqual(source.status_code, 200, source.data)
+                data = source.data["data"]
+                self.assertFalse(data["can_create"])
+                blockers = {item["code"]: item["message"] for item in data["blockers"]}
+                self.assertIn("BOM_NOT_VERIFIED", blockers)
+                self.assertNotIn("BOM_MATERIAL_IDENTITY_INVALID", blockers)
+                message = " ".join(blockers.values())
+                self.assertIn("五金件", message)
+                self.assertRegex(message, r"第\s*7\s*行")
+                self.assertIn(catalog.name, message)
+                self.assertRegex(message, missing)
+
+        line.budget_quantity = "12"
+        line.save(update_fields=["budget_quantity"])
+        pending = self.get_source(task, bom).data["data"]
+        self.assertEqual([item["code"] for item in pending["blockers"]], ["BOM_NOT_VERIFIED"])
+        bom.status = BomStatus.VERIFIED
+        bom.save(update_fields=["status"])
+        ready = self.get_source(task, bom).data["data"]
+        self.assertTrue(ready["can_create"], ready["blockers"])
+        source_line, = ready["lines"]
+        self.assertEqual(str(source_line["material_catalog_id"]), str(catalog.pk))
+        self.assertEqual(source_line["source_unit_text"], "KG")
+        self.assertEqual(Decimal(source_line["required_quantity"]), Decimal("0.3"))
+        self.assert_group_prices_hardware(task, bom, line, ready, Decimal("0.3"), "KG", Decimal("0.75"), weight_purchase=True)
+
+    def test_rivets_and_washers_without_weight_mode_keep_kilogram_purchasing(self):
+        for index, name in enumerate(("铆钉", "垫片"), start=1):
+            with self.subTest(name=name):
+                task = self.make_task(f"MANDATORY-KG-{index}")
+                bom, line = self.make_catalog_hardware_bom(task, name)
+                missing = self.get_source(task, bom).data["data"]
+                self.assertFalse(missing["can_create"])
+                self.assertIn("单个材料重量", " ".join(item["message"] for item in missing["blockers"]))
+                line.raw_values = {"unit_material_weight_kg": "0.025"}
+                line.save(update_fields=["raw_values"])
+                ready = self.get_source(task, bom).data["data"]
+                self.assertTrue(ready["can_create"], ready["blockers"])
+                source_line, = ready["lines"]
+                self.assertEqual((Decimal(source_line["required_quantity"]), source_line["source_unit_text"]),
+                                 (Decimal("0.3"), "KG"))
+                self.assert_group_prices_hardware(task, bom, line, ready, Decimal("0.3"), "KG", Decimal("0.75"), weight_purchase=True)
+
     def test_unresolved_material_identity_blocks_purchase_order_creation(self):
         task = self.make_task("NO-MATERIAL-ID")
         product_line = self.make_product_line(task)
@@ -851,6 +988,19 @@ class PurchaseOrderApiTests(APITestCase):
             blocker["invalid_lines"][0]["reason"],
             "MATERIAL_IDENTITY_UNRESOLVED",
         )
+
+    def test_legacy_material_bound_with_a_different_unit_keeps_identity_blocker(self):
+        task = self.make_task("WRONG-STOCK-UNIT")
+        product = self.make_product_line(task)
+        bom, line = self.make_bom(product, section_type=BomSectionType.ACCESSORY, budget_quantity="12", unit="千克")
+
+        source = self.get_source(task, bom).data["data"]
+
+        self.assertFalse(source["can_create"])
+        blocker, = source["blockers"]
+        self.assertEqual(blocker["code"], "BOM_MATERIAL_IDENTITY_INVALID")
+        invalid, = blocker["invalid_lines"]
+        self.assertEqual((invalid["bom_line_id"], invalid["reason"]), (str(line.pk), "UNIT_MISMATCH"))
 
     def test_invalid_quantity_is_visible_but_does_not_block_manual_purchase(self):
         task = self.make_task("INVALID-QTY")
@@ -1008,11 +1158,14 @@ class PurchaseOrderApiTests(APITestCase):
                 self.assertEqual(row["quantity_parse_status"], status)
 
     def test_auxiliary_quantity_change_preserves_other_fabric_section_purchase_rules(self):
+        from ..models import PurchaseScope
+        from ..services import evaluate_purchase_source
+
         for index, title in enumerate(["面料类", "包材", "裁剪明细"]):
             with self.subTest(section_title=title):
                 task = self.make_task(f"AUX-OTHER-{index}")
                 product_line = self.make_product_line(task)
-                _, bom_line = self.make_bom(
+                bom, bom_line = self.make_bom(
                     product_line,
                     section_type=BomSectionType.FABRIC,
                     total_purchase_quantity="",
@@ -1026,16 +1179,20 @@ class PurchaseOrderApiTests(APITestCase):
                 source = self.get_source(task)
 
                 self.assertEqual(source.status_code, 200, source.data)
-                if title == "裁剪明细":
+                data = source.data["data"]
+                if title in {"包材", "裁剪明细"}:
                     self.assertEqual(source.data["data"]["lines"], [])
                     self.assertEqual(source.data["data"]["preview_lines"], [])
                     self.assertIn("BOM_EMPTY", [item["code"] for item in source.data["data"]["blockers"]])
-                else:
-                    self.assertTrue(source.data["data"]["can_create"], source.data)
-                    row = source.data["data"]["lines"][0]
-                    self.assertEqual(row["required_quantity"], "2.5000")
-                    self.assertEqual(row["source_quantity_field"], "purchase_consumption*order_quantity")
-                    self.assertEqual(row["quantity_parse_status"], "READY")
+                if title == "裁剪明细":
+                    continue
+                if title == "包材":
+                    data = evaluate_purchase_source(task, bom_id=bom.pk, purchase_scope=PurchaseScope.PACKAGING)
+                self.assertTrue(data["can_create"], data.get("blockers"))
+                row = data["lines"][0]
+                self.assertEqual(str(row["required_quantity"]), "2.5000")
+                self.assertEqual(row["source_quantity_field"], "purchase_consumption*order_quantity")
+                self.assertEqual(row["quantity_parse_status"], "READY")
 
     def test_long_invalid_derived_quantity_keeps_full_audit_text_and_can_be_saved(self):
         task = self.make_task("LONG-SOURCE")
@@ -1255,7 +1412,6 @@ class PurchaseOrderApiTests(APITestCase):
         edited_price = "2.5000"
         expected_delivery_date = timezone.localdate() + timedelta(days=10)
         order_update_payload = {
-            "is_mailed": True,
             "lines": [{
                 "id": confirmed_line["id"],
                 "supplier_id": str(self.supplier.pk),
@@ -1274,7 +1430,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(edited_order.data["data"]["status"], "SUBMITTED")
         self.assertEqual(edited_order.data["data"]["lines"][0]["actual_purchase_quantity"], edited_quantity)
         self.assertEqual(edited_order.data["data"]["lines"][0]["amount"], "32.5000")
-        self.assertTrue(edited_order.data["data"]["is_mailed"])
+        self.assertNotIn("is_mailed", edited_order.data["data"])
         options = self.client.get(f"/api/v1/purchase-orders/{order_id}/sheet-options/")
         self.assertEqual(options.status_code, 200, options.data)
         self.assertEqual(len(options.data["data"]["suppliers"]), 1)

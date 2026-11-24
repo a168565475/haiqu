@@ -3,8 +3,10 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login as django_login, logout as django_logout
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import connection, transaction
+from django.http import HttpResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_POST
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -149,6 +151,17 @@ def auth_logout(request):
 def current_user(request):
     get_token(request)
     return Response(authentication_payload(request))
+
+
+@require_POST
+@csrf_protect
+def authorize_local_production_sync(request):
+    if request.get_host() != "127.0.0.1:8000" or request.headers.get("Origin") not in {
+        "http://localhost:8080", "http://127.0.0.1:8080",
+    }:
+        return HttpResponse(status=403)
+    allowed = request.user.is_superuser and can_access_erp(request.user)
+    return HttpResponse(status=204 if allowed else 403)
 
 
 def authentication_payload(request):

@@ -1,0 +1,118 @@
+{
+  "tests": 5094,
+  "passed": 5072,
+  "failed": 22,
+  "unhandled_errors": 22,
+  "records": [
+    {
+      "file": "src/config/systemSettings.spec.ts",
+      "test": "系统配置卡片访问范围 > 非admin超级用户不能越过管理角色判定，admin仍沿用现有管理例外",
+      "location": "src/config/systemSettings.spec.ts:84:72"
+    },
+    {
+      "file": "src/components/common/PopupComponentUsage.spec.ts",
+      "test": "业务弹窗和抽屉必须通过 AppWindowDialog，不能依赖全局注册绕过统一组件",
+      "location": "src/components/common/PopupComponentUsage.spec.ts:52:22"
+    },
+    {
+      "file": "src/components/navigation/AppSidebar.spec.ts",
+      "test": "全局悬停侧栏 > 悬停各主菜单时浮层标题复用该菜单的确认图标",
+      "location": "src/components/navigation/AppSidebar.spec.ts:131:58"
+    },
+    {
+      "file": "src/components/navigation/AppSidebar.spec.ts",
+      "test": "全局悬停侧栏 > 各组真实二级菜单完整渲染对应图标，待开放项也保留图形",
+      "location": null
+    },
+    {
+      "file": "src/components/navigation/AppSidebar.spec.ts",
+      "test": "全局悬停侧栏 > 点击production一级菜单进入指定默认列表production-tasks并收起浮层",
+      "location": null
+    },
+    {
+      "file": "src/views/inventory/HardwareWeightInventory.spec.ts",
+      "test": "铆钉垫片按公斤入库和质检 > 计重管材在重量框下方随输入显示整根数，编辑时收起规格悬浮提示",
+      "location": "src/views/inventory/HardwareWeightInventory.spec.ts:99:44"
+    },
+    {
+      "file": "src/views/inventory/MaterialInboundLoading.spec.ts",
+      "test": "采购入库读取 > 按根到货只收本批未到的整根，旧公斤草稿不当根数恢复",
+      "location": "src/views/inventory/MaterialInboundLoading.spec.ts:76:20"
+    },
+    {
+      "file": "src/views/inventory/PurchaseInboundNavigation.spec.ts",
+      "test": "采购入库使用当前应用的路由 > 采购入库、退货明细和生产领料保留旧路径并使用仓库上下文",
+      "location": "src/views/inventory/PurchaseInboundNavigation.spec.ts:88:39"
+    },
+    {
+      "file": "src/views/production/AiProductionTaskImportView.spec.ts",
+      "test": "AI 生产导入主流程（子表单和 API 使用测试替身） > 旧配置显示各步骤既有自动强度，模型变更同步更新自动说明",
+      "location": "src/views/production/AiProductionTaskImportView.spec.ts:252:69"
+    },
+    {
+      "file": "src/views/samples/SampleApplicationCreateView.spec.ts",
+      "test": "创建打样申请客户查询 > 唯一报价产品的明细图片自动进入图片上传区",
+      "location": "src/views/samples/SampleApplicationCreateView.spec.ts:137:45"
+    },
+    {
+      "file": "src/views/samples/SampleApplicationCreateView.spec.ts",
+      "test": "创建打样申请客户查询 > 询盘单张附件自动带入产品图片，移除后不自动恢复",
+      "location": "src/views/samples/SampleApplicationCreateView.spec.ts:173:45"
+    },
+    {
+      "file": "src/views/samples/SampleApplicationCreateView.spec.ts",
+      "test": "创建打样申请客户查询 > 多张询盘图片需要选择，上传替换同时更新产品图片",
+      "location": "src/views/samples/SampleApplicationCreateView.spec.ts:190:45"
+    },
+    {
+      "file": "src/views/samples/SampleLoanView.spec.ts",
+      "test": "SampleLoanView > 按原型合并规格颜色并加载接口结果",
+      "location": "src/views/samples/SampleLoanView.spec.ts:103:28"
+    },
+    {
+      "file": "src/views/samples/SampleOutboundView.spec.ts",
+      "test": "SampleOutboundView > 按原型合并展示规格颜色并加载真实接口结果",
+      "location": "src/views/samples/SampleOutboundView.spec.ts:111:28"
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 显示四个一级维护分类并在生产维护中切换颜色设置项",
+      "location": "src/views/settings/ProductionDataView.spec.ts:201:25"
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 嵌入配置窗口时要求先处理生产资料编辑，取消后允许关闭",
+      "location": "src/views/settings/ProductionDataView.spec.ts:223:35"
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 面料维护显示材质规格门幅并读取导入数据",
+      "location": null
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 辅料维护显示四个设置项且规格颜色使用品名关联",
+      "location": null
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 新增窗口可拖动并使用可缩放窗口类",
+      "location": null
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 管材维护按形状查看权限提供计算公式入口",
+      "location": null
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 管材维护显示七个设置项并读取原始导入数据",
+      "location": "src/views/settings/ProductionDataView.spec.ts:268:32"
+    },
+    {
+      "file": "src/views/settings/ProductionDataView.spec.ts",
+      "test": "ProductionDataView > 只有面料材质查看权限时默认进入面料维护",
+      "location": "src/views/settings/ProductionDataView.spec.ts:343:28"
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 """一个账号、一个活动操作；设备码与原始 RPC 只保存在内存。"""
 import asyncio
+import base64
 from collections import OrderedDict
 import copy
+import hashlib
 from datetime import datetime, timedelta, timezone
 import json
 import re
@@ -129,6 +131,7 @@ class Operation:
         self.cleanup_failed = False
         self.stage = 'operation_start'
         self.result = None
+        self.artifacts = {}
 
 
 class Runtime:
@@ -149,7 +152,7 @@ class Runtime:
         latest = next(reversed(self.operations.values()), None) if self.operations else None
         return copy.deepcopy({'boot_id': self.boot_id, 'cli_version': '0.165.0', 'account': self.account,
                               'models': self.models, 'rate_limits': self.rate_limits,
-                              'limits_updated_at': self.limits_updated_at,
+                              'limits_updated_at': self.limits_updated_at, 'capabilities': ['nest_tools_v1'],
                               'operation': latest.public if latest else None})
 
     def lookup(self, params):
@@ -174,20 +177,19 @@ class Runtime:
             require(not params, 'INVALID_REQUEST')
             return self.snapshot()
         if method == 'start':
-            parsing = params.get('action') in ('discover', 'extract')
-            require(set(params) == ({'operation_id', 'generation', 'action', 'model', 'payload'} if parsing
+            nesting = params.get('action') == 'nest'
+            require(set(params) == ({'operation_id', 'generation', 'action', 'model', 'payload'} if nesting
                                    else {'operation_id', 'generation', 'action', 'model'}), 'INVALID_REQUEST')
             self.validate_identity(params)
-            require(type(params['action']) is str and params['action'] in {'login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract'}
+            require(type(params['action']) is str and params['action'] in {'login', 'switch', 'disconnect', 'refresh', 'test', 'nest'}
                     and type(params['model']) is str and len(params['model']) <= 160, 'INVALID_REQUEST')
             require(not params['model'] or MODEL_PATTERN.fullmatch(params['model']), 'INVALID_REQUEST')
-            require(params['action'] not in ('test', 'discover', 'extract') or params['model'], 'INVALID_REQUEST')
-            if parsing:
-                from .parsing import validate_payload
+            require(params['action'] not in ('test', 'nest') or params['model'], 'INVALID_REQUEST')
+            if params['action'] == 'nest':
+                from .nesting import validate_payload
                 validate_payload(params['payload'])
             existing = self.operations.get(params['operation_id'])
             if existing:
-                import hashlib
                 require(existing.params_hash == hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest(), 'INVALID_REQUEST')
                 snapshot = self.snapshot()
                 snapshot['operation'] = copy.deepcopy(existing.public)
@@ -197,6 +199,7 @@ class Runtime:
             # 只有上一操作落库并释放互斥后才能启动下一操作；不长期缓存业务原文。
             for previous in self.operations.values():
                 previous.result = None
+                previous.artifacts.clear()
                 previous.params.pop('payload', None)
             require(params['generation'] >= self.generation, 'NOT_READY')
             self.generation = params['generation']
@@ -205,6 +208,19 @@ class Runtime:
             self.active = operation
             operation.task = asyncio.create_task(self._execute(operation))
             return self.snapshot()
+        if method == 'artifact':
+            require(set(params) == {'operation_id', 'generation', 'boot_id', 'name'}, 'INVALID_REQUEST')
+            require(params['boot_id'] == self.boot_id, 'INTERRUPTED')
+            require(type(params['name']) is str and params['name'] in ('layout.svg', 'layout.dxf'), 'INVALID_REQUEST')
+            operation = self.lookup({key: params[key] for key in ('operation_id', 'generation')})
+            require(operation.public['state'] == 'SUCCEEDED' and operation.params['action'] == 'nest'
+                    and params['name'] in operation.artifacts, 'NOT_FOUND')
+            content = operation.artifacts[params['name']]
+            require(type(content) is bytes and 0 < len(content) <= 8 * 1024 * 1024, 'RESULT_LIMIT')
+            return {'boot_id': self.boot_id, 'operation_id': operation.public['id'],
+                'generation': operation.public['generation'], 'name': params['name'],
+                'size_bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest(),
+                'data_base64': base64.b64encode(content).decode('ascii')}
         if method not in {'operation', 'cancel', 'challenge', 'result'}:
             raise RuntimeErrorCode('INVALID_REQUEST')
         if method == 'operation':
@@ -358,20 +374,24 @@ class Runtime:
         require(await self.read_account(operation) is None)
         await self.close_session(operation)
 
-    async def test_model(self, operation, *, items=None, schema=None):
+    async def test_model(self, operation, *, items=None, schema=None, tool_session=None):
         await self.refresh(operation)
         model = operation.params['model']
         operation.stage = 'model_validation'
         require(model in {item['id'] for item in self.models}, 'MODEL_UNAVAILABLE')
         operation.stage = 'thread_start'
+        require(tool_session is None or operation.params['action'] == 'nest')
+        dynamic_tools = tool_session.tool_definitions() if tool_session is not None else []
         result = await operation.session.request('thread/start', {'model': model, 'cwd': '/work/current',
-            'approvalPolicy': 'never', 'ephemeral': True, 'environments': [], 'dynamicTools': []})
+            'approvalPolicy': 'never', 'ephemeral': True, 'environments': [], 'dynamicTools': dynamic_tools})
         thread = result.get('thread') or {}
         require(thread.get('ephemeral') is True and thread.get('environments') == [] and 'environments' in thread
                 and type(thread.get('id')) is str and result.get('approvalPolicy') == 'never' and result.get('model') == model)
         operation.stage = 'mcp_status'
         status = await operation.session.request('mcpServerStatus/list', {'threadId': thread['id']})
         require(status.get('data') == [] and status.get('nextCursor') is None)
+        if tool_session is not None:
+            operation.session.enable_dynamic_tools()
         operation.stage = 'turn_start'
         started = await operation.session.request('turn/start', {'threadId': thread['id'], 'environments': [],
             'input': items if items is not None else [{'type': 'text', 'text': TEST_PROMPT, 'text_elements': []}],
@@ -380,12 +400,21 @@ class Runtime:
         turn_id = (started.get('turn') or {}).get('id')
         require(type(turn_id) is str and turn_id)
         operation.turn = {'threadId': thread['id'], 'turnId': turn_id}
-        deadline, final_text, last_error = asyncio.get_running_loop().time() + 300, None, None
+        tool_calls = None
+        if tool_session is not None:
+            from .nesting import DynamicToolCalls
+            tool_calls = DynamicToolCalls(tool_session, thread['id'], turn_id)
+        deadline = asyncio.get_running_loop().time() + (600 if tool_session is not None else 300)
+        final_text, last_error = None, None
         while True:
             operation.stage = 'turn_events'
             require(deadline > asyncio.get_running_loop().time(), 'TIMEOUT')
             event = await operation.session.notification(deadline - asyncio.get_running_loop().time())
             params = event.get('params') or {}
+            if event.get('method') == 'item/tool/call':
+                require(tool_calls is not None)
+                await tool_calls.respond(event, operation.session)
+                continue
             if params.get('threadId') != thread['id']:
                 continue
             if event.get('method') == 'error' and params.get('turnId') == turn_id:
@@ -395,7 +424,10 @@ class Runtime:
                 print(json.dumps({'event': 'model_turn_error', **last_error}), file=sys.stderr, flush=True)
             if event.get('method') in {'item/started', 'item/completed'} and params.get('turnId') == turn_id:
                 item = params.get('item') or {}
-                require(item.get('type') not in TOOL_TYPES)
+                if item.get('type') == 'dynamicToolCall' and tool_calls is not None:
+                    require(item.get('tool') in tool_calls.allowed)
+                else:
+                    require(item.get('type') not in TOOL_TYPES)
                 if event['method'] == 'item/completed' and item.get('type') == 'agentMessage' and item.get('phase') != 'commentary':
                     require(type(item.get('text')) is str and len(item['text'].encode()) <= (2 * 1024 * 1024 if schema else 4096))
                     final_text = item['text']
@@ -413,6 +445,9 @@ class Runtime:
                 if status == 'failed' and diagnostic['codex_error_info'] == 'usageLimitExceeded':
                     raise RuntimeErrorCode('USAGE_LIMIT_EXCEEDED')
                 require(params['turn'].get('status') == 'completed')
+                if tool_calls is not None:
+                    # 完成证据来自宿主工具，最终模型文字不能覆盖结果或伪造文件。
+                    return None
                 operation.stage = 'final_json'
                 require(final_text is not None)
                 final = strict_json(final_text)
@@ -469,9 +504,9 @@ class Runtime:
                     await self.refresh(operation)
                 elif action == 'test':
                     await self.test_model(operation)
-                elif action in ('discover', 'extract'):
-                    from .parsing import parse_model
-                    await parse_model(self, operation)
+                elif action == 'nest':
+                    from .nesting import parse_nesting
+                    await parse_nesting(self, operation)
         except asyncio.CancelledError:
             state, error_code = 'CANCELED', ''
         except (TimeoutError, RuntimeErrorCode) as error:
@@ -510,6 +545,7 @@ class Runtime:
             operation.params.pop('payload', None)
             if state != 'SUCCEEDED':
                 operation.result = None
+                operation.artifacts.clear()
             if self.active is operation:
                 self.active = None
 

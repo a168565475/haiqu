@@ -51,8 +51,8 @@ const fastReadLoadingRoute = computed(() => [
   'sales-orders', 'sales-order-detail',
   'quotations', 'quotation-preview',
   'samples', 'sample-detail', 'sample-material-detail', 'sample-inventory', 'sample-outbound', 'sample-loans',
-  'material-inventory', 'finished-goods-inventory', 'material-inbound-details',
-  'boms', 'purchase-orders', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
+  'material-inventory', 'finished-goods-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details',
+  'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
 ].includes(String(route.name || '')))
 const compactBusinessRoutes = [
   'customer-duplicates', 'contacts',
@@ -73,11 +73,12 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
-  'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
+  'customers', 'purchase-orders', 'purchase-batch-create', 'purchase-tracking', 'purchase-alerts', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
+  'packaging-purchase-create', 'packaging-purchase-batch',
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
-  'material-inventory', 'workshop-scheduling',
+  'material-inventory', 'material-transfers', 'material-inbound-records', 'workshop-scheduling',
   'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
   'sample-outbound', 'sample-loans',
   'reference-data-settings', 'master-data-center', 'production-data', 'number-rules',
@@ -94,7 +95,7 @@ const contentScrollRoutes = [
   'workshop-outsourcing-rework-detail', 'workshop-outsourcing-detail', 'workshop-outsourcing-factory-detail',
   'warehouse-outsourcing-rework-detail', 'warehouse-outsourcing-detail',
   'purchase-order-detail', 'purchase-inbound-detail',
-  'purchase-group-detail', 'purchase-batch-create',
+  'purchase-group-detail',
 ]
 const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(route.name || '')))
 </script>

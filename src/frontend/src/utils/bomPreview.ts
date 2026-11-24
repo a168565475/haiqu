@@ -2,9 +2,10 @@ import type { BomLine, BomLineInput, BomSectionInput } from '@/types/bom'
 import { cuttingCalculation, legacyPipeCuttingValues } from './bomCuttingQuantities'
 import { packagingQuantity } from './bomPackagingQuantity'
 import { pipePlanForBomLine, type SavedPipePlanBasis } from './materialFlow'
+import { componentDemand, componentParent } from './bomComposition'
 
 export interface BomPreviewColumn { key: string; label: string; width: number }
-export type BomPreviewLine = BomLineInput & Pick<Partial<BomLine>, 'cutting_material_original'> & SavedPipePlanBasis
+export type BomPreviewLine = BomLineInput & Pick<Partial<BomLine>, 'cutting_material_original' | 'long_material_total_weight_kg'> & SavedPipePlanBasis
 export type BomPreviewSection = Omit<BomSectionInput, 'lines'> & { lines: BomPreviewLine[] }
 const column = (key: string, label: string, width = 110): BomPreviewColumn => ({ key, label, width })
 const serial = column('line_number', '序号', 54)
@@ -18,12 +19,18 @@ const images = column('images', '图片', 210)
 
 /** 各分区遵循编辑页的字段与顺序；原料身份编号不属于预览列。 */
 export function bomPreviewColumns(section: BomPreviewSection): BomPreviewColumn[] {
+  if (/裁剪|裁片/.test(section.title) && section.lines.some(line => line.component_kind)) return [
+    serial, column('component_kind', '层级', 80), column('parent_part_name', '所属部位', 120),
+    column('part_name', '部位 / 裁片名称', 140), specification, column('composition_source', '裁剪原料', 180),
+    column('parts_per_product', '每产品部位数', 110), column('pieces_per_part', '每部位用量', 100),
+    column('component_demand', '订单需求', 110), unit, images, notes,
+  ]
   if (section.section_type === 'PROFILE') return [
     serial, column('part_name', '部件名称', 140), material, column('tube_coating_color', '喷塑颜色'), specification,
     column('length_value', '切割长度（mm）', 120), column('unit_consumption', '单耗', 80),
     column('total_consumption', '总需求（支）'), column('tube_cut_piece_count', '切割支数', 90),
     column('tube_cut_length_m', '原材料长度（m）', 130), column('branch_count', '采购根数', 90),
-    column('suggested_purchase_meters', '建议采购米数', 120), notes,
+    column('suggested_purchase_weight_kg', '建议采购重量（kg）', 145), notes,
   ]
   if (/五金/.test(section.title)) return [
     serial, name, material, column('hardware_color', '颜色'), specification, unit, consumption,
@@ -37,7 +44,7 @@ export function bomPreviewColumns(section: BomPreviewSection): BomPreviewColumn[
     column('part_name', '裁片', 120), unit, notes, images,
   ]
   if (/辅料/.test(section.title)) return [serial, name, specification, column('accessory_color', '颜色'), material, unit, consumption, notes, images]
-  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '箱数（多少一箱）', 140), column('total_consumption', '需求数量'), images]
+  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '用量（多少成品用一份）', 170), column('total_consumption', '需求数量'), images]
   if (/裁剪|裁片/.test(section.title)) return [
     serial, column('part_name', '裁剪名称', 140), specification,
     column('cutting_pieces_per_set', '裁片量（片/套）', 130),
@@ -53,11 +60,27 @@ function text(value: unknown) {
 }
 
 export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPreviewSection, orderQuantity: string, sections: BomPreviewSection[], savedLine?: SavedPipePlanBasis): string {
+  if (line.component_kind) {
+    if (key === 'component_kind') return line.component_kind === 'SEWN_PART' ? '部位' : '裁片'
+    if (key === 'parent_part_name') return line.component_kind === 'CUT_PIECE' ? text(componentParent(line, section.lines)?.part_name) : '—'
+    if (key === 'component_demand') return componentDemand(line, section.lines, orderQuantity)
+    if (key === 'composition_source') {
+      const source = sections.flatMap(item => item.lines).find(item => line.fabric_source_line_id
+        ? item.id === line.fabric_source_line_id : Boolean(line.fabric_source_client_key && item.client_key === line.fabric_source_client_key))
+      return source ? `${source.part_name} ${source.specification}`.trim() : '—'
+    }
+    return text(line[key as keyof BomPreviewLine])
+  }
+  if (key === 'component_kind') return '历史明细'
   if (/包材|包装/.test(section.title) && key === 'total_consumption') return packagingQuantity(line.units_per_box, orderQuantity) || '—'
   if (section.section_type === 'PROFILE') {
-    if (['total_consumption', 'tube_cut_length_m', 'branch_count', 'suggested_purchase_meters'].includes(key)) {
+    if (['total_consumption', 'tube_cut_length_m', 'branch_count', 'suggested_purchase_meters', 'suggested_purchase_weight_kg'].includes(key)) {
       const plan = pipePlanForBomLine(line, orderQuantity, savedLine || line)
-      return plan ? plan[key as keyof typeof plan] : '—'
+      if (key === 'suggested_purchase_weight_kg') {
+        const weight = line.long_material_total_weight_kg || line.raw_values?.long_material_total_weight_kg
+        return weight ? String(weight) : '—'
+      }
+      return plan ? plan[key as 'total_consumption' | 'tube_cut_length_m' | 'branch_count' | 'suggested_purchase_meters'] : '—'
     }
     if (key === 'specification') return line.specification || `${line.tube_diameter || '—'} × ${line.tube_thickness || '—'}`
   }

@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
-from ..models import TubeSourceKind
+from ..models import PriceUnit, TubeSourceKind
 from ..tube_kinds import CUTTING_SOURCES
 
 
@@ -73,10 +73,12 @@ class TubePlanRecordCorrectionSerializer(serializers.Serializer):
 class TubePlanQuantityLineSerializer(serializers.Serializer):
     order_line_id = serializers.UUIDField()
     quantity = TubeQuantityField()
+    unit_price = serializers.DecimalField(max_digits=16, decimal_places=2,
+                                         min_value=Decimal('0'), required=False)
 
     def to_internal_value(self, data):
         if not isinstance(data, dict) or set(data) - set(self.fields):
-            raise serializers.ValidationError('仅允许填写原部件编号和计划数量。')
+            raise serializers.ValidationError('仅允许填写原部件编号、计划数量和部位加工单价。')
         return super().to_internal_value(data)
 
     def validate_quantity(self, value):
@@ -90,7 +92,7 @@ class TubePlanQuantityWriteSerializer(serializers.Serializer):
 
     def to_internal_value(self, data):
         if not isinstance(data, dict) or set(data) - set(self.fields):
-            raise serializers.ValidationError('本次只允许修改总单部件的计划数量。')
+            raise serializers.ValidationError('本次只允许修改总单部件的计划数量和部位加工单价。')
         return super().to_internal_value(data)
 
     def validate_lines(self, rows):
@@ -104,11 +106,20 @@ class TubeSourceQuerySerializer(serializers.Serializer):
     is_plan = serializers.BooleanField(required=False)
     plan_id = serializers.UUIDField(required=False)
     schedule_product_id = serializers.UUIDField()
-    source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
+    source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices, required=False)
+    category = serializers.ChoiceField(choices=['tube', 'cutting'], required=False)
     zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     craft_id = serializers.UUIDField(required=False)
 
     def validate(self, attrs):
+        if attrs.get('category'):
+            if not attrs.get('is_plan') or attrs.get('plan_id'):
+                raise serializers.ValidationError({'category': '加工类别仅用于新建需求计划，实际发货请选择材料来源。'})
+            if attrs.get('zone_id'):
+                raise serializers.ValidationError({'zone_id': '需求计划不选择来源库区，请在实际发货时选择。'})
+            attrs['source_kind'] = 'SEWING' if attrs['category'] == 'cutting' else 'METAL'
+        if not attrs.get('source_kind'):
+            raise serializers.ValidationError({'source_kind': '请选择材料来源；新建需求计划请提供加工类别。'})
         if attrs['source_kind'] in CUTTING_SOURCES and not attrs.get('craft_id'):
             raise serializers.ValidationError({'craft_id': '裁片外发请选择刺绣、丝印、裁剪或车缝工艺。'})
         return attrs
@@ -118,6 +129,7 @@ class TubeLineWriteSerializer(serializers.Serializer):
     component_identity = serializers.UUIDField()
     quantity = TubeQuantityField(allow_null=True)
     factory_id = serializers.UUIDField(required=False, allow_null=True)
+    price_unit = serializers.ChoiceField(choices=PriceUnit.choices, required=False)
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal('0'),
                                          required=False, allow_null=True)
 
@@ -151,24 +163,33 @@ class TubeMaterialWriteSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
+class TubePlanMaterialWriteSerializer(TubeMaterialWriteSerializer):
+    zone_id = serializers.UUIDField(required=False)
+
+
 class TubeOrderWriteSerializer(TubeSourceQuerySerializer):
+    category = None
+    source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
     client_request_id = serializers.UUIDField()
     source_revision = serializers.CharField(min_length=64, max_length=64)
     planned_dispatch_date = serializers.DateField()
     expected_return_date = serializers.DateField()
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
     lines = TubeLineWriteSerializer(many=True, allow_empty=False)
-    materials = TubeMaterialWriteSerializer(many=True, required=False)
+    materials = TubePlanMaterialWriteSerializer(many=True, required=False)
     material_source_revision = serializers.CharField(min_length=64, max_length=64, required=False)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
         attrs.pop('plan_id', None)
-        if attrs.get('is_plan') and any(line.get('unit_price') is None for line in attrs['lines']):
-            raise serializers.ValidationError({'lines': '每个委外计划部件都须填写加工单价。'})
+        if attrs['source_kind'] in CUTTING_SOURCES and any(
+                line.get('price_unit', PriceUnit.PIECE) != PriceUnit.PIECE for line in attrs['lines']):
+            raise serializers.ValidationError({'lines': '裁片委外只支持按支计价。'})
         if attrs['expected_return_date'] < attrs['planned_dispatch_date']:
             raise serializers.ValidationError({'expected_return_date': '预计回货日期不能早于计划发出日期。'})
         materials = attrs.get('materials', [])
+        if not attrs.get('is_plan') and any(not row.get('zone_id') for row in materials):
+            raise serializers.ValidationError({'materials': '实际发货的随单材料必须选择来源库区。'})
         if materials and not attrs.get('material_source_revision'):
             raise serializers.ValidationError({'material_source_revision': '请选择并刷新随单材料来源。'})
         # 保持旧无五金请求的幂等摘要，空数组不改变既有保存内容。
@@ -180,10 +201,10 @@ class TubeOrderWriteSerializer(TubeSourceQuerySerializer):
     def validate_materials(self, rows):
         if len(rows) > 500:
             raise serializers.ValidationError('一次最多提交500项随单材料。')
-        keys = [(row['bom_line_id'], row['factory_id'], row['zone_id']) for row in rows]
+        keys = [(row['bom_line_id'], row['factory_id'], row.get('zone_id')) for row in rows]
         if len(keys) != len(set(keys)):
             raise serializers.ValidationError('同一材料、加工厂和来源库区不能重复添加。')
-        return sorted(rows, key=lambda row: (str(row['bom_line_id']), str(row['factory_id']), str(row['zone_id'])))
+        return sorted(rows, key=lambda row: (str(row['bom_line_id']), str(row['factory_id']), str(row.get('zone_id'))))
 
     def validate_lines(self, rows):
         if len(rows) > 500:
@@ -222,20 +243,27 @@ class TubePlanDispatchSerializer(TubeActionWriteSerializer):
     zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     actual_dispatch_date = serializers.DateField()
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
-    lines = TubeLineWriteSerializer(many=True, allow_empty=False)
+    lines = TubeLineWriteSerializer(many=True, allow_empty=True, required=False)
+    inputs = TubeCorrectionLineSerializer(many=True, allow_empty=False, required=False, max_length=500)
     materials = TubeMaterialWriteSerializer(many=True, required=False)
     material_source_revision = serializers.CharField(min_length=64, max_length=64, required=False)
 
     def validate_lines(self, rows):
-        rows = TubeOrderWriteSerializer().validate_lines(rows)
-        if any(row.get('unit_price') is None for row in rows):
-            raise serializers.ValidationError('实际外发须填写每个部件的加工单价。')
-        return rows
+        return TubeOrderWriteSerializer().validate_lines(rows) if rows else []
 
     def validate_materials(self, rows):
         return TubeOrderWriteSerializer().validate_materials(rows)
 
     def validate(self, attrs):
+        if bool(attrs.get('inputs')) == bool(attrs.get('lines')):
+            raise serializers.ValidationError('一次发货须提交裁片投入或部位明细，不能同时提交或全部留空。')
+        if attrs.get('inputs'):
+            identifiers = [row['component_identity'] for row in attrs['inputs']]
+            if len(set(identifiers)) != len(identifiers):
+                raise serializers.ValidationError({'inputs': '同一种裁片不能重复提交。'})
+        if attrs['source_kind'] in CUTTING_SOURCES and any(
+                line.get('price_unit', PriceUnit.PIECE) != PriceUnit.PIECE for line in attrs.get('lines', [])):
+            raise serializers.ValidationError({'lines': '裁片委外只支持按支计价。'})
         if attrs.get('materials') and attrs['source_kind'] not in CUTTING_SOURCES:
             raise serializers.ValidationError({'materials': '管材委外总单不再附带五金。'})
         if attrs.get('materials') and not attrs.get('material_source_revision'):

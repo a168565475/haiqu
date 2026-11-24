@@ -96,6 +96,23 @@ class CodexWorkerTests(TransactionTestCase):
         self.assertFalse(process_tick(runtime, owner_id=uuid4()))
         runtime.call.assert_not_called()
 
+    def test_retired_import_operations_never_call_runtime(self):
+        from unittest.mock import Mock
+        from apps.codex_connection.worker import process_tick
+        operation = self.running('discover')
+        for action in ('discover', 'extract'):
+            for state in ('QUEUED', 'RUNNING'):
+                with self.subTest(action=action, state=state):
+                    operation.action = action
+                    operation.state = state
+                    operation.save()
+                    runtime = Mock()
+                    self.assertFalse(process_tick(runtime, owner_id=uuid4()))
+                    runtime.call.assert_not_called()
+                    operation.refresh_from_db()
+                    self.assertEqual(operation.state, state)
+                    self.assertEqual(operation.error_code, '')
+
     def test_cancellation_is_polled_and_does_not_claim_disconnected(self):
         from apps.codex_connection.worker import apply_result
         operation = self.running('login')

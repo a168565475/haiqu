@@ -60,7 +60,7 @@ class ProcessingSourceReadSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["OPEN", "CLOSED"], required=False)
     version = serializers.IntegerField(required=False)
     bar_count = serializers.IntegerField(required=False)
-    meters = serializers.DecimalField(max_digits=22, decimal_places=2, required=False)
+    meters = serializers.DecimalField(max_digits=23, decimal_places=3, required=False)
     can_register = serializers.BooleanField()
     can_close = serializers.BooleanField()
     blockers = serializers.JSONField()

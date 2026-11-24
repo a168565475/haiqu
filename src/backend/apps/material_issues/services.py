@@ -288,6 +288,8 @@ def _replace_lines(issue, line_inputs):
     if issue.stock_mode == "PUBLIC_V2":
         from .public_issue_services import replace_public_issue_lines
         return replace_public_issue_lines(issue, line_inputs)
+    if any(item.get('source_kind') == 'CUTTING_DIRECT' for item in line_inputs):
+        raise ValidationError({'lines': '裁剪车间直交仅适用于新裁片公共流转。'})
     issue.lines.all().delete()
     if not line_inputs:
         return
@@ -612,8 +614,18 @@ def _sync_issue_sources(issue):
     return [b for b in blockers if b["code"] != "PIPE_SERVICE_REQUIRED"], revision
 
 
+def _lock_direct_issue_scope(issue_id):
+    # 与裁剪入库及外发直发使用相同锁序，共享同一批裁片的首次产出额度。
+    source = MaterialIssueLine.objects.filter(issue_id=issue_id,
+        conversion_snapshot__source_kind='CUTTING_DIRECT').values_list('issue__product_line_id', flat=True).first()
+    if source:
+        from apps.inventory.tube_processing_services import lock_tube_product_scope
+        lock_tube_product_scope(source)
+
+
 @stock_write_transaction
 def submit_issue(*, issue_id, actor_employee, request):
+    _lock_direct_issue_scope(issue_id)
     issue = MaterialIssue.objects.select_for_update(of=("self",)).select_related(
         "production_task", "product_line", "workshop", "recipient_workshop_employee"
     ).get(pk=issue_id)
@@ -667,6 +679,7 @@ def submit_issue(*, issue_id, actor_employee, request):
 
 @stock_write_transaction
 def return_issue(*, issue_id, reason, actor_employee, request):
+    _lock_direct_issue_scope(issue_id)
     issue = MaterialIssue.objects.select_for_update().get(pk=issue_id)
     from apps.access_control.workshop_scopes import require_task_workshop
     require_task_workshop(request, 'material_issues.review_materialissue', issue.production_task_id, issue.workshop_id, owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
@@ -698,6 +711,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
         prohibit_self_approval(actor_employee, existing.issue.submitted_by_employee_id)
         return existing.issue
 
+    _lock_direct_issue_scope(issue_id)
     issue = MaterialIssue.objects.select_for_update(of=("self",)).select_related(
         "production_task", "product_line", "workshop", "recipient_workshop_employee"
     ).get(pk=issue_id)

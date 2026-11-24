@@ -56,6 +56,8 @@ class MaterialAttributeValue(ArchivableModel):
     product_color = models.ForeignKey(
         "reference_data.ProductColor", null=True, blank=True, on_delete=models.PROTECT, related_name="catalog_color_options",
     )
+    color_card = models.CharField(max_length=100, blank=True, default="")
+    color_code = models.CharField(max_length=100, blank=True, default="")
 
     class Meta:
         db_table = "material_catalog_attribute_value"
@@ -63,7 +65,7 @@ class MaterialAttributeValue(ArchivableModel):
         default_permissions = ()
         constraints = [
             models.UniqueConstraint(
-                fields=["catalog", "scope", "field_key", "value", "parent"],
+                fields=["catalog", "scope", "field_key", "value", "parent", "color_card", "color_code"],
                 nulls_distinct=False, condition=Q(product_color__isnull=True), name="mat_catalog_value_uniq",
             ),
             models.UniqueConstraint(

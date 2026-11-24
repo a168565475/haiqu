@@ -3,7 +3,7 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import type { AuthUser } from '@/types/auth'
-import type { SampleListItem, SampleListResult } from '@/types/sample'
+import type { SampleListSummary, SampleListResult } from '@/types/sample'
 import type { Paginated, WageScheme } from '@/types/workshopReporting'
 import ProductionOverviewTodo from './ProductionOverviewTodo.vue'
 
@@ -17,11 +17,13 @@ function user(grants = permissions): AuthUser {
     employee: { id: 'employee-1', employee_code: 'E001', display_name: '厂长', status: 'ACTIVE' },
     permissions: [...grants], data_scope: 'ALL' }
 }
-function sample(id: string, allowed = true): SampleListItem {
+function sample(id: string, allowed = true): SampleListSummary {
   return { id, request_number: `打样-${id}`, status: 'DIRECTOR_REVIEW', customer_name: '客户名称',
     item_summary: { text: '待确认样品', count: 1 }, sample_due_date: '2026-10-28',
     application_actions: { is_application: true, can_director_review: allowed, can_resubmit: false },
-  } as SampleListItem
+    status_display: '待厂长确认', sample_type_display: '售前样', owner: null,
+    requested_at: '2026-10-26T08:00:00+08:00', requested_due_at: null, latest_shipment: null,
+  }
 }
 function sampleResult(rows = [sample('允许'), sample('不允许', false)], total = 30): SampleListResult {
   return { data: rows, meta: { page: 1, page_size: 5, total, total_pages: Math.ceil(total / 5) } }

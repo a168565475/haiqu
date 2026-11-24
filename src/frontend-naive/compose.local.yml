@@ -1,0 +1,32 @@
+name: soybean-naive-local
+
+services:
+  web:
+    image: public.ecr.aws/docker/library/nginx@sha256:ff8328b4279ec385af48cde9ef486e7165ad74b7065cb3cd86c377384e2e2dd5
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - type: bind
+        source: ./dist
+        target: /usr/share/nginx/html
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/nginx.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

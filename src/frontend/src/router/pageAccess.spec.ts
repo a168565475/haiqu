@@ -16,6 +16,51 @@ function followedReader(permissions: string[]): PageAccessReader {
 }
 
 describe('岗位菜单与独立页面权限', () => {
+  it('车间入库使用半成品入库查看权，跟单角色保留关联记录入口', () => {
+    const key = 'semi-receipt-records'
+    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
+    const permission = 'inventory.view_internalsemifinishedreceipt'
+    for (const [auth, showMenu, openRecords] of [
+      [reader(['inventory.view_materialinbound']), false, false],
+      [reader([permission]), true, true],
+      [followedReader([permission]), false, true],
+    ] as const) {
+      expect(canOpenMenu(item, auth)).toBe(showMenu)
+      expect(canOpenPage(key, auth)).toBe(openRecords)
+    }
+  })
+  it('材料收发使用收货权限，收发记录查看权限独立保留', () => {
+    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === 'material-transfers')!
+    expect(item?.label).toBe('材料收发')
+    const viewer = reader(['inventory.view_material_receipt'])
+    const receiver = reader(['inventory.receive_material'])
+    expect(canOpenMenu(item, viewer)).toBe(false)
+    expect(canOpenPage('material-transfers', viewer)).toBe(false)
+    expect(canOpenPage('material-inbound-records', viewer)).toBe(true)
+    expect(canOpenMenu(item, receiver)).toBe(true)
+    expect(canOpenPage('material-transfers', receiver)).toBe(true)
+  })
+  it('采购入库记录允许仓管、品质和独立记录查看权限，跟单继续走关联单据', () => {
+    const key = 'purchase-receipt-records'
+    const warehouse = sidebarMenuItems.find(item => item.key === 'warehouse-management')!
+    const item = warehouse.children!.find(item => item.key === key)!
+    for (const permission of ['inventory.receive_material', 'inventory.quality_confirm_material', 'inventory.view_material_receipt']) {
+      expect(canOpenMenu(item, reader([permission]))).toBe(true)
+      expect(canOpenPage(key, reader([permission]))).toBe(true)
+      expect(canOpenPage(key, followedReader([permission]))).toBe(false)
+    }
+    expect(canOpenPage(key, reader())).toBe(false)
+  })
+  it('仅跟单范围保留旧明细深链但不开放一般入库菜单，兼岗仍独立生效', () => {
+    const permission = 'inventory.receive_material'
+    const auth = followedReader([permission])
+    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === 'material-transfers')!
+    expect(canOpenMenu(item, auth)).toBe(false)
+    expect(canOpenPage('material-transfers', auth)).toBe(false)
+    auth.user!.effective_access!.actions[permission]!.scopes.push('MODULE')
+    expect(canOpenMenu(item, auth)).toBe(true)
+    expect(canOpenPage('material-transfers', auth)).toBe(true)
+  })
   it('采购保留自己的退货记录，但不显示仓库菜单或进入仓库退货页', () => {
     const auth = reader([
       'procurement.view_purchaseorder', 'procurement.add_purchaseorder', 'procurement.submit_purchaseorder',

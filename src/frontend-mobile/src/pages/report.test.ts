@@ -36,7 +36,7 @@ const multipleOperations: ReportingScheme = {
 }
 let wrapper: VueWrapper | undefined
 async function openPage(params: Record<string, string> = query) {
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>任务列表</div>' } }, { path: '/report', component: ReportView }, { path: '/report-records', component: { template: '<div>记录</div>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>领料列表</div>' } }, { path: '/production-report', component: { template: '<div>报工计划列表</div>' } }, { path: '/report', component: ReportView }, { path: '/report-records', component: { template: '<div>记录</div>' } }] })
   await router.push({ path: '/report', query: params })
   await router.isReady()
   wrapper = mount({ template: '<router-view />' }, { global: { plugins: [router], components: { VanButton: Button, VanCell: Cell, VanDatePicker: DatePicker, VanEmpty: Empty, VanField: Field, VanIcon: Icon, VanLoading: Loading, VanPopup: Popup, VanRadio: Radio, VanRadioGroup: RadioGroup, VanSearch: Search } } })
@@ -286,6 +286,14 @@ describe('手机报工页面', () => {
     expect(view.text()).toContain('返回任务列表重新选择')
     expect(api.context).not.toHaveBeenCalled()
     expect(api.create).not.toHaveBeenCalled()
+    await clickButton(view, '返回生产报工')
+    expect(view.vm.$router.currentRoute.value.path).toBe('/production-report')
+  })
+  it('查看报工记录保留当前计划、工艺和报工模块', async () => {
+    const view = await openPage()
+    await view.findAll('button').find(button => button.text() === '查看报工记录')!.trigger('click'); await flushPromises()
+    expect(view.vm.$router.currentRoute.value.path).toBe('/report-records')
+    expect(view.vm.$router.currentRoute.value.query).toEqual({ ...query, section: 'report' })
   })
   it('默认列出所有有效工序，每道工序固定一张卡片并分别提交员工与次数', async () => {
     api.scheme.mockResolvedValueOnce(structuredClone(multipleOperations))

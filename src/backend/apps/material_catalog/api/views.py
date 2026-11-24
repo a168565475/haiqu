@@ -14,7 +14,7 @@ from .serializers import (
     AllowedUnitCreateSerializer, AllowedUnitPatchSerializer, AttributeValueCreateSerializer,
     AttributeValuePatchSerializer, CatalogCreateSerializer,
     CatalogDetailResponseSerializer, CatalogErrorResponseSerializer, CatalogListQuerySerializer,
-    CatalogListResponseSerializer, CatalogOptionsResponseSerializer, CatalogPatchSerializer, CatalogSaveSerializer,
+    CatalogListResponseSerializer, CatalogOptionsQuerySerializer, CatalogOptionsResponseSerializer, CatalogPatchSerializer, CatalogSaveSerializer,
     CatalogSummarySerializer,
 )
 
@@ -47,6 +47,16 @@ UNIT_CREATE_SCHEMA = {
     **UNIT_PATCH_SCHEMA,
     "properties": {**UNIT_PATCH_SCHEMA["properties"], "scope": {"type": "string", "enum": ["BASE", "SPRAY"]}},
     "required": ["scope"],
+}
+VALUE_PATCH_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["value"],
+    "properties": {
+        "value": {"type": "string", "minLength": 1, "maxLength": 300},
+        "product_color_id": {"type": "string", "format": "uuid", "nullable": True},
+        "color_card": {"type": "string", "maxLength": 100},
+        "color_code": {"type": "string", "maxLength": 100},
+        "color_name": {"type": "string", "minLength": 1, "maxLength": 200},
+    },
 }
 
 
@@ -110,11 +120,13 @@ class MaterialCatalogViewSet(viewsets.GenericViewSet):
         response["ETag"] = etag
         return response
 
-    @extend_schema(responses={200: CatalogOptionsResponseSerializer, **{
-        code: CatalogErrorResponseSerializer for code in (401, 403)
+    @extend_schema(parameters=[CatalogOptionsQuerySerializer], responses={200: CatalogOptionsResponseSerializer, **{
+        code: CatalogErrorResponseSerializer for code in (400, 401, 403)
     }})
     def options_list(self, request):
-        return Response({"data": selectors.catalog_options()})
+        query = CatalogOptionsQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response({"data": selectors.catalog_options(**query.validated_data)})
 
     @extend_schema(parameters=[
         CatalogListQuerySerializer,
@@ -171,7 +183,7 @@ class MaterialCatalogViewSet(viewsets.GenericViewSet):
     def add_value(self, request, pk=None):
         return self._detail_response(services.add_value(catalog_id=pk, data=self._validated(AttributeValueCreateSerializer), request=request))
 
-    @extend_schema(request=AttributeValuePatchSerializer, responses=WRITE_RESPONSES, parameters=[IF_MATCH, ETAG])
+    @extend_schema(request={"application/json": VALUE_PATCH_SCHEMA}, responses=WRITE_RESPONSES, parameters=[IF_MATCH, ETAG])
     def update_value(self, request, pk=None, value_id=None):
         data = self._validated(AttributeValuePatchSerializer)
         return self._detail_response(services.update_value(catalog_id=pk, value_id=value_id, value=data["value"], color=data, request=request))

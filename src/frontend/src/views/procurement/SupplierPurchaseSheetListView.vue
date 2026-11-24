@@ -11,6 +11,7 @@ import {
   batchDownloadSupplierPurchaseSheets,
   batchPublishSupplierPurchaseSheets,
   downloadSupplierPurchaseSheetXlsx,
+  ensureDefaultPurchaseSheets,
   fetchSupplierPurchaseSheets,
 } from '@/api/purchaseOrders'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -34,11 +35,16 @@ const page = ref(1)
 const pageSize = ref(50)
 const loadError = ref('')
 const purchaseOrderId = computed(() => String(route.query.purchase_order_id || ''))
+const purchaseGroupId = computed(() => String(route.query.purchase_group_id || ''))
+const packaging = computed(() => route.query.purchase_scope === 'PACKAGING')
+const batchSessionId = computed(() => String(route.query.batch_session_id || ''))
 const publishedSelected = computed(() => selected.value.filter((item) => item.status === 'PUBLISHED'))
 const draftSelected = computed(() => selected.value.filter((item) => item.status === 'DRAFT'))
 
 const busy = computed(() => publishing.value || downloading.value || publishConfirmVisible.value)
-const canPublish = computed(() => auth.user?.is_superuser || auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder'))
+const canPublish = computed(() => auth.user?.is_superuser || (packaging.value
+  ? auth.hasPermission('procurement.manage_packagingpurchase') : auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder')))
+const canGenerate = computed(() => auth.user?.is_superuser || auth.moduleCan('access_control.generate_purchasesheets', 'procurement.add_purchaseorder'))
 const publishReady = computed(() => canPublish.value && !loading.value && !loadError.value && !busy.value && selected.value.length > 0 && selected.value.length <= 100 && draftSelected.value.length === selected.value.length)
 const downloadReady = computed(() => !loading.value && !loadError.value && !busy.value && selected.value.length > 0 && publishedSelected.value.length === selected.value.length)
 let loadSequence = 0
@@ -51,14 +57,16 @@ function updatedTime(value: string): string {
 
 function money(value: string | null): string {
   if (value === null) return '待结算'
-  if (!Number.isFinite(Number(value))) return '—'
-  return `¥${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })}`
+  const parts = /^(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim())
+  if (!parts) return '—'
+  const cents = (BigInt(parts[1]!) * 10000n + BigInt((parts[2] || '').padEnd(4, '0')) + 50n) / 100n
+  return `¥${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 
 function apiErrorMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
   const fieldError = response?.data?.error?.field_errors ? Object.values(response.data.error.field_errors).flat()[0] : ''
-  return fieldError || response?.data?.error?.message || response?.data?.detail || fallback
+  return fieldError || response?.data?.error?.message || response?.data?.detail || (error instanceof Error && !response ? error.message : '') || fallback
 }
 
 function saveBlob(blob: Blob, name: string): void {
@@ -77,10 +85,17 @@ async function load(): Promise<void> {
   selected.value = []
   tableRef.value?.clearSelection()
   try {
+    if (purchaseOrderId.value && canGenerate.value && !packaging.value) {
+      await ensureDefaultPurchaseSheets(purchaseOrderId.value)
+      if (sequence !== loadSequence) return
+    }
     const result = await fetchSupplierPurchaseSheets({
       page: page.value,
       page_size: pageSize.value,
       purchase_order_id: purchaseOrderId.value || undefined,
+      ...(purchaseGroupId.value ? { purchase_group_id: purchaseGroupId.value } : {}),
+      ...(packaging.value ? { purchase_scope: 'PACKAGING' as const } : {}),
+      ...(batchSessionId.value ? { batch_session_id: batchSessionId.value } : {}),
       is_current: true,
     })
     if (sequence !== loadSequence) return
@@ -103,7 +118,7 @@ function resetPageAndLoad(): void {
 }
 
 function edit(row: SupplierPurchaseSheet): void {
-  void router.push({ name: 'supplier-purchase-sheet-editor', params: { id: row.id } })
+  void router.push({ name: 'supplier-purchase-sheet-editor', params: { id: row.id }, ...(packaging.value ? { query: route.query } : {}) })
 }
 
 function handleRowAction(command: string, row: SupplierPurchaseSheet): void {
@@ -176,7 +191,7 @@ async function confirmBatchPublish(): Promise<void> {
   }
 }
 
-watch(purchaseOrderId, () => {
+watch([purchaseOrderId, purchaseGroupId, packaging, batchSessionId], () => {
   page.value = 1
   void load()
 })
@@ -212,6 +227,7 @@ onMounted(() => {
         <ElTableColumn type="selection" width="46" align="center" header-align="center" :selectable="() => !busy && !loading" />
         <ElTableColumn prop="sheet_number" label="采购表编号" width="152" show-overflow-tooltip />
         <ElTableColumn label="订单来源" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : (row.production_task_number || row.sales_order_number || '—') }}</template></ElTableColumn>
+        <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.purchase_batch_number == null ? '—' : `第 ${row.purchase_batch_number} 批` }}</template></ElTableColumn>
         <ElTableColumn prop="supplier_name_snapshot" label="供应商" min-width="200" show-overflow-tooltip />
         <ElTableColumn prop="template_name" label="模板" width="126" show-overflow-tooltip />
         <ElTableColumn label="金额" width="110" align="right" header-align="center"><template #default="{ row }"><strong>{{ money(row.total_amount) }}</strong></template></ElTableColumn>
@@ -227,7 +243,7 @@ onMounted(() => {
             </ElDropdownMenu></template>
           </ElDropdown>
         </template></ElTableColumn>
-        <template #empty><div class="empty"><strong>{{ loadError ? '采购表加载失败' : '暂无供应商采购表' }}</strong><span>{{ loadError ? '请重新加载后继续操作' : '请先确认采购订单并选择合同模板' }}</span></div></template>
+        <template #empty><div class="empty"><strong>{{ loadError ? '采购表加载失败' : '暂无供应商采购表' }}</strong><span>{{ loadError ? '请重新加载后继续操作' : '确认采购订单后自动生成采购表' }}</span></div></template>
       </ElTable>
       </div>
       <footer class="erp-list-footer"><span>已选择{{ selected.length }}张　·　草稿{{ draftSelected.length }}张　·　已发布{{ publishedSelected.length }}张</span><ElPagination :disabled="busy || loading" background v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="load" @size-change="resetPageAndLoad" /></footer>

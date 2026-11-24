@@ -67,7 +67,7 @@ class SamplePurchaseApiTests(APITestCase):
         self.assertEqual(source['bom_options'], [])
         self.assertNotIn('production_task', source)
         return {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk),
-                'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk), 'is_mailed': False,
+                'source_revision': source['source_revision'], 'currency_id': str(self.currency.pk),
                 'lines': [{'sample_line_key': self.key, 'supplier_id': str(self.supplier.pk),
                            'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '4', 'unit_price': '2'}]}
 
@@ -147,11 +147,11 @@ class SamplePurchaseApiTests(APITestCase):
     def test_update_confirm_generate_and_direct_full_arrival(self):
         created = self.create_order()
         changed = self.client.patch(self.root + self.sample_order_id + '/', {
-            'is_mailed': False, 'lines': [{'id': str(self.purchase_line.pk), 'supplier_id': str(self.supplier.pk),
+            'lines': [{'id': str(self.purchase_line.pk), 'supplier_id': str(self.supplier.pk),
             'delivery_date': timezone.localdate().isoformat(), 'actual_purchase_quantity': '4', 'unit_price': '3'}],
         }, format='json', HTTP_IF_MATCH=created['ETag'])
         self.assertEqual(changed.status_code, 200, changed.data)
-        stale = self.client.patch(self.root + self.sample_order_id + '/', {'is_mailed': True, 'lines': []}, format='json', HTTP_IF_MATCH=created['ETag'])
+        stale = self.client.patch(self.root + self.sample_order_id + '/', {'lines': []}, format='json', HTTP_IF_MATCH=created['ETag'])
         self.assertIn(stale.status_code, [400, 409, 412])
         confirmed = self.client.post(self.root + self.sample_order_id + '/confirm/', {}, format='json')
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
@@ -219,6 +219,11 @@ class SamplePurchaseApiTests(APITestCase):
         # 到货不会跳过样品领料确认。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
         self.assertEqual(self.receive_all().status_code, 409)
+        # 仓库收货范围不会附赠采购删除范围；补齐采购动作范围后再核对已入库保护。
+        self.assertEqual(self.client.delete(self.root + self.sample_order_id + '/').status_code, 404)
+        RoleActionGrant.objects.create(role=receiver_role, scope='MODULE', permission=Permission.objects.get(
+            content_type__app_label='procurement', codename='delete_purchaseorder'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         self.assertEqual(self.client.delete(self.root + self.sample_order_id + '/').status_code, 409)
 
     def test_same_material_different_colors_survive_sheet_edit_and_exports(self):
@@ -345,6 +350,8 @@ from django.test import TransactionTestCase
 
 
 class SamplePurchaseConcurrencyTests(TransactionTestCase):
+    # 每个并发用例恢复迁移种子，避免 flush 清空采购跟踪策略及干扰后续序列化测试。
+    serialized_rollback = True
     setUp = SamplePurchaseApiTests.setUp
     purchase_payload = SamplePurchaseApiTests.purchase_payload
 

@@ -29,12 +29,12 @@ const key = 'tube-outsourcing-action:v1:7:order-1'
 const base: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-real', status: 'PENDING_DISPATCH', version: 1, etag: '"order-1:v1"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: '原材料', schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10', total_area_sqm: null,
   task_order_number: 'DD-real', task_number: 'SC-real', schedule_number: 'PC-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '真实测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'zone-1', zone_name: 'A区', warehouse_name: '原料管材仓', craft_name: '喷塑', remark: '原单备注', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: true, can_cancel: true },
-  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
+  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', price_unit: 'PIECE', unit_area_sqm: null, line_area_sqm: null, unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
     material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [] }],
 }
 const httpError = (status: number) => Object.assign(new AxiosError('接口错误'), { response: { status, data: { error: { message: `状态 ${status}` } } } })
@@ -254,14 +254,54 @@ describe('管材外发详情与整单动作', () => {
     expect(wrapper.get('.d4-lines').text()).toContain('0.25')
     expect(wrapper.get('.d4-footer').text()).toContain('计划加工金额 5 元')
     vm.dialog = 'dispatch'; await flushPromises()
-    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('加工单价（元/支）')
-    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('0.25')
+    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('加工单价')
+    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('0.25 元/支')
     const missing = structuredClone(base); missing.planned_amount = null
     missing.lines[0]!.unit_price = null; missing.lines[0]!.planned_amount = null
     vi.mocked(api.fetchTubeOrder).mockResolvedValue(missing)
     vm.dialog = ''; await vm.loadDetail(); await flushPromises()
     expect(wrapper.get('.d4-lines').text()).toContain('未录入')
     expect(wrapper.get('.d4-footer').text()).toContain('计划加工金额 未录入 元')
+  })
+  it('车间按平方米详情显示冻结单支、本行和整单面积及元每平方米', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
+    const data = structuredClone(base)
+    data.total_area_sqm = '2.5000'; data.planned_amount = '6.25'
+    Object.assign(data.lines[0]!, { price_unit: 'SQUARE_METER', unit_area_sqm: '0.1250', line_area_sqm: '2.5000', unit_price: '2.50', planned_amount: '6.25' })
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
+    const { wrapper } = await mountPage()
+    const table = wrapper.get('.d4-lines')
+    expect(table.text()).toContain('单支面积（㎡）')
+    expect(table.text()).toContain('本行面积（㎡）')
+    expect(table.text()).toContain('计价方式')
+    expect(table.text()).toContain('按㎡')
+    expect(table.text()).toContain('2.5 元/㎡')
+    expect(wrapper.get('.d4-footer').text()).toContain('喷塑总面积 2.5 ㎡')
+  })
+  it('车间混合单逐行显示按支和按平方米，历史未知面积显示横线', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
+    const data = structuredClone(base)
+    data.total_area_sqm = null
+    data.lines.push({ ...structuredClone(data.lines[0]!), id: 'line-2', component_identity: 'component-2', part_name: '后腿管',
+      price_unit: 'SQUARE_METER', unit_area_sqm: '0.2500', line_area_sqm: '2.5000', quantity: '10', unit_price: '2.00', planned_amount: '5.00' })
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
+    const { wrapper } = await mountPage()
+    const text = wrapper.get('.d4-lines').text()
+    expect(text).toContain('按支'); expect(text).toContain('0.25 元/支')
+    expect(text).toContain('按㎡'); expect(text).toContain('2 元/㎡')
+    expect(text).toContain('—')
+    expect(wrapper.get('.d4-footer').text()).toContain('喷塑总面积 — ㎡')
+  })
+  it('仓库详情不显示面积计价方式、单价或计划金额', async () => {
+    const data = structuredClone(base)
+    data.total_area_sqm = '2.5000'
+    Object.assign(data.lines[0]!, { price_unit: 'SQUARE_METER', unit_area_sqm: '0.1250', line_area_sqm: '2.5000', unit_price: '2.50', planned_amount: '6.25' })
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
+    const { wrapper } = await mountPage()
+    expect(wrapper.get('.d4-lines').text()).not.toContain('计价方式')
+    expect(wrapper.get('.d4-lines').text()).not.toContain('加工单价')
+    expect(wrapper.get('.d4-footer').text()).not.toContain('喷塑总面积')
+    expect(wrapper.get('.d4-footer').text()).not.toContain('计划加工金额')
   })
   it.each(['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED'])('附带料在%s详情沿已存快照展示投入材料', async status => {
     const data: TubeOrderDetail = { ...structuredClone(base), status, materials: [{ ...hardwareMaterials[0]!,

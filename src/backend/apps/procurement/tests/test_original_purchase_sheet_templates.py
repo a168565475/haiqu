@@ -19,6 +19,35 @@ from ..fabric_purchase_sheet_template import (
 
 
 class OriginalPurchaseSheetTemplateTests(SimpleTestCase):
+    def test_manual_set_count_with_mixed_physical_units_across_contract_layouts(self):
+        from ..fabric_purchase_sheet_template import build_fabric_purchase_sheet_xlsx
+
+        pricing = {"anchor_id": "component-1", "quantity": 1600, "unit_price": "5.0000"}
+        common = {**self.line, "set_pricing": pricing, "set_line_number": 4}
+        anchor = {**common, "is_set_anchor": True, "quantity": "1600", "unit": "套", "unit_price": "5",
+                  "amount": "8000", "physical_quantity": "3200", "physical_unit": "个"}
+        member = {**common, "is_set_anchor": False, "quantity": "2400", "unit": "米", "unit_price": "",
+                  "amount": "0", "physical_quantity": "2400", "physical_unit": "米"}
+        content = {**self.content, "lines": [anchor, member], "total_amount": "8000.0000"}
+        for code, columns in (("FOAM_CUTTING", "DEF"), ("AUXILIARY", "EFG"), ("PLASTIC_PART", "GHI"),
+                              ("WEBBING_ACTUAL_WEIGHT", "FGH"), ("FABRIC", "DEF")):
+            with self.subTest(template=code):
+                sheet = self.sheet(code, content)
+                build = build_fabric_purchase_sheet_xlsx if code == "FABRIC" else build_original_purchase_contract_xlsx
+                book = load_workbook(BytesIO(build(sheet)), data_only=True)
+                try:
+                    row = book.active
+                    quantity, price, amount = columns
+                    self.assertEqual(row[f"{quantity}6"].value, 1600)
+                    self.assertEqual(row[f"{price}6"].value, 5)
+                    self.assertEqual(row[f"{amount}6"].value, 8000)
+                    self.assertEqual(row[f"{quantity}7"].value, 2400)
+                    self.assertEqual(row[f"{price}7"].value, "已含套价")
+                    self.assertEqual(row[f"{amount}7"].value, "—")
+                    self.assertIn("3200 个", " ".join(str(cell.value or "") for cell in row[6]))
+                finally:
+                    book.close()
+
     def setUp(self):
         self.line = {
             "source_purchase_order_line_id": "line-1", "product_name": "本单椅子", "part_name": "本单零件",

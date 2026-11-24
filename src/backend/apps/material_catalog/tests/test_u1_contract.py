@@ -31,6 +31,7 @@ class U1ContractTests(TestCase):
         semi = self.warehouse("U1-SEMI", "SEMI_FINISHED")
         current = self.create_catalog()
         current = self.assert_write(self.write(current, "patch", payload={"base_warehouse_id": str(base.pk), "semi_warehouse_id": str(semi.pk), "spray_enabled": True}))
+        ProductionUnit.objects.create(unit_code="U1-加工", unit_name="U1加工单位")
         current = self.assert_write(self.write(current, "post", "units/", {"scope": "SPRAY", "unit_name": "U1加工单位"}))
         old = deepcopy(current.data["data"])
         current = self.assert_write(self.write(current, "patch", payload={"spray_enabled": False}))
@@ -68,11 +69,20 @@ class U1ContractTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["warehouses"], [{"id": str(warehouse.pk), "warehouse_number": "U1-READ", "warehouse_name": "U1-READ", "warehouse_type": "MATERIAL"}])
         self.assertEqual(response.data["data"]["units"], [])
+        unit = ProductionUnit.objects.create(unit_code="U1-PICK", unit_name="档案可选单位")
+        inactive = ProductionUnit.objects.create(unit_code="U1-PICK-OFF", unit_name="停用档案单位", status="INACTIVE")
+        response = self.client.get(ROOT + "options/", {"include_units": True})
+        self.assertEqual(response.status_code, 200)
+        options = {item["unit_name"]: item["id"] for item in response.data["data"]["units"]}
+        self.assertEqual(options[unit.unit_name], str(unit.pk))
+        self.assertNotIn(inactive.unit_name, options)
         self.assertEqual(self.client.get("/api/v1/warehouses/").status_code, 403)
 
     def test_input_units_reuse_ids_without_sharing_candidates_or_duplicate_rows(self):
         a = self.create_catalog(name="U1品名A")
         b = self.create_catalog(name="U1品名B")
+        ProductionUnit.objects.create(unit_code="U1-独立", unit_name="U1独立单位")
+        ProductionUnit.objects.create(unit_code="U1-新", unit_name="U1新单位")
         a = self.assert_write(self.write(a, "post", "units/", {"scope": "BASE", "unit_name": " U1独立单位 "}))
         unit = a.data["data"]["units"][0]
         self.assertEqual(ProductionUnit.objects.filter(unit_name="U1独立单位").count(), 1)
@@ -84,6 +94,37 @@ class U1ContractTests(TestCase):
         a = self.assert_write(self.write(a, "patch", f"units/{unit['id']}/", {"unit_name": "U1新单位"}))
         self.assertEqual(a.data["data"]["units"][0]["id"], unit["id"])
         self.assertEqual(b.data["data"]["units"][0]["unit_name"], "U1独立单位")
+
+    def test_private_unit_is_real_scoped_and_invisible_to_public_readers(self):
+        a = self.create_catalog(name="捆装甲")
+        b = self.create_catalog(name="捆装乙")
+        unit_input = {"scope": "BASE", "unit_name": "测试专用捆"}
+        a = self.assert_write(self.write(a, "post", "units/", unit_input))
+        unit = a.data["data"]["units"][0]
+        a_id, b_id = a.data["data"]["id"], b.data["data"]["id"]
+        actual = ProductionUnit.for_catalog(a_id).get(pk=unit["unit_id"])
+        self.assertEqual(str(actual.catalog_owner_id), a_id)
+        self.assertFalse(ProductionUnit.objects.filter(unit_name=actual.unit_name).exists())
+        self.assertFalse(ProductionUnit.for_catalog(b_id).filter(pk=actual.pk).exists())
+        self.assertNotIn({"id": str(actual.pk), "unit_name": actual.unit_name},
+                         self.client.get(ROOT + "options/", {"include_units": True}).data["data"]["units"])
+        self.assertEqual(self.write(b, "post", "units/", {"scope": "BASE", "unit_id": str(actual.pk)}).status_code, 400)
+        b = self.assert_write(self.write(b, "post", "units/", unit_input))
+        self.assertNotEqual(unit["unit_id"], b.data["data"]["units"][0]["unit_id"])
+        public_units = "/api/v1/reference-data/production-units/"
+        self.assertEqual(self.client.get(f"{public_units}{actual.pk}/").status_code, 404)
+        created = self.client.post(public_units, {"unit_code": "PUBLIC-BUNDLE", "unit_name": actual.unit_name}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        public = ProductionUnit.objects.get(pk=created.data["data"]["id"])
+        self.assertEqual(self.write(a, "post", "units/", {"scope": "BASE", "unit_id": str(public.pk)}).status_code, 400)
+        self.assertEqual(list(MaterialAllowedUnit.objects.filter(catalog_id=a_id, scope="BASE").values_list("unit_id", flat=True)), [actual.pk])
+        duplicate = self.client.post(public_units, {"unit_code": "OTHER-BUNDLE", "unit_name": actual.unit_name}, format="json")
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        self.assertFalse(ProductionUnit.all_objects.filter(unit_code="OTHER-BUNDLE").exists())
+        a = self.assert_write(self.write(a, "delete", f"units/{unit['id']}/"))
+        a = self.assert_write(self.write(a, "post", "units/", unit_input))
+        self.assertEqual(a.data["data"]["units"][0]["unit_id"], unit["unit_id"])
+        self.assertEqual(ProductionUnit.objects.get(unit_name=actual.unit_name), public)
 
     def test_unit_xor_validation_and_inactive_units_not_restored(self):
         current = self.create_catalog()
@@ -98,6 +139,7 @@ class U1ContractTests(TestCase):
         a = self.assert_write(self.add_value(a, field="shape", value="圆管"))
         shape = next(row for row in a.data["data"]["values"] if row["field_key"] == "shape")
         a = self.assert_write(self.add_value(a, field="section_size", value="Φ25×1.2", parent_id=shape["id"]))
+        ProductionUnit.objects.create(unit_code="U1-BAR", unit_name="U1根")
         a = self.assert_write(self.write(a, "post", "units/", {"scope": "BASE", "unit_name": "U1根"}))
         catalog = MaterialCatalog.objects.get(pk=a.data["data"]["id"])
         snapshot = build_material_snapshot(catalog=catalog, scope="BASE", processing_state="RAW", required_fields=("shape", "section_size"), attributes={"shape": "圆管", "section_size": "Φ25×1.2"}, unit_id=a.data["data"]["units"][0]["unit_id"])
@@ -123,6 +165,7 @@ class U1ContractTests(TestCase):
         current = self.create_catalog()
         current = self.assert_write(self.write(current, "patch", payload={"semi_warehouse_id": str(warehouse.pk)}))
         self.assertFalse(current.data["data"]["spray_enabled"])
+        ProductionUnit.objects.create(unit_code="U1-RESULT-UNIT", unit_name="U1加工结果单位")
         current = self.assert_write(self.write(current, "post", "units/", {"scope": "BASE", "unit_name": "U1加工结果单位"}))
         catalog = MaterialCatalog.objects.get(pk=current.data["data"]["id"])
         arguments = dict(catalog=catalog, scope="BASE", attributes={"color": "无颜色"}, unit_id=current.data["data"]["units"][0]["unit_id"], required_fields=("color",))

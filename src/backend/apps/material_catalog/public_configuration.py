@@ -16,7 +16,7 @@ from apps.reference_data.models import (
 
 from .definitions import CATEGORIES, CATEGORY_TEMPLATES, SPRAY_FIELDS, TEMPLATES
 from .accessory_weights import WEIGHT_FIELDS, accessory_weight_records, find_specification_weight, is_accessory_weight
-from .colors import COLOR_FIELDS, color_identity, color_metadata, unchanged_color, uses_product_color_identity
+from .colors import COLOR_FIELDS, color_identity, color_metadata, uses_product_color_identity
 
 
 SOURCES = {
@@ -299,34 +299,3 @@ def ensure_public_value(catalog, scope, key, value, *, parent_value=None, unit_n
     elif model is ProductColor:
         defaults.update(color_card="", color_code="")
     return _ensure(model, lookup, defaults=defaults, request=request, persist=persist, allow_inactive=allow_inactive)
-
-
-def ensure_public_draft(catalog, data, *, request):
-    existing_values = {row.pk: row for row in catalog.attribute_values.select_related("product_color")}
-    drafts = {row["id"]: row for row in data["values"]}
-    unit_name = next((row["unit_name"] for row in data["units"] if row["scope"] == "BASE"), "")
-    for row in data["values"]:
-        previous = existing_values.get(row["id"])
-        parent = drafts.get(row["parent_id"])
-        same = previous is not None and previous.archived_at is None and previous.value == row["value"]
-        ordinary_color = uses_product_color_identity(catalog, row["scope"], row["field_key"])
-        _validate_color_source(ordinary_color, row)
-        if ordinary_color:
-            same = unchanged_color(previous, row)
-            if same:
-                row["product_color_id"] = previous.product_color_id
-        if same and row["field_key"] == "section_size":
-            same = parent is not None and previous.parent_id is not None and previous.parent.value == parent["value"]
-        if same:
-            continue
-        public = ensure_public_value(catalog, row["scope"], row["field_key"], row["value"],
-                            parent_value=parent["value"] if parent else None, unit_name=unit_name,
-                            request=request, allow_inactive=same, color=row if ordinary_color else None)
-        if ordinary_color:
-            row["product_color_id"] = public.pk
-    existing_units = {(row.pk, row.unit.unit_name) for row in catalog.allowed_units.filter(archived_at__isnull=True).select_related("unit")}
-    for row in data["units"]:
-        if (row["id"], row["unit_name"]) in existing_units:
-            continue
-        ensure_public_value(catalog, row["scope"], "unit", row["unit_name"], request=request,
-                            allow_inactive=False)

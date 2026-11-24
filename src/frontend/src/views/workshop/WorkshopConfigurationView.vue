@@ -114,7 +114,11 @@ function closeManager(): void {
           <span>生产配置</span><i>/</i><strong>{{ activeTitle }}管理</strong>
         </div>
       </template>
-      <WorkshopConfigManager :key="activeKind" :kind="activeKind" />
+      <WorkshopConfigManager
+        :key="activeKind"
+        :kind="activeKind"
+        :create-dialog-width="activeKind === 'operations' ? '80vw' : undefined"
+      />
     </AppWindowDialog>
   </section>
 </template>

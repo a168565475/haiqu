@@ -65,7 +65,7 @@ export function buildTubeEndedResult(order: TubeOrderDetail, receipt: TubeReceip
     const sent = pieceCount(matched?.dispatched_quantity), actual = pieceCount(matched?.received_quantity), difference = pieceCount(matched?.shortage_quantity)
     const expected = pieceCount(original.quantity)
     const validQuantity = matched && sent !== null && actual !== null && difference !== null && expected !== null
-      && sent === expected && actual + difference === sent
+      && sent === expected && difference === Math.max(sent-actual, 0)
     if (!validQuantity) { issues.add('部分明细实发、实收与差额无法对应，请核对原凭证。'); quantitiesMatch = false }
     else { dispatched += sent; received += actual; shortage += difference }
     const row: TubeEndedLine = {

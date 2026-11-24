@@ -62,7 +62,7 @@ def bom_options_for_product_line(product_line_id):
     ).filter(
         Q(section__section_type=BomSectionType.PROFILE)
         | Q(section__section_type=BomSectionType.FABRIC, section__title="裁剪明细")
-    ).order_by("section__line_number", "line_number", "id")
+    ).select_related("section", "parent_part").order_by("section__line_number", "line_number", "id")
     for line in lines:
         name = (line.part_name or "").strip()
         material = (line.material or "").strip()
@@ -74,12 +74,19 @@ def bom_options_for_product_line(product_line_id):
             if line.section.section_type == BomSectionType.PROFILE
             else PlanCategory.CUTTING
         )
+        # 裁剪/车缝只接受新的部位-裁片结构；旧的空 component_kind
+        # 不再混入候选，避免两种数量口径被同一个工价方案引用。
+        if source_type == PlanCategory.CUTTING and line.component_kind not in {"CUT_PIECE", "SEWN_PART"}:
+            continue
         label_parts = [name]
         if source_type == PlanCategory.METAL and material:
             label_parts.append(material)
         if specification:
             label_parts.append(specification)
         label = "-".join(label_parts)
+        parts_per_product = line.parts_per_product
+        if line.component_kind == "CUT_PIECE" and line.parent_part_id:
+            parts_per_product = line.parent_part.parts_per_product
         option = {
             "id": str(line.pk),
             "component_identity": str(line.component_identity),
@@ -88,9 +95,13 @@ def bom_options_for_product_line(product_line_id):
             "specification": specification,
             "label": label,
             "source_type": source_type,
+            "component_kind": line.component_kind,
             "pieces_per_product": line.pieces_per_product,
             "cutting_sets_per_product": line.cutting_sets_per_product,
             "cutting_pieces_per_set": line.cutting_pieces_per_set,
+            "parts_per_product": parts_per_product,
+            "pieces_per_part": line.pieces_per_part,
+            "unit": line.unit,
         }
         options.append(option)
     return options
@@ -230,8 +241,22 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
         bom_line_id = str(item.get("bom_line_id") or "")
         bom_option = bom_options.get(bom_line_id)
         expected_source = PlanCategory.METAL if plan_category == PlanCategory.METAL else PlanCategory.CUTTING
-        if not bom_option or bom_option["source_type"] != expected_source:
-            label = "管材" if plan_category == PlanCategory.METAL else "裁剪明细"
+        expected_component = {
+            PlanCategory.METAL: "METAL",
+            PlanCategory.CUTTING: "CUT_PIECE",
+            PlanCategory.SEWING: "SEWN_PART",
+        }[plan_category]
+        if (
+            not bom_option
+            or bom_option["source_type"] != expected_source
+            or (
+                plan_category != PlanCategory.METAL
+                and bom_option.get("component_kind") != expected_component
+            )
+        ):
+            label = "管材" if plan_category == PlanCategory.METAL else (
+                "裁片" if plan_category == PlanCategory.CUTTING else "车缝部位"
+            )
             raise ValidationError({"lines": f"名称/部位必须从当前已确认 BOM 的{label}中选择。"})
         display_name = bom_option["label"]
         if plan_category == PlanCategory.METAL:
@@ -240,20 +265,26 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
             if factor is None or factor <= 0:
                 raise ValidationError({"lines": f"BOM“{display_name}”缺少每件支数，请先完善 BOM。"})
             required_quantity = Decimal(order_quantity) * Decimal(factor)
+        elif plan_category == PlanCategory.CUTTING:
+            parts = bom_option["parts_per_product"]
+            pieces = bom_option["pieces_per_part"]
+            if parts is None or parts <= 0 or pieces is None or pieces <= 0:
+                raise ValidationError({"lines": f"裁片“{display_name}”缺少每产品部位数或每部位裁片数，请先完善 BOM。"})
+            if not (bom_option.get("unit") or "").strip():
+                raise ValidationError({"lines": f"裁片“{display_name}”缺少计数单位，请先完善 BOM。"})
+            counting_mode = WorkCountingMode.PIECE
+            required_quantity = Decimal(order_quantity) * Decimal(parts) * Decimal(pieces)
         else:
-            sets = bom_option["cutting_sets_per_product"]
-            pieces = bom_option["cutting_pieces_per_set"]
-            if sets is None or sets <= 0 or pieces is None or pieces <= 0:
-                raise ValidationError({"lines": f"BOM“{display_name}”缺少每件套数或每套裁片数，请先完善 BOM。"})
-            if plan_category == PlanCategory.CUTTING:
-                counting_mode = WorkCountingMode.SET
-            else:
-                counting_mode = item.get("counting_mode")
-                if counting_mode not in {WorkCountingMode.SET, WorkCountingMode.PIECE}:
-                    raise ValidationError({"lines": f"车缝明细“{display_name}”必须选择按套或按片。"})
-            required_quantity = Decimal(order_quantity) * Decimal(sets)
-            if counting_mode == WorkCountingMode.PIECE:
-                required_quantity *= Decimal(pieces)
+            parts = bom_option["parts_per_product"]
+            if parts is None or parts <= 0:
+                raise ValidationError({"lines": f"车缝部位“{display_name}”缺少每产品部位数，请先完善 BOM。"})
+            if not (bom_option.get("unit") or "").strip():
+                raise ValidationError({"lines": f"车缝部位“{display_name}”缺少计数单位，请先完善 BOM。"})
+            requested_mode = item.get("counting_mode")
+            if requested_mode not in {None, "", WorkCountingMode.ORDER, WorkCountingMode.SET}:
+                raise ValidationError({"lines": f"车缝部位“{display_name}”只能按套计价。"})
+            counting_mode = WorkCountingMode.SET
+            required_quantity = Decimal(order_quantity) * Decimal(parts)
     else:
         if not display_name:
             raise ValidationError({"lines": "名称/部位不能为空。"})
@@ -374,6 +405,15 @@ def _replace_scheme_lines(scheme, items, crafts):
             bom_pieces_per_set_snapshot=(
                 basis["bom_option"]["cutting_pieces_per_set"] if basis["bom_option"] else None
             ),
+            bom_component_kind_snapshot=(
+                basis["bom_option"]["component_kind"] if basis["bom_option"] else ""
+            ),
+            bom_parts_per_product_snapshot=(
+                basis["bom_option"]["parts_per_product"] if basis["bom_option"] else None
+            ),
+            bom_pieces_per_part_snapshot=(
+                basis["bom_option"]["pieces_per_part"] if basis["bom_option"] else None
+            ),
             required_quantity_snapshot=basis["required_quantity"],
             previous_price=item.get("previous_price"), revised_price=item.get("revised_price"),
             declared_price=item["declared_price"], status=item.get("status", WageSchemeLineStatus.ACTIVE),
@@ -414,11 +454,21 @@ def _refresh_scheme_required_quantities(scheme):
         line.bom_pieces_per_set_snapshot = (
             basis["bom_option"]["cutting_pieces_per_set"] if basis["bom_option"] else None
         )
+        line.bom_component_kind_snapshot = (
+            basis["bom_option"]["component_kind"] if basis["bom_option"] else ""
+        )
+        line.bom_parts_per_product_snapshot = (
+            basis["bom_option"]["parts_per_product"] if basis["bom_option"] else None
+        )
+        line.bom_pieces_per_part_snapshot = (
+            basis["bom_option"]["pieces_per_part"] if basis["bom_option"] else None
+        )
         changed.append(line)
     if changed:
         WageSchemeLine.objects.bulk_update(changed, [
             "display_name_snapshot", "order_quantity_snapshot", "required_quantity_snapshot",
-            "bom_sets_per_product_snapshot", "bom_pieces_per_set_snapshot",
+            "bom_sets_per_product_snapshot", "bom_pieces_per_set_snapshot", "bom_component_kind_snapshot",
+            "bom_parts_per_product_snapshot", "bom_pieces_per_part_snapshot",
         ])
 
 

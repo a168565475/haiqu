@@ -113,10 +113,10 @@ describe('内部计划入库入口的订单状态', () => {
     expect(wrapper.findAllComponents(ElDropdownItem).some(item => /^(半成品|成品)入库$/.test(item.text()))).toBe(false)
   })
 
-  it('裁剪计划继续没有半成品入库入口', async () => {
+  it('裁剪计划有裁片半成品入库入口', async () => {
     state.route.name = 'workshop-cutting-plan'
     const wrapper = await createPlan('IN_PRODUCTION')
-    expect(wrapper.findAllComponents(ElDropdownItem).some(item => /入库/.test(item.text()))).toBe(false)
+    expect(wrapper.findAllComponents(ElDropdownItem).some(item => item.text() === '半成品入库')).toBe(true)
   })
 })
 

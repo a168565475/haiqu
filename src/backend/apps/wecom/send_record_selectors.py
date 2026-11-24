@@ -31,6 +31,11 @@ def send_record_payload(record, source):
         event = record.recipient.event
         recipient_name, event_code = record.recipient.employee_name, event.event_code
         title, body = event.rendered_title, event.rendered_body
+        if event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+            from apps.procurement.tracking_notifications import saved_content
+            content = saved_content(record)
+            if content:
+                title, body = content.title, content.body
         sent_at, attempt_count, status = record.last_attempt_at, record.attempt_count, record.status
     else:
         recipient_name = record.recipient_name

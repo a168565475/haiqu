@@ -31,6 +31,7 @@ qa/runtime/
 qa/browser_profile*/
 qa/chrome_cdp*/
 qa/chrome_profile*/
+/docs/designs/supplier_payment_20261119/.unit-2-runtime/
 
 # Local credentials for isolated permissions browser acceptance.
 /src/backend/.tmp/access_stage3_runtime.json
@@ -54,6 +55,8 @@ qa/*
 !qa/run.py
 !qa/runner_manifest.json
 !qa/test_run.py
+!qa/finance_supplier_ledger_u02.cjs
+!qa/finance_supplier_payments_u02.cjs
 !qa/bom_material_save_preview_readonly.cjs
 !qa/boards_preview_readonly.cjs
 !qa/workbench_navigation_readonly.cjs
@@ -85,3 +88,15 @@ tmp_bom_serializer_excerpt.txt
 
 # 单元六隔离浏览器凭据与缓存
 .tmp/employee-menu-u6-a15c89/
+
+# 本机 Codex 文件识别队列和真实上传资料。
+/data/local_codex_import/
+/src/backend/private/ai_import_source_rules.json
+
+# Private purchase-contract templates are restored from the private knowledge repository.
+/src/backend/apps/procurement/resources/auxiliary_purchase_contract.xlsx
+/src/backend/apps/procurement/resources/fabric_purchase_contract.xlsx
+/src/backend/apps/procurement/resources/foam_purchase_contract.xlsx
+/src/backend/apps/procurement/resources/plastic_purchase_contract.xlsx
+/src/backend/apps/procurement/resources/webbing_purchase_contract.xlsx
+/src/backend/apps/quotations/resources/sample_invoice_template.xlsx

@@ -42,7 +42,7 @@ def _sewing_schemes(product_line_id):
 
 
 def sewing_output_usage(product_line_id, *, exclude_tube_order_id=None):
-    """累计首次产出，不读取剩余库存；新裁片外发回货不重复占用，直发或首次入库已占。"""
+    """累计车缝部位首次产出，不读取剩余库存；外发回货不重复占用，直发或首次入库已占。"""
     from apps.outsourcing.models import TubeOutsourcingLine
     usage = defaultdict(lambda: dict(received=0, dispatched=0, reserved=0, plan_dispatched=0))
     direct = TubeOutsourcingLine.objects.filter(
@@ -86,7 +86,17 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
     bom = Bom.objects.filter(product_line=product_line, archived_at__isnull=True).order_by('-version_number', '-pk').first()
     bom_ready = bom is not None and bom.status == 'VERIFIED' and bom.order_quantity == product_line.quantity
     components = defaultdict(list)
-    for line in BomLine.objects.filter(section__bom=bom, section__section_type='FABRIC', section__title='裁剪明细'):
+    typed_lines = BomLine.objects.filter(
+        section__bom=bom, section__section_type='FABRIC', section__title='裁剪明细',
+        component_kind='SEWN_PART',
+    )
+    # 新 BOM 走部位口径；没有新部位结构时保留旧流程的只读/回退核算，
+    # 但新建工价候选已在 workshop_reporting 中拒绝旧空类型行。
+    use_part_flow = typed_lines.exists()
+    component_lines = typed_lines if use_part_flow else BomLine.objects.filter(
+        section__bom=bom, section__section_type='FABRIC', section__title='裁剪明细',
+    )
+    for line in component_lines:
         components[str(line.component_identity)].append(line)
     approved = list(_sewing_schemes(product_line.pk).filter(status='APPROVED').order_by('pk'))
     schemes = [scheme for scheme in approved if scheme.effective_from and scheme.effective_from <= as_of
@@ -111,7 +121,8 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
             blockers.append('请先确认与订单数量一致、部位唯一的最新 BOM。')
         else:
             try:
-                required = _whole(product_line.quantity * lines[0].cutting_sets_per_product, '部位订单需求')
+                quantity_basis = lines[0].parts_per_product if use_part_flow else lines[0].cutting_sets_per_product
+                required = _whole(product_line.quantity * quantity_basis, '部位订单需求')
                 if not required:
                     raise ValueError('部位订单需求必须大于零。')
             except (ValueError, TypeError) as exc:
@@ -121,21 +132,23 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
             blockers.append('部位缺少有效车缝工价工序，不能用人工完成量代替报工。')
         seen = set()
         for line in rows:
-            item, total, pieces_per_set = line.work_item, 0, None
+            item, total = line.work_item, 0
             identity = (item.craft_id, item.operation_id)
             operation_errors = []
             if (identity in seen or item.product_line_id != product_line.pk
                     or item.bom_component_identity != line.bom_component_identity_snapshot
                     or item.craft_id != line.scheme.scope_craft_id or item.workshop_id != line.scheme.workshop_id
-                    or item.counting_mode != line.counting_mode or line.counting_mode not in {'SET', 'PIECE'}):
+                    or item.counting_mode != line.counting_mode
+                    or (use_part_flow and (
+                        line.bom_component_kind_snapshot != 'SEWN_PART'
+                        or line.counting_mode != 'SET'
+                    ))
+                    or (not use_part_flow and line.counting_mode not in {'SET', 'PIECE'})):
                 operation_errors.append('车缝工项、部位或计数方式不能唯一对应。')
             seen.add(identity)
             try:
-                expected_unit = '套' if line.counting_mode == 'SET' else '片'
-                unit_names = [line.unit_name_snapshot, item.unit.unit_name if item.unit_id else '']
-                if any(name.strip() and name.strip() != expected_unit for name in unit_names):
-                    raise ValueError('车缝工项单位与按套/按片计数方式冲突。')
-                if line.counting_mode == 'PIECE':
+                pieces_per_set = None
+                if not use_part_flow and line.counting_mode == 'PIECE':
                     pieces_per_set = _whole(line.bom_pieces_per_set_snapshot, '冻结每套片数')
                     if not pieces_per_set:
                         raise ValueError('按片报工缺少可靠的冻结每套片数。')
@@ -145,14 +158,14 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
                     frozen = report_line.scheme_line
                     if (frozen.work_item_id != item.pk or frozen.bom_component_identity_snapshot != line.bom_component_identity_snapshot
                             or frozen.counting_mode != line.counting_mode
-                            or report_line.report.scheme_id != frozen.scheme_id
-                            or (report_line.unit_name_snapshot.strip() and report_line.unit_name_snapshot.strip() != expected_unit)):
-                        raise ValueError('历史报工工项、部位或计数单位与当前工序不一致。')
-                    if line.counting_mode == 'PIECE' and _whole(frozen.bom_pieces_per_set_snapshot, '历史冻结每套片数') != pieces_per_set:
+                            or (use_part_flow and frozen.bom_component_kind_snapshot != 'SEWN_PART')
+                            or report_line.report.scheme_id != frozen.scheme_id):
+                        raise ValueError('历史报工工项或部位与当前工序不一致。')
+                    if not use_part_flow and line.counting_mode == 'PIECE' and _whole(frozen.bom_pieces_per_set_snapshot, '历史冻结每套片数') != pieces_per_set:
                         raise ValueError('历史报工每套片数缺失或存在冲突，不能使用当前 BOM 猜补。')
                     total += _whole(report_line.quantity, '实际报工数量')
-                completed = total if line.counting_mode == 'SET' else total // pieces_per_set
-                if total and not completed:
+                completed = total if use_part_flow or line.counting_mode == 'SET' else total // pieces_per_set
+                if not use_part_flow and total and not completed:
                     raise ValueError('按片报工数量不足一整套，不能直发。')
                 totals.append(completed)
             except (ValueError, TypeError) as exc:
@@ -172,7 +185,7 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
             if protected > required:
                 blockers.append('累计首次入库、已直发和待发预留超过订单需求，请核对历史占用。')
             if protected > reported:
-                blockers.append('累计首次入库、已直发和待发预留超过有效报工完成套数，请核对报工及历史占用。')
+                blockers.append('累计首次入库、已直发和待发预留超过有效报工完成部位数，请核对报工及历史占用。')
             if not blockers:
                 allowance = dict(required=required, reported_minimum=reported, **values, used=used,
                     remaining=max(0, min(required, reported) - used), report_protected_usage=protected)
@@ -206,7 +219,7 @@ def assert_sewing_reports_cover_usage(product_line_id):
         for key, used in protected.items():
             row = context['components'].get(key)
             if not row or not row['basis_ready'] or row['allowance']['reported_minimum'] < used:
-                raise ValidationError({'detail': f'{as_of}的裁片报工依据不足，已有{used}套首次入库、直发或预留，不能保存该变更。'})
+                raise ValidationError({'detail': f'{as_of}的车缝部位报工依据不足，已有{used}套首次入库、直发或预留，不能保存该变更。'})
 
 
 def assert_sewing_quantity_available(*, product_line_id, requested, expected_revision, exclude_tube_order_id=None):
@@ -215,7 +228,7 @@ def assert_sewing_quantity_available(*, product_line_id, requested, expected_rev
     if not expected_revision or context['revision'] != expected_revision:
         raise PreconditionFailed('工价、报工或首次产出占用已变化，请刷新后重试。')
     if not isinstance(requested, dict) or not requested:
-        raise ValidationError({'detail': '至少选择一个裁片部位。'})
+        raise ValidationError({'detail': '至少选择一个车缝部位。'})
     for as_of in _basis_dates(product_line_id):
         basis = context if str(as_of) == context['as_of'] else sewing_component_limits(
             product, as_of=as_of, exclude_tube_order_id=exclude_tube_order_id)
@@ -226,7 +239,7 @@ def assert_sewing_quantity_available(*, product_line_id, requested, expected_rev
             except ValueError as exc:
                 raise ValidationError({'detail': str(exc)}) from exc
             if not row or not row['basis_ready']:
-                raise ValidationError({'detail': '裁片不属于当前 BOM 或报工依据不完整，请刷新并核对资料。'})
+                raise ValidationError({'detail': '车缝部位不属于当前 BOM 或报工依据不完整，请刷新并核对资料。'})
             if quantity <= 0 or quantity > row['allowance']['remaining']:
                 raise ValidationError({'detail': f'“{row["part_name"]}”在{as_of}最多可直发{row["allowance"]["remaining"]}套。'})
     return context

@@ -365,7 +365,7 @@ watch(
             <el-option
               v-for="item in options.warehouses"
               :key="`${item.warehouse_number}-${item.warehouse_name}`"
-              :label="`${item.warehouse_number} / ${item.warehouse_name}`"
+              :label="item.warehouse_name"
               :value="item.warehouse_number"
             />
           </el-select>

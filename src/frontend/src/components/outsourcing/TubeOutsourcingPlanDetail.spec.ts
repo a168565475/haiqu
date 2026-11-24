@@ -21,10 +21,10 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), fetchTubeSour
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { success: vi.fn() } }))
 
-const line = { id: 'line-1', component_identity: 'part-1', part_name: '横管', factory_id: 'factory-1', factory_name: '加工厂', quantity: '900', unit_price: '0.25', planned_amount: '225', stock_quantity: null, meters: null, material: '钢', specification: 'Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '黑', pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [], bom_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', receivable_quantity: '400' }
+const line = { id: 'line-1', component_identity: 'part-1', part_name: '横管', factory_id: 'factory-1', factory_name: '加工厂', quantity: '900', price_unit: 'PIECE' as const, unit_area_sqm: null, line_area_sqm: null, unit_price: '0.25', planned_amount: '225', stock_quantity: null, meters: null, material: '钢', specification: 'Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '黑', pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [], bom_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', receivable_quantity: '400' }
 const order: TubeOrderDetail = {
   id: 'plan-1', is_plan: true, order_number: 'WF-test', status: 'PROCESSING', version: 1, etag: 'v1', created: false, client_request_id: 'create-1', source_kind: 'PUBLIC_SEMI', source_label: '未喷塑半成品', schedule_product_id: 'schedule-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-10-29', expected_return_date: '2026-11-05', total_quantity: '900', total_stock_quantity: null, total_meters: null, planned_amount: '225', task_order_number: 'DD-test', task_number: 'SC-test', schedule_number: 'PC-test', product_number: 'CP-test', item_number: '', product_name: '测试产品', quantity: '500', unit: '把', color: '黑', zone_id: 'zone-1', zone_name: '未喷塑区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '', created_at: '', created_by_name: '', actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
+  planned_dispatch_date: '2026-10-29', expected_return_date: '2026-11-05', total_quantity: '900', total_stock_quantity: null, total_meters: null, total_area_sqm: null, planned_amount: '225', task_order_number: 'DD-test', task_number: 'SC-test', schedule_number: 'PC-test', product_number: 'CP-test', item_number: '', product_name: '测试产品', quantity: '500', unit: '把', color: '黑', zone_id: 'zone-1', zone_name: '未喷塑区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '', created_at: '', created_by_name: '', actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: true, can_receive: true, can_cancel: false }, lines: [line, { ...line, id: 'line-2', component_identity: 'part-2', part_name: '竖管', quantity: '100', bom_quantity: '100', dispatched_quantity: '0', received_quantity: '0', receivable_quantity: '0' }],
   plan_summary: { bom_quantity: '1100', planned_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', dispatch_progress: 109.1, receipt_progress: 72.7 }, dispatch_records: [], receipt_records: [],
   plan_options: { source_kinds: [{ value: 'PUBLIC_SEMI', label: '未喷塑半成品' }, { value: 'METAL', label: '金工直发' }], factories: [{ id: 'factory-1', name: '加工厂' }], zones: [{ id: 'zone-1', name: '未喷塑区', warehouse_id: 'warehouse-1', warehouse_name: '半成品仓', warehouse_type: 'SEMI_FINISHED' }] },
@@ -36,15 +36,36 @@ const auxiliarySnapshot: MaterialSelectionSnapshot = {
 }
 const key = 'tube-outsourcing-plan-action:v1:7:plan-1'
 const sourceContext: TubeSourceContext = {
-  ...order, source_revision: 'source-v1', task_id: 'task-1', specification: '测试规格', specification_display: '测试规格', material: '钢', image_file_id: null, image_url: '',
+  ...order, inputs: [], source_revision: 'source-v1', task_id: 'task-1', specification: '测试规格', specification_display: '测试规格', material: '钢', image_file_id: null, image_url: '',
   ready: true, blockers: [], tasks: [], zones: order.plan_options!.zones, factories: order.plan_options!.factories,
   rows: order.lines.map(row => ({ ...row, bom_line_id: `bom-${row.id}`, order_required: row.bom_quantity!, stock_unit: '支', max_quantity: '2400', blockers: [] })),
 }
 function receivedResult(requestId: string): TubeOrderDetail {
   return { ...structuredClone(order), etag: 'v2', receipt_records: [{ id: 'receipt-1', client_request_id: requestId, receipt_number: 'RK-test', receipt_date: '2026-10-29', created_at: '', actor_name: '经办人', warehouse_id: 'warehouse-1', warehouse_name: '半成品仓', total_received_quantity: '200', lines: [{ order_line_id: 'line-1', component_identity: 'part-1', received_quantity: '200', zone_id: 'received-zone', zone_name: '喷塑区' }] }] }
 }
+function typedColumnOrder(): TubeOrderDetail {
+  const value = structuredClone(order)
+  Object.assign(value, { part_flow: true, sewing_inputs: true, source_kind: 'CUTTING', zone_id: null })
+  value.permissions.can_edit_quantity = true
+  value.lines = [{ ...value.lines[0]!, part_name: '床面', specification: '成形60*40cm', unit: '个', quantity: '100',
+    component_source_materials: [
+      { source_bom_line_id: 'fabric', name: '蓝面布', material: '涤纶', color: '蓝', color_code: 'B1', fabric_spec: '600D', width: '150', unit: '米' },
+      { source_bom_line_id: 'lining', name: '红里布', material: '尼龙', color: '红', color_code: 'R1', fabric_spec: '210D', width: '140', unit: '米' },
+    ] }]
+  value.inputs = [{ component_identity: 'piece-1', bom_line_id: 'bom-piece-1', parent_component_identity: 'part-1',
+    parent_name: '床面', part_name: '面片', specification: '裁片70*50cm', unit: '片', pieces_per_part: 2,
+    target_quantity: '200', dispatched_quantity: '0', factory_id: 'factory-1', factory_name: '加工厂',
+    component_source_materials: [value.lines[0]!.component_source_materials![0]!] }]
+  value.planned_materials = [{ bom_line_id: 'bom-material-1', name: '计划织带', specification: '30mm',
+    material: '涤纶', color: '黑', quantity: '3', unit: '卷', factory_id: 'factory-1', factory_name: '加工厂',
+    material_selection_snapshot: { ...auxiliarySnapshot, attributes: { ...auxiliarySnapshot.attributes, size: '旧尺寸10mm' } } },
+  { bom_line_id: 'old-material', name: '旧辅料', quantity: '2', unit: '个', factory_id: 'factory-1', factory_name: '加工厂' }]
+  value.plan_options!.source_kinds = [{ value: 'CUTTING', label: '车间裁片直发' }]
+  return value
+}
 interface ViewModel {
-  entries: Array<{ quantity: string; zone: string; factory: string; price: string }>
+  warehouseId: string
+  entries: Array<{ quantity: string; zone: string; factory: string }>
   materialEntries: Array<{ id: string; quantity: string; zone: string; factory: string }>
   mode: string; pending: TubePlanPendingAction | null; message: string; canReceive: boolean
   open: (kind: 'DISPATCH' | 'RECEIPT') => Promise<void>; submit: () => Promise<void>; postPending: () => Promise<void>
@@ -53,13 +74,14 @@ interface ViewModel {
   preparedCorrection: (order: TubeOrderDetail) => void
   submitCorrection: (input: TubePlanRecordCorrectionDraft, etag: string) => Promise<void>
   checkCorrection: () => Promise<void>
-  quantityEditing: boolean; quantityValues: Record<string, string>; quantityError: string; quantityRefreshRequired: boolean
+  quantityEditing: boolean; quantityValues: Record<string, string>; priceValues: Record<string, string>; quantityError: string; quantityRefreshRequired: boolean
   openQuantityEditor: () => Promise<void>; loadQuantityEditor: () => Promise<void>; closeQuantityEditor: () => void; saveQuantity: () => Promise<void>
 }
 const wrappers: ReturnType<typeof shallowMount>[] = []
 async function mountPage(value = structuredClone(order), warehouse = true, props: { actionOnly?: boolean; entryAction?: string; blocked?: boolean } = {}, renderTables = false) {
   const wrapper = shallowMount(TubeOutsourcingPlanDetail, { props: { order: value, warehouse, ...props }, global: { plugins: [ElementPlus], stubs: {
     ProcessingMaterialDetails: { props: ['materials'], template: '<span><slot/></span>' },
+    ComponentSourceMaterials: false,
     TubeOutsourcingDetailTable: !renderTables,
     TubeOutsourcingPlanRecords: { name: 'TubeOutsourcingPlanRecords', props: ['order', 'warehouse', 'blocked', 'busy', 'pending', 'writeBlocked', 'message', 'refreshRequired', 'requestConflict'], template: '<section><slot name="dispatch-action"/><slot name="receipt-action"/></section>' },
     ElButton: { props: ['disabled', 'loading'], template: '<button :disabled="disabled || loading"><slot/></button>' },
@@ -80,6 +102,26 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('车间编辑委外总单计划数量', () => {
+  it('部位只改单价也提交，保留行单位并阻止负价，不改管材原编辑契约', async () => {
+    const value = structuredClone(order)
+    value.part_flow = true; value.sewing_inputs = true; value.permissions.can_edit_quantity = true
+    value.lines = [{ ...value.lines[0]!, part_name: '床面', unit: '个', quantity: '1400' },
+      { ...value.lines[1]!, part_name: '外袋', unit: '件', unit_price: null }]
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(value)
+    vi.mocked(api.updateTubePlanQuantity).mockResolvedValue({ ...value, etag: 'priced-v2' })
+    const { wrapper, vm } = await mountPage(value, false, {}, true)
+    await vm.openQuantityEditor()
+    expect(wrapper.text()).toContain('修改单价仅用于后续回货')
+    vm.priceValues['line-1'] = '-1'; await vm.saveQuantity()
+    expect(vm.quantityError).toContain('非负加工单价')
+    expect(api.updateTubePlanQuantity).not.toHaveBeenCalled()
+    vm.priceValues['line-1'] = '2.50'; vm.priceValues['line-2'] = '1.20'
+    await vm.saveQuantity()
+    expect(api.updateTubePlanQuantity).toHaveBeenCalledWith(value.id, { lines: [
+      { order_line_id: 'line-1', quantity: '1400', unit_price: '2.50' },
+      { order_line_id: 'line-2', quantity: '100', unit_price: '1.20' },
+    ] }, 'v1')
+  })
   function editableOrder() {
     const value = structuredClone(order); value.permissions.can_edit_quantity = true; value.etag = 'quantity-v2'
     value.lines[0]!.quantity = '1400'
@@ -144,6 +186,150 @@ describe('车间编辑委外总单计划数量', () => {
 })
 
 describe('委外总单分次收发', () => {
+  it('部位、裁片投入及目标单价弹窗独立展示规格和四列冻结来源，计划辅料逐项展示', async () => {
+    const value = typedColumnOrder()
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(value)
+    const { wrapper, vm } = await mountPage(value, false, {}, true)
+    const parts = wrapper.get('.plan-parts-table')
+    const headers = parts.findAll('thead th').map(cell => cell.text())
+    const cells = parts.findAll('tbody tr')[0]!.findAll('td')
+    expect(cells[headers.indexOf('规格')]!.text()).toBe('成形60*40cm')
+    expect(cells[headers.indexOf('部位')]!.text()).toBe('床面')
+    for (const [label, expected] of [
+      ['来源布料', ['蓝面布', '红里布']], ['材质', ['涤纶', '尼龙']], ['颜色', ['蓝', '红']], ['面料规格', ['600D', '210D']],
+    ] as const) expect(cells[headers.indexOf(label)]!.findAll('.component-source-value').map(item => item.text())).toEqual(expected)
+    const inputs = wrapper.get('.plan-input-table')
+    const inputHeaders = inputs.findAll('thead th').map(cell => cell.text())
+    const inputCells = inputs.findAll('tbody tr')[0]!.findAll('td')
+    expect(inputCells[inputHeaders.indexOf('裁片')]!.text()).toBe('面片')
+    expect(inputCells[inputHeaders.indexOf('规格')]!.text()).toBe('裁片70*50cm')
+    expect(inputCells[inputHeaders.indexOf('面料规格')]!.text()).toBe('600D')
+    const materials = wrapper.get('.planned-material-table')
+    expect(materials.findAll('thead th').map(cell => cell.text())).toEqual(['辅料', '规格', '材质', '颜色', '数量', '单位', '加工厂'])
+    expect(materials.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toEqual(['计划织带', '30mm', '涤纶', '黑', '3', '卷', '加工厂'])
+    expect(materials.findAll('tbody tr')[1]!.findAll('td')[1]!.text()).toBe('—')
+    await vm.openQuantityEditor()
+    const quantity = wrapper.get('.plan-quantity-table')
+    const quantityHeaders = quantity.findAll('thead th').map(cell => cell.text())
+    const quantityCells = quantity.findAll('tbody tr')[0]!.findAll('td')
+    expect(quantityHeaders).toEqual(expect.arrayContaining(['规格', '来源布料', '材质', '颜色', '面料规格', '目标数量', '部位单价']))
+    expect(quantityCells[quantityHeaders.indexOf('规格')]!.text()).toBe('成形60*40cm')
+    expect(quantityCells[quantityHeaders.indexOf('颜色')]!.findAll('.component-source-value').map(item => item.text())).toEqual(['蓝', '红'])
+    expect(api.updateTubePlanQuantity).not.toHaveBeenCalled()
+  })
+  it('发出和回货弹窗保持独立规格与来源列，附带辅料显示本次来源的规格材质颜色单位', async () => {
+    const value = typedColumnOrder()
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(sourceContext), source_kind: 'CUTTING', part_flow: true,
+      sewing_inputs: true, inputs: value.inputs!.map(piece => ({ ...piece, order_required: '200', max_quantity: '200', stock_quantity: null, blockers: [] })),
+      material_rows: [{ bom_line_id: 'bom-material-1', material_number: 'FL-1', name: '包边带', specification: '俊峰#33号灰色 / 橡胶 / 11*64/60CM', material: '橡胶', color: '俊峰#33号灰色', unit: '米',
+        required_quantity: '10', outsourcing_issued_quantity: '2', order_remaining: '8', available_stock: '8', max_quantity: '8', blockers: [], zones: [], material_selection_snapshot: { ...auxiliarySnapshot, attributes: { material: '橡胶', width: '11*64/60CM', color: '俊峰#33号灰色' } } }] })
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: value, etag: value.etag, can_receive: true, blockers: [], actor_name: '员工', today: '2026-11-15',
+      warehouses: [{ id: 'warehouse-1', name: '半成品仓' }], zones: [], receipt: null })
+    const { wrapper, vm } = await mountPage(value)
+    await vm.open('DISPATCH')
+    const dispatch = wrapper.get('.plan-entry-table--parts')
+    const headers = dispatch.findAll('thead th').map(cell => cell.text())
+    const cells = dispatch.findAll('tbody tr')[0]!.findAll('td')
+    expect(headers).toEqual(expect.arrayContaining(['规格', '来源布料', '材质', '颜色', '面料规格', '可外发多少', '已外发']))
+    expect(cells[0]!.text()).toBe('床面 / 面片')
+    expect(['规格', '来源布料', '材质', '颜色', '面料规格', '可外发多少', '已外发'].map(label => cells[headers.indexOf(label)]!.text())).toEqual(['裁片70*50cm', '蓝面布', '涤纶', '蓝', '600D', '200', '0'])
+    const materialTable = wrapper.get('.plan-material-table')
+    const materialHeaders = materialTable.findAll('thead th').map(cell => cell.text())
+    expect(materialHeaders).toEqual(['辅料', '规格', '材质', '颜色', '单位', '可外发多少', '已外发', '本次数量', '加工厂', '来源库区'])
+    const materialCells = materialTable.findAll('tbody tr')[0]!.findAll('td')
+    expect(materialCells.slice(0, 5).map(cell => cell.text())).toEqual(['包边带', '11*64/60CM', '橡胶', '俊峰#33号灰色', '米'])
+    expect(materialCells[materialHeaders.indexOf('可外发多少')]!.text()).toBe('8')
+    expect(materialCells[materialHeaders.indexOf('已外发')]!.text()).toBe('2')
+    vm.close()
+    await vm.open('RECEIPT')
+    const receipt = wrapper.get('.plan-entry-table--parts')
+    const receiptHeaders = receipt.findAll('thead th').map(cell => cell.text())
+    const receiptCells = receipt.findAll('tbody tr')[0]!.findAll('td')
+    expect(receiptCells[receiptHeaders.indexOf('规格')]!.text()).toBe('成形60*40cm')
+    expect(receiptCells[receiptHeaders.indexOf('来源布料')]!.findAll('.component-source-value').map(item => item.text())).toEqual(['蓝面布', '红里布'])
+    expect(receiptCells[receiptHeaders.indexOf('面料规格')]!.findAll('.component-source-value').map(item => item.text())).toEqual(['600D', '210D'])
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+    expect(api.receiveTubePlan).not.toHaveBeenCalled()
+  })
+  it.each([
+    { stock: '200', sent: '0', message: '床面 / 面片：车间可直发 0 片。请在本单改选「裁片库存」，来源库区选「布面仓 / 四楼」（可发 200 片）。' },
+    { stock: '119', sent: '0', message: '床面 / 面片：车间可直发 0 片。本次填写 120 片，请核对数量。' },
+    { stock: '200', sent: '200', message: '床面 / 面片：本单已发 200 片，剩余可发 0 片。' },
+  ])('直发不足时按该裁片可用库存 $stock 和本单已发量 $sent 提示', async ({ stock, sent, message }) => {
+    const value = typedColumnOrder()
+    value.inputs![0]!.dispatched_quantity = sent
+    value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' })
+    value.plan_options!.zones.push({ id: 'fabric-zone', warehouse_id: 'fabric', warehouse_name: '布面仓', name: '四楼', warehouse_type: 'SEMI_FINISHED' })
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...sourceContext, source_kind: 'CUTTING', inputs: [{
+      ...value.inputs![0]!, order_required: '200', max_quantity: '0', stock_quantity: null, blockers: [],
+      stock_zones: [{ zone_id: 'zone-1', available_quantity: '1' }, { zone_id: 'fabric-zone', available_quantity: stock }],
+    }] })
+    const { vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    vm.entries[0]!.quantity = '120'
+    await vm.submit()
+    expect(vm.message).toBe(message)
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+  })
+  it('混合单位裁片分组汇总并按行发出，部位回货保持单位和历史费用暂缓', async () => {
+    const value = structuredClone(order)
+    Object.assign(value, { part_flow: true, sewing_inputs: true, fees_deferred: true, source_kind: 'CUTTING', zone_id: null, planned_amount: null })
+    value.lines = [{ ...value.lines[0]!, part_name: '床面', unit: '个', quantity: '100', dispatched_quantity: '0', received_quantity: '0', unit_price: null, planned_amount: null }]
+    value.inputs = ['面片', '棉片'].map((name, index) => ({ component_identity: `piece-${index}`, bom_line_id: `bom-piece-${index}`, parent_component_identity: 'part-1', parent_name: '床面', part_name: name, specification: '50*40', unit: index ? '件' : '片', pieces_per_part: 2, target_quantity: '200', dispatched_quantity: '0', factory_id: 'factory-1', factory_name: '加工厂' }))
+    value.lines[0]!.component_source_materials = [
+      { source_bom_line_id: 'fabric', name: '面布', material: '涤纶', color: '蓝', color_code: 'B1', fabric_spec: '600D', width: '150', unit: '米' },
+      { source_bom_line_id: 'cotton', name: '棉料', material: '无胶棉', color: '白', color_code: '', fabric_spec: '200g', width: '', unit: '米' },
+    ]
+    value.inputs.forEach((piece, index) => { piece.component_source_materials = [value.lines[0]!.component_source_materials![index]!] })
+    value.plan_summary!.quantity_totals = [{ unit: '个', bom_quantity: '100', planned_quantity: '100', dispatched_quantity: '0', received_quantity: '0' }]
+    value.plan_summary!.dispatched_quantity = null
+    value.plan_summary!.input_totals = [{ unit: '片', dispatched_quantity: '20' }, { unit: '件', dispatched_quantity: '0' }]
+    value.plan_options!.source_kinds = [{ value: 'CUTTING', label: '车间裁片直发' }, { value: 'PUBLIC_PIECE', label: '裁片库存' }]
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(sourceContext), part_flow: true, sewing_inputs: true, source_kind: 'CUTTING', inputs: value.inputs.map(piece => ({ ...piece, order_required: '200', max_quantity: '200', stock_quantity: null, blockers: [] })) })
+    vi.mocked(api.dispatchTubePlan).mockImplementation(async (_, payload) => ({ ...value, etag: 'v2', dispatch_records: [{ id: 'typed-batch', client_request_id: payload.client_request_id, order_number: 'WF-typed', actual_dispatch_date: payload.actual_dispatch_date, created_at: '', actor_name: '员工', source_kind: 'CUTTING', zone_name: '', total_quantity: '20', lines: [] }] }))
+    const { wrapper, vm } = await mountPage(value)
+    await vm.open('DISPATCH')
+    expect(vm.entries).toHaveLength(2)
+    const headers = wrapper.get('.plan-entry-table').findAll('thead th').map(cell => cell.text())
+    expect(wrapper.get('.plan-entry-table').findAll('tbody tr').map(row => row.findAll('td')[headers.indexOf('单位')]!.text())).toEqual(['片', '件'])
+    expect(wrapper.text()).toContain('20 片 / 0 件')
+    expect(wrapper.text()).not.toContain('每部位片数')
+    expect(wrapper.text()).toContain('床面 / 面片')
+    expect(wrapper.text()).not.toContain('每套片数')
+    expect(wrapper.get('.plan-entry-table').findAll('tbody tr').map(row => {
+      const cells = row.findAll('td')
+      return ['规格', '来源布料', '材质', '颜色', '面料规格'].map(label => cells[headers.indexOf(label)]!.text())
+    })).toEqual([['50*40', '面布', '涤纶', '蓝', '600D'], ['50*40', '棉料', '无胶棉', '白', '200g']])
+    expect(wrapper.get('.plan-entry-table').findAll('tbody tr').map(row => {
+      const cells = row.findAll('td')
+      return ['可外发多少', '已外发'].map(label => cells[headers.indexOf(label)]!.text())
+    })).toEqual([['200', '0'], ['200', '0']])
+    vm.entries[1]!.quantity = '3'
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [], inputs: [{ component_identity: 'piece-1', quantity: '3' }] }), 'v1')
+    const workshop = await mountPage(value, false, {}, true)
+    expect(workshop.wrapper.text()).toContain('100 个')
+    expect(workshop.wrapper.text()).toContain('费用未知')
+    expect(workshop.wrapper.text()).not.toContain('元/套')
+    const columns = workshop.wrapper.get('.plan-parts-table').findAll('thead th').map(cell => cell.text())
+    expect(columns).toEqual(expect.arrayContaining(['规格', '来源布料', '材质', '颜色', '面料规格']))
+    const cells = workshop.wrapper.get('.plan-parts-table').findAll('tbody tr')[0]!.findAll('td')
+    expect(cells[columns.indexOf('来源布料')]!.findAll('.component-source-value').map(row => row.text())).toEqual(['面布', '棉料'])
+    expect(cells[columns.indexOf('材质')]!.findAll('.component-source-value').map(row => row.text())).toEqual(['涤纶', '无胶棉'])
+  })
+  it('车间总单显示冻结面积、逐行计价单位和金额，仓库隐藏', async () => {
+    const value = structuredClone(order)
+    value.total_area_sqm = '112.5000'; value.planned_amount = '281.25'
+    Object.assign(value.lines[0]!, { price_unit: 'SQUARE_METER', unit_area_sqm: '0.1250', line_area_sqm: '112.5000', unit_price: '2.50', planned_amount: '281.25' })
+    const workshop = await mountPage(value, false, {}, true)
+    expect(workshop.wrapper.text()).toContain('喷塑总面积')
+    expect(workshop.wrapper.text()).toContain('112.5 ㎡')
+    expect(workshop.wrapper.text()).toContain('按㎡')
+    expect(workshop.wrapper.text()).toContain('2.5 元/㎡')
+    const warehouse = await mountPage(value, true, {}, true)
+    expect(warehouse.wrapper.text()).not.toContain('喷塑总面积')
+    expect(warehouse.wrapper.text()).not.toContain('计价方式')
+    expect(warehouse.wrapper.text()).not.toContain('计划加工金额')
+  })
   it('列表直接打开材料发出，沿用总单厂家单价但不提供编辑或金额展示', async () => {
     const value = structuredClone(order); value.source_kind = 'METAL'; value.zone_id = null
     value.lines[0]!.quantity = '2700'
@@ -161,17 +347,47 @@ describe('委外总单分次收发', () => {
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('Φ22')
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('400')
     vm.entries[0]!.quantity = '1500'; await vm.submit()
-    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1', unit_price: '0.25' }] }), 'v1')
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(wrapper.emitted('closed')).toHaveLength(1)
   })
-  it('列表外发入库保留真实可入数量、材料属性和只读计划厂家', async () => {
+  it.each([
+    ['CUTTING', '成品布面仓'],
+    ['METAL', '管材喷塑仓'],
+  ] as const)('列表外发入库按 %s 默认选中 %s', async (sourceKind, warehouseName) => {
+    const value = { ...structuredClone(order), source_kind: sourceKind }
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValueOnce({
+      order: value, etag: value.etag, can_receive: true, blockers: [], actor_name: '经办人', today: '2026-10-29',
+      warehouses: [{ id: 'other-warehouse', name: '半成品暂存仓' }, { id: 'default-warehouse', name: warehouseName }],
+      zones: [
+        { id: 'zone-1', warehouse_id: 'default-warehouse', warehouse: warehouseName, name: 'A区' },
+        { id: 'zone-2', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'B区' },
+        { id: 'zone-3', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'C区' },
+      ], receipt: null,
+    })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(vm.warehouseId).toBe('default-warehouse')
+    expect(vm.entries[0]!.zone).toBe('zone-1')
+
+    const warehouseSelect = wrapper.getComponent({ name: 'ElSelect' })
+    warehouseSelect.vm.$emit('update:modelValue', 'other-warehouse')
+    await flushPromises()
+    expect(vm.warehouseId).toBe('other-warehouse')
+    expect(vm.entries[0]!.zone).toBe('')
+
+    warehouseSelect.vm.$emit('update:modelValue', 'default-warehouse')
+    await flushPromises()
+    expect(vm.entries[0]!.zone).toBe('zone-1')
+  })
+  it('列表外发入库保留实收记录、材料属性和只读计划厂家，不显示可入上限', async () => {
     const { wrapper, vm } = await mountPage(structuredClone(order), true, { actionOnly: true, entryAction: 'return' })
     expect(vm.mode).toBe('RECEIPT'); expect(wrapper.find('[aria-label="外发入库"]').exists()).toBe(true)
     const headers = wrapper.findAll('.plan-entry-table th').map(item => item.text())
     expect(headers).toContain('材质'); expect(headers).toContain('规格'); expect(headers).toContain('切割长度 mm')
     expect(headers).toContain('计划加工厂'); expect(headers).not.toContain('加工单价')
     const cells = wrapper.findAll('.plan-entry-table tbody tr')[0]!.findAll('td')
-    expect(cells[headers.indexOf('本次最多可入')]!.text()).toBe('400')
+    expect(headers).not.toContain('本次最多可入')
+    expect(wrapper.findAll('.plan-entry-table col')).toHaveLength(headers.length)
+    expect(cells).toHaveLength(headers.length)
     expect(cells[headers.indexOf('计划加工厂')]!.text()).toBe('加工厂')
     expect(wrapper.emitted('closed')).toBeUndefined()
   })
@@ -225,7 +441,7 @@ describe('委外总单分次收发', () => {
       expect(headers).not.toContain('本次可外发')
     } else {
       expect(headers).not.toContain('需要外发（套）')
-      expect(cells[headers.indexOf('本次最多可入')]!.text()).toBe('400')
+      expect(headers).not.toContain('本次最多可入')
       expect(api.fetchTubeSource).not.toHaveBeenCalled()
     }
   })
@@ -427,7 +643,7 @@ describe('委外总单分次收发', () => {
     const { vm } = await mountPage(value)
     await vm.open('DISPATCH'); vm.entries[0]!.quantity = '1500'; await vm.submit()
     expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: 'plan-1', source_kind: 'PUBLIC_SEMI' }))
-    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1', unit_price: '0.25' }] }), 'v1')
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(localStorage.getItem(key)).toBeNull()
   })
   it.each(['METAL', 'SEWING', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'] as const)('%s按总单数量减累计已发限制本次外发', async sourceKind => {
@@ -450,18 +666,18 @@ describe('委外总单分次收发', () => {
     await vm.open('DISPATCH'); vm.entries[0]!.quantity = '2401'; await vm.submit()
     expect(api.dispatchTubePlan).not.toHaveBeenCalled(); expect(vm.message).toContain('最多可发2400')
   })
-  it('按总单独立入库，支持部分部件且禁止超过累计实发', async () => {
+  it('按总单独立入库，支持部分部件且数量可超过累计实发和目标', async () => {
     const { vm } = await mountPage()
-    await vm.open('RECEIPT'); vm.entries[0]!.quantity = '401'; vm.entries[0]!.zone = 'received-zone'; await vm.submit()
-    expect(api.receiveTubePlan).not.toHaveBeenCalled(); expect(vm.message).toContain('累计入库不能超过')
-    vm.entries[0]!.quantity = '200'; await vm.submit()
+    await vm.open('RECEIPT'); vm.entries[0]!.quantity = '10001'; vm.entries[0]!.zone = 'received-zone'; await vm.submit()
     const payload = vi.mocked(api.receiveTubePlan).mock.calls[0]![1]
-    expect(payload.lines).toEqual([{ order_line_id: 'line-1', received_quantity: '200', zone_id: 'received-zone' }])
+    expect(payload.lines).toEqual([{ order_line_id: 'line-1', received_quantity: '10001', zone_id: 'received-zone' }])
     expect(payload).not.toHaveProperty('dispatch_id'); expect(payload).not.toHaveProperty('batch_id')
   })
-  it('已达BOM目标仍可继续收剩余外发，数量不截断到BOM', async () => {
+  it('已超收且剩余外发为零仍可继续入库', async () => {
     const value = structuredClone(order)
-    value.plan_summary!.receipt_progress = 100; value.lines[0]!.received_quantity = '1000'; value.lines[0]!.receivable_quantity = '200'
+    value.status = 'COMPLETED'; value.plan_summary!.receipt_progress = 100
+    value.lines[0]!.received_quantity = '10001'; value.lines[0]!.receivable_quantity = '0'
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: value, etag: 'v1', can_receive: true, blockers: [], actor_name: '经办人', today: '2026-11-13', warehouses: [{ id: 'warehouse-1', name: '半成品仓' }], zones: [{ id: 'received-zone', warehouse_id: 'warehouse-1', warehouse: '半成品仓', name: '喷塑区' }], receipt: null })
     const { vm } = await mountPage(value)
     expect(vm.canReceive).toBe(true)
     await vm.open('RECEIPT'); vm.entries[0]!.quantity = '200'; vm.entries[0]!.zone = 'received-zone'; await vm.submit()

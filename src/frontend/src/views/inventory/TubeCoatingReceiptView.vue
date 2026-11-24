@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
-import { isCuttingSource, tubeMaterialColumn, tubeSourceLabels } from '@/utils/tubeOutsourcing'
+import { defaultOutsourcingReceiptWarehouse, isCuttingSource, tubeMaterialColumn, tubeSourceLabels } from '@/utils/tubeOutsourcing'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { isAxiosError, isCancel } from 'axios'
 import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
@@ -67,6 +67,7 @@ const formLocked = computed(() => loading.value || saving.value || Boolean(pendi
 const canEdit = computed(() => warehouseWorkspace.value && hasPermission.value && !formLocked.value && !isEnded.value && order.value?.status === 'PROCESSING' && preview.value?.can_receive === true && rows.value.length > 0)
 const warehouses = computed(() => preview.value?.warehouses || [])
 const zones = computed(() => (preview.value?.zones || []).filter(zone => zone.warehouse_id === warehouse.value))
+const defaultZone = computed(() => zones.value.length === 1 ? zones.value[0]!.id : '')
 const warehouseLabel = computed(() => receipt.value?.warehouse_name || warehouses.value.find(item => item.id === warehouse.value)?.name || '—')
 const actorName = computed(() => receipt.value?.actor_name || preview.value?.actor_name || '—')
 const hasInvalidQuantity = computed(() => rows.value.some(row => receivedValue(row) === null))
@@ -100,10 +101,10 @@ function receivedValue(row: Entry): number | null {
   const text = row.received.trim()
   if (!text) return 0
   if (!/^\d+$/.test(text)) return null
-  const value = Number(text), sent = Number(row.dispatched_quantity)
-  return Number.isSafeInteger(value) && Number.isSafeInteger(sent) && value >= 0 && value <= sent ? value : null
+  const value = Number(text)
+  return Number.isSafeInteger(value) && value >= 0 && value <= 99999999999999 ? value : null
 }
-function difference(row: Entry): number | null { const value = receivedValue(row); return value === null ? null : Number(row.dispatched_quantity) - value }
+function difference(row: Entry): number | null { const value = receivedValue(row); return value === null ? null : Math.max(Number(row.dispatched_quantity) - value, 0) }
 function zoneLabel(row: Entry): string { return (receivedValue(row) || 0) > 0 ? isEnded.value ? row.zone_name || '—' : zones.value.find(item => item.id === row.zone)?.name || '—' : '—' }
 function warn(message: string) { if (!owned.isCurrent()) return; ElMessage.closeAll(); ElMessage.warning({ message, duration: 4500 }) }
 function errorText(cause: unknown, fallback: string): string {
@@ -116,7 +117,7 @@ function errorText(cause: unknown, fallback: string): string {
 function rowFromOrder(line: TubeDetailLine): Entry {
   return { ...line, id: line.id, order_line_id: line.id, part_name: line.part_name, material: line.material, specification: line.specification, thickness: line.thickness,
     cutting_length_mm: line.cutting_length_mm, raw_color: line.raw_color, spray_color: line.spray_color, factory_id: line.factory_id, factory_name: line.factory_name,
-    dispatched_quantity: line.quantity, received: '', reason: '', zone: '', zone_name: '' }
+    dispatched_quantity: line.quantity, received: '', reason: '', zone: defaultZone.value, zone_name: '' }
 }
 function useReceipt(result: TubeReceipt) {
   if (!preview.value || result.order_id !== orderId || result.source_kind !== preview.value.order.source_kind || result.status !== 'COMPLETED' || !result.id || !result.receipt_number || !result.etag || !Array.isArray(result.lines)) throw new Error('回货结果不完整，请继续核对原请求。')
@@ -133,12 +134,13 @@ function usePreview(result: TubeReceiptPreview, preserve = true) {
   const previous = new Map(rows.value.map(row => [row.order_line_id, row]))
   preview.value = result
   if (result.receipt) { useReceipt(result.receipt); return }
+  if (!preserve || !warehouse.value) warehouse.value = defaultOutsourcingReceiptWarehouse(result.order.source_kind, result.warehouses) ?? ''
   rows.value = result.order.lines.map(line => {
     const row = rowFromOrder(line), old = preserve ? previous.get(line.id) : undefined
-    return old ? { ...row, received: old.received, reason: old.reason, zone: old.zone } : row
+    return old ? { ...row, received: old.received, reason: old.reason, zone: row.zone || old.zone } : row
   })
   if (!preserve || !receiptDate.value) receiptDate.value = result.today
-  if (!preserve) { warehouse.value = ''; remark.value = '' }
+  if (!preserve) remark.value = ''
 }
 async function loadPreview(preserve = true) {
   if (!owned.isCurrent() || !orderId || saving.value || pending.value || storageError.value) return
@@ -155,19 +157,22 @@ async function loadPreview(preserve = true) {
   } finally { if (owned.isCurrent() && !disposed && sequence === previewSequence) loading.value = false }
 }
 function validateQuantity(row: Entry): boolean {
-  if (receivedValue(row) === null) { warn(`${row.part_name}：实收须为0至${format(row.dispatched_quantity)}的整数，空白按0${quantityUnit.value}处理。`); return false }
+  if (receivedValue(row) === null) { warn(`${row.part_name}：实收须为有效非负整数，空白按0${quantityUnit.value}处理。`); return false }
   return true
 }
-function onReceivedChange(row: Entry) { if ((receivedValue(row) || 0) > 0 && !row.zone && zones.value.length) row.zone = zones.value[0]!.id }
+function changeWarehouse(id: string) {
+  warehouse.value = id
+  rows.value.forEach(row => { row.zone = defaultZone.value })
+}
 function requestWarehouseChange(raw: unknown) {
   if (!canEdit.value || typeof raw !== 'string' || raw === warehouse.value) return
   if (!warehouses.value.some(item => item.id === raw)) return
-  if (warehouse.value && rows.value.some(row => row.zone)) { pendingWarehouse.value = raw; dialog.value = 'warehouse'; return }
-  warehouse.value = raw; rows.value.forEach(row => { row.zone = '' })
+  if (warehouse.value && positiveRows.value.some(row => row.zone)) { pendingWarehouse.value = raw; dialog.value = 'warehouse'; return }
+  changeWarehouse(raw)
 }
 function confirmWarehouseChange() {
   if (!canEdit.value || !warehouses.value.some(item => item.id === pendingWarehouse.value)) return
-  warehouse.value = pendingWarehouse.value; rows.value.forEach(row => { row.zone = '' })
+  changeWarehouse(pendingWarehouse.value)
   pendingWarehouse.value = ''; dialog.value = ''
 }
 function validateReceipt(): boolean {
@@ -364,7 +369,7 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1 })
           <template #cell-dispatched_quantity="{ row }">{{ format(row.dispatched_quantity) }}</template>
           <template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(orderLinesById.get(row.order_line_id)?.unit_price) }}</template>
           <template #cell-planned_amount="{ row }">{{ formatOutsourcingMoney(orderLinesById.get(row.order_line_id)?.planned_amount) }}</template>
-          <template #cell-received="{ row }"><strong v-if="!canEdit" class="brand">{{ receivedValue(row) === null ? '—' : format(receivedValue(row)) }}</strong><ElInput v-else v-model="row.received" inputmode="numeric" :aria-label="`${row.part_name}实收${quantityUnit}数`" placeholder="0或空白" @input="onReceivedChange(row)" @blur="validateQuantity(row)"><template #suffix>{{ quantityUnit }}</template></ElInput></template>
+          <template #cell-received="{ row }"><strong v-if="!canEdit" class="brand">{{ receivedValue(row) === null ? '—' : format(receivedValue(row)) }}</strong><ElInput v-else v-model="row.received" inputmode="numeric" :aria-label="`${row.part_name}实收${quantityUnit}数`" placeholder="0或空白" @blur="validateQuantity(row)"><template #suffix>{{ quantityUnit }}</template></ElInput></template>
           <template #cell-difference="{ row }"><strong :class="{ brand: (difference(row) || 0) > 0 }">{{ difference(row) === null ? '—' : format(difference(row)) }}</strong></template>
           <template #cell-reason="{ row }"><span v-if="!canEdit" class="cell-text" :title="(difference(row) || 0) > 0 ? row.reason : '—'">{{ (difference(row) || 0) > 0 ? row.reason : '—' }}</span><ElInput v-else v-model="row.reason" class="reason" :disabled="difference(row) === 0" :aria-label="`${row.part_name}差额原因`" :placeholder="difference(row) === 0 ? '全回，无需填写' : '少回须填写原因'" maxlength="2000" /></template>
           <template #cell-zone="{ row }"><span v-if="!canEdit">{{ zoneLabel(row) }}</span><ElSelect v-else v-model="row.zone" :disabled="!(receivedValue(row) || 0) || !warehouse" :placeholder="(receivedValue(row) || 0) > 0 ? '选择库区' : '不入库'" :aria-label="`${row.part_name}入库库区`" popper-class="tube-coating-select-popper"><ElOption v-for="zone in zones" :key="zone.id" :value="zone.id" :label="zone.name" /></ElSelect></template>
@@ -405,7 +410,7 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1 })
   </AppWindowDialog>
 
   <AppWindowDialog :model-value="dialog === 'warehouse'" title="切换目标仓库" :width="620" class="tube-coating-receipt-dialog" @update:model-value="closeDialog">
-    <div class="d3-warehouse-confirm"><p>切换至<strong>{{ warehouses.find(item => item.id === pendingWarehouse)?.name }}</strong>后，各部位需要重新选择新仓库下的库区。</p><p class="muted">已填写的实收{{ quantityUnit }}数、差额原因和备注全部保留。</p></div><template #footer><ElButton @click="dialog = ''; pendingWarehouse = ''">保留原仓库</ElButton><ElButton type="primary" @click="confirmWarehouseChange">切换仓库</ElButton></template>
+    <div class="d3-warehouse-confirm"><p>切换至<strong>{{ warehouses.find(item => item.id === pendingWarehouse)?.name }}</strong>后，将清除原库区选择。</p><p class="muted">已填写的实收{{ quantityUnit }}数、差额原因和备注全部保留。</p></div><template #footer><ElButton @click="dialog = ''; pendingWarehouse = ''">保留原仓库</ElButton><ElButton type="primary" @click="confirmWarehouseChange">切换仓库</ElButton></template>
   </AppWindowDialog>
 </template>
 

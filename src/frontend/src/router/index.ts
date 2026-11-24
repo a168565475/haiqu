@@ -4,6 +4,7 @@ import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
 import { canOpenPage } from './pageAccess'
 
 import { useAuthStore } from '@/stores/auth'
+import { createClientUuid } from '@/utils/clientUuid'
 import { approveRouteIdentity, hasStaleRouteIdentity, isCleanIdentityLanding } from '@/composables/useRouteIdentityBoundary'
 import LoginView from '@/views/LoginView.vue'
 
@@ -40,6 +41,7 @@ const BomEditorView = () => import('@/views/boms/BomEditorView.vue')
 const BomPreviewView = () => import('@/views/boms/BomPreviewView.vue')
 const ProductionTaskListView = () => import('@/views/production/ProductionTaskListView.vue')
 const ProductionTaskCreateView = () => import('@/views/production/ProductionTaskCreateView.vue')
+const AiProductionTaskImportView = () => import('@/views/production/AiProductionTaskImportView.vue')
 const ProductionTaskDetailView = () => import('@/views/production/ProductionTaskDetailView.vue')
 const ProductionTaskEditView = () => import('@/views/production/ProductionTaskEditView.vue')
 const QuotationListView = () => import('@/views/quotations/QuotationListView.vue')
@@ -69,11 +71,12 @@ const RawMaterialManagementView = () => import('@/views/products/RawMaterialMana
 const ProductManagementView = () => import('@/views/products/ProductManagementView.vue')
 const SupplierListView = () => import('@/views/procurement/SupplierListView.vue')
 const PurchaseOrderListView = () => import('@/views/procurement/PurchaseOrderListView.vue')
+const PurchaseTrackingView = () => import('@/views/procurement/PurchaseTrackingView.vue')
 const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFormView.vue')
+const PackagingPurchaseFormView = () => import('@/views/procurement/PackagingPurchaseFormView.vue')
 const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
 const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
 const PurchaseGroupDetailView = () => import('@/views/procurement/PurchaseGroupDetailView.vue')
-const PurchaseSheetTemplateSelectView = () => import('@/views/procurement/PurchaseSheetTemplateSelectView.vue')
 const SupplierPurchaseSheetListView = () => import('@/views/procurement/SupplierPurchaseSheetListView.vue')
 const SupplierPurchaseSheetEditorView = () => import('@/views/procurement/SupplierPurchaseSheetEditorView.vue')
 const PurchaseContractTemplateListView = () => import('@/views/procurement/PurchaseContractTemplateListView.vue')
@@ -83,9 +86,9 @@ const FinishedGoodsOutboundDetailView = () => import('@/views/inventory/Finished
 const MaterialInventoryView = () => import('@/views/inventory/MaterialInventoryView.vue')
 const MaterialInventoryDetailView = () => import('@/views/inventory/MaterialInventoryDetailView.vue')
 const MaterialPurchaseInboundView = () => import('@/views/inventory/MaterialPurchaseInboundView.vue')
-const ManualMaterialInboundView = () => import('@/views/inventory/ManualMaterialInboundView.vue')
 const MaterialQualityConfirmationView = () => import('@/views/inventory/MaterialQualityConfirmationView.vue')
 const MaterialInboundDetailView = () => import('@/views/inventory/MaterialInboundDetailView.vue')
+const MaterialTransferRecordsView = () => import('@/views/inventory/MaterialTransferRecordsView.vue')
 const PurchaseInboundListView = () => import('@/views/procurement/PurchaseInboundListView.vue')
 const WorkshopConfigurationView = () => import('@/views/workshop/WorkshopConfigurationView.vue')
 const ProductionSchedulingDetailView = () => import('@/views/workshop/ProductionSchedulingDetailView.vue')
@@ -192,7 +195,7 @@ export const router = createRouter({
     {
       path: '/inventory/semi-finished/receipts', name: 'semi-receipt-records',
       component: () => import('@/views/inventory/SemiReceiptRecordsView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '仓库管理 / 半成品入库记录', breadcrumbs: [{label:'仓库管理'},{label:'材料库存',to:'/inventory/materials'},{label:'半成品入库记录'}], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'semi-receipt-records', headerTitle: '仓库管理 / 车间入库', breadcrumbs: [{label:'仓库管理'},{label:'车间入库'}], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/semi-finished/tube-return', name: 'inventory-tube-return',
@@ -671,6 +674,20 @@ export const router = createRouter({
         activeMenu: 'production-tasks',
         headerTitle: '生产管理 / 生产订单',
         breadcrumbs: [{ label: '生产管理' }, { label: '生产订单', to: '/production-tasks' }, { label: '新增生产任务单' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/production-tasks/ai-import',
+      name: 'ai-production-task-import',
+      component: AiProductionTaskImportView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'ai-production-task-import',
+        headerTitle: '生产管理 / AI 生产任务导入',
+        breadcrumbs: [{ label: '生产管理' }, { label: 'AI 生产任务导入' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1183,7 +1200,7 @@ export const router = createRouter({
       component: MaterialIssueListView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料' }],
+        headerTitle: '仓库管理 / 车间领料', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1193,7 +1210,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 新增', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '新增' }],
+        headerTitle: '仓库管理 / 车间领料 / 新增', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '新增' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1203,7 +1220,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 修改', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '修改' }],
+        headerTitle: '仓库管理 / 车间领料 / 修改', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '修改' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1213,7 +1230,7 @@ export const router = createRouter({
       component: MaterialIssueDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 领料单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
+        headerTitle: '仓库管理 / 车间领料 / 领料单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1272,6 +1289,20 @@ export const router = createRouter({
         activeMenu: 'purchase-inbounds',
         headerTitle: '仓库管理 / 采购入库',
         breadcrumbs: [{ label: '仓库管理' }, { label: '采购入库' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-inbound/records',
+      name: 'purchase-receipt-records',
+      component: () => import('@/views/inventory/PurchaseReceiptRecordsView.vue'),
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'purchase-receipt-records',
+        headerTitle: '仓库管理 / 入库记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '入库记录' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1542,13 +1573,27 @@ export const router = createRouter({
     {
       path: '/inventory/materials/inbound',
       name: 'manual-material-inbound',
-      component: ManualMaterialInboundView,
+      redirect: { name: 'material-transfers' },
       meta: {
         requiresAuth: true,
         layout: 'erp',
-        activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 材料库存 / 材料入库',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '材料库存', to: '/inventory/materials' }, { label: '材料入库' }],
+        activeMenu: 'material-transfers',
+        headerTitle: '仓库管理 / 材料收发',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '材料收发' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/inventory/material-transfers',
+      name: 'material-transfers',
+      component: MaterialInboundDetailView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'material-transfers',
+        headerTitle: '仓库管理 / 材料收发',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '材料收发' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1556,13 +1601,27 @@ export const router = createRouter({
     {
       path: '/inventory/material-inbounds',
       name: 'material-inbound-details',
-      component: MaterialInboundDetailView,
+      redirect: { name: 'material-inbound-records' },
       meta: {
         requiresAuth: true,
         layout: 'erp',
-        activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 入库明细',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '入库明细' }],
+        activeMenu: 'material-inbound-records',
+        headerTitle: '仓库管理 / 收发记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '收发记录' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/inventory/material-transfer-records',
+      name: 'material-inbound-records',
+      component: MaterialTransferRecordsView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'material-inbound-records',
+        headerTitle: '仓库管理 / 收发记录',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '收发记录' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1575,10 +1634,81 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-orders',
-        headerTitle: '采购管理 / 采购订单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单' }],
+        headerTitle: '采购管理 / 采购需求',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求' }],
         pageWidth: 'fluid',
         flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases',
+      name: 'packaging-purchases',
+      component: PurchaseOrderListView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/new',
+      name: 'packaging-purchase-create',
+      component: PackagingPurchaseFormView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 填写包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '填写采购' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/batch',
+      name: 'packaging-purchase-batch',
+      component: PackagingPurchaseFormView,
+      beforeEnter: to => {
+        if (typeof to.query.batch_session_id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(to.query.batch_session_id)) return
+        if (!to.query.group_ids) return { name: 'packaging-purchase-create' }
+        return { name: 'packaging-purchase-batch', query: { ...to.query, batch_session_id: createClientUuid() } }
+      },
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 填写包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '填写采购' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/:id',
+      name: 'packaging-purchase-detail',
+      component: PurchaseGroupDetailView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 包材采购详情',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '详情' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-tracking',
+      name: 'purchase-tracking',
+      component: PurchaseTrackingView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-tracking',
+        headerTitle: '采购管理 / 采购跟踪',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders?view=groups' }, { label: '采购跟踪' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-alerts',
+      name: 'purchase-alerts',
+      component: PurchaseTrackingView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-alerts',
+        headerTitle: '采购管理 / 采购提醒',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购提醒' }],
+        pageWidth: 'fluid', flushPage: true,
       },
     },
     {
@@ -1587,8 +1717,8 @@ export const router = createRouter({
       component: PurchaseGroupDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
-        headerTitle: '采购管理 / 采购总单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders?view=groups' }, { label: '采购总单' }],
+        headerTitle: '采购管理 / 采购需求',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders?view=groups' }, { label: '采购需求详情' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1596,10 +1726,15 @@ export const router = createRouter({
       path: '/purchase-groups/:groupId/batches/new',
       name: 'purchase-batch-create',
       component: PurchaseOrderFormView,
+      beforeEnter: (to) => {
+        const sessionId = to.query.batch_session_id
+        if (typeof sessionId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) return
+        return { name: 'purchase-batch-create', params: to.params, query: { ...to.query, batch_session_id: createClientUuid() } }
+      },
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 新增采购批次',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders?view=groups' }, { label: '新增采购批次' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders?view=groups' }, { label: '新增采购批次' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1611,8 +1746,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-orders',
-        headerTitle: '采购管理 / 采购订单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '新建' }],
+        headerTitle: '采购管理 / 采购需求 / 新建',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '新建' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1626,7 +1761,7 @@ export const router = createRouter({
         layout: 'erp',
         activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 采购订单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '填写明细' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '填写明细' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1638,7 +1773,7 @@ export const router = createRouter({
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 采购订单 / 查看明细',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '查看明细' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '查看明细' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1662,7 +1797,7 @@ export const router = createRouter({
         layout: 'erp',
         activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 采购订单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '确认' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '确认' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1670,13 +1805,13 @@ export const router = createRouter({
     {
       path: '/purchase-orders/:id/templates',
       name: 'purchase-sheet-template-select',
-      component: PurchaseSheetTemplateSelectView,
+      redirect: to => ({ name: 'supplier-purchase-sheets', query: { purchase_order_id: String(to.params.id) } }),
       meta: {
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 采购订单',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '选择模板' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '选择模板' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1690,7 +1825,7 @@ export const router = createRouter({
         layout: 'erp',
           activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 供应商采购表',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '供应商采购表' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '供应商采购表' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1704,7 +1839,7 @@ export const router = createRouter({
         layout: 'erp',
           activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 供应商采购表',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '供应商采购表', to: '/supplier-purchase-sheets' }, { label: '编辑' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '供应商采购表', to: '/supplier-purchase-sheets' }, { label: '编辑' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1732,7 +1867,7 @@ export const router = createRouter({
         layout: 'erp',
         activeMenu: 'purchase-orders',
         headerTitle: '采购管理 / 采购订单 / 供应商管理',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders' }, { label: '供应商管理' }],
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购需求', to: '/purchase-orders' }, { label: '供应商管理' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1876,6 +2011,33 @@ export const router = createRouter({
       },
     },
     {
+      path: '/finance/purchase-payables',
+      name: 'finance-purchase-payables',
+      component: () => import('@/views/finance/FinancePurchasePayablesView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-purchase-payables', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '采购应付' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/supplier-ledger',
+      name: 'finance-supplier-ledger',
+      component: () => import('@/views/finance/FinanceSupplierLedgerView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-supplier-ledger', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '供应商往来明细' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/supplier-payments',
+      name: 'finance-supplier-payments',
+      component: () => import('@/views/finance/FinanceSupplierPaymentsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-supplier-payments', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '供应商付款' }], pageWidth: 'fluid',
+      },
+    },
+    {
       path: '/finance/receipts',
       name: 'finance-receipts',
       component: () => import('@/views/finance/FinanceReceiptsView.vue'),
@@ -1977,15 +2139,16 @@ router.beforeEach(async (to, from) => {
   }
 
   if (to.name === 'home') {
+    const notificationQuery = to.query.notification === undefined ? {} : { notification: to.query.notification }
     if (authStore.hasPermission('production_tasks.view_productiontask')) {
-      return { name: 'production-overview' }
+      return { name: 'production-overview', query: notificationQuery }
     }
     if (authStore.user?.is_superuser || authStore.hasAnyPermission([
       'production_scheduling.view_productionschedule',
       'workshop_reporting.view_workreport',
       'inventory.view_finishedgoodsreceipt',
     ])) {
-      return { name: 'workshop-workbench' }
+      return { name: 'workshop-workbench', query: notificationQuery }
     }
   }
 

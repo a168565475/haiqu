@@ -5,6 +5,16 @@ import type { MaterialRequirement } from '@/types/materialIssue'
 const pipe = { line_type: 'RAW', unit: '支', max_issue_quantity: '99999999999999',
   conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' } } as MaterialRequirement
 describe('生产领料计量', () => {
+  it('车间裁片直交独立校验产出额度，不能借用库存或把直交加入库存合计', () => {
+    const stock = { requirement_id: 'stock', stock_item_id: 'piece', line_type: 'SEMI', component_kind: 'CUT_PIECE',
+      unit: '片', stock_mode: 'PUBLIC_V2', source_kind: 'STOCK', max_issue_quantity: '5', direct_available_quantity: '20' } as MaterialRequirement
+    const direct = { ...stock, requirement_id: 'direct', source_kind: 'CUTTING_DIRECT' as const }
+    expect(issueSelectedQuantityError('5', stock, [stock, direct], { stock: '5', direct: '20' })).toBe('')
+    expect(issueSelectedQuantityError('20', direct, [stock, direct], { stock: '5', direct: '20' })).toBe('')
+    expect(issueQuantityError('21', direct)).toContain('可领上限')
+    expect(issueQuantityError('6', stock)).toContain('可领上限')
+    expect(issueQuantityError('1.5', direct)).toContain('正整数')
+  })
   it('公共原料同档案不同库存身份分别校验，不能合并不同规格铆钉', () => {
     const row = { requirement_id: 'one', stock_item_id: 'rivet-catalog', line_type: 'RAW', unit: '个',
       stock_mode: 'PUBLIC_V2', max_issue_quantity: '48',

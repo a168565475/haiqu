@@ -23,7 +23,7 @@ const record = {
 }
 let wrapper: VueWrapper | undefined
 async function openPage(params: Record<string, string> = query) {
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>任务列表</div>' } }, { path: '/report-records', component: RecordsView }, { path: '/plan', component: { template: '<div>选择工艺</div>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>领料列表</div>' } }, { path: '/production-report', component: { template: '<div>报工计划列表</div>' } }, { path: '/report-records', component: RecordsView }, { path: '/plan', component: { template: '<div>选择工艺</div>' } }] })
   await router.push({ path: '/report-records', query: params })
   await router.isReady()
   wrapper = mount({ template: '<router-view />' }, { global: { plugins: [router], components: { VanButton: Button, VanEmpty: Empty, VanIcon: Icon, VanLoading: Loading, VanTag: Tag } } })
@@ -89,6 +89,8 @@ describe('手机报工记录', () => {
     const invalid = await openPage({})
     expect(invalid.text()).toContain('返回任务列表重新选择')
     expect(api.records).not.toHaveBeenCalled()
+    await invalid.findAllComponents(Button).find(button => button.text() === '返回报工记录列表')!.trigger('click'); await flushPromises()
+    expect(invalid.vm.$router.currentRoute.value.fullPath).toBe('/production-report?view=records')
   })
   it('计划入口不带工艺时展示全部工艺历史，新增返回计划明确选择工艺', async () => {
     const { craft_id: _craft, ...planQuery } = query
@@ -102,6 +104,6 @@ describe('手机报工记录', () => {
     await view.findAllComponents(Button).find(button => button.text() === '选择工艺并报工')!.trigger('click')
     await flushPromises()
     expect(view.vm.$router.currentRoute.value.path).toBe('/plan')
-    expect(view.vm.$router.currentRoute.value.query).toEqual({ ...planQuery, action: 'report' })
+    expect(view.vm.$router.currentRoute.value.query).toEqual({ ...planQuery, section: 'report', action: 'report' })
   })
 })

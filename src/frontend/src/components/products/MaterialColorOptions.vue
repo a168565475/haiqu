@@ -3,13 +3,11 @@ import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 import { Close, Delete } from '@element-plus/icons-vue'
 import { materialCatalogError } from '@/api/materialCatalog'
 import type { MaterialAttributeValue } from '@/types/materialCatalog'
-import MaterialCatalogSelect from './MaterialCatalogSelect.vue'
 
-type ColorEditor = { key: number; optionId: string; draft: MaterialAttributeValue; choice: string; error: string }
+type ColorEditor = { key: number; optionId: string; draft: MaterialAttributeValue; error: string }
 const props = defineProps<{
   label: string
   options: MaterialAttributeValue[]
-  publicOptions: MaterialAttributeValue[]
   readonly: boolean
   disabled: boolean
   onSave: (color: MaterialAttributeValue) => Promise<void>
@@ -22,7 +20,6 @@ const removing = ref('')
 const error = ref('')
 let nextKey = 0
 const locked = computed(() => props.disabled || props.readonly || flushing.value || !!removing.value)
-const choices = computed(() => props.publicOptions.map(color => ({ value: `public:${color.id}`, label: color.color_name ?? color.value })))
 const rows = computed(() => [
   ...props.options.map(option => ({ key: `option-${option.id}`, option, editor: props.readonly ? undefined : editors.value.find(editor => editor.optionId === option.id) })),
   ...(!props.readonly ? editors.value.filter(editor => !editor.optionId).map(editor => ({ key: `new-${editor.key}`, option: undefined, editor })) : []),
@@ -36,10 +33,6 @@ function identity(color: MaterialAttributeValue) {
   const normalized = normalize(color)
   return JSON.stringify([normalized.color_card, normalized.color_code, normalized.color_name])
 }
-function publicLabel(value: string) {
-  const color = props.publicOptions.find(item => `public:${item.id}` === value)
-  return color ? `${color.color_card || '—'} / ${color.color_code || '—'} / ${color.color_name ?? color.value}` : value
-}
 const cardInputs = new Map<number, HTMLInputElement>()
 function setCardInput(key: number, element: Element | ComponentPublicInstance | null) {
   if (element instanceof HTMLInputElement) cardInputs.set(key, element)
@@ -52,7 +45,7 @@ async function focusEditor(key: number) {
 async function add() {
   if (locked.value) return
   const key = ++nextKey
-  editors.value.push({ key, optionId: '', choice: '', error: '', draft: {
+  editors.value.push({ key, optionId: '', error: '', draft: {
     id: '', scope: 'BASE', field_key: 'color', parent_id: null, value: '', product_color_id: null, color_card: '', color_code: '', color_name: '',
   } })
   await focusEditor(key)
@@ -63,7 +56,7 @@ async function edit(option: MaterialAttributeValue) {
   if (existing) { await focusEditor(existing.key); return }
   const key = ++nextKey
   const draft = normalize(option)
-  editors.value.push({ key, optionId: option.id, draft, choice: draft.color_name || '', error: '' })
+  editors.value.push({ key, optionId: option.id, draft, error: '' })
   await focusEditor(key)
 }
 function cancel(key: number) {
@@ -71,23 +64,9 @@ function cancel(key: number) {
 }
 function manualChange(editor: ColorEditor) {
   editor.draft.product_color_id = null
-  editor.choice = editor.draft.color_name || ''
   editor.error = ''
 }
-function changeColor(editor: ColorEditor, value: string) {
-  if (locked.value) return
-  const selected = props.publicOptions.find(item => `public:${item.id}` === value)
-  if (selected) {
-    const normalized = normalize(selected)
-    Object.assign(editor.draft, { value: normalized.value, color_name: normalized.color_name,
-      color_card: normalized.color_card, color_code: normalized.color_code, product_color_id: selected.product_color_id || selected.id })
-  } else {
-    Object.assign(editor.draft, { value, color_name: value, product_color_id: null })
-  }
-  editor.choice = value
-  editor.error = ''
-}
-// 只有顶部统一保存收集全部输入；输入、选公共色、添加和取消都不写库。
+// 只有顶部保存收集全部输入，沿用旧色卡的行在手工改动后成为品名自有颜色。
 async function flushDraft(): Promise<boolean> {
   if (!editors.value.length) return true
   if (flushing.value || props.readonly) return false
@@ -140,7 +119,7 @@ defineExpose({ flushDraft, hasPendingEdit })
               <tr v-if="row.editor" class="color-editor erp-flat-form" :data-editor-key="row.editor.key" @keydown.enter.prevent @keydown.esc.prevent="cancel(row.editor.key)">
                 <td><input :ref="element => setCardInput(row.editor!.key, element)" v-model="row.editor.draft.color_card" aria-label="色卡" placeholder="可不填" autocomplete="off" :disabled="locked" @input="manualChange(row.editor)" /></td>
                 <td><input v-model="row.editor.draft.color_code" aria-label="色号" placeholder="可不填" autocomplete="off" :disabled="locked" @input="manualChange(row.editor)" /></td>
-                <td><MaterialCatalogSelect :model-value="row.editor.choice" :options="choices" :ariaLabel="row.editor.optionId ? '修改颜色' : '添加颜色'" placeholder="选择或输入颜色" filterable allow-create :invalid="!!row.editor.error" :disabled="locked" @update:model-value="changeColor(row.editor!, $event)"><template #option="{ option }"><span>{{ publicLabel(option.value) }}</span></template></MaterialCatalogSelect></td>
+                <td><input v-model="row.editor.draft.color_name" :aria-label="row.editor.optionId ? '修改颜色' : '添加颜色'" placeholder="输入颜色" maxlength="200" autocomplete="off" :aria-invalid="!!row.editor.error" :disabled="locked" @input="manualChange(row.editor)" /></td>
                 <td><button type="button" class="erp-list-button color-action" :aria-label="row.editor.optionId ? '取消修改' : '取消添加'" :disabled="locked" @click="cancel(row.editor.key)"><Close aria-hidden="true" /></button></td>
               </tr>
               <tr v-else-if="row.option" :data-option-id="row.option.id">
@@ -174,8 +153,6 @@ defineExpose({ flushDraft, hasPendingEdit })
 .color-table tbody tr:hover { background: var(--erp-table-hover); }
 .color-table .color-editor > td { padding: 3px 5px; }
 .color-editor input { box-sizing: border-box; width: 100%; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--erp-input-border); border-radius: 5px; background: var(--erp-input-background); color: var(--erp-input-text); font: inherit; }
-.color-editor.erp-flat-form :deep(.el-select__wrapper) { height: 28px !important; min-height: 28px !important; padding: 0 8px !important; }
-.color-editor :deep(.el-select__selected-item), .color-editor :deep(.el-select__input) { font-size: 12px !important; }
 .color-action { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-height: 24px; padding: 0; }
 .color-action svg { width: 13px; height: 13px; }
 .color-action[data-action="delete"] { opacity: 0; }

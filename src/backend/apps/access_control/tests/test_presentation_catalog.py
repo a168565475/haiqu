@@ -58,7 +58,8 @@ class PresentationCatalogTests(SimpleTestCase):
 
     def test_whole_catalog_builds_before_and_after_new_permissions_are_available(self):
         permissions = declared_permissions()
-        new_codes = {f'access_control.{row[0]}' for row in PRODUCTION_OPERATIONS}
+        packaging_code = 'procurement.manage_packagingpurchase'
+        new_codes = {packaging_code, *(f'access_control.{row[0]}' for row in PRODUCTION_OPERATIONS)}
         self.assertTrue(new_codes.issubset(PERMISSION_CODES))
         for migrated in (False, True):
             with self.subTest(migrated=migrated):
@@ -72,6 +73,9 @@ class PresentationCatalogTests(SimpleTestCase):
                 for row in rows:
                     if row['code'] in new_codes:
                         self.assertEqual(row['available'], migrated)
+                    if row['code'] == packaging_code:
+                        self.assertEqual(row['resource'], 'procurement.purchasegroup')
+                        self.assertEqual(row['label'], '包材采购 · 办理采购')
 
     @override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=False, SALES_ACCESS_ENABLED=False)
     def test_login_user_payload_builds_effective_access_before_production_permissions_exist(self):

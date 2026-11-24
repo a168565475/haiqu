@@ -5,9 +5,10 @@ import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadInstance } from 'element-plus'
 
-import { createBom, fetchBomOptions, previewBomWorkbook } from '@/api/boms'
+import { createBom, fetchBomOptions, fetchBoms, previewBomWorkbook } from '@/api/boms'
 import { productEntryUnitName } from '@/utils/productEntryDraft'
 import type {
+  Bom,
   BomCreationMethod,
   BomOptions,
   BomProductionTaskProduct,
@@ -37,13 +38,17 @@ const creationMethod = ref<BomCreationMethod>(
   requestedCreationMethod === 'COPY' || requestedCreationMethod === 'BLANK' ? requestedCreationMethod : 'IMPORT',
 )
 const selectedFile = ref<File | null>(null)
-const sourceBomId = ref('')
+const selectedHistoryBom = ref<{ bom: Bom; label: string } | null>(null)
+const historySearchResults = ref<Bom[] | null>(null)
+const historySearchLoading = ref(false)
+const historyHasMoreResults = ref(false)
+let historySearchRequestId = 0
 const preview = ref<BomWorkbookPreview | null>(null)
 const previewError = ref('')
 const quantityDifferenceReason = ref('')
 const methodCards: Array<{ value: BomCreationMethod; title: string; description: string }> = [
   { value: 'IMPORT', title: '从 Excel BOM 导入', description: '读取本地 Excel 文件，自动识别物料、分类、规格和用量等信息' },
-  { value: 'COPY', title: '复制历史 BOM', description: '选择同产品的历史 BOM，复制结构后再调整' },
+  { value: 'COPY', title: '复制历史 BOM', description: '选择历史 BOM，复制结构后再调整' },
   { value: 'BLANK', title: '空白建立', description: '只带出任务与产品信息，手工新增物料' },
 ]
 
@@ -97,35 +102,39 @@ const filteredProducts = computed(() => {
     : matchedProducts.slice(0, 20)
 })
 
-const copyCandidates = computed(() => {
-  if (!selectedProduct.value) return []
-  const productCode = selectedProduct.value.product_code
-  const productNumber = selectedProduct.value.product_number
-  const catalogId = selectedProduct.value.product_catalog_id
-  return (options.value?.history_boms || []).filter((item) => (
-    catalogId
-      ? item.product_catalog_id === catalogId
-      : !item.product_catalog_id && (item.product_code_snapshot === productCode
-        || (!productCode && item.product_number_snapshot === productNumber))
-  ))
+const copyCandidates = computed(() => historySearchResults.value ?? options.value?.history_boms ?? [])
+
+const historyBomLabels = computed(() => {
+  const choices = copyCandidates.value.map(bom => {
+    const quantity = `${number(bom.order_quantity)} ${bom.product_unit_name}`.trim()
+    const description = [bom.production_task_number, bom.product_name_snapshot, bom.product_color_snapshot, quantity]
+      .filter(Boolean).join(' · ')
+    return { bom, description }
+  })
+  return new Map(choices.map(choice => {
+    const { bom, description } = choice
+    const repeated = choices.some(other => other !== choice && other.description === description && other.bom.status === bom.status)
+    const label = [description, repeated ? `V${bom.version_number}` : '', bom.status_display].filter(Boolean).join(' · ')
+    return [bom.id, label]
+  }))
 })
 
 const sourceReady = computed(() => {
   if (creationMethod.value === 'IMPORT') return Boolean(preview.value && !preview.value.identity_errors.length)
-  if (creationMethod.value === 'COPY') return Boolean(sourceBomId.value)
+  if (creationMethod.value === 'COPY') return Boolean(selectedHistoryBom.value)
   return Boolean(selectedProduct.value)
 })
 
 const canSubmit = computed(() => {
   if (!selectedProduct.value || submitting.value || previewLoading.value) return false
   if (creationMethod.value === 'IMPORT' && !(selectedFile.value && sourceReady.value)) return false
-  if (creationMethod.value === 'COPY' && !sourceBomId.value) return false
+  if (creationMethod.value === 'COPY' && !sourceReady.value) return false
   return !quantityRequiresReason.value || Boolean(quantityDifferenceReason.value.trim())
 })
 
 const reviewSource = computed(() => (
   creationMethod.value === 'COPY'
-    ? copyCandidates.value.find((item) => item.id === sourceBomId.value) || null
+    ? selectedHistoryBom.value?.bom ?? null
     : null
 ))
 
@@ -135,25 +144,39 @@ const reviewQuantities = computed(() => {
   const sourceValue = creationMethod.value === 'IMPORT'
     ? preview.value?.quantity.source_quantity
     : creationMethod.value === 'COPY'
-      ? reviewSource.value?.source_quantity || reviewSource.value?.order_quantity
+      ? reviewSource.value?.order_quantity
       : null
   const batchValue = preview.value?.quantity.batch_quantity ?? selectedProduct.value?.batch_quantity ?? null
   return [
     { label: '订单依据数量', value: baseline, difference: 0 },
     { label: '当前任务数量', value: current, difference: current - baseline },
-    { label: creationMethod.value === 'IMPORT' ? 'Excel原表数量' : creationMethod.value === 'COPY' ? '历史BOM数量' : '来源数据数量', value: sourceValue === null || sourceValue === undefined ? null : Number(sourceValue), difference: sourceValue === null || sourceValue === undefined ? null : Number(sourceValue) - baseline },
+    { label: creationMethod.value === 'IMPORT' ? 'Excel原表数量' : creationMethod.value === 'COPY' ? '历史BOM数量（参考）' : '来源数据数量', value: sourceValue == null ? null : Number(sourceValue), difference: sourceValue == null ? null : Number(sourceValue) - baseline, referenceOnly: creationMethod.value === 'COPY' },
     { label: '生产批次数量', value: batchValue === null || batchValue === undefined ? null : Number(batchValue), difference: batchValue === null || batchValue === undefined ? null : Number(batchValue) - baseline },
   ]
 })
 
-const quantityRequiresReason = computed(() => reviewQuantities.value.some((item) => item.difference !== null && item.difference !== 0))
+const quantityRequiresReason = computed(() => reviewQuantities.value.some((item) => !item.referenceOnly && item.difference !== null && item.difference !== 0))
+
+const quantityCheckMessage = computed(() => {
+  if (!sourceReady.value) return '选择数据来源后核对数量。'
+  if (quantityRequiresReason.value) {
+    const step = currentStep.value === 3 ? '本页' : '下一步'
+    return `请在${step}的「数量差异说明」填写本次使用哪个数量及原因。`
+  }
+  if (reviewSource.value && selectedProduct.value) {
+    const current = selectedProduct.value
+    const unit = productEntryUnitName(current) || 'PCS'
+    return `历史 BOM 为 ${number(reviewSource.value.order_quantity)} ${reviewSource.value.product_unit_name || unit}，本次按 ${number(current.order_quantity)} ${unit}创建草稿。`
+  }
+  return '各数量来源与当前任务数量一致。'
+})
 
 const expectedResult = computed(() => {
   if (preview.value) {
     return `${preview.value.section_count} 个用料分类 · ${preview.value.line_count} 行明细 · ${preview.value.calculation_summary.calculation_row_count} 行计算 / 汇总`
   }
   if (creationMethod.value === 'COPY') {
-    const source = copyCandidates.value.find((item) => item.id === sourceBomId.value)
+    const source = reviewSource.value
     return source ? `${source.section_count} 个用料分类 · ${source.line_count} 行明细` : '选择历史 BOM 后显示预计结果'
   }
   if (creationMethod.value === 'BLANK') return '仅生成 BOM 主记录，暂不生成用料明细'
@@ -168,6 +191,31 @@ function apiError(error: unknown) {
   if (Array.isArray(data.workbook)) return data.workbook[0] || 'Excel 文件校验失败。'
   if (typeof data.workbook === 'string') return data.workbook
   return data.error?.message || data.detail || '操作失败，请检查填写内容。'
+}
+
+async function searchHistoryBoms(keyword: string) {
+  const query = keyword.trim()
+  const requestId = ++historySearchRequestId
+  historyHasMoreResults.value = false
+  historySearchResults.value = query ? [] : null
+  historySearchLoading.value = Boolean(query)
+  if (!query) return
+
+  try {
+    const result = await fetchBoms({ q: query, page_size: 100 })
+    if (requestId !== historySearchRequestId) return
+    historySearchResults.value = result.data
+    historyHasMoreResults.value = result.meta.total > result.data.length
+  } catch (error) {
+    if (requestId === historySearchRequestId) ElMessage.error(apiError(error))
+  } finally {
+    if (requestId === historySearchRequestId) historySearchLoading.value = false
+  }
+}
+
+function selectHistoryBom(id: string) {
+  const bom = copyCandidates.value.find(item => item.id === id)
+  selectedHistoryBom.value = bom ? { bom, label: historyBomLabels.value.get(bom.id) ?? bom.bom_number } : null
 }
 
 function number(value: string | number | null | undefined) {
@@ -236,12 +284,15 @@ function goPrevious() {
 
 function differenceText(value: number | null) {
   if (value === null) return '—'
-  if (value === 0) return '0'
-  return `${value > 0 ? '+' : ''}${number(value)}`
+  if (value === 0) return '一致'
+  return `${value > 0 ? '多' : '少'} ${number(Math.abs(value))}`
 }
 
 function taskOptionLabel(item: BomProductionTaskProduct) {
-  return `${item.task_number} · ${item.product_code || item.product_number} · ${item.product_name}`
+  const color = item.color_name || item.product_selection_snapshot?.color_name
+  const quantity = `${number(item.order_quantity)} ${productEntryUnitName(item)}`.trim()
+  return [item.task_number, item.product_name, color, quantity, item.task_status_display]
+    .filter(Boolean).join(' · ')
 }
 
 let taskSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -362,7 +413,7 @@ async function submit() {
       productionTaskProductId: selectedProduct.value.id,
       creationMethod: creationMethod.value,
       workbook: creationMethod.value === 'IMPORT' ? selectedFile.value : null,
-      sourceBomId: creationMethod.value === 'COPY' ? sourceBomId.value : undefined,
+      sourceBomId: reviewSource.value?.id,
       taskEtag: selectedProduct.value.task_etag,
       quantityDifferenceReason: quantityDifferenceReason.value,
     })
@@ -381,18 +432,24 @@ function cancel() {
 
 watch(selectedProductId, () => {
   clearUpload()
-  sourceBomId.value = ''
+  selectedHistoryBom.value = null
   quantityDifferenceReason.value = ''
 })
 
 watch(creationMethod, () => {
   if (creationMethod.value !== 'IMPORT') clearUpload()
-  if (creationMethod.value !== 'COPY') sourceBomId.value = ''
+  if (creationMethod.value !== 'COPY') {
+    selectedHistoryBom.value = null
+    void searchHistoryBoms('')
+  }
   quantityDifferenceReason.value = ''
 })
 
 onMounted(() => { void loadOptions() })
-onBeforeUnmount(cancelPendingTaskSearch)
+onBeforeUnmount(() => {
+  cancelPendingTaskSearch()
+  historySearchRequestId += 1
+})
 </script>
 
 <template>
@@ -478,7 +535,22 @@ onBeforeUnmount(cancelPendingTaskSearch)
                 <ElTableColumn prop="notes" label="备注" min-width="110"><template #default="{ row }">{{ row.notes || '—' }}</template></ElTableColumn>
               </ElTable>
             </div>
-            <div v-else-if="creationMethod === 'COPY'" class="alternative-source"><ElSelect v-model="sourceBomId" placeholder="请选择同产品历史BOM" clearable><ElOption v-for="item in copyCandidates" :key="item.id" :label="`${item.bom_number} · ${item.section_count}个分区 · ${item.line_count}行`" :value="item.id" /></ElSelect><span v-if="selectedProduct && !copyCandidates.length">当前产品没有可复制的历史BOM</span></div>
+            <div v-else-if="creationMethod === 'COPY'" class="alternative-source">
+              <ElSelect
+                :model-value="selectedHistoryBom?.bom.id || ''"
+                filterable remote clearable
+                placeholder="输入生产任务单号或 BOM 编号搜索"
+                no-data-text="没有找到可复制的历史 BOM"
+                :loading="historySearchLoading"
+                :remote-method="searchHistoryBoms"
+                @change="selectHistoryBom"
+                @clear="searchHistoryBoms('')"
+              >
+                <template #label>{{ selectedHistoryBom?.label }}</template>
+                <ElOption v-for="item in copyCandidates" :key="item.id" :label="historyBomLabels.get(item.id)" :value="item.id" />
+              </ElSelect>
+              <span v-if="historyHasMoreResults">可输入更完整的生产任务单号或 BOM 编号缩小范围</span>
+            </div>
             <div v-else-if="creationMethod === 'BLANK'" class="blank-source">仅建立BOM主记录和默认分区，不生成虚构用料数据；创建后在编辑页新增物料。</div>
           </section>
         </section>
@@ -486,12 +558,12 @@ onBeforeUnmount(cancelPendingTaskSearch)
         <section v-else class="content-card review-content">
           <h2>检查并创建BOM草稿</h2>
           <dl class="review-meta">
-            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${reviewSource?.bom_number || '—'}` : '空白建立' }}</dd></div>
+            <div><dt>建立方式</dt><dd>{{ creationMethod === 'IMPORT' ? `Excel导入 · ${preview?.file_name || '—'} 第${preview?.sheet_number || 2}个工作表` : creationMethod === 'COPY' ? `复制历史BOM · ${selectedHistoryBom?.label || '—'}` : '空白建立' }}</dd></div>
             <div><dt>识别结果</dt><dd>{{ expectedResult }}</dd></div>
             <div><dt>来源产品</dt><dd>{{ selectedProduct?.product_code || selectedProduct?.product_number }} {{ selectedProduct?.product_name }}</dd></div>
           </dl>
-          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/{{ productEntryUnitName(selectedProduct) || 'PCS' }}</th><th>与当前任务差异</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
-          <label class="reason-field"><span>数量差异说明<span v-if="quantityRequiresReason"> *</span></span><ElInput v-model="quantityDifferenceReason" maxlength="500" show-word-limit :placeholder="quantityRequiresReason ? '请说明数量差异及本次执行依据' : '数量一致，可不填写'" /></label>
+          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/{{ productEntryUnitName(selectedProduct) || 'PCS' }}</th><th>与本次产品数量相比</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference && !item.referenceOnly }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
+          <label class="reason-field"><span>数量差异说明<span v-if="quantityRequiresReason"> *</span></span><ElInput v-model="quantityDifferenceReason" maxlength="500" show-word-limit :placeholder="quantityRequiresReason ? '请说明数量差异及本次执行依据' : '可选填'" /></label>
           <div class="info-strip">此操作只创建草稿，BOM需在编辑页单独确认。</div>
         </section>
 
@@ -510,9 +582,12 @@ onBeforeUnmount(cancelPendingTaskSearch)
           </dl>
           <div class="aside-divider" />
           <h2>数据校验</h2><p>系统已对导入数据进行基础校验</p>
+          <ElAlert v-if="creationMethod === 'IMPORT' && preview?.component_structure?.pending"
+            :title="preview.component_structure.message" description="可以先创建草稿，补齐部位与裁片组成后再确认 BOM。"
+            type="warning" :closable="false" show-icon />
           <div class="check-item is-ok"><i>✓</i><span><strong>来源任务单匹配</strong><small>BOM数据与生产任务单产品一致</small></span></div>
           <div class="check-item" :class="{ 'is-ok': sourceReady }"><i>{{ sourceReady ? '✓' : '!' }}</i><span><strong>字段识别成功</strong><small>{{ sourceReady ? '已识别物料编码、名称、规格、单位、用量等字段' : '等待完成数据来源设置' }}</small></span></div>
-          <div class="check-item" :class="{ 'is-ok': !quantityRequiresReason }"><i>{{ quantityRequiresReason ? '!' : '✓' }}</i><span><strong>数量校验</strong><small>{{ quantityRequiresReason ? '来源数量与当前任务数量存在差异，需在下一步说明' : '各数量来源与当前任务数量一致' }}</small></span></div>
+          <div class="check-item" :class="{ 'is-ok': sourceReady && !quantityRequiresReason }"><i>{{ !sourceReady ? '…' : quantityRequiresReason ? '!' : '✓' }}</i><span><strong>数量校验</strong><small>{{ quantityCheckMessage }}</small></span></div>
           <div class="check-item" :class="{ 'is-ok': creationMethod !== 'IMPORT' || Boolean(preview) }"><i>{{ creationMethod !== 'IMPORT' || preview ? '✓' : '!' }}</i><span><strong>数据结构完整</strong><small>{{ preview ? `共${preview.section_count}个分区，${preview.line_count}行数据` : creationMethod === 'IMPORT' ? '等待解析Excel数据' : '创建后在编辑页维护结构' }}</small></span></div>
         </aside>
       </main>

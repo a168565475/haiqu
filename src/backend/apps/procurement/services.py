@@ -1,5 +1,5 @@
 from .catalog_materials import bom_catalog_fields, purchase_catalog_selection, physical_pipe_quantity, priced_quantity
-from .pipe_purchase import PIPE_PURCHASE_FIELDS, is_sample_total_meter_snapshot, pipe_source_snapshot, purchase_pipe_values, validate_pipe_purchase_source
+from .pipe_purchase import PIPE_PURCHASE_FIELDS, is_sample_total_meter_snapshot, is_sample_weight_snapshot, pipe_source_snapshot, purchase_pipe_values, validate_pipe_purchase_source
 import hashlib
 import json
 import re
@@ -8,6 +8,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -26,10 +27,13 @@ from apps.reference_data.models import Currency, ReferenceStatus
 from .models import (
     PurchaseOrder,
     PurchaseOrderLine,
+    PurchaseOrderSourceType,
     PurchaseOrderStatus,
     PurchaseQuantityParseStatus,
+    PurchaseScope,
     Supplier,
     SupplierCategory,
+    SupplierPaymentTerm,
     SupplierPurchaseSheet,
     SupplierPurchaseSheetLineImage,
     SupplierPurchaseSheetSealImage,
@@ -41,6 +45,8 @@ from .selectors import (
     purchase_orders_by_product, purchase_orders_with_product_ids,
 )
 from .source_access import purchase_order_access
+from .purchase_scope import is_packaging_bom_line, is_packaging_material, packaging_order_filter, validate_source_scope
+from .set_pricing import apply_set_pricing, line_set_pricing, validate_set_members
 
 
 MONEY_QUANT = Decimal("0.0001")
@@ -59,8 +65,8 @@ def next_purchase_order_number(business_date=None):
     return next_business_number("PURCHASE_ORDER", business_date)
 
 
-def supplier_snapshot(supplier):
-    return {
+def supplier_snapshot(supplier, term=None):
+    snapshot = {
         "supplier_number": supplier.supplier_number,
         "supplier_type": supplier.supplier_type,
         "supplier_categories": list(supplier.supplier_categories),
@@ -70,10 +76,27 @@ def supplier_snapshot(supplier):
         "phone": supplier.phone,
         "is_disabled": supplier.is_disabled,
     }
+    if term is not None:
+        snapshot["payment_term"] = {
+            "id": term.pk, "months": term.months, "effective_month": term.effective_month,
+            "basis": term.basis, "recorded_by_employee_id": term.recorded_by_employee_id,
+            "recorded_at": term.created_at,
+        }
+    return snapshot
+
+
+def record_supplier_payment_term(supplier, actor_employee, data):
+    if data is None:
+        return None
+    if supplier.payment_term_versions.filter(effective_month=data["effective_month"]).exists():
+        raise ValidationError({"payment_term": "该生效收货月份已有账期。"})
+    return SupplierPaymentTerm.objects.create(supplier=supplier, recorded_by_employee=actor_employee, **data)
 
 
 @transaction.atomic
 def create_supplier(*, validated_data, actor_employee, request=None):
+    supplier_fields = validated_data.copy()
+    term_data = supplier_fields.pop("payment_term", None)
     submitted_by_name = getattr(actor_employee, "display_name", "") if actor_employee else ""
     supplier = Supplier(
         supplier_number=next_business_number("SUPPLIER"),
@@ -82,16 +105,17 @@ def create_supplier(*, validated_data, actor_employee, request=None):
         submitted_at=timezone.now(),
         created_by_employee=actor_employee,
         updated_by_employee=actor_employee,
-        **validated_data,
+        **supplier_fields,
     )
     supplier.full_clean()
     supplier.save()
+    term = record_supplier_payment_term(supplier, actor_employee, term_data)
     write_audit_log(
         object_type="SUPPLIER",
         object_id=supplier.pk,
         action="CREATED",
         actor_employee=actor_employee,
-        after_data=supplier_snapshot(supplier),
+        after_data=supplier_snapshot(supplier, term),
         request=request,
     )
     return supplier
@@ -105,18 +129,21 @@ def update_supplier(*, supplier_id, validated_data, actor_employee, request):
     )
     require_matching_etag(request, supplier)
     before_data = supplier_snapshot(supplier)
-    for field_name, value in validated_data.items():
+    supplier_fields = validated_data.copy()
+    term_data = supplier_fields.pop("payment_term", None)
+    for field_name, value in supplier_fields.items():
         setattr(supplier, field_name, value)
     supplier.updated_by_employee = actor_employee
     supplier.full_clean()
     supplier.save()
+    term = record_supplier_payment_term(supplier, actor_employee, term_data)
     write_audit_log(
         object_type="SUPPLIER",
         object_id=supplier.pk,
         action="UPDATED",
         actor_employee=actor_employee,
         before_data=before_data,
-        after_data=supplier_snapshot(supplier),
+        after_data=supplier_snapshot(supplier, term),
         request=request,
     )
     return supplier
@@ -223,6 +250,103 @@ def _derived_quantity(line, bom, field_name):
     return result, source_field, source_text, PurchaseQuantityParseStatus.READY
 
 
+def _hardware_weight_data(line, bom):
+    """返回五金按重量采购所需的快照；未启用重量规则时返回 None。"""
+    if line.section.title.strip() != "五金件":
+        return None
+    # 普通五金可以记录单重，采购时仍沿用选料单位；铆钉套也按普通配件处理。
+    name = re.split(r"[-（(]", line.part_name, maxsplit=1)[0].strip()
+    if not name.endswith(("铆钉", "平垫", "垫片", "垫圈")):
+        return None
+    raw = line.raw_values or {}
+    mode = raw.get("hardware_weight_mode") or "MANUAL"
+    unit_weight, unit_status = _parsed_decimal(raw.get("unit_material_weight_kg"))
+    source_unit = str(line.unit or "").strip()
+    weight_source = source_unit.upper() in {"KG", "公斤", "千克"}
+    piece_source = source_unit.upper() in {"个", "片", "件", "只", "颗", "粒", "枚", "支", "PCS", "PC", "PIECE", "PIECES"}
+    piece_quantity, source_field, source_text, piece_status = _first_direct_quantity(
+        line, ["budget_quantity", "total_consumption"]
+    )
+    if not source_field:
+        piece_quantity, source_field, source_text, piece_status = _derived_quantity(line, bom, "unit_consumption")
+    if unit_status == PurchaseQuantityParseStatus.READY:
+        try:
+            unit_weight = unit_weight.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            unit_weight, unit_status = None, PurchaseQuantityParseStatus.INVALID
+        if unit_weight is not None and unit_weight <= 0:
+            unit_status = PurchaseQuantityParseStatus.INVALID
+    if not weight_source and not piece_source:
+        piece_status = PurchaseQuantityParseStatus.INVALID
+    if weight_source:
+        return {
+            "mode": mode, "piece_quantity": None, "piece_source_field": source_field,
+            "piece_source_text": source_text, "piece_status": piece_status,
+            "source_unit": source_unit, "weight_source": True,
+            "unit_weight_kg": unit_weight, "unit_status": unit_status,
+            **({"total_weight_kg": piece_quantity} if piece_status == PurchaseQuantityParseStatus.READY
+               and piece_quantity is not None and piece_quantity > 0 else {}),
+        }
+    if piece_status != PurchaseQuantityParseStatus.READY:
+        return {
+            "mode": mode, "piece_quantity": None, "piece_source_field": source_field,
+            "piece_source_text": source_text, "piece_status": piece_status,
+            "unit_weight_kg": unit_weight, "unit_status": unit_status,
+        }
+    if unit_status != PurchaseQuantityParseStatus.READY or unit_weight is None or unit_weight <= 0:
+        return {
+            "mode": mode, "piece_quantity": piece_quantity, "piece_source_field": source_field,
+            "piece_source_text": source_text, "piece_status": piece_status,
+            "unit_weight_kg": unit_weight, "unit_status": unit_status,
+        }
+    with localcontext() as context:
+        context.prec = 64
+        total_weight = (piece_quantity * unit_weight).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    if total_weight <= 0 or total_weight > MAX_MONEY_VALUE:
+        return {
+            "mode": mode, "piece_quantity": piece_quantity, "piece_source_field": source_field,
+            "piece_source_text": source_text, "piece_status": PurchaseQuantityParseStatus.INVALID,
+            "unit_weight_kg": unit_weight, "unit_status": PurchaseQuantityParseStatus.INVALID,
+        }
+    return {
+        "mode": mode, "piece_quantity": piece_quantity, "piece_source_field": source_field,
+        "piece_source_text": source_text, "piece_status": piece_status,
+        "unit_weight_kg": unit_weight, "unit_status": unit_status,
+        "total_weight_kg": total_weight,
+    }
+
+
+def _hardware_calculation_snapshot(line, bom, data):
+    snapshot = build_purchase_material_snapshot(line)
+    unit_weight = data.get("unit_weight_kg")
+    piece_quantity = data.get("piece_quantity")
+    total_weight = data.get("total_weight_kg")
+    snapshot.update({
+        "hardware_weight_mode": data["mode"],
+        "measurement_kind": "HARDWARE_WEIGHT",
+        "measurement_unit": "kg",
+        "hardware_quantity_unit": line.unit or "个",
+        "hardware_weight_unit": "KG",
+        "hardware_unit_weight_kg": str(unit_weight) if unit_weight is not None else "",
+        "hardware_piece_quantity": str(piece_quantity) if piece_quantity is not None else "",
+        "hardware_suggested_weight_kg": str(total_weight) if total_weight is not None else "",
+        "hardware_weight_snapshot": (line.raw_values or {}).get("hardware_weight_snapshot") or {},
+    })
+    return snapshot
+
+
+def is_hardware_weight_snapshot(snapshot):
+    return isinstance(snapshot, dict) and snapshot.get("measurement_kind") == "HARDWARE_WEIGHT"
+
+
+def _validate_hardware_actual_weight(snapshot, submitted, quantity):
+    if not is_hardware_weight_snapshot(snapshot):
+        return
+    submitted_weight = submitted.get("actual_purchase_weight_kg")
+    if submitted_weight is not None and quantity is not None and Decimal(submitted_weight) != Decimal(quantity):
+        raise ValidationError({"lines": "五金重量采购的实际采购重量必须与实际采购数量（KG）一致。"})
+
+
 def _source_quantity(line, bom):
     section_type = line.section.section_type
     if line.section.title.strip() == "包材类":
@@ -239,15 +363,28 @@ def _source_quantity(line, bom):
         try:
             snapshot = pipe_source_snapshot(line)
         except (ValidationError, Conflict):
-            return None, "suggested_purchase_meters", "", "米", PurchaseQuantityParseStatus.MISSING
-        value = Decimal(snapshot["suggested_purchase_meters"])
-        return value, "suggested_purchase_meters", str(value), "米", PurchaseQuantityParseStatus.READY
+            return None, "suggested_purchase_weight_kg", "", "KG", PurchaseQuantityParseStatus.MISSING
+        if snapshot.get("measurement_unit") == "kg":
+            value = Decimal(snapshot["suggested_purchase_weight_kg"])
+            return value, "suggested_purchase_weight_kg", str(value), "KG", PurchaseQuantityParseStatus.READY
+        # 新采购只接受已确认的长料单重；旧采购继续使用自身保存的米制快照履约。
+        return None, "suggested_purchase_weight_kg", "", "KG", PurchaseQuantityParseStatus.MISSING
 
     if section_type == BomSectionType.ACCESSORY:
-        value, field_name, text, status = _first_direct_quantity(
-            line,
-            ["budget_quantity", "total_consumption"],
-        )
+        hardware = _hardware_weight_data(line, bom)
+        if hardware is not None:
+            source_unit = str(line.unit or "").strip()
+            if hardware.get("total_weight_kg") is not None:
+                text = (f"{hardware['piece_source_text']} KG" if hardware.get("weight_source") else
+                        f"{hardware['piece_source_text']} {source_unit} × {hardware['unit_weight_kg']} kg/{source_unit}")
+                return hardware["total_weight_kg"], "hardware_weight_kg", text, "KG", PurchaseQuantityParseStatus.READY
+            status = hardware["piece_status"] if hardware["piece_status"] != PurchaseQuantityParseStatus.READY else hardware["unit_status"]
+            text = (f"{hardware['piece_source_text']} KG" if hardware.get("weight_source") else
+                    f"{hardware['piece_source_text']} {source_unit} × 单个材料重量" if hardware["piece_source_text"] else "单个材料重量")
+            if status == PurchaseQuantityParseStatus.READY:
+                status = PurchaseQuantityParseStatus.INVALID
+            return None, "hardware_weight_kg", text, "KG", status
+        value, field_name, text, status = _first_direct_quantity(line, ["budget_quantity", "total_consumption"])
         if field_name:
             return value, field_name, text, line.unit, status
         value, field_name, text, status = _derived_quantity(line, bom, "unit_consumption")
@@ -297,6 +434,15 @@ def _supplier_category_suggestion(line):
 def _source_line(bom, section, line, product):
     required_quantity, source_field, source_text, source_unit, parse_status = _source_quantity(line, bom)
     suggested_category, confidence = _supplier_category_suggestion(line)
+    pipe_snapshot = pipe_source_snapshot(line) if section.section_type == "PROFILE" and parse_status == "READY" else {}
+    hardware_data = _hardware_weight_data(line, bom) if section.section_type == BomSectionType.ACCESSORY else None
+    hardware_snapshot = None
+    if hardware_data is not None:
+        try:
+            hardware_snapshot = _hardware_calculation_snapshot(line, bom, hardware_data)
+        except (ValidationError, Conflict):
+            # 来源详情仍需返回阻塞行，材料身份问题由后续来源校验统一报告。
+            hardware_snapshot = None
     return {
         **bom_catalog_fields(line),
         "bom_id": str(bom.pk),
@@ -327,7 +473,12 @@ def _source_line(bom, section, line, product):
         "quantity_parse_status": parse_status,
         "suggested_supplier_category": suggested_category,
         "category_source": confidence,
-        **({key: pipe_source_snapshot(line)[key] for key in ("raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters")} if section.section_type == "PROFILE" and parse_status == "READY" else {}),
+        **({key: pipe_snapshot[key] for key in ("raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters") if key in pipe_snapshot}),
+        **({key: pipe_snapshot[key] for key in ("measurement_unit", "raw_bar_weight_kg", "suggested_purchase_weight_kg") if key in pipe_snapshot}
+           if pipe_snapshot.get("measurement_unit") == "kg" else {}),
+        **({"suggested_purchase_weight_kg": str(hardware_data["total_weight_kg"])}
+           if hardware_data is not None and hardware_data.get("total_weight_kg") is not None else {}),
+        **({"calculation_snapshot": hardware_snapshot} if hardware_snapshot is not None else {}),
         "_bom": bom,
         "_bom_line": line,
     }
@@ -366,6 +517,8 @@ def _purchase_source_revision(task, products):
                 if not _is_purchasable_bom_section(section):
                     continue
                 for line in section.lines.all():
+                    if not line.purchase_required:
+                        continue
                     line_revisions.append(
                         {
                             "section_id": str(section.pk),
@@ -387,6 +540,10 @@ def _purchase_source_revision(task, products):
                             "unit_consumption": line.unit_consumption,
                             "total_purchase_quantity": line.total_purchase_quantity,
                             "purchase_consumption": line.purchase_consumption,
+                            "hardware_weight_mode": (line.raw_values or {}).get("hardware_weight_mode", ""),
+                            "hardware_weight_input": (line.raw_values or {}).get("hardware_weight_input", {}),
+                            "hardware_weight_snapshot": (line.raw_values or {}).get("hardware_weight_snapshot", {}),
+                            "unit_material_weight_kg": (line.raw_values or {}).get("unit_material_weight_kg", ""),
                             "material_identity_sources": {
                                 key: str((line.raw_values or {}).get(key) or "")
                                 for key in (
@@ -420,7 +577,33 @@ def _latest_bom_for_product(product):
     return boms[0] if boms else None
 
 
-def _bom_source_details(product, bom):
+def _purchase_quantity_blocker(product, bom, section, line, source):
+    field = source["source_quantity_field"]
+    if field == "hardware_weight_kg":
+        weight = _hardware_weight_data(line, bom)
+        if weight.get("weight_source"):
+            detail = "请核对按公斤填写的采购数量。"
+        elif weight["piece_status"] == PurchaseQuantityParseStatus.READY and weight["unit_status"] != PurchaseQuantityParseStatus.READY:
+            detail = "按公斤采购，请填写有效的单个材料重量（kg），以便从件数换算。"
+        else:
+            detail = "按公斤采购，请核对五金用量、数量单位和计算出的总重量。"
+    elif section.section_type == BomSectionType.PROFILE:
+        detail = "请核对管材采购根数、原管长度和长料单重（kg/根）。"
+    elif field == "units_per_box":
+        detail = "请核对包材用量（多少成品用一份），以便计算采购数量。"
+    elif section.title.strip() == "面料类" and line.unit != "米":
+        detail = "面料采购用量须以米为单位。"
+    else:
+        detail = "请核对 BOM 用量，以便计算采购数量。"
+    name = (line.material_selection_snapshot or {}).get("name") or line.part_name or line.raw_material
+    return _blocker(
+        "BOM_PURCHASE_QUANTITY_INVALID", f"{section.title}第{line.line_number}行「{name}」：{detail}",
+        product=product, bom=bom, bom_line_id=str(line.pk), line_number=line.line_number,
+        section_title=section.title, source_quantity_field=field,
+    )
+
+
+def _bom_source_details(product, bom, purchase_scope=PurchaseScope.STANDARD):
     blockers = []
     source_lines = []
     if bom is None:
@@ -453,11 +636,15 @@ def _bom_source_details(product, bom):
             if not _is_purchasable_bom_section(section):
                 continue
             for line in section.lines.all():
+                if not line.purchase_required:
+                    continue
+                if is_packaging_bom_line(line) != (purchase_scope == PurchaseScope.PACKAGING):
+                    continue
                 source_line = _source_line(bom, section, line, product)
                 source_lines.append(source_line)
                 if line.material_catalog_id:
                     if source_line["quantity_parse_status"] != "READY":
-                        identity_errors.append({"bom_line_id": str(line.pk), "reason": "MATERIAL_QUANTITY_REQUIRED"})
+                        blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
                     continue
                 material, source_key = resolve_bom_line_raw_material(
                     line,
@@ -476,14 +663,21 @@ def _bom_source_details(product, bom):
                     continue
                 if section.section_type == "PROFILE":
                     if source_line["quantity_parse_status"] != "READY":
-                        identity_errors.append({"bom_line_id": str(line.pk), "reason": "PIPE_PARAMETERS_REQUIRED"})
+                        blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
                     continue
                 source_unit = str(source_line["source_unit_text"] or "").strip()
                 valid_units = {
                     material.unit.unit_name.strip(),
                     material.unit.unit_code.strip(),
                 }
-                if source_unit not in valid_units:
+                hardware_weighted = (
+                    section.section_type == BomSectionType.ACCESSORY
+                    and source_unit == "KG"
+                    and is_hardware_weight_snapshot(source_line.get("calculation_snapshot"))
+                )
+                if hardware_weighted and source_line["quantity_parse_status"] != "READY":
+                    blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
+                if source_unit not in valid_units and not hardware_weighted:
                     identity_errors.append(
                         {
                             "bom_line_id": str(line.pk),
@@ -539,7 +733,7 @@ def _bom_option(product, bom, blockers, line_count, global_blockers):
     }
 
 
-def evaluate_purchase_source(task, bom_id=None):
+def evaluate_purchase_source(task, bom_id=None, *, purchase_scope=PurchaseScope.STANDARD):
     global_blockers = []
     if task.status not in PURCHASABLE_TASK_STATUSES:
         global_blockers.append(
@@ -553,14 +747,21 @@ def evaluate_purchase_source(task, bom_id=None):
 
     orders = getattr(task, "purchase_source_orders", None)
     if orders is None:
-        orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task))
-    existing_by_product = purchase_orders_by_product(orders)
+        orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task).exclude(packaging_order_filter()))
+    existing_by_product = purchase_orders_by_product(orders) if purchase_scope == PurchaseScope.STANDARD else {}
     from .models import PurchaseGroup
-    existing_groups = {
-        group.product_line_id_snapshot: group for group in PurchaseGroup.objects.filter(
-            production_task=task, archived_at__isnull=True,
-        )
-    }
+    existing_groups = {}
+    groups = PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True, purchase_scope=purchase_scope).prefetch_related(
+        "bom_sources", "combined_into_sources",
+    )
+    for group in groups:
+        if group.combined_into_sources.all():
+            continue
+        if group.product_line_id_snapshot:
+            existing_groups[group.product_line_id_snapshot] = group
+        else:
+            for membership in group.bom_sources.all():
+                existing_groups[membership.product_line_id_snapshot] = group
     if None in existing_by_product:
         global_blockers.append(
             _blocker(
@@ -582,7 +783,7 @@ def evaluate_purchase_source(task, bom_id=None):
     unavailable_blockers = []
     for product in products:
         latest_bom = _latest_bom_for_product(product)
-        bom_blockers, bom_lines = _bom_source_details(product, latest_bom)
+        bom_blockers, bom_lines = _bom_source_details(product, latest_bom, purchase_scope)
         existing = existing_by_product.get(product.pk)
         if existing is not None:
             bom_blockers.append(_blocker(
@@ -601,11 +802,21 @@ def evaluate_purchase_source(task, bom_id=None):
             )
             if not can_reconnect:
                 bom_blockers.append(_blocker(
-                    "PURCHASE_GROUP_EXISTS", "该产品已有采购总单，请在总单中新增批次。", product=product, bom=latest_bom,
+                    "PURCHASE_GROUP_EXISTS", "该产品已有采购需求，请在该需求中新增批次。", product=product, bom=latest_bom,
                     existing_purchase_group_id=str(group.pk), existing_purchase_group_number=group.group_number,
                 ))
         unavailable_blockers.extend(bom_blockers)
         option = _bom_option(product, latest_bom, bom_blockers, len(bom_lines), global_blockers)
+        if option["can_create"]:
+            option["source_revision"] = _purchase_source_revision(task, [product])
+        group = existing_groups.get(product.pk)
+        if group:
+            option["existing_purchase_group_id"] = str(group.pk)
+            if (not global_blockers and latest_bom and latest_bom.status == BomStatus.VERIFIED
+                    and group.product_line_id_snapshot == product.pk and group.source_bom_id_snapshot
+                    and not group.manual_completed_at and not group.compatibility_issues):
+                option["can_combine"] = True
+                option["combine_source_revision"] = group.source_revision
         bom_options.append(option)
         if latest_bom is not None:
             source_by_bom_id[str(latest_bom.pk)] = (bom_blockers, bom_lines)
@@ -646,7 +857,8 @@ def evaluate_purchase_source(task, bom_id=None):
         "bom_options": bom_options,
         "selected_bom_id": selected_bom_id,
         "requires_bom_selection": requires_bom_selection,
-        "has_creatable_bom": any(option["can_create"] for option in bom_options),
+        "has_creatable_bom": (any(option["can_create"] for option in bom_options) or
+                              sum(bool(option.get("can_combine")) for option in bom_options) >= 2),
         "existing_purchase_order_id": str(existing.pk) if existing else None,
         "existing_purchase_order_number": existing.order_number if existing else None,
         "product_count": len(products),
@@ -666,6 +878,13 @@ def public_purchase_source(task, bom_id=None):
             public_lines.append(public_line)
         result[field_name] = public_lines
     return result
+
+
+def refresh_batch_demand_version(group_id):
+    if group_id:
+        from .models import PurchaseGroup, PurchaseGroupBomSource
+        combined_ids = PurchaseGroupBomSource.objects.filter(previous_group_id=group_id).values("purchase_group_id")
+        PurchaseGroup.objects.filter(Q(pk=group_id) | Q(pk__in=combined_ids)).update(updated_at=timezone.now())
 
 
 def _money(value):
@@ -700,15 +919,17 @@ def purchase_order_snapshot(order):
         "production_task_number": order.production_task_number_snapshot,
         "source_revision": order.source_revision,
         "currency_code": order.currency_code_snapshot,
-        "is_mailed": order.is_mailed,
         "status": order.status,
         "total_amount": str(order.total_amount) if order.total_amount is not None else None,
         "lines": [
             {
                 "purchase_order_line_id": str(line.pk),
                 'raw_bar_length_m': str(line.raw_bar_length_m) if line.raw_bar_length_m else None,
+                'raw_bar_weight_kg': str(line.raw_bar_weight_kg) if line.raw_bar_weight_kg is not None else None,
                 'actual_bar_count': line.actual_bar_count,
                 'actual_purchase_meters': str(line.actual_purchase_meters) if line.actual_purchase_meters is not None else None,
+                'actual_purchase_weight_kg': str(line.actual_purchase_weight_kg) if line.actual_purchase_weight_kg is not None else None,
+                'suggested_purchase_weight_kg': str(line.suggested_purchase_weight_kg) if line.suggested_purchase_weight_kg is not None else None,
                 'quantity_difference_reason': line.quantity_difference_reason,
                 'calculation_snapshot': line.calculation_snapshot,
                 "sample_line_key": str(line.sample_material_source.line_key) if hasattr(line, "sample_material_source") else None,
@@ -809,7 +1030,6 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         currency_code_snapshot=currency.code if currency else "",
         currency_name_snapshot=currency.chinese_name if currency else "",
         currency_symbol_snapshot=currency.symbol if currency else "",
-        is_mailed=validated_data.get("is_mailed"),
         status=PurchaseOrderStatus.DRAFT,
         total_amount=None,
         created_by_employee=actor_employee,
@@ -828,6 +1048,11 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
             quantity = physical_pipe_quantity(pipe_values["calculation_snapshot"], input_line, pipe_values)
         else:
             pipe_values["calculation_snapshot"] = build_purchase_material_snapshot(source_line["_bom_line"])
+            if source_line["section_type"] == BomSectionType.ACCESSORY:
+                hardware_data = _hardware_weight_data(source_line["_bom_line"], source_line["_bom"])
+                if hardware_data is not None:
+                    pipe_values["calculation_snapshot"] = _hardware_calculation_snapshot(source_line["_bom_line"], source_line["_bom"], hardware_data)
+        _validate_hardware_actual_weight(pipe_values["calculation_snapshot"], input_line, quantity)
         unit_price = input_line.get("unit_price")
         price_quantity = priced_quantity(section_type=source_line["section_type"], material_catalog_id=source_line["material_catalog_id"], physical_quantity=quantity, pipe_values=pipe_values)
         amount = _money(price_quantity * unit_price) if price_quantity is not None and quantity is not None and unit_price is not None else None
@@ -890,6 +1115,7 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
 
 
 def _purchase_order_confirmation_errors(order, lines):
+    validate_set_members(lines)
     errors = []
     for line in lines:
         validate_pipe_purchase_source(line)
@@ -898,7 +1124,11 @@ def _purchase_order_confirmation_errors(order, lines):
                 errors.append(f'第 {line.line_number} 行缺少打样管材采购根数或单根长度')
             elif line.actual_purchase_meters != line.actual_bar_count * line.raw_bar_length_m:
                 errors.append(f'第 {line.line_number} 行打样管材米数与根数、单根长度不一致')
-        if line.raw_bar_length_m and (line.actual_bar_count is None or line.actual_purchase_meters != line.actual_purchase_quantity):
+        if line.section_type_snapshot == "PROFILE" and line.source_unit_text == "KG":
+            if (line.raw_bar_length_m is None or line.raw_bar_weight_kg is None or line.actual_bar_count is None
+                    or line.actual_purchase_weight_kg is None or line.actual_purchase_quantity != line.actual_purchase_weight_kg):
+                errors.append(f"第 {line.line_number} 行缺少有效管材重量或换算根数")
+        elif line.raw_bar_length_m and (line.actual_bar_count is None or line.actual_purchase_meters != line.actual_purchase_quantity):
             errors.append(f"第 {line.line_number} 行缺少有效管材根米数量")
         if line.actual_purchase_quantity is None or line.actual_purchase_quantity <= 0:
             errors.append(f"第 {line.line_number} 行缺少有效采购数量")
@@ -908,13 +1138,24 @@ def _purchase_order_confirmation_errors(order, lines):
             errors.append(f"第 {line.line_number} 行缺少供应商")
         if line.delivery_date is None:
             errors.append(f"第 {line.line_number} 行缺少采购交期")
-        if line.unit_price is None or line.unit_price < 0:
+        if not line_set_pricing(line) and (line.unit_price is None or line.unit_price < 0):
             errors.append(f"第 {line.line_number} 行缺少有效采购单价")
         if line.amount is None:
             errors.append(f"第 {line.line_number} 行缺少采购金额")
     if order.currency_code_snapshot != "CNY":
         errors.append("供应商采购表金额单位固定为元，采购单必须使用人民币 CNY")
     return errors
+
+
+def _validate_production_order_scope(order, lines):
+    if order.source_type != PurchaseOrderSourceType.PRODUCTION:
+        return
+    scope = order.purchase_group.purchase_scope if order.purchase_group_id else PurchaseScope.STANDARD
+    for line in lines:
+        packaging = is_packaging_material(
+            line.material_selection_snapshot, line.section_type_snapshot, line.section_title_snapshot, line.category_snapshot,
+        )
+        validate_source_scope(packaging, scope, line.line_number)
 
 
 def _lock_purchase_task(order_id):
@@ -953,6 +1194,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         .filter(purchase_order=order)
         .order_by("line_number", "id")
     )
+    _validate_production_order_scope(order, lines)
     submitted_lines = validated_data["lines"]
     submitted_by_id = {str(item["id"]): item for item in submitted_lines}
     lock_bom_line_material_identities([line.bom_line for line in lines if line.bom_line_id and line.raw_bar_length_m],
@@ -982,14 +1224,20 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         from .reset_sources import refresh_reset_purchase_source
         reset_source_fields = [] if order.batch_request_id else refresh_reset_purchase_source(line)
         validate_pipe_purchase_source(line)
-        if line.raw_bar_length_m or is_sample_total_meter_snapshot(line.calculation_snapshot):
+        if line.raw_bar_length_m or is_sample_total_meter_snapshot(line.calculation_snapshot) or is_sample_weight_snapshot(line.calculation_snapshot):
             pipe_input = {**submitted, 'quantity_difference_reason': submitted.get('quantity_difference_reason', line.quantity_difference_reason)}
             pipe_values = purchase_pipe_values(line.calculation_snapshot, pipe_input)
             for key, value in pipe_values.items():
                 setattr(line, key, value)
             quantity = physical_pipe_quantity(line.calculation_snapshot, submitted, pipe_values)
+            if is_sample_weight_snapshot(line.calculation_snapshot):
+                line.required_quantity = line.suggested_purchase_weight_kg
+                line.source_quantity_text = str(line.required_quantity) if line.required_quantity is not None else ''
+                line.quantity_parse_status = 'READY' if line.required_quantity is not None else 'MISSING'
+                reset_source_fields.extend(['required_quantity', 'source_quantity_text', 'quantity_parse_status'])
+        _validate_hardware_actual_weight(line.calculation_snapshot, submitted, quantity)
         unit_price = submitted.get("unit_price")
-        price_quantity = line.actual_purchase_meters if line.material_catalog_id and line.section_type_snapshot == "PROFILE" else quantity
+        price_quantity = quantity
         amount = _money(price_quantity * unit_price) if price_quantity is not None and quantity is not None and unit_price is not None else None
         line.supplier = supplier
         line.supplier_number_snapshot = supplier.supplier_number if supplier else ""
@@ -1000,6 +1248,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         line.actual_purchase_quantity = quantity
         line.unit_price = unit_price
         line.amount = amount
+        apply_set_pricing(line, submitted)
         line.save(update_fields=[
             *reset_source_fields,
             *PIPE_PURCHASE_FIELDS,
@@ -1014,13 +1263,12 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
             "amount",
             "updated_at",
         ])
-        amounts.append(amount)
+        amounts.append(line.amount)
 
-    if "is_mailed" in validated_data:
-        order.is_mailed = validated_data["is_mailed"]
+    validate_set_members(lines)
     if "batch_type" in validated_data:
         if not order.purchase_group_id or order.source_type != "PRODUCTION":
-            raise ValidationError({"batch_type": "只有生产采购总单的批次可以设置采购类型。"})
+            raise ValidationError({"batch_type": "只有生产采购需求的批次可以设置采购类型。"})
         order.batch_type = validated_data["batch_type"]
     order.total_amount = (
         _money(sum(amounts, Decimal("0")))
@@ -1031,7 +1279,8 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         errors = _purchase_order_confirmation_errors(order, lines)
         if errors:
             raise ValidationError({"lines": errors})
-    order.save(update_fields=["is_mailed", "batch_type", "total_amount", "updated_at"])
+    order.save(update_fields=["batch_type", "total_amount", "updated_at"])
+    refresh_batch_demand_version(order.purchase_group_id)
     updated = purchase_orders_with_context().get(pk=order.pk)
     write_audit_log(
         object_type="PURCHASE_ORDER",
@@ -1066,6 +1315,7 @@ def confirm_purchase_order(*, order_id, allowed_task_ids, actor_employee, reques
     lines = list(order.lines.all())
     if not lines:
         raise ValidationError({"lines": "采购单没有明细，不能确认。"})
+    _validate_production_order_scope(order, lines)
     lock_bom_line_material_identities([line.bom_line for line in lines if line.bom_line_id and line.raw_bar_length_m],
                                       extra_raw_material_ids=[line.calculation_snapshot.get('raw_material_id') for line in lines if line.calculation_snapshot])
     errors = _purchase_order_confirmation_errors(order, lines)
@@ -1138,7 +1388,7 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
         SupplierPurchaseSheet.objects.filter(pk__in=[sheet.pk for sheet in sheets]).update(
             archived_at=now, archived_by_employee=actor_employee, archive_reason="采购批次已删除", updated_at=now,
         )
-        order.purchase_group.save(update_fields=["updated_at"])
+        refresh_batch_demand_version(order.purchase_group_id)
         write_audit_log(object_type="PURCHASE_ORDER", object_id=order.pk, **purchase_order_audit_context(order),
                         action="ARCHIVED", actor_employee=actor_employee, before_data=before, request=request)
         return
@@ -1213,9 +1463,7 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
     from apps.samples.models import SampleMaterialPurchaseSource
     SampleMaterialPurchaseSource.objects.filter(purchase_order_line__purchase_order=order).delete()
     order.delete()
-    if order.purchase_group_id:
-        from .models import PurchaseGroup
-        PurchaseGroup.objects.filter(pk=order.purchase_group_id).update(updated_at=timezone.now())
+    refresh_batch_demand_version(order.purchase_group_id)
     write_audit_log(
         object_type="PURCHASE_ORDER",
         object_id=order_id_value,

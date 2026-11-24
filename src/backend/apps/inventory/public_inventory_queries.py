@@ -6,23 +6,34 @@ from django.db.models.functions import Collate, Coalesce
 
 from apps.workshop_config.models import Craft
 
+from .bom_inventory_sections import (
+    LEGACY_FABRIC_CRAFT_CODES, LEGACY_RAW_FIELDS, RAW_SECTIONS, SEMI_SECTIONS,
+    TUBE_PROCESSING_LABELS, semi_inventory_attributes,
+)
 from .models import MaterialInboundLine, MaterialStockMovement, PublicStockBalance, PublicStockMovement
 from .public_stock_identity import validate_public_identity
 from .selectors import material_inventory_rows
 
 
-def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", warehouse_id="", zone_id="", location_id="", legacy=False):
+def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", warehouse_id="", zone_id="", location_id="", legacy=False, bom_section=""):
     filters = dict(keyword=keyword, section_title=section_title, warehouse_id=warehouse_id,
                    zone_id=zone_id, location_id=location_id)
+    legacy_names = RAW_SECTIONS[bom_section][1] if bom_section else ()
+    attribute_fields = tuple(f"raw_material__{name}" for name in LEGACY_RAW_FIELDS.values()) if bom_section else ()
     # 普通材料本来就是公共账；旧口径管材不能混进公共根米余额。
-    # 库存列表只展示仍有可用余额的记录；零余额仍保留在库存流水和汇总接口中追溯。
-    ordinary_rows = material_inventory_rows(**filters).filter(inventory_quantity__gt=0)
+    # 不足一件的五金仍有实称重量；参考数为零时也保留在库存列表。
+    ordinary_rows = material_inventory_rows(**filters, raw_category_names=legacy_names, attribute_fields=attribute_fields).filter(
+        Q(inventory_quantity__gt=0) | Q(weight_quantity__gt=0))
     if not legacy:
         ordinary_rows = ordinary_rows.filter(measurement_kind="OTHER").exclude(raw_material__category__category_name="管材")
     balances = PublicStockBalance.objects.filter(
-        stock_kind__in=["CATALOG_RAW"] if legacy else ["RAW_PIPE", "CATALOG_RAW"], quality="AVAILABLE", quantity__gt=0,
-    ).select_related(
+        stock_kind__in=["CATALOG_RAW"] if legacy else ["RAW_PIPE", "CATALOG_RAW"], quality="AVAILABLE",
+    ).filter(Q(quantity__gt=0) | Q(weight_quantity__gt=0)).select_related(
         "raw_material__category", "raw_material__color", "unit", "zone__warehouse")
+    if bom_section:
+        balances = balances.filter(
+            Q(stock_kind="CATALOG_RAW", identity_snapshot__material_selection_snapshot__category_key=bom_section)
+            | Q(stock_kind="RAW_PIPE", raw_material__category__category_name__in=legacy_names))
     if keyword:
         matching = MaterialInboundLine.objects.filter(raw_material_information_id=OuterRef("raw_material_id"),
             inbound__status="CONFIRMED", material_pinyin_search__icontains=keyword)
@@ -73,7 +84,7 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
                      "FABRIC": "面料类", "PACKAGING": "包材类"}[selected["category_key"]]
             rows.append({"_balance_id": str(balance.pk), "material_catalog_id": str(balance.material_catalog_id),
                 "material_selection_snapshot": selected, "identity_key": balance.identity_key,
-                "inventory_key": f"CATALOG_RAW|{balance.pk}", "measurement_kind": "PIPE" if balance.raw_bar_length_m else "CATALOG",
+                "inventory_key": f"CATALOG_RAW|{balance.pk}", "measurement_kind": "PIPE" if balance.raw_bar_length_m else "HARDWARE_WEIGHT" if selected["category_key"] == "HARDWARE" else "CATALOG",
                 "raw_bar_length_m": balance.raw_bar_length_m,
                 "raw_material_id": balance.material_catalog_id, "raw_material__item_type": "MATERIAL",
                 "raw_material__category__category_name": title, "raw_material__material_number": "",
@@ -83,10 +94,12 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
                 "zone_id": zone.pk, "zone__zone_name": zone.zone_name, "zone__warehouse_id": zone.warehouse_id,
                 "zone__warehouse__warehouse_number": zone.warehouse.warehouse_number, "zone__warehouse__warehouse_name": zone.warehouse.warehouse_name,
                 "inventory_quantity": balance.quantity, "meter_quantity": balance.meter_quantity,
+                "bar_weight_kg": balance.bar_weight_kg, "weight_quantity": balance.weight_quantity,
                 "inbound_count": balance.inbound_count, "latest_inbound_time": balance.latest_inbound_time})
             continue
         rows.append({
             "_balance_id": str(balance.pk),
+            **{field: getattr(material, field.removeprefix("raw_material__")) for field in attribute_fields},
             "measurement_kind": "PIPE", "raw_bar_length_m": balance.raw_bar_length_m,
             "raw_material_id": material.pk, "raw_material__item_type": material.item_type,
             "raw_material__category__category_name": material.category.category_name,
@@ -99,6 +112,7 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
             "zone__warehouse_id": zone.warehouse_id, "zone__warehouse__warehouse_number": zone.warehouse.warehouse_number,
             "zone__warehouse__warehouse_name": zone.warehouse.warehouse_name,
             "inventory_quantity": balance.quantity, "meter_quantity": balance.meter_quantity,
+            "bar_weight_kg": balance.bar_weight_kg, "weight_quantity": balance.weight_quantity,
             "inbound_count": balance.inbound_count, "latest_inbound_time": balance.latest_inbound_time,
         })
     # 前三项相同时保留普通材料优先，并为各来源补足稳定顺序，避免跨页重复或遗漏。
@@ -114,6 +128,8 @@ def public_pipe_summary(material):
     totals = balances.aggregate(
         available=Sum("quantity", filter=Q(quality="AVAILABLE")),
         meters=Sum("meter_quantity", filter=Q(quality="AVAILABLE")),
+        weights=Sum("weight_quantity", filter=Q(quality="AVAILABLE")),
+        missing_weights=Count("pk", filter=Q(quality="AVAILABLE", quantity__gt=0, weight_quantity__isnull=True)),
         defective=Sum("quantity", filter=Q(quality="DEFECTIVE")),
     )
     old = MaterialStockMovement.objects.filter(balance__raw_material=material, balance__measurement_kind="PIPE")
@@ -130,6 +146,8 @@ def public_pipe_summary(material):
         "unit": material.unit.unit_name, "stock_kind": "RAW", "measurement_kind": "PIPE",
         "current_quantity": str(totals["available"] or 0), "available_quantity": str(totals["available"] or 0),
         "meter_quantity": str(totals["meters"] or 0), "defective_quantity": str(totals["defective"] or 0),
+        "weight_quantity": None if totals["missing_weights"] else str(totals["weights"] or 0),
+        "available_weight_quantity": None if totals["missing_weights"] else str(totals["weights"] or 0),
         "cumulative_inbound_quantity": str(sum((row["inbound"] or Decimal("0") for row in quantities), Decimal("0"))),
         "cumulative_issued_quantity": str(sum((row["issued"] or Decimal("0") for row in quantities), Decimal("0"))),
         "zones": [{
@@ -138,6 +156,8 @@ def public_pipe_summary(material):
             "warehouse_name": row.zone.warehouse.warehouse_name, "zone_name": row.zone.zone_name,
             "quality": row.quality, "quantity": str(row.quantity), "inbound_line_id": None,
             "raw_bar_length_m": str(row.raw_bar_length_m), "meter_quantity": str(row.meter_quantity),
+            "bar_weight_kg": str(row.bar_weight_kg) if row.bar_weight_kg is not None else None,
+            "weight_quantity": str(row.weight_quantity) if row.weight_quantity is not None else None,
         } for row in balances.select_related("zone__warehouse").order_by(
             "zone__warehouse__warehouse_number", "zone__zone_name", "raw_bar_length_m", "id")],
     }
@@ -151,21 +171,27 @@ def _semi_snapshot(balance):
     })["identity_snapshot"]
 
 
-def public_semi_inventory_page(*, page, page_size, keyword="", section_title="", processing_status="", warehouse_id="", zone_id="", location_id="", legacy=False):
-    # 与原材料列表保持一致，零余额不参与库存列表分页和总数统计。
+def public_semi_inventory_page(*, page, page_size, keyword="", section_title="", processing_status="", warehouse_id="", zone_id="", location_id="", legacy=False, bom_section=""):
+    # 与原材料列表一致，仍有实际重量的零参考数余额也可查。
     balances = PublicStockBalance.objects.filter(
-        stock_kind__in=["CATALOG_SEMI"] if legacy else ["SEMI", "CATALOG_SEMI"], quality="AVAILABLE", quantity__gt=0,
-    ).select_related("unit", "zone__warehouse")
+        stock_kind__in=["CATALOG_SEMI"] if legacy else ["SEMI", "CATALOG_SEMI"], quality="AVAILABLE",
+    ).filter(Q(quantity__gt=0) | Q(weight_quantity__gt=0)).select_related("unit", "zone__warehouse")
     if keyword:
         balances = balances.filter(Q(identity_snapshot__part_name__icontains=keyword)
             | Q(identity_snapshot__category__icontains=keyword) | Q(identity_snapshot__material__icontains=keyword)
             | Q(identity_snapshot__specification__icontains=keyword) | Q(identity_snapshot__color__icontains=keyword)
             | Q(identity_snapshot__tube_shape__icontains=keyword) | Q(identity_snapshot__tube_diameter__icontains=keyword)
             | Q(identity_snapshot__material_selection_snapshot__display_name__icontains=keyword))
+    if bom_section:
+        section_rows = Q(identity_snapshot__semi_kind__in=SEMI_SECTIONS[bom_section][1])
+        if bom_section in LEGACY_FABRIC_CRAFT_CODES:
+            section_rows |= Q(identity_snapshot__semi_kind="CUTTING",
+                              identity_snapshot__completed_craft__code__in=LEGACY_FABRIC_CRAFT_CODES[bom_section])
+        balances = balances.filter(section_rows)
     if section_title:
-        section_kinds = {"型材明细": "PIPE", "管材": "PIPE", "裁剪明细": "CUTTING", "五金件": "HARDWARE"}
+        section_kinds = {"型材明细": ['PIPE'], "管材": ['PIPE'], "裁剪明细": ['CUTTING', 'CUT_PIECE', 'SEWN_PART'], "五金件": ['HARDWARE']}
         balances = balances.filter(Q(identity_snapshot__category=section_title)
-            | Q(identity_snapshot__semi_kind=section_kinds.get(section_title, "")))
+            | Q(identity_snapshot__semi_kind__in=section_kinds.get(section_title, [])))
     if processing_status:
         balances = balances.filter(identity_snapshot__completed_craft__code=processing_status)
     if warehouse_id:
@@ -189,7 +215,7 @@ def public_semi_inventory_page(*, page, page_size, keyword="", section_title="",
         semi_kind = snapshot["semi_kind"]
         specification = snapshot.get("specification", "")
         craft_code = snapshot["completed_craft"]["code"]
-        processing_status_label = {"METAL": "未喷塑", "POWDER_COATING": "已喷塑"}.get(
+        processing_status_label = TUBE_PROCESSING_LABELS.get(
             craft_code, crafts.get(snapshot["completed_craft"]["id"], craft_code))
         if semi_kind == "PIPE":
             specification = (f'{snapshot["tube_shape"]} {snapshot["tube_diameter"]} × {snapshot["tube_thickness"]}mm'
@@ -199,8 +225,9 @@ def public_semi_inventory_page(*, page, page_size, keyword="", section_title="",
             **({"_sort_updated_at": row.updated_at, "_sort_id": str(row.pk)} if legacy else {}),
             **({"material_catalog_id": str(row.material_catalog_id), "material_selection_snapshot": snapshot["material_selection_snapshot"]} if row.material_catalog_id else {}),
             "identity_key": row.identity_key, "identity_snapshot": snapshot,
-            "section_type": {"PIPE": "PROFILE", "CUTTING": "FABRIC", "HARDWARE": "ACCESSORY"}[semi_kind],
-            "section_title": {"PIPE": "型材明细", "CUTTING": "裁剪明细", "HARDWARE": "五金件"}[semi_kind],
+            **({"inventory_attributes": semi_inventory_attributes(snapshot)} if bom_section else {}),
+            "section_type": {"PIPE": "PROFILE", "CUTTING": "FABRIC", "CUT_PIECE": "FABRIC", "SEWN_PART": "FABRIC", "HARDWARE": "ACCESSORY"}[semi_kind],
+            "section_title": {"PIPE": "型材明细", "CUTTING": "裁剪明细", "CUT_PIECE": "裁剪明细", "SEWN_PART": "裁剪明细", "HARDWARE": "五金件"}[semi_kind],
             "category": snapshot["category"], "material_number": "", "material": snapshot["material"],
             "part_name": snapshot["part_name"], "specification": specification, "color": snapshot["color"],
             "completed_craft_code": craft_code, "processing_status": craft_code,

@@ -39,8 +39,18 @@ export interface WorkshopEmployee {
   is_supervisor: boolean
   status: WorkshopEmployeeStatus
   status_display: string
+  can_edit: boolean
+  role_workshop: string | null
+  role_workshop_name: string | null
   created_at: string
   updated_at: string
+}
+
+export type WorkshopOption = Pick<Workshop, 'id' | 'name' | 'status'>
+
+export interface WorkshopEmployeeOptions {
+  workshops: WorkshopOption[]
+  editable_workshops: WorkshopOption[]
 }
 
 export interface Craft {

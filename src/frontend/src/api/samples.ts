@@ -4,19 +4,16 @@ import { apiClient } from './request'
 import type { ApiDataResponse } from '@/types/customer'
 import type {
   SampleCreateInput,
-  SampleFromInquiryCreateInput,
   SampleFromQuotationCreateInput,
   SampleListQuery,
   SampleListResult,
   SampleListItem,
   SampleOptions,
+  SampleFilterOptions,
   SampleFormContext,
   SampleFormOptions,
-  SampleRequestFormInput,
   SampleStats,
   SampleDetail,
-  SampleDetailUpdateInput,
-  SampleItemDetail,
   SampleFeeApproval,
   SampleFeeCreateInput,
   SampleFeeRecord,
@@ -25,10 +22,6 @@ import type {
   SampleRequotationCreateInput,
   SampleRequotationOption,
   SampleRequotationResult,
-  SampleShipInput,
-  SampleShipment,
-  SampleShipmentCreateInput,
-  SampleShipmentProgressInput,
   SampleInventoryOptions,
   SampleInventoryEligibleResult,
   SampleFinishedGoodsDestination,
@@ -38,7 +31,6 @@ import type {
   SampleInventoryReceiptLineInput,
   SampleInventoryQuery,
   SampleInventoryResult,
-  SampleInventorySummary,
   SampleOutboundOptions,
   SampleOutboundEligibleResult,
   SampleOutboundCreateLineInput,
@@ -46,7 +38,6 @@ import type {
   SampleOutboundDetail,
   SampleOutboundQuery,
   SampleOutboundResult,
-  SampleOutboundSummary,
   SampleLoanOptions,
   SampleLoanCreateLineInput,
   SampleLoanCreated,
@@ -54,7 +45,6 @@ import type {
   SampleLoanEligibleResult,
   SampleLoanQuery,
   SampleLoanResult,
-  SampleLoanSummary,
 } from '@/types/sample'
 
 function unwrap<T>(response: AxiosResponse<ApiDataResponse<T>>): T {
@@ -77,10 +67,6 @@ function sampleQueryParams(query: Partial<SampleListQuery>) {
 export async function fetchSampleInventory(query: SampleInventoryQuery): Promise<SampleInventoryResult> {
   const { data } = await apiClient.get<SampleInventoryResult>('/api/v1/sample-inventory/', { params: query })
   return data
-}
-
-export async function fetchSampleInventorySummary(): Promise<SampleInventorySummary> {
-  return unwrap(await apiClient.get<ApiDataResponse<SampleInventorySummary>>('/api/v1/sample-inventory/summary/'))
 }
 
 export async function fetchSampleInventoryOptions(): Promise<SampleInventoryOptions> {
@@ -128,10 +114,6 @@ export async function fetchSampleOutbound(query: SampleOutboundQuery): Promise<S
   return data
 }
 
-export async function fetchSampleOutboundSummary(): Promise<SampleOutboundSummary> {
-  return unwrap(await apiClient.get<ApiDataResponse<SampleOutboundSummary>>('/api/v1/sample-outbound/summary/'))
-}
-
 export async function fetchSampleOutboundOptions(): Promise<SampleOutboundOptions> {
   return unwrap(await apiClient.get<ApiDataResponse<SampleOutboundOptions>>('/api/v1/sample-outbound/options/'))
 }
@@ -168,10 +150,6 @@ export async function deleteSampleOutbound(outboundId: string): Promise<void> {
 export async function fetchSampleLoans(query: SampleLoanQuery): Promise<SampleLoanResult> {
   const { data } = await apiClient.get<SampleLoanResult>('/api/v1/sample-loans/', { params: query })
   return data
-}
-
-export async function fetchSampleLoanSummary(): Promise<SampleLoanSummary> {
-  return unwrap(await apiClient.get<ApiDataResponse<SampleLoanSummary>>('/api/v1/sample-loans/summary/'))
 }
 
 export async function fetchSampleLoanOptions(): Promise<SampleLoanOptions> {
@@ -213,6 +191,10 @@ export async function fetchSampleOptions(): Promise<SampleOptions> {
   return unwrap(await apiClient.get<ApiDataResponse<SampleOptions>>('/api/v1/sample-requests/options/'))
 }
 
+export async function fetchSampleFilterOptions(): Promise<SampleFilterOptions> {
+  return unwrap(await apiClient.get<ApiDataResponse<SampleFilterOptions>>('/api/v1/sample-requests/options/', { params: { scope: 'filters' } }))
+}
+
 export async function fetchSampleFormOptions(): Promise<SampleFormOptions> {
   return unwrap(await apiClient.get<ApiDataResponse<SampleFormOptions>>('/api/v1/sample-requests/form-options/'))
 }
@@ -227,56 +209,8 @@ export async function fetchSampleFormContext(
   ))
 }
 
-function sampleFormData(
-  payload: SampleRequestFormInput,
-  taskFiles: Record<string, File | null>,
-  samplingImageFiles: Record<string, File | null>,
-): FormData {
-  const body = new FormData()
-  body.append('payload', JSON.stringify(payload))
-  for (const [clientKey, file] of Object.entries(taskFiles)) {
-    if (file) body.append(`task_sheet_${clientKey}`, file)
-  }
-  for (const [clientKey, file] of Object.entries(samplingImageFiles)) {
-    if (file) body.append(`sampling_image_${clientKey}`, file)
-  }
-  return body
-}
-
-export async function submitSampleForm(
-  payload: SampleRequestFormInput,
-  taskFiles: Record<string, File | null>,
-  samplingImageFiles: Record<string, File | null>,
-): Promise<{ data: SampleDetail; etag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleDetail>>(
-    '/api/v1/sample-requests/',
-    sampleFormData(payload, taskFiles, samplingImageFiles),
-    { timeout: 120_000 },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function patchSampleForm(
-  sampleId: string,
-  payload: SampleRequestFormInput,
-  taskFiles: Record<string, File | null>,
-  samplingImageFiles: Record<string, File | null>,
-  etag: string,
-): Promise<{ data: SampleDetail; etag: string }> {
-  const response = await apiClient.patch<ApiDataResponse<SampleDetail>>(
-    `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/form/`,
-    sampleFormData(payload, taskFiles, samplingImageFiles),
-    { headers: { 'If-Match': etag }, timeout: 120_000 },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
 export async function createSample(payload: SampleCreateInput): Promise<SampleListItem> {
   return unwrap(await apiClient.post<ApiDataResponse<SampleListItem>>('/api/v1/sample-requests/', payload))
-}
-
-export async function createSampleFromInquiry(payload: SampleFromInquiryCreateInput): Promise<SampleDetail> {
-  return unwrap(await apiClient.post<ApiDataResponse<SampleDetail>>('/api/v1/sample-requests/create-from-inquiry/', payload))
 }
 
 export async function createSampleFromQuotation(payload: SampleFromQuotationCreateInput): Promise<SampleDetail> {
@@ -322,17 +256,6 @@ export function approveSamplePmc(sampleId: string, etag: string, note = '') {
   return postSampleWorkflow(sampleId, 'pmc-approve', etag, { note })
 }
 
-export function uploadSampleParameters(
-  sampleId: string,
-  parameterType: 'metalwork' | 'cutting',
-  note: string,
-  file: File,
-  etag: string,
-) {
-  const action = parameterType === 'metalwork' ? 'metalwork-parameters' : 'cutting-parameters'
-  return postSampleWorkflow(sampleId, action, etag, workflowFormData(note, file))
-}
-
 export function uploadSampleParameterImage(
   sampleId: string,
   parameterType: 'metalwork' | 'cutting',
@@ -359,14 +282,6 @@ export function sampleBusinessFileUrl(sampleId: string, fileId: string): string 
   return `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/business-files/${encodeURIComponent(fileId)}/`
 }
 
-export async function fetchSampleBusinessFile(sampleId: string, fileId: string, signal?: AbortSignal): Promise<Blob> {
-  const response = await apiClient.get(
-    sampleBusinessFileUrl(sampleId, fileId),
-    { responseType: 'blob', timeout: 120_000, signal },
-  )
-  return response.data as Blob
-}
-
 export async function deleteSample(sampleId: string, etag: string): Promise<{ deleted_count: number }> {
   return unwrap(await apiClient.delete<ApiDataResponse<{ deleted_count: number }>>(
     `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/`,
@@ -374,19 +289,9 @@ export async function deleteSample(sampleId: string, etag: string): Promise<{ de
   ))
 }
 
-export async function updateSample(sampleId: string, payload: SampleDetailUpdateInput, etag: string): Promise<{ data: SampleDetail; etag: string }> {
-  const response = await apiClient.patch<ApiDataResponse<SampleDetail>>(`/api/v1/sample-requests/${sampleId}/`, payload, { headers: { 'If-Match': etag } })
-  return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function transitionSample(sampleId: string, action: 'submit' | 'start-preparing' | 'confirm' | 'reject' | 'cancel', etag: string, note = ''): Promise<{ data: SampleDetail; etag: string }> {
+export async function transitionSample(sampleId: string, action: 'submit' | 'confirm' | 'reject' | 'cancel', etag: string, note = ''): Promise<{ data: SampleDetail; etag: string }> {
   const field = action === 'reject' || action === 'cancel' ? { reason: note } : { note }
   const response = await apiClient.post<ApiDataResponse<SampleDetail>>(`/api/v1/sample-requests/${sampleId}/${action}/`, field, { headers: { 'If-Match': etag } })
-  return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function addSampleItem(sampleId: string, payload: Omit<SampleItemDetail, 'id' | 'source_inquiry_item' | 'source_quotation_line'>, etag: string): Promise<{ data: SampleItemDetail; etag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleItemDetail>>(`/api/v1/sample-requests/${sampleId}/items/`, payload, { headers: { 'If-Match': etag } })
   return { data: unwrap(response), etag: response.headers.etag || '' }
 }
 
@@ -414,56 +319,6 @@ export async function decideSampleFeeWaiver(sampleId: string, approvalId: string
     { headers: { 'If-Match': etag } },
   )
   return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function fetchSampleShipment(shipmentId: string): Promise<{ data: SampleShipment; etag: string }> {
-  const response = await apiClient.get<ApiDataResponse<SampleShipment>>(`/api/v1/sample-shipments/${shipmentId}/`)
-  return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function createSampleShipment(sampleId: string, payload: SampleShipmentCreateInput, etag: string): Promise<{ data: SampleShipment; etag: string; sampleEtag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleShipment>>(
-    `/api/v1/sample-requests/${sampleId}/shipments/`,
-    payload,
-    { headers: { 'If-Match': etag } },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '', sampleEtag: response.headers['sample-request-etag'] || '' }
-}
-
-export async function shipSampleShipment(shipmentId: string, payload: SampleShipInput, etag: string): Promise<{ data: SampleShipment; etag: string; sampleEtag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleShipment>>(
-    `/api/v1/sample-shipments/${shipmentId}/ship/`,
-    payload,
-    { headers: { 'If-Match': etag } },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '', sampleEtag: response.headers['sample-request-etag'] || '' }
-}
-
-export async function deliverSampleShipment(shipmentId: string, note: string, etag: string): Promise<{ data: SampleShipment; etag: string; sampleEtag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleShipment>>(
-    `/api/v1/sample-shipments/${shipmentId}/deliver/`,
-    { note },
-    { headers: { 'If-Match': etag } },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '', sampleEtag: response.headers['sample-request-etag'] || '' }
-}
-
-export async function markSampleShipmentException(shipmentId: string, reason: string, etag: string): Promise<{ data: SampleShipment; etag: string; sampleEtag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleShipment>>(
-    `/api/v1/sample-shipments/${shipmentId}/exception/`,
-    { reason },
-    { headers: { 'If-Match': etag } },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '', sampleEtag: response.headers['sample-request-etag'] || '' }
-}
-
-export async function recordSampleShipmentProgress(shipmentId: string, payload: SampleShipmentProgressInput, etag: string): Promise<{ data: SampleShipment; etag: string; sampleEtag: string }> {
-  const response = await apiClient.post<ApiDataResponse<SampleShipment>>(
-    `/api/v1/sample-shipments/${shipmentId}/progress/`,
-    payload,
-    { headers: { 'If-Match': etag } },
-  )
-  return { data: unwrap(response), etag: response.headers.etag || '', sampleEtag: response.headers['sample-request-etag'] || '' }
 }
 
 export async function createSampleFeedback(sampleId: string, payload: SampleFeedbackCreateInput, etag: string): Promise<{ data: SampleFeedback; etag: string }> {
@@ -497,31 +352,6 @@ export async function createSampleFeedbackRequotation(
     { headers: { 'If-Match': etag } },
   )
   return { data: unwrap(response), etag: response.headers.etag || '' }
-}
-
-export async function exportSamples(query: SampleListQuery): Promise<Blob> {
-  const response = await apiClient.get('/api/v1/sample-requests/export/', {
-    params: sampleQueryParams(query),
-    responseType: 'blob',
-  })
-  return response.data as Blob
-}
-
-export async function bulkTransferSamples(payload: {
-  sample_ids: string[]
-  etags: Record<string, string>
-  owner_employee_id: string
-  note: string
-}): Promise<{ updated_count: number }> {
-  return unwrap(await apiClient.post('/api/v1/sample-requests/bulk-transfer/', payload))
-}
-
-export async function bulkRemindSamples(payload: {
-  sample_ids: string[]
-  etags: Record<string, string>
-  note?: string
-}): Promise<{ task_count: number; task_ids: string[] }> {
-  return unwrap(await apiClient.post('/api/v1/sample-requests/bulk-remind/', payload))
 }
 
 export async function reportSampleProduction(sampleId: string, etag: string, items: import('@/types/sample').SampleProductionReportItem[]): Promise<{ data: SampleDetail; etag: string }> {

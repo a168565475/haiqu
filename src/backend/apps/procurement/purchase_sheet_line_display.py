@@ -1,4 +1,5 @@
 """采购合同明细的规格、物料属性与颜色分栏，不修改历史快照。"""
+from .set_pricing import sheet_set_description
 
 
 COLOR_KEYS = {
@@ -15,6 +16,8 @@ def purchase_sheet_line_display(line, *, sample_source=False):
     material = _text(line.get("material"))
     remark = _text(line.get("remark"))
     attributes = [f"材质：{material}"] if material else []
+    if line.get("set_pricing"):
+        attributes.append(sheet_set_description(line))
     colors = [remark] if sample_source and remark else []
     selected = line.get("material_selection_snapshot")
     if line.get("material_catalog_id") and isinstance(selected, dict):
@@ -25,7 +28,7 @@ def purchase_sheet_line_display(line, *, sample_source=False):
         for key, value in selected["attributes"].items():
             if key == "color":
                 colors.append(value)
-            elif key != "material":
+            elif key not in {"material", "flow_unit", "unit"}:
                 attributes.append(f"{labels.get(key, key)}：{value}")
         if remark and not sample_source:
             attributes.append(f"要求：{remark}")
@@ -39,7 +42,7 @@ def purchase_sheet_line_display(line, *, sample_source=False):
         key, label, value = (_text(field.get(name)) for name in ("key", "label", "value"))
         if not label or not value or key == "tube_coating_color" or label == "喷塑颜色":
             continue
-        if key in {"part_name", "material", "specification"} or label in {"品名", "部件名称", "材质", "规格"}:
+        if key in {"part_name", "material", "specification", "flow_unit", "unit"} or label in {"品名", "部件名称", "材质", "规格", "流转单位", "可用单位"}:
             continue
         is_color = not sample_source and (key in COLOR_KEYS or label == "颜色")
         target = colors if is_color else attributes

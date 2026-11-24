@@ -1,7 +1,10 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from rest_framework.exceptions import PermissionDenied
 
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
@@ -10,6 +13,7 @@ from apps.organizations.models import Employee
 from apps.organizations.selectors import active_department_employees
 
 from .models import Craft, Operation, RecordStatus, Workshop
+from .selectors import employee_role_workshop, employee_workshop_ids
 
 
 class ActiveChildrenConflict(Conflict):
@@ -132,6 +136,18 @@ def update_employee_workshop(*, instance_id, validated_data, actor_employee, req
     require_matching_etag(request, instance)
     if not active_department_employees("DEPT_PRODUCTION").filter(pk=instance.pk).exists():
         raise Conflict("员工已不属于生产部，请刷新列表。")
+    # 请求入口的权限快照可能早于等待员工锁；保存时重新读取账号和有效授权。
+    authorization_request = SimpleNamespace(user=get_user_model().objects.get(pk=request.user.pk))
+    allowed_ids = employee_workshop_ids(authorization_request, "workshop_config.change_workshopemployee")
+    role_workshop = employee_role_workshop(instance) if instance.workshop_id is None else None
+    source_workshop = instance.workshop or role_workshop
+    if allowed_ids is not None and (source_workshop is None or str(source_workshop.pk) not in allowed_ids):
+        raise PermissionDenied("当前操作未授权该员工所在车间。")
+    target = validated_data.get("workshop", instance.workshop)
+    if target is not None and allowed_ids is not None and str(target.pk) not in allowed_ids:
+        raise PermissionDenied("当前操作未授权目标车间。")
+    if instance.workshop_id is None and role_workshop is not None and target is not None and target.pk != role_workshop.pk:
+        raise ValidationError({"workshop": "该员工的角色已对应固定车间，不能改到其他车间。"})
     fields = ("workshop_id", "workshop_position", "workshop_is_supervisor", "workshop_status")
     before = {key: str(getattr(instance, key)) if key == "workshop_id" and getattr(instance, key) else getattr(instance, key) for key in fields}
     for key, value in validated_data.items():

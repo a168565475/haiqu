@@ -50,6 +50,19 @@ class MaterialCatalogImportTests(TestCase):
     def run_import(self, payload=None, **kwargs):
         return self.importer().import_catalog_payload(payload or self.payload, **kwargs)
 
+    def test_import_reuses_private_unit_and_distinguishes_plain_color_from_card(self):
+        catalog = MaterialCatalog.objects.create(category_key="FABRIC", template_key="FABRIC", name="本地面料")
+        catalog.attribute_values.create(scope="BASE", field_key="color", value="红", color_card="卡A")
+        unit = ProductionUnit.all_objects.create(catalog_owner=catalog, unit_code="IMP-PRIVATE", unit_name=self.unit.unit_name)
+        catalog.allowed_units.create(scope="BASE", unit=unit)
+        data = {**self.payload, "catalogs": [{"category_key": "FABRIC", "template_key": "FABRIC", "name": catalog.name,
+                "spray_enabled": False, "values": [{"scope": "BASE", "field_key": "color", "value": "红"}],
+                "units": [{"scope": "BASE", "unit_name": unit.unit_name}]}]}
+        result = self.run_import(data, apply=True)
+        self.assertEqual(result["units_created"], 0)
+        self.assertEqual(list(catalog.allowed_units.values_list("unit_id", flat=True)), [unit.pk])
+        self.assertEqual(set(catalog.attribute_values.values_list("color_card", flat=True)), {"", "卡A"})
+
     def counts(self):
         return tuple(model.objects.count() for model in (
             MaterialCatalog, MaterialAttributeValue, MaterialAllowedUnit, AuditLog, ProductionUnit,

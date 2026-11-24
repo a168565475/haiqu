@@ -92,6 +92,9 @@ services:
       - type: bind
         source: ./data/media
         target: /app/media
+      - type: bind
+        source: ./data/bom_nesting
+        target: /app/var/bom_nesting
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +107,32 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bom-nesting-worker:
+    image: haiqu-erp-backend
+    pull_policy: never
+    container_name: haiqu-bom-nesting-worker
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+        read_only: true
+      - type: bind
+        source: ./data/bom_nesting
+        target: /app/var/bom_nesting
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "manage.py", "process_bom_nesting_jobs", "--watch", "--interval", "2"]
     logging:
       driver: local
       options:
@@ -129,6 +158,30 @@ services:
       backend:
         condition: service_healthy
     command: ["python", "manage.py", "process_notification_deliveries", "--execute", "--watch", "--interval", "5", "--recover-processing"]
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  purchase-tracking-worker:
+    image: haiqu-erp-backend
+    pull_policy: never
+    container_name: haiqu-purchase-tracking-worker
+    profiles: ["purchase-tracking"]
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+        read_only: true
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "manage.py", "process_purchase_tracking", "--loop", "--interval", "60"]
     logging:
       driver: local
       options:

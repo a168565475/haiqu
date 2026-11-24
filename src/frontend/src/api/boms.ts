@@ -8,6 +8,7 @@ import type {
   BomHardwareMaterialGroup,
   BomHardwareMaterialQuery,
   BomLineImage,
+  BomLineInput,
   BomMaterialPickerQuery,
   BomMaterialSaveOptions,
   BomMaterialSavePreview,
@@ -27,11 +28,18 @@ import type {
   VersionedBom,
   TubeCalculationInput,
   TubeCalculationPreview,
+  HardwareWeightInput,
+  HardwareWeightPreview,
 } from '@/types/bom'
 import type { ProductionTaskProductInput } from '@/types/productionTask'
 
 const basePath = '/api/v1/boms/'
 const workbookRequestTimeout = 180_000
+
+export async function previewBomHardwareWeight(payload: HardwareWeightInput): Promise<HardwareWeightPreview> {
+  const { data } = await apiClient.post<DataResponse<HardwareWeightPreview>>(`${basePath}hardware-weight-preview/`, payload)
+  return data.data
+}
 
 export async function previewBomTubeCalculation(payload: TubeCalculationInput): Promise<TubeCalculationPreview> {
   const { data } = await apiClient.post<DataResponse<TubeCalculationPreview>>(`${basePath}tube-calculation-preview/`, payload)
@@ -131,19 +139,22 @@ export async function fetchBomForEdit(id: string, signal?: AbortSignal): Promise
   return versionedBom(await apiClient.get<DataResponse<BomDetail>>(`${basePath}${encodeURIComponent(id)}/`, { signal }))
 }
 
-export async function archiveBom(id: string, etag: string): Promise<void> {
-  await apiClient.post(
-    `${basePath}${encodeURIComponent(id)}/archive/`,
-    {},
-    { headers: { 'If-Match': etag } },
-  )
+export async function deleteBom(id: string, etag: string): Promise<void> {
+  await apiClient.delete(`${basePath}${encodeURIComponent(id)}/`, {
+    headers: { 'If-Match': etag },
+  })
 }
 
 function writableBomSections(sections: BomSectionInput[]) {
   return sections.map((section) => ({
     ...section,
     lines: section.lines.map((line) => {
-      const { images, draft_images: draftImages, draft_key: draftKey, tube_calculation_preview: tubePreview, ...writableLine } = line
+      const { images, draft_images: draftImages, draft_key: draftKey, tube_calculation_preview: tubePreview,
+        hardware_weight_snapshot: hardwareSnapshot, hardware_weight_preview: hardwarePreview,
+        hardware_weight_saved: hardwareSaved, ...writableLine } = line
+      void hardwareSnapshot
+      void hardwarePreview
+      void hardwareSaved
       void tubePreview
       void images
       void draftKey
@@ -358,7 +369,7 @@ export async function fetchBomFlowMaterials(kind: 'pipe' | 'fabric', q = ''): Pr
   return data
 }
 
-export async function previewBomMaterialFlow(input: { kind: 'PIPE' | 'FABRIC'; order_quantity: string; cutting_length_mm?: string; pieces_per_product?: string; pieces_per_bar?: string; unit_consumption?: string }) {
+export async function previewBomMaterialFlow(input: { kind: 'PIPE' | 'FABRIC'; order_quantity: string; cutting_length_mm?: string; pieces_per_product?: string; pieces_per_bar?: string; unit_consumption?: string } & Pick<BomLineInput, 'purchase_allowance_mode' | 'purchase_allowance_rule' | 'source_purchase_allowance_percent' | 'source_raw_bar_length_m'>) {
   const { data } = await apiClient.post<DataResponse<{ suggested_purchase_meters: string; raw_bar_length_m?: string; suggested_bar_count?: number }>>(`${basePath}material-flow-preview/`, input)
   return data.data
 }

@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount as mountTable, shallowMount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/purchaseReturns'
@@ -27,6 +27,27 @@ describe('退货明细加载与搜索', () => {
     vi.mocked(api.fetchPurchaseReturns).mockResolvedValue({ data: [record], meta: { total: 1 } } as never)
     vi.mocked(api.fetchReturnOptions).mockResolvedValue({ suppliers: [] })
     vi.mocked(api.fetchPurchaseReturn).mockResolvedValue({ data: record, etag: 'frozen-version' } as never)
+  })
+  it('每条退货物料的品名能悬停，规格列按同一行的规格或尺寸材质显示', async () => {
+    const lines = [
+      { id: 'line-1', part_name: '螺钉', specification: 'M6', material: '钢' },
+      { id: 'line-2', part_name: '扣件', specification: '扣件', material: '尼龙',
+        material_attributes_snapshot: { fields: [{ key: 'size', label: '尺寸', value: '30 mm' }] } },
+    ]
+    vi.mocked(api.fetchPurchaseReturns).mockResolvedValue({ data: [{ ...record, lines }], meta: { total: 1 } } as never)
+    const wrapper = mountTable(PurchaseReturnListView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    try {
+      await flushPromises()
+      const headers = wrapper.findAll('thead th').map(cell => cell.text())
+      const cells = wrapper.get('tbody tr').findAll('td')
+      const names = cells[headers.indexOf('品名')]!.findAll('.bom-attributes-anchor')
+      expect(names.map(name => name.text())).toEqual(['螺钉', '扣件'])
+      expect(cells[headers.indexOf('规格')]!.text()).toBe('M6、尺寸 30 mm / 材质 尼龙')
+      await names[1]!.trigger('mouseenter')
+      await vi.waitFor(() => expect(document.querySelector('.bom-attribute-list')?.textContent).toContain('尺寸：30 mm'))
+    } finally {
+      wrapper.unmount()
+    }
   })
   it('供应商选项失败不清空列表，并可单独重试', async () => {
     vi.mocked(api.fetchReturnOptions).mockRejectedValueOnce(new Error('选项失败'))

@@ -1,5 +1,5 @@
 # 本机 Docker Desktop ERP + 服务器 Codex；从项目根与 compose.yml 合并。
-# 不与 compose.codex.yml / compose.import.yml 同时合并，不执行迁移。
+# 不与 compose.codex.yml 同时合并，不执行迁移。
 services:
   codex-local-storage-init:
     image: haiqu-erp-backend:latest
@@ -28,10 +28,9 @@ services:
             if not condition:
                 raise SystemExit('LOCAL_CODEX_STORAGE_OWNERSHIP_MISMATCH')
 
-        # 2026-11-03 实查本机 backend 为 0:0；只初始化两个明确挂载的卷根。
+        # 只初始化已登记的 Codex socket 卷根。
         targets = [
             (Path('/run/haiqu-codex'), 'codex-bridge-socket', 10001, 10001, 0o750),
-            (Path('/state/production-imports'), 'production-imports', 0, 0, 0o700),
         ]
         for path, purpose, uid, gid, mode in targets:
             check(path.resolve() == path and not path.is_symlink() and path.is_dir())
@@ -63,10 +62,6 @@ services:
         source: codex_bridge_socket
         target: /run/haiqu-codex
         volume: {nocopy: true}
-      - type: volume
-        source: production_imports
-        target: /state/production-imports
-        volume: {nocopy: true}
 
   backend:
     image: haiqu-erp-backend:latest
@@ -75,7 +70,6 @@ services:
     group_add: ["10001"]
     environment:
       CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
-      PRODUCTION_IMPORT_ROOT: /state/production-imports
       FILE_VIRUS_SCAN_ENABLED: "true"
     depends_on:
       codex-local-storage-init:
@@ -87,10 +81,6 @@ services:
         source: codex_bridge_socket
         target: /run/haiqu-codex
         read_only: true
-        volume: {nocopy: true}
-      - type: volume
-        source: production_imports
-        target: /state/production-imports
         volume: {nocopy: true}
 
   codex-worker:
@@ -105,7 +95,6 @@ services:
     env_file: [./.env]
     environment:
       CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
-      PRODUCTION_IMPORT_ROOT: /state/production-imports
       FILE_VIRUS_SCAN_ENABLED: "true"
       TUBE_OUTSOURCING_ENABLED: "True"
       PYTHONDONTWRITEBYTECODE: "1"
@@ -133,72 +122,21 @@ services:
         target: /opt/haiqu-codex-bridge
         read_only: true
         bind: {create_host_path: false}
+      - type: bind
+        source: ./data/bom_nesting
+        target: /app/var/bom_nesting
+        bind: {create_host_path: false}
       - type: volume
         source: codex_bridge_socket
         target: /run/haiqu-codex
-        volume: {nocopy: true}
-      - type: volume
-        source: production_imports
-        target: /state/production-imports
-        read_only: true
         volume: {nocopy: true}
     logging:
       driver: local
       options: {max-size: "10m", max-file: "3"}
 
-  production-import-worker:
-    image: haiqu-erp-backend:latest
-    pull_policy: never
-    container_name: haiqu-production-import-worker
-    user: "0:0"
-    restart: unless-stopped
-    init: true
-    read_only: true
-    env_file: [./.env]
-    environment:
-      PRODUCTION_IMPORT_ROOT: /state/production-imports
-      FILE_VIRUS_SCAN_ENABLED: "true"
-      TUBE_OUTSOURCING_ENABLED: "True"
-      PYTHONDONTWRITEBYTECODE: "1"
-      PYTHONUNBUFFERED: "1"
-    command: [python, manage.py, process_production_task_imports, --watch]
-    depends_on:
-      backend:
-        condition: service_healthy
-      clamav:
-        condition: service_healthy
-      codex-local-storage-init:
-        condition: service_completed_successfully
-    mem_limit: 1024m
-    pids_limit: 64
-    stop_grace_period: 120s
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"]
-    volumes:
-      - type: bind
-        source: ./src/backend
-        target: /app
-        read_only: true
-        bind: {create_host_path: false}
-      - type: bind
-        source: ./data/media
-        target: /app/media
-        bind: {create_host_path: false}
-      - type: volume
-        source: production_imports
-        target: /state/production-imports
-        volume: {nocopy: true}
-    logging:
-      driver: local
-      options: {max-size: "10m", max-file: "3"}
 
 volumes:
   codex_bridge_socket:
     name: haiqu-erp-codex-bridge-socket
     labels:
       haiqu.purpose: local-remote-codex-socket
-  production_imports:
-    name: haiqu-erp-production-imports
-    labels:
-      haiqu.purpose: production-task-import-private-data

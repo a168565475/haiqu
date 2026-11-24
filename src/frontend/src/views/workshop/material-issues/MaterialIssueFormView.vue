@@ -3,7 +3,7 @@ import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Check, DocumentChecked, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, DocumentChecked } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -11,7 +11,7 @@ import {
   fetchMaterialRequirements, materialIssueProductImageUrl, submitMaterialIssue, updateMaterialIssue,
 } from '@/api/materialIssues'
 import MaterialIssuePartitions from '@/components/workshop/MaterialIssuePartitions.vue'
-import { issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
+import { issueOrderOverages, issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
 import type { MaterialIssueBatch } from '@/types/materialIssue'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
@@ -106,10 +106,13 @@ async function loadProducts(clear = true) {
   if (clear) { form.product_line_id = ''; requirements.value = []; Object.keys(selected).forEach((key) => delete selected[key]) }
   products.value = form.production_task_id ? await fetchEligibleMaterialIssueProducts(form.production_task_id) : []
 }
+function readRequirements() {
+  return fetchMaterialRequirements(form.production_task_id, form.product_line_id, form.workshop_id, loadedIssueId.value || undefined, planCategory.value || undefined)
+}
 async function loadRequirements(restore?: Map<string, string>) {
   requirements.value = []; blockers.value = []
   if (!form.production_task_id || !form.product_line_id || !form.workshop_id) return
-  const data = await fetchMaterialRequirements(form.production_task_id, form.product_line_id, form.workshop_id, loadedIssueId.value || undefined, planCategory.value || undefined)
+  const data = await readRequirements()
   requirements.value = data.items; blockers.value = data.blockers
   Object.keys(selected).forEach((key) => delete selected[key])
   if (restore) {
@@ -145,7 +148,8 @@ function validate(): string {
 function payload() {
   const issueLines = recordedRows.value.flatMap((item) => {
     if (item.stock_mode === 'PUBLIC_V2' || item.line_type !== 'SEMI' || !item.semi_balance_allocations?.length) {
-      return [{ requirement_id: item.requirement_id, requested_quantity: selected[item.requirement_id] }]
+      return [{ requirement_id: item.requirement_id, requested_quantity: selected[item.requirement_id],
+        ...(item.source_kind === 'CUTTING_DIRECT' ? { source_kind: 'CUTTING_DIRECT' } : {}) }]
     }
     let remaining = decimalUnits(selected[item.requirement_id]) || 0n
     return item.semi_balance_allocations.flatMap((allocation) => {
@@ -173,11 +177,38 @@ function payload() {
   }
   return data
 }
+async function confirmOrderQuantities() {
+  const { items, blockers: latestBlockers } = await readRequirements()
+  const currentIds = new Set(items.map(item => item.requirement_id))
+  if (recordedRows.value.some(item => !currentIds.has(item.requirement_id))) {
+    ElMessage.warning('已选物料的领料范围有变，请刷新页面后重新核对。')
+    return false
+  }
+  const directIds = new Set(selectedRows.value.filter(item => item.source_kind === 'CUTTING_DIRECT').map(item => item.requirement_id))
+  requirements.value = items.map(item => directIds.has(item.requirement_id) ? { ...item, source_kind: 'CUTTING_DIRECT' } : item)
+  blockers.value = latestBlockers
+  const message = validate()
+  if (message) { ElMessage.warning(message); return false }
+  const overages = issueOrderOverages(items, selected)
+  if (!overages.length) return true
+  try {
+    await ElMessageBox.confirm(overages.join('\n\n'), '领料超出本产品需求', {
+      type: 'warning', confirmButtonText: '确认提交', cancelButtonText: '返回修改',
+      customClass: 'material-issue-overage-dialog', closeOnClickModal: false,
+    })
+    return true
+  } catch (reason) {
+    if (reason === 'cancel' || reason === 'close') return false
+    throw reason
+  }
+}
 async function save(submit: boolean) {
+  if (saving.value) return
   if (editing.value && !editLoadComplete.value) { ElMessage.warning('编辑数据尚未完整加载，请先重试。'); return }
   if (submit) { const message = validate(); if (message) { ElMessage.warning(message); return } }
   saving.value = true
   try {
+    if (submit && !await confirmOrderQuantities()) return
     const targetId = issueId.value || persistedIssueId.value
     const targetEtag = etag.value || persistedEtag.value
     const result = targetId
@@ -229,6 +260,8 @@ async function loadEdit() {
       const matching = requirements.value.find((item) => item.stock_mode !== 'PUBLIC_V2'
         && item.semi_balance_allocations?.some((allocation) => allocation.balance_id === line.requirement_id))
       const key = matching?.requirement_id || line.requirement_id
+      const requirement = requirements.value.find(item => item.requirement_id === key)
+      if (requirement) requirement.source_kind = line.source_kind || line.conversion_snapshot?.source_kind || 'STOCK'
       const toScaled = (value: string) => {
         const [whole, fraction = ''] = String(value || '0').split('.')
         return BigInt(whole || '0') * 10000n + BigInt(fraction.padEnd(4, '0').slice(0, 4) || '0')
@@ -309,13 +342,12 @@ onMounted(initialize)
       <ElEmpty :description="contextError"><ElButton type="primary" @click="router.push({ name: 'workshop-metalworking-plan' })">返回作业计划</ElButton></ElEmpty>
     </section>
     <template v-else>
-      <div class="material-issue-scroll">
+      <div class="material-issue-scroll" :inert="saving">
         <header class="form-titlebar">
           <div class="form-title-copy">
-            <h1>{{ editing ? '修改生产领料单' : '新增生产领料单' }}</h1>
+            <h1>{{ editing ? '修改车间领料单' : '新增车间领料单' }}</h1>
             <span v-if="planContextActive" class="plan-label">{{ planCategoryLabels[planCategory] }}</span>
           </div>
-          <p><ElIcon><InfoFilled /></ElIcon>按扣除占用后的合格库存领料，可超过 BOM 建议量；仓库确认出库后扣库存。</p>
         </header>
 
         <section class="mi-surface form-basic basic-card">
@@ -372,7 +404,7 @@ onMounted(initialize)
       <footer class="form-action-footer">
         <span><b>原材料 {{ recordedRows.filter(r => r.line_type === 'RAW').length }} 项 · 半成品 {{ recordedRows.filter(r => r.line_type === 'SEMI').length }} 项</b><i></i>不同单位的物料 / 半成品，按各自计量单位领料</span>
         <div>
-          <ElButton :icon="ArrowLeft" @click="router.back()">{{ editing ? '返回详情' : '返回' }}</ElButton>
+          <ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">{{ editing ? '返回详情' : '返回' }}</ElButton>
           <ElButton :loading="saving" :icon="DocumentChecked" @click="save(false)">保存草稿</ElButton>
           <ElButton type="primary" :loading="saving" :icon="Check" @click="save(true)">{{ editing ? '重新提交审核' : '提交仓库审核' }}</ElButton>
         </div>
@@ -384,14 +416,14 @@ onMounted(initialize)
 <style scoped lang="scss">
 @use '@/styles/materialIssue';
 @use '@/styles/theme/detail' as detail;
+:global(.material-issue-overage-dialog) { --el-messagebox-width: 520px; }
+:global(.material-issue-overage-dialog .el-message-box__message) { white-space: pre-line; max-height: 55vh; overflow-y: auto; }
 .material-issue-page.material-issue-form { --el-color-primary: var(--erp-color-brand); height: auto; min-height: 0; display: flex; flex-direction: column; overflow: visible; background: transparent; }
 .material-issue-form :deep(.mi-surface) { @include detail.surface; }
 .material-issue-scroll { flex: none; min-height: 0; overflow: visible; }
 .form-titlebar { display: flex; min-height: 54px; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .form-title-copy { display: flex; align-items: center; gap: 18px; min-width: 0; }
 .form-titlebar h1 { margin: 0; color: var(--erp-color-text-primary); font: 500 34px/44px 'Noto Serif SC', 'Songti SC', serif; letter-spacing: -0.6px; }
-.form-titlebar p { display: flex; align-items: center; gap: 7px; margin: 15px 4px 0 0; color: var(--erp-color-text-secondary); font-size: 13px; white-space: nowrap; }
-.form-titlebar p :deep(.el-icon) { color: var(--erp-color-text-secondary); font-size: 15px; }
 .plan-label { margin-top: 4px; padding: 4px 10px; border-left: 3px solid var(--erp-color-brand); color: var(--erp-color-brand); background: var(--erp-color-subtle); font-size: 13px; line-height: 22px; white-space: nowrap; }
 .form-basic { margin-bottom: 14px; padding: 8px 15px 12px; }
 .form-basic h2, .category-panel h2, .pick-panel h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; font-weight: 600; line-height: 24px; }
@@ -470,7 +502,6 @@ onMounted(initialize)
   .basic-row--bottom > :nth-child(4) { grid-column: 3; grid-row: 2; }
 }
 @media (max-width: 1400px) {
-  .form-titlebar p { display: none; }
   .product-preview { align-self: center; margin-top: 0; margin-left: 0; }
   .product-preview img { width: 62px; height: 62px; }
   .issue-workspace { grid-template-columns: 150px minmax(0, 1fr); }

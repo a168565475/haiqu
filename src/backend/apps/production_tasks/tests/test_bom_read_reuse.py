@@ -106,12 +106,14 @@ class ProductionTaskBomReadReuseTests(APITestCase):
 
     def test_detail_reads_boms_once_and_matches_fallback_response_and_etag(self):
         fallback_task = production_tasks_with_context().get(pk=self.task.pk)
-        expected = ProductionTaskReadSerializer(fallback_task).data
 
         with CaptureQueriesContext(connection) as queries:
             response = self.client.get(f"/api/v1/production-tasks/{self.task.pk}/", HTTP_HOST="localhost")
 
         self.assertEqual(response.status_code, 200, response.data)
+        expected = ProductionTaskReadSerializer(
+            fallback_task, context={"request": response.renderer_context["request"]},
+        ).data
         self.assertEqual(response.data["data"], expected)
         self.assertEqual(response["ETag"], etag_for_instance(fallback_task))
         # 产品删除提示含 BOM 的 EXISTS 子查询；这里只统计实际加载 BOM 对象的主查询。
@@ -128,6 +130,7 @@ class ProductionTaskBomReadReuseTests(APITestCase):
             boms = serializer.get_current_boms(task)
             status = serializer.get_bom_status(task)
             status_display = serializer.get_bom_status_display(task)
+            self.assertTrue(serializer.get_has_confirmed_bom_product(task))
 
         self.assertEqual(boms, [
             {
@@ -161,6 +164,7 @@ class ProductionTaskBomReadReuseTests(APITestCase):
             self.assertEqual(serializer.get_current_boms(task), [])
             self.assertEqual(serializer.get_bom_status(task), "NOT_CREATED")
             self.assertEqual(serializer.get_bom_status_display(task), "未建立")
+            self.assertFalse(serializer.get_has_confirmed_bom_product(task))
 
     def test_non_detail_paths_keep_original_current_boms_fallback(self):
         prefetched_task = production_tasks_with_context(

@@ -32,6 +32,8 @@ class DailyBusinessNumberTests(TestCase):
             "INTERNAL_SEMI_RECEIPT": "BNRK", "FINISHED_GOODS_RECEIPT": "CPRK", "FINISHED_GOODS_OUTBOUND": "CPCK",
             "OUTSOURCING_ORDER": "WF", "OUTSOURCING_DISPATCH": "FL", "OUTSOURCING_RETURN": "WH",
             "TUBE_OUTSOURCING_RECEIPT": "WFHK", "WORK_REPORT": "BG", "FINANCE_ACCOUNT": "ZH",
+            "RECEIVABLE_STATEMENT": "YSDZD", "PURCHASE_PAYABLE": "CGYF", "FINANCE_RECEIPT": "SKQRD",
+            "SUPPLIER_PAYMENT": "GYFK", "SUPPLIER_OFFSET": "GYDZ", "SUPPLIER_PAYMENT_APPLICATION": "FKSQ",
         }
         self.assertEqual(DAILY_NUMBER_RULES, expected_prefixes)
         for number_type, prefix in expected_prefixes.items():

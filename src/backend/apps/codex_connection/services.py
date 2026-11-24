@@ -78,7 +78,7 @@ def enqueue(request, action):
     if connection.status == 'UNKNOWN' and not active and action not in ('refresh', 'disconnect'):
         raise Conflict('上次运行结果尚未核实，请先刷新连接状态。')
     if active:
-        draining = (len(active) == 1 and active[0].state == 'RUNNING' and active[0].action in ('test', 'discover', 'extract')
+        draining = (len(active) == 1 and active[0].state == 'RUNNING' and active[0].action in ('test', 'discover', 'extract', 'nest')
                     and action in ('switch', 'disconnect'))
         if not draining:
             raise Conflict('已有操作正在处理，请等待结束或取消当前授权。')

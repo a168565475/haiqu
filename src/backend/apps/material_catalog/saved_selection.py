@@ -50,6 +50,7 @@ def validate_saved_material(snapshot, *, material_catalog_id=None):
                 invalid("普通颜色编号不是已规范化的编号。")
         except (ValueError, TypeError, AttributeError):
             invalid("普通颜色编号无效。")
+    if snapshot.get("product_color_id") or snapshot.get("color_card") or snapshot.get("color_code"):
         for field, limit in (("color_card", 100), ("color_code", 100), ("color_name", 200)):
             if not isinstance(snapshot.get(field), str) or len(snapshot[field]) > limit:
                 invalid("普通颜色快照必须保留完整的色卡、色号与颜色名。")

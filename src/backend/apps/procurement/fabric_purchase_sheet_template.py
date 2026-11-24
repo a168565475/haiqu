@@ -10,6 +10,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
+from .set_pricing import sheet_set_description
 
 TEMPLATE_PATH = Path(__file__).with_name("resources") / "fabric_purchase_contract.xlsx"
 SHEET_PATH = "xl/worksheets/sheet1.xml"
@@ -100,6 +101,8 @@ def _line_fields(line):
         if item not in target:
             target.append(item)
     remark = _text(line.get("remark"))
+    if line.get("set_pricing"):
+        description.append(sheet_set_description(line))
     if remark and f"要求：{remark}" not in description:
         description.append(f"要求：{remark}")
     return "；".join(description) or "—", " / ".join(widths) or "—", " / ".join(colors) or "—"
@@ -215,11 +218,13 @@ def _resize_rows(sheet, count):
     return delta, new_rows
 
 
-def _numeric_style(styles, cell, value, cache):
+def _numeric_style(styles, cell, value, cache, suffix=""):
     base_index = int(cell.get("s", "0"))
     text = _decimal_text(value)
     fraction = text.partition(".")[2]
     code = "0." + "#" * len(fraction) if fraction else "0"
+    if suffix:
+        code += '" ' + suffix.replace('"', '""') + '"'
     key = (base_index, code)
     if key not in cache:
         formats = styles.find("m:numFmts", NS)
@@ -269,14 +274,16 @@ def build_fabric_purchase_sheet_xlsx(sheet):
     lines = content.get("lines") or []
     if not isinstance(lines, list) or any(not isinstance(line, dict) for line in lines):
         raise FabricPurchaseSheetTemplateError("布面采购明细格式无效。")
+    has_sets = any(line.get("set_pricing") for line in lines)
     prepared, dates = [], set()
     for index, line in enumerate(lines, 1):
-        if _text(line.get("unit")).casefold() not in {"米", "m", "meter", "metre"}:
+        if not line.get("set_pricing") and _text(line.get("unit")).casefold() not in {"米", "m", "meter", "metre"}:
             raise FabricPurchaseSheetTemplateError(f"第 {index} 行单位不是米，不能套用布面按米采购原版。")
         quantity = _decimal(line.get("quantity"), f"第 {index} 行数量")
-        price = _decimal(line.get("unit_price"), f"第 {index} 行单价")
+        included = line.get("set_pricing") and not line["is_set_anchor"]
+        price = None if included else _decimal(line.get("unit_price"), f"第 {index} 行单价")
         try:
-            amount = (quantity * price).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+            amount = (quantity * (price or Decimal(0))).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
         except InvalidOperation as exc:
             raise FabricPurchaseSheetTemplateError(f"第 {index} 行金额超出有效计算范围。") from exc
         prepared.append((_line_fields(line), quantity, price, amount))
@@ -309,6 +316,9 @@ def build_fabric_purchase_sheet_xlsx(sheet):
         _replace_original_text(cell("A4"), strings, r"\d+(?:\.\d+)?(?=%增值税)", lambda match: _decimal_text(tax_rate))
         _replace_original_text(cell("A4"), strings, r"含送货到好甲方的运费", lambda match: f"运费由{freight_bearer}承担")
         _set_value(cell("G5"), "订单编号")
+        if has_sets:
+            _set_value(cell("D5"), "采购数量")
+            _set_value(cell("E5"), "采购单价（元）")
         total, cache = Decimal("0"), {}
         for index, (fields, quantity, price, amount) in enumerate(prepared):
             row = 6 + index
@@ -316,8 +326,12 @@ def build_fabric_purchase_sheet_xlsx(sheet):
                 _set_value(cell(f"{column}{row}"), value)
             for column, value in (("D", quantity), ("E", price), ("F", amount)):
                 target = cell(f"{column}{row}")
+                if price is None and column in {"E", "F"}:
+                    _set_value(target, "已含套价" if column == "E" else "—")
+                    continue
                 _set_value(target, value, formula=f"ROUND(D{row}*E{row},4)" if column == "F" else None)
-                _numeric_style(styles, target, value, cache)
+                suffix = _text(lines[index].get("unit")) if has_sets and column == "D" else ""
+                _numeric_style(styles, target, value, cache, suffix=suffix)
             _set_value(cell(f"G{row}"), task_number if index == 0 else None)
             detail_rows[index].set("ht", str(max(_text_height(value, capacity, 27, "采购明细") for value, capacity in zip(fields, (25, 9, 14)))))
             detail_rows[index].set("customHeight", "1")

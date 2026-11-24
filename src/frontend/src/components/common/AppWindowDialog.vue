@@ -31,6 +31,7 @@ const props = withDefaults(defineProps<{
   minimizable?: boolean
   destroyOnClose?: boolean
   lockScroll?: boolean
+  embedded?: boolean
   modalClass?: string
   beforeClose?: (done: () => void) => void
 }>(), {
@@ -49,6 +50,7 @@ const props = withDefaults(defineProps<{
   minimizable: true,
   destroyOnClose: false,
   lockScroll: true,
+  embedded: false,
   modalClass: '',
   beforeClose: undefined,
 })
@@ -188,6 +190,7 @@ function observeAutoContent() {
 }
 
 const windowStyle = computed(() => {
+  if (props.embedded) return {}
   const viewport = typeof window === 'undefined' ? { width: 1920, height: 1080, padding: 16 } : viewportBounds()
   if (state.value === 'minimized') {
     const width = Math.min(320, viewport.width - viewport.padding * 2)
@@ -224,7 +227,7 @@ const windowStyle = computed(() => {
 })
 
 function lockBody() {
-  if (!props.lockScroll || bodyLocked || state.value === 'minimized') return
+  if (props.embedded || !props.lockScroll || bodyLocked || state.value === 'minimized') return
   if (bodyLockCount === 0) {
     bodyOverflowBeforeFirstLock = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -245,6 +248,10 @@ function unlockBody() {
 
 async function initializeWindow() {
   await nextTick()
+  if (props.embedded) {
+    emit('opened')
+    return
+  }
   if (props.height === 'auto' && typeof window.requestAnimationFrame === 'function') {
     await new Promise<void>(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
   }
@@ -378,7 +385,7 @@ function handleViewportResize() {
 }
 
 function handleOverlayClick(event: MouseEvent) {
-  if (event.target === event.currentTarget && props.closeOnClickModal && state.value !== 'minimized') requestClose()
+  if (!props.embedded && event.target === event.currentTarget && props.closeOnClickModal && state.value !== 'minimized') requestClose()
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -461,12 +468,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport to="body" :disabled="embedded">
     <div
       v-if="rendered"
       v-show="modelValue"
       class="app-window-overlay"
-      :class="[{ 'is-minimized': state === 'minimized' }, modalClass]"
+      :class="[{ 'is-minimized': state === 'minimized', 'is-embedded': embedded }, modalClass]"
       :style="{ zIndex: overlayZIndex }"
       @mousedown="handleOverlayClick"
       @keydown="handleKeydown"
@@ -475,7 +482,7 @@ onBeforeUnmount(() => {
         ref="windowRef"
         v-bind="forwardedAttrs"
         class="el-dialog app-window-dialog"
-        :class="[$attrs.class, `is-${state}`]"
+        :class="[$attrs.class, `is-${state}`, { 'is-embedded': embedded }]"
         :style="[windowStyle, $attrs.style]"
         role="dialog"
         :aria-modal="state !== 'minimized'"
@@ -517,6 +524,12 @@ onBeforeUnmount(() => {
   inset: 0;
   background: color-mix(in srgb, var(--erp-overlay-scrim-color) 34%, transparent);
 
+  &.is-embedded {
+    position: static;
+    inset: auto;
+    background: transparent;
+  }
+
   &.is-minimized {
     pointer-events: none;
     background: transparent;
@@ -546,6 +559,24 @@ onBeforeUnmount(() => {
   --el-fill-color-blank: #{token.$crm-color-surface};
   --el-text-color-primary: #{token.$crm-text-primary};
   --el-text-color-regular: #{token.$crm-text-regular};
+
+  &.is-embedded {
+    position: static;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+
+    > .app-window-dialog__header,
+    > .app-window-dialog__resize-handle {
+      display: none;
+    }
+  }
 
   &.is-maximized {
     border-radius: token.$crm-radius-2;

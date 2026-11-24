@@ -73,7 +73,8 @@ class MaterialCatalogSchemaTests(SimpleTestCase):
             with self.subTest(suffix=suffix):
                 operation = self.schema["paths"][f"{ROOT}{{id}}/{suffix}"]["patch"]
                 body = self.resolve(operation["requestBody"]["content"]["application/json"]["schema"])
-                self.assertEqual(set(body["properties"]), {field} if field == "value" else {"unit_id", "unit_name"})
+                expected = {"value", "product_color_id", "color_card", "color_code", "color_name"} if field == "value" else {"unit_id", "unit_name"}
+                self.assertEqual(set(body["properties"]), expected)
                 if field == "value":
                     self.assertEqual(body["required"], [field])
                 else:

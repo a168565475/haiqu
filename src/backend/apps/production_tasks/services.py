@@ -58,12 +58,35 @@ def _production_cny_rate_snapshot():
     }
 
 
+def _production_rate_snapshot(currency, exchange_rate):
+    if currency is None or exchange_rate is None:
+        return {}
+    if currency.code == "CNY" and exchange_rate == Decimal("1"):
+        return _production_cny_rate_snapshot()
+    return {
+        "record_id": None, "base_currency_code": currency.code, "quote_currency_code": "CNY",
+        "rate": str(exchange_rate), "effective_date": None,
+        "source_name": "生产任务确认汇率", "source_version": "",
+    }
+
+
+def _product_total(quantity, unit_price):
+    if unit_price is None:
+        return None
+    return (quantity * unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def _nullable_string(value):
+    return None if value is None else str(value)
+
+
 def _prepare_catalog_products(products, task=None):
     from apps.product_catalog.selection import resolve_product_selection
 
     existing = {str(line.pk): line for line in task.products.all()} if task else {}
     for data in products:
-        line = existing.get(str(data["client_key"]))
+        client_key = data.get("client_key")
+        line = existing.get(str(client_key)) if client_key is not None else None
         catalog_id = data.pop("product_catalog_id", getattr(line, "product_catalog_id", None))
         selection = data.pop("product_selection", None)
         if not catalog_id and selection is None and not is_product_entry_snapshot(getattr(line, "product_selection_snapshot", None)):
@@ -258,8 +281,8 @@ def _snapshot(task):
         "order_tolerance_percent": str(task.order_tolerance_percent),
         "is_repeat_order": task.is_repeat_order,
         "delivery_method": task.delivery_method,
-        "freight_amount": str(task.freight_amount),
-        "other_fee_amount": str(task.other_fee_amount),
+        "freight_amount": _nullable_string(task.freight_amount),
+        "other_fee_amount": _nullable_string(task.other_fee_amount),
         "products": [
             {
                 "id": str(product.pk),
@@ -281,10 +304,10 @@ def _snapshot(task):
                 "material": product.material_snapshot,
                 "color_code": product.color_code_snapshot,
                 "unit_id": str(product.unit_id) if product.unit_id else None,
-                "currency_id": str(product.currency_id),
-                "unit_price": str(product.unit_price),
-                "total_amount": str(product.total_amount),
-                "exchange_rate": str(product.exchange_rate),
+                "currency_id": _nullable_string(product.currency_id),
+                "unit_price": _nullable_string(product.unit_price),
+                "total_amount": _nullable_string(product.total_amount),
+                "exchange_rate": _nullable_string(product.exchange_rate),
                 "exchange_rate_snapshot": product.exchange_rate_snapshot,
                 "special_requirements": product.special_requirements,
                 "packaging_method": product.packaging_method,
@@ -509,8 +532,8 @@ def _create_children(
                 line_number=product_index,
                 **snapshot_values,
                 image_file=product_images[0] if product_images else None,
-                total_amount=(data["quantity"] * data["unit_price"]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP),
-                exchange_rate_snapshot=_production_cny_rate_snapshot(),
+                total_amount=_product_total(data["quantity"], data["unit_price"]),
+                exchange_rate_snapshot=_production_rate_snapshot(data.get("currency"), data.get("exchange_rate")),
                 **data,
             )
             ProductionTaskProductImage.objects.bulk_create(
@@ -604,11 +627,11 @@ def _validate_sales_products(task, products, files):
             maximum_by_source[source.pk] = maximum
         if maximum is not None and int(product_data["quantity"]) > maximum:
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”本次生产数量最多为 {maximum}。"})
-        if line.unit_id != getattr(product_data.get("unit"), "pk", None) or line.currency_id != product_data["currency"].pk:
+        if line.unit_id != getattr(product_data.get("unit"), "pk", None) or line.currency_id != getattr(product_data.get("currency"), "pk", None):
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”的单位和币种由销售订单锁定。"})
-        if Decimal(line.exchange_rate) != Decimal(product_data["exchange_rate"]):
+        if line.exchange_rate != product_data["exchange_rate"]:
             raise ValidationError({"products": "销售来源汇率快照不可修改。"})
-        if Decimal(line.unit_price) != Decimal(product_data["unit_price"]):
+        if line.unit_price != product_data["unit_price"]:
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”的单价由销售订单锁定。"})
         for name in ("special_requirements", "packaging_method"):
             if name in product_data and product_data[name] != getattr(line, name):
@@ -734,9 +757,7 @@ def _sync_children(
                 # 来源产品只更新本次数量；即使调用方省略图片、明细等字段，也完整保留。
                 line.line_number = product_index
                 line.quantity = data["quantity"]
-                line.total_amount = (line.quantity * line.unit_price).quantize(
-                    Decimal("0.0001"), rounding=ROUND_HALF_UP,
-                )
+                line.total_amount = _product_total(line.quantity, line.unit_price)
                 line.full_clean()
                 line.save(update_fields=["line_number", "quantity", "total_amount", "updated_at"])
                 continue
@@ -770,10 +791,14 @@ def _sync_children(
                     {f"product_image_{client_key}": f"每条颜色明细最多保留 {MAX_IMAGES_PER_PRODUCT_LINE} 张图片。"}
                 )
 
+            refresh_rate_snapshot = line is None or (
+                line.currency_id != getattr(data.get("currency"), "pk", None)
+                or line.exchange_rate != data.get("exchange_rate")
+            )
             if line is None:
                 line = ProductionTaskProduct(production_task=task)
-                if data["currency"].code == "CNY":
-                    line.exchange_rate_snapshot = _production_cny_rate_snapshot()
+            if refresh_rate_snapshot and not task.sales_order_id and not line.sales_order_delivery_batch_line_id:
+                line.exchange_rate_snapshot = _production_rate_snapshot(data.get("currency"), data.get("exchange_rate"))
             line.line_number = product_index
             line.product = product
             if not task.sales_order_id and not line.sales_order_delivery_batch_line_id:
@@ -784,10 +809,7 @@ def _sync_children(
                 # 没有销售订单来源的行允许在 BOM 前由客户文本暂存产品信息。
                 for field_name, value in snapshot_values.items():
                     setattr(line, field_name, value)
-            line.total_amount = (data["quantity"] * data["unit_price"]).quantize(
-                Decimal("0.0001"),
-                rounding=ROUND_HALF_UP,
-            )
+            line.total_amount = _product_total(data["quantity"], data["unit_price"])
             for field_name, value in data.items():
                 setattr(line, field_name, value)
             line.full_clean()
@@ -900,10 +922,10 @@ def replace_unbound_product_line(*, task, product_line, product_data, files, act
     for field_name, value in snapshot_values.items():
         setattr(product_line, field_name, value)
     product_line.image_file = uploaded_images[0] if uploaded_images else None
-    product_line.total_amount = (data["quantity"] * data["unit_price"]).quantize(
-        Decimal("0.0001"),
-        rounding=ROUND_HALF_UP,
-    )
+    product_line.total_amount = _product_total(data["quantity"], data["unit_price"])
+    if (product_line.currency_id != getattr(data.get("currency"), "pk", None)
+            or product_line.exchange_rate != data.get("exchange_rate")):
+        product_line.exchange_rate_snapshot = _production_rate_snapshot(data.get("currency"), data.get("exchange_rate"))
     for field_name, value in data.items():
         setattr(product_line, field_name, value)
     product_line.full_clean()
@@ -970,10 +992,12 @@ def _audit_context(task):
     return {"context_type": "", "context_id": None}
 
 
-def _validate_task_tax(*, includes_tax, tax_rate):
-    if includes_tax and tax_rate not in {3, 5, 7}:
+def _validate_task_tax(*, includes_tax, tax_rate, allow_unknown=False):
+    if includes_tax is None and not allow_unknown:
+        raise ValidationError({"includes_tax": "请选择是否含税。"})
+    if includes_tax and tax_rate not in {3, 5, 7} and not (allow_unknown and tax_rate is None):
         raise ValidationError({"tax_rate": "含税时税率必须选择 3%、5% 或 7%。"})
-    if not includes_tax and tax_rate is not None:
+    if includes_tax is False and tax_rate is not None:
         raise ValidationError({"tax_rate": "不含税时税率必须为空。"})
 
 
@@ -1011,7 +1035,7 @@ def _sync_sales_delivery_date(*, task, actor_employee, request):
 
 
 @transaction.atomic
-def create_production_task(*, validated_data, files, actor_employee, request, created_files=None):
+def create_production_task(*, validated_data, files, actor_employee, request, created_files=None, allow_incomplete_import=False):
     validated_data.pop("bom_sync_mode", None)
     validated_data.pop("bom_sync_token", None)
     products = validated_data.pop("products")
@@ -1021,9 +1045,18 @@ def create_production_task(*, validated_data, files, actor_employee, request, cr
     _validate_followers(followers)
     if validated_data.get("customer_account") is not None:
         raise ValidationError({"customer_account_id": "手动生产任务单不关联客户。"})
-    if validated_data["currency"].code != "CNY" or any(item["currency"].code != "CNY" for item in products):
+    if not allow_incomplete_import and (getattr(validated_data.get("currency"), "code", None) != "CNY"
+            or any(getattr(item.get("currency"), "code", None) != "CNY" for item in products)):
         raise ValidationError({"currency_id": "手动生产任务单必须使用人民币 CNY。"})
-    _validate_task_tax(includes_tax=validated_data["includes_tax"], tax_rate=validated_data.get("tax_rate"))
+    if not allow_incomplete_import:
+        if any(item.get("unit_price") is None or item.get("exchange_rate") is None for item in products):
+            raise ValidationError({"products": "手动生产任务单必须填写单价和汇率。"})
+        if any(validated_data.get(name, Decimal("0")) is None for name in ("freight_amount", "other_fee_amount")):
+            raise ValidationError({"freight_amount": "手动生产任务单费用不可为空。"})
+        if any(detail.get("is_selected", False) is None for item in products for detail in item.get("details", [])):
+            raise ValidationError({"products": "手动生产明细请选择是或否。"})
+    _validate_task_tax(includes_tax=validated_data["includes_tax"], tax_rate=validated_data.get("tax_rate"),
+                       allow_unknown=allow_incomplete_import)
     validated_data["order_source"] = "REPEAT" if validated_data["is_repeat_order"] else "NEW"
     contract_number = _contract_number_from_token(
         validated_data.pop("contract_number_token"),
@@ -1072,7 +1105,8 @@ def update_production_task(*, task, validated_data, files, actor_employee, reque
             delivery_batch_id=task.sales_order_delivery_batch_id,
         ).order_by("pk"))
     _validate_task_tax(includes_tax=validated_data.get("includes_tax", task.includes_tax),
-                       tax_rate=validated_data.get("tax_rate", task.tax_rate))
+                       tax_rate=validated_data.get("tax_rate", task.tax_rate),
+                       allow_unknown=task.includes_tax is None or task.includes_tax and task.tax_rate is None)
     start = validated_data.get("planned_start_date", task.planned_start_date)
     end = validated_data.get("planned_end_date", task.planned_end_date)
     if (start is None) != (end is None) or (start and end and end < start):
@@ -1356,6 +1390,14 @@ def set_production_task_paused(*, task, paused, reason, actor_employee, request)
     return task
 
 
+def require_all_task_products_scheduled(task):
+    from .selectors import unscheduled_task_products
+
+    count = unscheduled_task_products(task).count()
+    if count:
+        raise Conflict(f"生产任务仍有 {count} 个产品未排产，请先补齐排产后再完成整单。")
+
+
 @transaction.atomic
 def close_production_task(*, task, target_status, reason, actor_employee, request):
     if target_status not in {ProductionTaskStatus.CANCELLED, ProductionTaskStatus.COMPLETED}:
@@ -1368,6 +1410,9 @@ def close_production_task(*, task, target_status, reason, actor_employee, reques
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
     if task.status in {ProductionTaskStatus.CANCELLED, ProductionTaskStatus.COMPLETED}:
         raise Conflict("订单已经结束或取消，不能重复操作。")
+
+    if target_status == ProductionTaskStatus.COMPLETED:
+        require_all_task_products_scheduled(task)
 
     before_data = _snapshot(task)
     task.status = target_status
@@ -1745,12 +1790,13 @@ def decide_production_order_by_pmc(*, task, validated_data, actor_employee, requ
                 setattr(task, field_name, validated_data[field_name])
         if "is_repeat_order" in validated_data:
             task.order_source = "REPEAT" if task.is_repeat_order else "NEW"
-        _validate_task_tax(includes_tax=task.includes_tax, tax_rate=task.tax_rate)
+        _validate_task_tax(includes_tax=task.includes_tax, tax_rate=task.tax_rate,
+                           allow_unknown=task.includes_tax is None or task.includes_tax and task.tax_rate is None)
         if task.delivery_date < task.order_date:
             raise ValidationError({"delivery_date": "交期日期不能早于下单日期。"})
-        if not task.planned_start_date or not task.planned_end_date:
-            raise ValidationError({"planned_start_date": "PMC 确认前必须填写计划开始和计划完工日期。"})
-        if task.planned_end_date < task.planned_start_date:
+        if bool(task.planned_start_date) != bool(task.planned_end_date):
+            raise ValidationError({"planned_start_date": "计划开始和计划完工日期需同时填写或同时留空。"})
+        if task.planned_start_date and task.planned_end_date and task.planned_end_date < task.planned_start_date:
             raise ValidationError({"planned_end_date": "计划完工日期不能早于计划开始日期。"})
         task.status = ProductionTaskStatus.READY
         task.status_reason = ""
@@ -1848,6 +1894,7 @@ def complete_production_order(*, task, validated_data, actor_employee, request=N
     require_matching_etag(request, task)
     if task.status != ProductionTaskStatus.IN_PRODUCTION:
         raise Conflict("只有生产中的订单可以完结。")
+    require_all_task_products_scheduled(task)
     submitted_batches = validated_data.get("run_batches")
     if submitted_batches is not None:
         submitted_numbers = [item["batch_number"] for item in submitted_batches]

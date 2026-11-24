@@ -46,6 +46,7 @@ from apps.inventory.models import (
     WarehouseType,
     WarehouseZone,
 )
+from apps.inventory.purchase_receiving_sections import SECTION_BY_CATEGORY, with_receiving_section
 from apps.inventory.services import create_material_inbound, confirm_material_quality
 from apps.inquiries.models import Inquiry, InquiryFileLink, InquiryStatus, format_inquiry_item_specification
 from apps.inquiries.services import create_inquiry, link_inquiry_file, transition_inquiry
@@ -116,7 +117,6 @@ EXPECTED_COUNTS = {
     "production_tasks": 80,
     "verified_boms": 70,
     "purchase_orders": 70,
-    "material_inbounds": 70,
 }
 TARGET_PURCHASE_ORDER_STATUS = PurchaseOrderStatus.PURCHASING
 
@@ -1899,7 +1899,6 @@ class Command(BaseCommand):
                     "bom_id": bom.pk,
                     "source_revision": source["source_revision"],
                     "currency_id": dependencies["cny"].pk,
-                    "is_mailed": False,
                     "lines": lines,
                 },
                 allowed_task_ids=allowed_task_ids,
@@ -1958,7 +1957,7 @@ class Command(BaseCommand):
         return material_zones.get(category) or material_zones["_default"]
 
     def _create_material_inbounds(self, dependencies, purchase_orders):
-        """每张采购单创建一批全量到货并完成品质确认，停在采购中。
+        """每张采购单按分区创建全量到货并完成品质确认，停在采购中。
 
         采购单不调用“采购完成”动作；入库只写真实的待检、质检确认和库存流水，
         让验收可以从采购入库之后继续验证领料等后续流程。
@@ -1967,10 +1966,10 @@ class Command(BaseCommand):
         request = self._simulation_request(actor)
         created = []
         for order in purchase_orders:
-            lines = list(order.lines.select_related("bom_line").order_by("line_number", "id"))
+            lines = list(with_receiving_section(order.lines.order_by("line_number", "id")))
             if not lines:
                 raise CommandError(f"采购单 {order.order_number} 没有采购明细，不能办理入库。")
-            items = []
+            items_by_section = {}
             for line in lines:
                 item = {
                     "purchase_order_line_id": line.pk,
@@ -1985,39 +1984,42 @@ class Command(BaseCommand):
                         raise CommandError(f"采购单 {order.order_number} 的管材明细缺少根米参数。")
                     item["received_bar_count"] = int(line.actual_bar_count)
                     item["raw_bar_length_m"] = line.raw_bar_length_m
-                items.append(item)
-            inbound = create_material_inbound(
-                inbound_date=timezone.localdate(),
-                remark="流程验收数据：采购订单全量到货，待品质确认。",
-                items=items,
-                actor_employee=actor,
-                request=request,
-            )
-            confirmation_items = []
-            for inbound_line in inbound.lines.order_by("id"):
-                quality_item = {
-                    "line_id": inbound_line.pk,
-                    "expected_received_quantity": inbound_line.received_quantity,
-                }
-                if inbound_line.measurement_kind == "PIPE":
-                    quality_item["return_bar_count"] = 0
-                else:
-                    quality_item["return_quantity"] = Decimal("0")
-                confirmation_items.append(quality_item)
-            inbound = confirm_material_quality(
-                inbound_id=inbound.pk,
-                items=confirmation_items,
-                actor_employee=actor,
-                request=request,
-            )
-            inbound.refresh_from_db()
-            if inbound.status != MaterialInboundStatus.CONFIRMED:
-                raise CommandError(
-                    f"采购单 {order.order_number} 的材料入库未完成品质确认，实际状态为 {inbound.status}。"
+                section = SECTION_BY_CATEGORY.get(line.receiving_section)
+                if not section:
+                    raise CommandError(f"采购单 {order.order_number} 第 {line.line_number} 行缺少材料分区。")
+                items_by_section.setdefault(section, []).append(item)
+            for section, items in items_by_section.items():
+                inbound = create_material_inbound(
+                    inbound_date=timezone.localdate(),
+                    remark="流程验收数据：采购订单全量到货，待品质确认。",
+                    items=items,
+                    material_section=section,
+                    actor_employee=actor,
+                    request=request,
                 )
-            created.append(inbound)
-        if len(created) != EXPECTED_COUNTS["material_inbounds"]:
-            raise CommandError(f"已确认材料入库只有 {len(created)} 批。")
+                confirmation_items = []
+                for inbound_line in inbound.lines.order_by("id"):
+                    quality_item = {
+                        "line_id": inbound_line.pk,
+                        "expected_received_quantity": inbound_line.received_quantity,
+                    }
+                    if inbound_line.measurement_kind == "PIPE":
+                        quality_item["return_bar_count"] = 0
+                    else:
+                        quality_item["return_quantity"] = Decimal("0")
+                    confirmation_items.append(quality_item)
+                inbound = confirm_material_quality(
+                    inbound_id=inbound.pk,
+                    items=confirmation_items,
+                    actor_employee=actor,
+                    request=request,
+                )
+                inbound.refresh_from_db()
+                if inbound.status != MaterialInboundStatus.CONFIRMED:
+                    raise CommandError(
+                        f"采购单 {order.order_number} 的材料入库未完成品质确认，实际状态为 {inbound.status}。"
+                    )
+                created.append(inbound)
         return created
 
     @staticmethod
@@ -2071,6 +2073,12 @@ class Command(BaseCommand):
         verified_bom_count = Bom.objects.filter(status=BomStatus.VERIFIED).count()
         purchase_count = PurchaseOrder.objects.count()
         material_inbound_count = MaterialInbound.objects.count()
+        expected_inbound_sections = {
+            (order_id, SECTION_BY_CATEGORY.get(category))
+            for order_id, category in with_receiving_section(PurchaseOrderLine.objects.all())
+            .order_by().values_list("purchase_order_id", "receiving_section").distinct()
+        }
+        actual_inbound_sections = set(MaterialInbound.objects.values_list("purchase_order_id", "material_section"))
         confirmed_material_inbound_count = MaterialInbound.objects.filter(
             status=MaterialInboundStatus.CONFIRMED,
         ).count()
@@ -2172,11 +2180,11 @@ class Command(BaseCommand):
             "purchase_orders_use_70_distinct_production_tasks": PurchaseOrder.objects.values(
                 "production_task_id"
             ).distinct().count() == EXPECTED_COUNTS["purchase_orders"],
-            "material_inbound_count_70": material_inbound_count == EXPECTED_COUNTS["material_inbounds"],
-            "all_material_inbounds_confirmed": (
-                confirmed_material_inbound_count == EXPECTED_COUNTS["material_inbounds"]
-                and not MaterialInbound.objects.exclude(status=MaterialInboundStatus.CONFIRMED).exists()
+            "material_inbounds_match_purchase_sections": (
+                actual_inbound_sections == expected_inbound_sections
+                and material_inbound_count == len(expected_inbound_sections)
             ),
+            "all_material_inbounds_confirmed": confirmed_material_inbound_count == material_inbound_count,
             "each_purchase_order_has_confirmed_inbound": (
                 MaterialInbound.objects.filter(status=MaterialInboundStatus.CONFIRMED)
                 .values("purchase_order_id").distinct().count()

@@ -548,9 +548,11 @@ class ProductionTaskApiTests(APITestCase):
             format="json",
             HTTP_IF_MATCH=finish_created["ETag"],
         )
-        self.assertEqual(finished.status_code, 200, finished.data)
-        self.assertEqual(finished.data["data"]["status"], ProductionTaskStatus.COMPLETED)
-        self.assertEqual(finished.data["data"]["status_reason"], "订单已全部交付")
+        self.assertEqual(finished.status_code, 409, finished.data)
+        self.assertIn("未排产", str(finished.data))
+        self.assertFalse(AuditLog.objects.filter(
+            object_id=finish_created.data["data"]["id"], action="COMPLETED",
+        ).exists())
 
     def test_rejects_invalid_dates_and_allows_salesperson_as_selected_follower(self):
         yesterday = timezone.localdate() - timedelta(days=1)

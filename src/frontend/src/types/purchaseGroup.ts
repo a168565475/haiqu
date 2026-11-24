@@ -1,9 +1,27 @@
-import type { MaterialAttributeSnapshot, PurchaseBatchType, PurchaseOrderStatus } from './purchaseOrder'
+import type { MaterialAttributeSnapshot, PurchaseBatchType, PurchaseOrderStatus, PurchaseSetPricing } from './purchaseOrder'
 import type { PageMeta } from './referenceData'
 
 export type PurchaseGroupStatus = 'PENDING' | 'PURCHASING' | 'COMPLETED' | 'UNKNOWN'
 
+export interface PackagingPurchaseSource {
+  production_task_id: string
+  task_number: string
+  bom_id: string
+  bom_number: string
+  product_name: string
+  source_revision: string
+}
+
 export interface PurchaseGroupSourceSnapshot {
+  source_contributions?: {
+    bom_id: string
+    bom_line_id: string
+    product_line_id: string
+    product_name: string
+    product_color: string
+    required_quantity: string
+    source_unit_text: string
+  }[]
   material_catalog_id?: string | null
   material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   bom_id: string | null
@@ -29,8 +47,10 @@ export interface PurchaseGroupSourceSnapshot {
   source_unit_text: string
   quantity_parse_status: 'READY' | 'MISSING' | 'INVALID'
   raw_bar_length_m?: string | null
+  raw_bar_weight_kg?: string | null
   suggested_bar_count?: number | null
   suggested_purchase_meters?: string | null
+  suggested_purchase_weight_kg?: string | null
   calculation_snapshot: Record<string, unknown>
 }
 
@@ -43,10 +63,13 @@ export interface PurchaseGroupProgressLine {
   source_unit_text: string
   source_snapshot: PurchaseGroupSourceSnapshot
   purchased_quantity: string | null
+  planned_purchase_quantity?: string | null
+  remaining_purchase_quantity?: string | null
   accepted_quantity: string | null
   in_progress_quantity?: string | null
   purchased_bar_count?: string | null
   accepted_bar_count?: string | null
+  receipt_quantity_mode?: 'ROOTS' | null
   in_progress_bar_count?: string | null
   /** 后端十进制百分比，不封顶；null表示来源或汇总缺口。 */
   progress_percent: string | null
@@ -56,6 +79,7 @@ export interface PurchaseGroupProgressLine {
 }
 
 export interface PurchaseGroupProgress {
+  external_supply_line_ids?: string[]
   status: PurchaseGroupStatus
   satisfied_line_count: number
   line_count: number
@@ -64,12 +88,21 @@ export interface PurchaseGroupProgress {
 
 export interface PurchaseBatchSummary {
   id: string
+  batch_session_id?: string | null
   order_number: string
   batch_number: number
   batch_type: PurchaseBatchType
   status: PurchaseOrderStatus
   display_status?: PurchaseOrderStatus
   currency_code_snapshot: string
+  total_amount: string | null
+}
+
+export interface PurchaseBatchPageDraft {
+  id: string
+  order_number: string
+  suppliers: string[]
+  line_count: number
   total_amount: string | null
 }
 
@@ -95,6 +128,8 @@ export interface PurchaseGroup {
   sales_order_number_snapshot: string
   customer_name_snapshot: string
   product?: PurchaseGroupProduct | null
+  products?: PurchaseGroupProduct[]
+  combined_into_group_id?: string | null
   order_delivery_date?: string | null
   source_revision: string
   compatibility_issues: string[]
@@ -104,7 +139,14 @@ export interface PurchaseGroup {
   manual_completed_by_name?: string
   manual_completion_remark?: string
   completion?: { can_complete: boolean; blocked_reason: string }
+  deletion?: { can_delete: boolean; blocked_reason: string }
   batches: PurchaseBatchSummary[]
+  batch_page?: {
+    current_batch_number: number | null
+    next_batch_number: number
+    submitted_line_ids: string[]
+    draft_orders?: PurchaseBatchPageDraft[]
+  } | null
   created_at: string
   updated_at: string
 }
@@ -129,16 +171,18 @@ export interface VersionedPurchaseGroup {
   etag: string
 }
 
-export interface PurchaseGroupInput {
-  production_task_id: string
+export interface PurchaseGroupBomInput {
   bom_id: string
   source_revision: string
 }
+export type PurchaseGroupInput = { production_task_id: string } & (PurchaseGroupBomInput | { sources: PurchaseGroupBomInput[] })
 
 export interface PurchaseBatchLineInput {
+  set_pricing?: PurchaseSetPricing | null
   purchase_group_line_id: string
   actual_purchase_quantity?: string | null
   actual_bar_count?: number | string | null
+  actual_purchase_weight_kg?: string | null
   supplier_id?: string | null
   delivery_date?: string | null
   unit_price?: string | null
@@ -148,8 +192,19 @@ export interface PurchaseBatchLineInput {
 export interface PurchaseBatchInput {
   /** 同一次提交重试时保留UUID，由调用方管理，API层不重建。 */
   request_id: string
+  batch_session_id?: string
+  save_as_draft?: boolean
   batch_type: PurchaseBatchType
   currency_id: string
-  is_mailed?: boolean | null
   lines: PurchaseBatchLineInput[]
+}
+
+export interface PurchaseBatchPageConfirmationInput {
+  batch_session_id: string
+  additional?: PurchaseBatchInput
+}
+
+export interface PurchaseSupplierBatchResult {
+  data: { order_id: string; batch_number: number; group: PurchaseGroup }
+  etag: string
 }

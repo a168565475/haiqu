@@ -9,6 +9,7 @@ COPY --from=verified_codex /usr/local/bin/codex /usr/local/bin/codex
 COPY --from=verified_codex /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY src/codex_runtime/ /opt/runtime/codex_runtime/
 COPY src/codex_runtime/config.toml /etc/codex/config.toml
+RUN python -m pip install --no-cache-dir -r /opt/runtime/codex_runtime/dxf_tools/requirements.txt
 RUN mkdir -p /work/current /run/haiqu-codex /state/codex \
     && chown -R 10001:10001 /work/current /run/haiqu-codex /state/codex \
     && chmod 0700 /state/codex /work/current \

@@ -4,7 +4,7 @@ import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
   PaginatedSuppliers,
-  Supplier,
+  SupplierDetail,
   SupplierInput,
   SupplierOptions,
   SupplierQuery,
@@ -14,7 +14,7 @@ import type {
 
 const basePath = '/api/v1/suppliers/'
 
-function versioned(response: AxiosResponse<DataResponse<Supplier>>): VersionedSupplier {
+function versioned(response: AxiosResponse<DataResponse<SupplierDetail>>): VersionedSupplier {
   return {
     data: response.data.data,
     etag: typeof response.headers.etag === 'string' ? response.headers.etag : '',
@@ -27,7 +27,7 @@ export async function fetchSuppliers(query: SupplierQuery): Promise<PaginatedSup
 }
 
 export async function fetchSupplier(id: string): Promise<VersionedSupplier> {
-  const response = await apiClient.get<DataResponse<Supplier>>(`${basePath}${encodeURIComponent(id)}/`)
+  const response = await apiClient.get<DataResponse<SupplierDetail>>(`${basePath}${encodeURIComponent(id)}/`)
   return versioned(response)
 }
 
@@ -42,7 +42,7 @@ export async function fetchSupplierStats(): Promise<SupplierStats> {
 }
 
 export async function createSupplier(payload: SupplierInput): Promise<VersionedSupplier> {
-  const response = await apiClient.post<DataResponse<Supplier>>(basePath, payload)
+  const response = await apiClient.post<DataResponse<SupplierDetail>>(basePath, payload)
   return versioned(response)
 }
 
@@ -51,7 +51,7 @@ export async function updateSupplier(
   payload: SupplierInput,
   etag: string,
 ): Promise<VersionedSupplier> {
-  const response = await apiClient.patch<DataResponse<Supplier>>(
+  const response = await apiClient.patch<DataResponse<SupplierDetail>>(
     `${basePath}${encodeURIComponent(id)}/`,
     payload,
     { headers: { 'If-Match': etag } },

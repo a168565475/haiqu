@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Button as VanButton, Loading as VanLoading, Tag as VanTag } from 'vant'
 import WorkPage from '@/components/WorkPage.vue'
+import ProductionSectionTabs from '@/components/ProductionSectionTabs.vue'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { materialAttributes, quantityText } from '@/utils/materialQuantities'
@@ -26,6 +27,7 @@ let active = true
 const statusLabels: Record<MaterialIssueStatus, string> = { DRAFT: '未提交', PENDING_REVIEW: '等待仓库发料', RETURNED: '仓库已退回', ISSUED: '仓库已发料' }
 const statusType = (value: MaterialIssueStatus) => ({ DRAFT: 'default', PENDING_REVIEW: 'primary', RETURNED: 'danger', ISSUED: 'success' }[value]) as 'default' | 'primary' | 'danger' | 'success'
 const scope = computed(() => Object.fromEntries(['production_task_id', 'product_line_id', 'workshop_id'].filter(key => query(key)).map(key => [key, query(key)])))
+const allRecords = computed(() => !Object.keys(scope.value).length && !query('issue_id'))
 const scopeText = computed(() => Object.keys(scope.value).length === 3 ? '当前生产单、产品与车间的申请记录'
   : Object.keys(scope.value).length ? '按所选条件筛选的申请记录' : '当前账号有权限查看的申请记录')
 const canEdit = computed(() => detail.value && ['DRAFT', 'RETURNED'].includes(detail.value.status)
@@ -72,7 +74,8 @@ onBeforeUnmount(() => { active = false; generation += 1 })
 </script>
 
 <template>
-  <WorkPage :title="query('issue_id') ? '领料申请详情' : '领料记录'" :subtitle="scopeText">
+  <WorkPage :title="allRecords ? '生产领料' : query('issue_id') ? '领料申请详情' : '领料记录'" :subtitle="scopeText" section="issue" :home="allRecords" back-to="/">
+    <ProductionSectionTabs v-if="allRecords" section="issue" :records="true" />
     <div class="page-stack issue-records-page">
       <button v-if="query('issue_id')" type="button" class="action-link back-to-records" @click="showList">返回领料记录列表</button>
       <section v-else class="section-card filter-card">
@@ -93,6 +96,7 @@ onBeforeUnmount(() => { active = false; generation += 1 })
         <p v-if="detail.status === 'PENDING_REVIEW'" class="muted pending-note">申请已提交，实际发料由仓库在 ERP 中确认。</p>
         <h2 class="section-title detail-section-title">申请材料</h2>
         <article v-for="line in detail.lines" :key="line.id" class="section-card line-card">
+          <p v-if="line.source_kind === 'CUTTING_DIRECT'" class="muted">领取来源：裁剪直交</p>
           <h3>{{ line.material_name }}</h3><p class="muted">{{ [line.specification, line.color, line.completed_craft].filter(Boolean).join(' · ') || '规格未记录' }}</p>
           <div class="summary-grid line-quantities"><span>申请 <b>{{ quantityText(line.requested_quantity) }} {{ line.unit }}</b></span><span>已发料 <b>{{ quantityText(line.issued_quantity) }} {{ line.unit }}</b></span></div>
           <details class="line-details"><summary>材料与数量详情</summary>

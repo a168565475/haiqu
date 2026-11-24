@@ -8,7 +8,7 @@ import type { MaterialCatalog } from '@/types/materialCatalog'
 import type { SampleMaterialLine } from '@/types/sampleMaterial'
 import { applySampleSelection, sampleCatalogTitles, sampleSelectionLine } from '@/utils/sampleCatalogSelection'
 
-const props = withDefaults(defineProps<{ modelValue: SampleMaterialLine; disabled?: boolean; source?: 'catalog' | 'sample' }>(), { source: 'catalog' })
+const props = withDefaults(defineProps<{ modelValue: SampleMaterialLine; disabled?: boolean; source?: 'catalog' | 'sample' | 'inventory' }>(), { source: 'catalog' })
 const emit = defineEmits<{ 'update:modelValue': [line: SampleMaterialLine]; loaded: [catalog: MaterialCatalog] }>()
 const selection = ref(sampleSelectionLine(props.modelValue))
 const maintenanceOpen = ref(false), refreshKey = ref(0)

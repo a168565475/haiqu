@@ -30,6 +30,7 @@ const props = withDefaults(defineProps<{
   canCreateColor?: boolean
   imageUrl?: string
   quotationCurrency?: string
+  allowUnknownPrice?: boolean
   closeOnConfirm?: boolean
   busy?: boolean
   identityDisabled?: boolean
@@ -47,6 +48,7 @@ const props = withDefaults(defineProps<{
   scene: 'inquiry',
   closeOnConfirm: true,
   allowDelete: false,
+  allowUnknownPrice: false,
 })
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -147,7 +149,7 @@ function confirm() {
   error.value = validateProducts([draft.value])
   if (props.scene === 'sales-order') {
     error.value = error.value.replace('目标价', '订单单价')
-    if (!error.value && (draft.value.target_unit_price === null || String(draft.value.target_unit_price ?? '').trim() === '')) error.value = '请填写订单单价。'
+    if (!error.value && !props.allowUnknownPrice && (draft.value.target_unit_price === null || String(draft.value.target_unit_price ?? '').trim() === '')) error.value = '请填写订单单价。'
   }
   const today = new Date(), localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   if (!error.value && draft.value.expected_date && draft.value.expected_date < localDate && draft.value.expected_date !== props.item.expected_date) error.value = '新录入的期望日期不能早于今天。'
@@ -181,7 +183,7 @@ onBeforeUnmount(() => replacePreview(''))
           <h3>{{ businessTitle || (scene === 'quotation' ? '本次报价内容' : scene === 'sales-order' ? '本次销售订单内容' : '本次询盘要求') }}</h3><div class="business-fields">
             <label :data-error="fieldError('数量')"><span><i>*</i> 数量</span><div class="quantity-control"><button type="button" aria-label="减少数量" @click="adjustQuantity(-1)">−</button><el-input v-model="draft.quantity" aria-label="数量" :aria-invalid="!!fieldError('数量')" inputmode="decimal" maxlength="19"/><button type="button" aria-label="增加数量" @click="adjustQuantity(1)">+</button></div></label>
             <template v-if="scene === 'quotation'"><label><span><i>*</i> 报价单价</span><el-input v-model="draft.target_unit_price" aria-label="报价单价" inputmode="decimal" maxlength="19" placeholder="请输入正式报价单价"/></label><label><span>折扣率</span><el-input v-model="draft.discount_rate" aria-label="折扣率" inputmode="decimal" maxlength="8" placeholder="0"/></label><label><span>报价币种</span><el-input :model-value="quotationCurrency || '—'" aria-label="报价币种" disabled/></label></template>
-            <template v-else-if="scene === 'sales-order'"><label :data-error="fieldError('订单单价')"><span><i>*</i> 订单单价</span><el-input v-model="draft.target_unit_price" aria-label="订单单价" :aria-invalid="!!fieldError('订单单价')" inputmode="decimal" maxlength="19" placeholder="请输入订单单价"/></label><label><span>订单币种</span><el-input :model-value="quotationCurrency || '—'" aria-label="订单币种" disabled/></label></template>
+            <template v-else-if="scene === 'sales-order'"><label :data-error="fieldError('订单单价')"><span><i v-if="!allowUnknownPrice">*</i> 订单单价</span><el-input v-model="draft.target_unit_price" aria-label="订单单价" :aria-invalid="!!fieldError('订单单价')" inputmode="decimal" maxlength="19" :placeholder="allowUnknownPrice ? '待补' : '请输入订单单价'"/></label><label><span>订单币种</span><el-input :model-value="quotationCurrency || '—'" aria-label="订单币种" disabled/></label></template>
             <template v-else><label :data-error="fieldError('目标价')"><span>目标价</span><el-input v-model="draft.target_unit_price" aria-label="目标价" :aria-invalid="!!fieldError('目标价')" inputmode="decimal" maxlength="19" placeholder="待填写"/></label><label :data-error="fieldError('币种')"><span>币种</span><el-select v-model="draft.target_currency_code" aria-label="币种" :aria-invalid="!!fieldError('币种')" filterable clearable placeholder="币种"><el-option v-if="draft.target_currency_code && !currencies.some(row => row.code === draft.target_currency_code)" :value="draft.target_currency_code" :label="draft.target_currency_code" disabled/><el-option v-for="currency in currencies" :key="currency.code" :value="currency.code" :label="currency.code"/></el-select></label><label :data-error="fieldError('期望日期')"><span>期望日期</span><el-date-picker v-model="draft.expected_date" aria-label="期望日期" :aria-invalid="!!fieldError('期望日期')" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledDate" placeholder="可选"/></label></template>
           </div>
           <h3 class="image-heading">产品图片 <small>单张主图</small></h3><div class="image-row"><ProductImage :src="preview" :name="imageName" large/><div class="image-note"><strong :title="imageName">{{ imageName }}</strong><p>JPG / JPEG / PNG，最大 10 MB</p><el-button :disabled="!canUpload" @click="imageInput?.click()">{{ preview ? '更换图片' : '选择图片' }}</el-button><el-button v-if="preview" link type="primary" :disabled="!canUpload" @click="clearImage">移除</el-button></div></div><input ref="imageInput" class="image-input" type="file" accept="image/jpeg,image/png" aria-label="上传产品图片" @change="selectImage"/>

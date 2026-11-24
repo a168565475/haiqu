@@ -9,6 +9,7 @@ last_reviewed: 2026-10-07
 maintainer: Project Brain
 source_links:
   - ../../src/backend/apps/products
+  - ../../src/backend/apps/product_catalog
   - ../../src/backend/apps/reference_data
   - ../../src/backend/apps/boms
   - ../../src/frontend/src/views/products
@@ -40,6 +41,18 @@ source_links:
 - BOM 保留订单数量、来源数量、批量数量、数量差异和确认原因；BOM 行保留导入原始值、来源公式和稳定的组件身份。
 - BOM 创建前要求生产任务处于允许状态；销售订单来源的产品、颜色和数量存在锁定规则，已有 BOM 后不能随意替换产品。
 - BOM 提供管材、面料、五金、塑料、包材和半成品等选项/计算接口；选项可按类别、单位和启用状态筛选。
+
+### 2.1 独立产品管理（2026-10-16）
+
+本次用户已确认新增独立档案，旧 `ProductInformation` 及其身份、唯一性和下游引用继续保留。上述旧产品规则不适用于新 `product_catalog` 的业务字段。
+
+- 新入口 `/product-catalog`，旧“产品信息” `/products` 保留；API为 `/api/v1/product-catalog/`，独立查看/新增/修改权限。
+- 类别 → 完整品名 → 具体产品UUID。固定维护产品编码、货号、规格、单个单位、常规/定制及多个颜色；空编码不补码，同货号、同规格及相同业务字段均不作为合并依据。添加颜色不生成产品或组合。
+- 规定源表逐行保存来源文件名、SHA256、工作表、源行、原始字段与原文件字节。仅规格/单位中的独立 `/` 转空；仓库字段仅留作来源，不形成库存或仓库关联。
+- 来源行技术身份防重复导入；同文件名和工作表但内容指纹变化时阻断并报告，不能按业务字段去重。
+- 当前数据库与API已独立核验207条来源记录；真实写页面及完整视觉验收仍待完成，不能将导入成功写成全模块验收通过。实际进度与证据仅维护在[交付记录](../superpowers/reports/product-catalog-delivery-20261016.md)，接口和边界见[实施计划](../superpowers/plans/2026-10-16-product-catalog.md)。
+
+状态：业务规则 `confirmed`，实现及导入数据 `verified`；页面写入与完整视觉验收尚未 `verified`。
 
 ## 3. 与销售订单、生产、采购、库存的边界
 

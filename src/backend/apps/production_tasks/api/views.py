@@ -268,14 +268,6 @@ class ProductionTaskViewSet(
 
     def create(self, request, *args, **kwargs):
         payload = self._payload()
-        if 'import_object_id' in payload:
-            from apps.production_task_imports.saving import save_import
-            task, replay = save_import(request, payload, self._serializer_context(), self._validate_file_fields)
-            task = production_tasks_with_context().get(pk=task.pk)
-            response = Response({'data': ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data,
-                                 'replay': replay}, status=status.HTTP_200_OK if replay else status.HTTP_201_CREATED)
-            response['ETag'] = etag_for_instance(task)
-            return response
         self._validate_file_fields(payload)
         serializer_context = self._serializer_context()
         serializer_context["require_contract_number_token"] = True
@@ -636,7 +628,7 @@ class ProductionTaskViewSet(
         current = self.get_object()
         payload = dict(request.data)
         payload["decision"] = "CONFIRM"
-        serializer = ProductionTaskPmcDecisionSerializer(data=payload)
+        serializer = ProductionTaskPmcDecisionSerializer(data=payload, context={"current_task": current})
         serializer.is_valid(raise_exception=True)
         task = decide_production_order_by_pmc(
             task=current,
@@ -651,10 +643,11 @@ class ProductionTaskViewSet(
 
     @action(detail=True, methods=["post"], url_path="pmc-decision")
     def pmc_decision(self, request, *args, **kwargs):
-        serializer = ProductionTaskPmcDecisionSerializer(data=request.data)
+        current = self.get_object()
+        serializer = ProductionTaskPmcDecisionSerializer(data=request.data, context={"current_task": current})
         serializer.is_valid(raise_exception=True)
         task = decide_production_order_by_pmc(
-            task=self.get_object(),
+            task=current,
             validated_data=serializer.validated_data,
             actor_employee=request.employee,
             request=request,

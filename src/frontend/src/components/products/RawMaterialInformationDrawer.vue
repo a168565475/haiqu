@@ -252,7 +252,7 @@ async function save(): Promise<void> {
   const valid = await formRef.value.validate().catch(() => false)
   const warehouse = selectedWarehouse()
   if (!valid || !form.item_type || !warehouse) {
-    if (!warehouse) serverErrors.value = { warehouse_name: '请选择有效的仓库编号与名称组合。' }
+    if (!warehouse) serverErrors.value = { warehouse_name: '请选择有效的仓库。' }
     focusFirstError()
     return
   }
@@ -523,7 +523,7 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
                   <ElOption
                     v-for="item in selectableWarehouses"
                     :key="warehouseKey(item)"
-                    :label="`${item.warehouse_number} / ${item.warehouse_name}`"
+                    :label="item.warehouse_name"
                     :value="warehouseKey(item)"
                   />
                 </ElSelect>

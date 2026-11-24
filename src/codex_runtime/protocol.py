@@ -13,7 +13,17 @@ from urllib.parse import urlsplit
 
 
 ERROR_CODES = {'INVALID_REQUEST', 'BUSY', 'NOT_FOUND', 'NOT_READY', 'UPSTREAM_UNAVAILABLE',
-               'AUTH_REQUIRED', 'MODEL_UNAVAILABLE', 'USAGE_LIMIT_EXCEEDED', 'TIMEOUT', 'INTERRUPTED'}
+               'AUTH_REQUIRED', 'MODEL_UNAVAILABLE', 'USAGE_LIMIT_EXCEEDED', 'TIMEOUT', 'INTERRUPTED',
+               'CODEX_INVALID_PROPOSAL', 'COVERAGE_INCOMPLETE', 'VISUAL_COVERAGE_INCOMPLETE', 'CALCULATION_ROW_AS_MATERIAL',
+               'TASK_IDENTITY_INCOMPLETE', 'UNSUPPORTED_CAPABILITY',
+               'SOURCE_REFERENCE_INVALID', 'SOURCE_REFERENCE_OUT_OF_SCOPE', 'REGION_INVALID',
+               'TASK_SCOPE_OVERLAP', 'PLAN_SOURCE_NOT_READ', 'PLAN_COVERAGE_INCOMPLETE', 'SCOPE_UNRESOLVED'}
+TOOL_ERROR_CODES = {'DXF_INVALID', 'DXF_BINARY', 'DXF_TOO_LARGE', 'DXF_UNIT_UNKNOWN', 'DXF_UNSUPPORTED',
+    'DXF_COMPLEXITY', 'DXF_OPEN_CONTOUR', 'DXF_INVALID_CONTOUR', 'DXF_AMBIGUOUS_CONTOUR', 'DXF_NO_PIECES',
+    'NEST_PARAMETERS', 'NEST_TOO_MANY_PIECES', 'NEST_TOO_WIDE', 'NEST_TIMEOUT', 'NEST_VALIDATION',
+    'SOURCE_CHANGED', 'SOURCE_MISSING', 'STORAGE_UNSAFE', 'RESULT_LIMIT', 'TOOL_SEQUENCE', 'TOOL_LIMIT', 'CODEX_INVALID_PROPOSAL'}
+ERROR_CODES |= TOOL_ERROR_CODES
+ERROR_CODES |= {'REVIEW_INCOMPLETE', 'REVIEW_CHANGE_INVALID', 'BOM_STATUS_INVALID', 'FIELD_KEY_DUPLICATE', 'LOCAL_CLEANUP_FAILED'}
 FEATURES = {'shell_tool': False, 'view_image': False, 'apps': False, 'multi_agent_v2': False,
             'plugins': False, 'skip_host_skill_discovery': True, 'browser_use': False,
             'computer_use': False, 'image_generation': False}
@@ -73,7 +83,11 @@ def validate_config(config, sqlite_home=None, log_dir=None):
 
 class RpcPeer:
     """一个读泵匹配全部响应；请求协程绝不直接抢读 stdout。"""
-    def __init__(self, reader, writer):
+    def __init__(self, reader, writer, *, max_tool_calls=32, max_total_bytes=8 * 1024 * 1024):
+        require(type(max_tool_calls) is int and 1 <= max_tool_calls <= 128)
+        self.max_tool_calls = max_tool_calls
+        require(type(max_total_bytes) is int and 8 * 1024 * 1024 <= max_total_bytes <= 64 * 1024 * 1024)
+        self.max_total_bytes = max_total_bytes
         self.reader, self.writer = reader, writer
         self.pending = {}
         self.events = asyncio.Queue(maxsize=256)
@@ -81,7 +95,18 @@ class RpcPeer:
         self.identifier = 0
         self.bytes_read = 0
         self.failure = None
+        self.dynamic_tools_enabled = False
+        self.server_requests = set()
+        self.server_request_ids = set()
         self.reader_task = asyncio.create_task(self._read())
+
+    def enable_dynamic_tools(self):
+        self.dynamic_tools_enabled = True
+
+    async def respond_tool_call(self, identifier, result):
+        require(self.dynamic_tools_enabled and identifier in self.server_requests)
+        await self.send({'id': identifier, 'result': result})
+        self.server_requests.remove(identifier)
 
     def fail(self, code):
         if self.failure is None:
@@ -109,10 +134,20 @@ class RpcPeer:
                 line = await self.reader.readline()
                 require(line and len(line) <= MAX_RPC_LINE)
                 self.bytes_read += len(line)
-                require(self.bytes_read <= 8 * 1024 * 1024)
+                require(self.bytes_read <= self.max_total_bytes, 'RESULT_LIMIT')
                 message = strict_json(line)
                 require(type(message) is dict)
                 if 'method' in message and 'id' in message:
+                    identifier = message['id']
+                    if self.dynamic_tools_enabled and message['method'] == 'item/tool/call':
+                        require((type(identifier) is int and -(2**63) <= identifier < 2**63)
+                                or (type(identifier) is str and 1 <= len(identifier) <= 160))
+                        require(identifier not in self.server_request_ids and len(self.server_request_ids) < self.max_tool_calls
+                                and len(self.server_requests) < 8 and not self.events.full())
+                        self.server_requests.add(identifier)
+                        self.server_request_ids.add(identifier)
+                        self.events.put_nowait(message)
+                        continue
                     await self.send({'id': message['id'], 'error': {'code': -32601, 'message': 'Requests disabled'}})
                     raise RuntimeErrorCode('UPSTREAM_UNAVAILABLE')
                 if 'id' in message:
@@ -134,7 +169,7 @@ class RpcPeer:
             raise
         except Exception as error:
             # 第三方 JSON/错误体只能留在当前调用内存，不能成为日志或异常消息。
-            self.fail('UPSTREAM_UNAVAILABLE')
+            self.fail(error.code if isinstance(error, RuntimeErrorCode) else 'UPSTREAM_UNAVAILABLE')
             report_error('app_server_reader', error)
 
     async def request(self, method, params, timeout=20):
@@ -232,6 +267,12 @@ class AppServerSession:
 
     async def notification(self, timeout=20):
         return await self.peer.notification(timeout)
+
+    def enable_dynamic_tools(self):
+        self.peer.enable_dynamic_tools()
+
+    async def respond_tool_call(self, identifier, result):
+        await self.peer.respond_tool_call(identifier, result)
 
     def take_queued_notifications(self):
         return self.peer.take_queued_notifications()

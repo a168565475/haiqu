@@ -118,6 +118,17 @@ class SavedPurchaseMaterialIdentityTests(APITestCase):
         with self.assertRaises(ValidationError):
             build_purchase_material_snapshot(BomLine(raw_values={}))
 
+    def test_legacy_purchase_cannot_use_a_unit_owned_by_another_catalog(self):
+        from apps.material_catalog.models import MaterialCatalog
+        from apps.procurement.material_receipt_identity import build_purchase_material_snapshot, resolve_purchase_material
+        owner = MaterialCatalog.objects.create(category_key="PLASTIC", template_key="PLASTIC", name="私有包装件")
+        private = ProductionUnit.all_objects.create(catalog_owner=owner, unit_name="捆", unit_code="TEST_BUNDLE")
+        legacy = self.make_saved_material(unit=private)
+        with self.assertRaises(ValidationError):
+            build_purchase_material_snapshot(BomLine(raw_values={"source_inventory_material_id": str(legacy.pk)}))
+        with self.assertRaises(Conflict):
+            resolve_purchase_material(PurchaseOrderLine(calculation_snapshot={"raw_material_id": str(legacy.pk), "unit_id": str(private.pk)}))
+
     def test_legacy_saved_number_resolves_without_bom_or_name_matching(self):
         from apps.procurement.material_receipt_identity import resolve_purchase_material
         material = self.make_saved_material()

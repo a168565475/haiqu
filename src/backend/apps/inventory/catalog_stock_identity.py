@@ -1,4 +1,5 @@
 """目录身份保留已选属性；原管库存仍按实际批次原长和根数记账。"""
+from apps.boms.material_flow_calculations import pipe_meters_text
 import hashlib
 import json
 
@@ -20,8 +21,8 @@ def build_catalog_stock_identity(*, material_catalog_id, material_selection_snap
         from .stock_services import InventoryStockValidationError
         if selected["unit_name"] != "根":
             raise InventoryStockValidationError("原管库存沿用根制单位，请核对保存选料。", code="UNIT_MISMATCH")
-        length = _positive_decimal(raw_bar_length_m, "raw_bar_length_m", places=2)
-        properties = {"material_key": key, "raw_bar_length_m": format(length, ".2f")}
+        length = _positive_decimal(raw_bar_length_m, "raw_bar_length_m", places=3)
+        properties = {"material_key": key, "raw_bar_length_m": pipe_meters_text(length)}
         key = hashlib.sha256(json.dumps(properties, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if kind == "CATALOG_SEMI":
         from .public_stock_identity import _make_identity, validate_public_identity
@@ -63,7 +64,7 @@ def validate_catalog_stock_identity(identity):
     normalized = dict(identity)
     if expected["raw_bar_length_m"] is not None:
         from .public_stock_identity import _positive_decimal
-        normalized["raw_bar_length_m"] = _positive_decimal(identity.get("raw_bar_length_m"), "raw_bar_length_m", places=2)
+        normalized["raw_bar_length_m"] = _positive_decimal(identity.get("raw_bar_length_m"), "raw_bar_length_m", places=3)
     if normalized != expected:
         raise InventoryStockValidationError("新材料库存索引与保存内容不一致。", code="PUBLIC_STOCK_IDENTITY_INVALID")
     return expected

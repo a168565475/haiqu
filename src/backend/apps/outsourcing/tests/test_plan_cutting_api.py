@@ -98,6 +98,17 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
         self.assertEqual(sewing_output_usage(self.product_line.pk)[self.component]['dispatched'], 600)
         assert_sewing_reports_cover_usage(self.product_line.pk)
 
+    def test_cutting_receipt_can_exceed_dispatch_and_continue_after_target(self):
+        order = self.dispatch(self.plan(), 100)
+        order = self.receive(order, 10001)
+        self.assertEqual(order['plan_summary']['received_quantity'], '10001')
+        self.assertEqual(order['plan_summary']['receipt_progress'], 100)
+        self.assertEqual(order['status'], 'COMPLETED')
+        order = self.receive(order, 1)
+        self.assertEqual(order['plan_summary']['received_quantity'], '10002')
+        self.assertEqual(sewing_output_usage(self.product_line.pk)[self.component]['dispatched'], 100)
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').exists())
+
     def test_stock_cutting_plan_can_precede_stock_and_only_actual_dispatch_debits(self):
         order = self.plan('PUBLIC_CUTTING')
         self.dispatch(order, 1, 'PUBLIC_CUTTING', expected=400)
@@ -121,9 +132,14 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
         line = BomLine.objects.create(section=section, line_number=1, part_name='随单扣件', category='辅料',
             material='塑料', specification='M6', unit='个', unit_consumption='2', total_consumption='1000',
             raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色'})
-        material = {'bom_line_id': str(line.pk), 'factory_id': str(self.factory.pk), 'quantity': '1200', 'zone_id': str(self.zone.pk)}
+        material = {'bom_line_id': str(line.pk), 'factory_id': str(self.factory.pk), 'quantity': '1200'}
         order = self.plan(materials=[material])
         self.assertEqual(len(order['planned_materials']), 1)
+        self.assertNotIn('zone_id', order['planned_materials'][0])
+        self.assertEqual({key: order['planned_materials'][0][key] for key in ('specification', 'material', 'color')},
+                         {'specification': 'M6', 'material': '塑料', 'color': '黑色'})
+        self.dispatch(order, 100, materials=[material], expected=400)
+        material['zone_id'] = str(self.zone.pk)
         stock = credit_material_stock(raw_material=raw, unit=unit, zone=self.zone, quantity=1300,
             source_type='TEST_PLAN_AUXILIARY', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee).balance
         order = self.dispatch(order, 100, materials=[material])
@@ -141,15 +157,26 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
         from apps.material_issues.requirements import sync_order_requirements
         from apps.material_issues.models import OrderMaterialRequirement
         from ..tube_materials import tube_material_context
-        from rest_framework.exceptions import ValidationError
         sync_order_requirements(self.task.pk)
         requirement = OrderMaterialRequirement.objects.get(production_task=self.task, raw_material=raw)
         self.assertEqual(requirement.required_quantity, 1000)
         self.assertEqual(requirement.outsourcing_issued_quantity, 1250)
+        line.specification = 'M8'
+        line.material = '新材质'
+        line.raw_values['accessory_color'] = '新颜色'
+        line.save(update_fields=['specification', 'material', 'raw_values'])
+        reloaded = self.client.get(BASE + order['id'] + '/')
+        self.assertEqual(reloaded.status_code, 200, reloaded.data)
+        self.assertEqual({key: reloaded.data['data']['planned_materials'][0][key]
+                          for key in ('specification', 'material', 'color')},
+                         {'specification': 'M6', 'material': '塑料', 'color': '黑色'})
         old_context = tube_material_context(self.schedule_product, source_kind='SEWING')
         old_row = next(row for row in old_context['material_rows'] if row['bom_line_id'] == str(line.pk))
         self.assertEqual(Decimal(old_row['max_quantity']), 0)
-        requirement.outsourcing_issued_quantity += 1500
-        requirement.save(update_fields=['outsourcing_issued_quantity'])
-        with self.assertRaises(ValidationError):
-            sync_order_requirements(self.task.pk)
+        material['quantity'] = '51'
+        response = self.dispatch(order, 1, materials=[material], expected=409)
+        self.assertIn('可用库存', str(response.data))
+        stock.refresh_from_db()
+        requirement.refresh_from_db()
+        self.assertEqual(stock.quantity, 50)
+        self.assertEqual(requirement.outsourcing_issued_quantity, 1250)

@@ -3,7 +3,8 @@ import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '@/api/productionTasks'
-import type { ProductionTask } from '@/types/productionTask'
+import type { ProductionTask, ProductionTaskProductInput } from '@/types/productionTask'
+import type { InquiryItem } from '@/types/inquiry'
 import ProductionTaskEditView from './ProductionTaskEditView.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
@@ -53,6 +54,16 @@ function legacyTask(): ProductionTask {
   }
 }
 
+function unknownTask(): ProductionTask {
+  const task = legacyTask()
+  Object.assign(task, { currency_id: null, currency_code: '', includes_tax: null, freight_amount: null,
+    other_fee_amount: null, product_total_amount: null, total_amount: null })
+  Object.assign(task.products[0]!, { currency_id: null, currency_code: '', unit_price: null,
+    exchange_rate: null, total_amount: null, local_unit_price: null, local_total_amount: null,
+    details: [{ id: 'detail-1', client_key: 'detail-1', line_number: 1, template_key: 'fabric', detail_type: '面料', category_label: '要求', is_selected: null, description: '', image_name: null }] })
+  return task
+}
+
 async function mountPage(interactive = false) {
   const wrapper = shallowMount(ProductionTaskEditView, { global: { plugins: [ElementPlus], stubs: interactive ? { ElInput: false, ElButton: false, ElResult: false } : {} } })
   await flushPromises()
@@ -60,6 +71,72 @@ async function mountPage(interactive = false) {
 }
 
 describe('生产任务编辑页精确保存', () => {
+  it('AI 未知金额和含税可读取为待补，不伪造为零或标记未编辑内容为修改', async () => {
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: unknownTask(), etag: 'unknown-v1' })
+    const { wrapper, page } = await mountPage()
+    const state = wrapper.vm as unknown as { loadError: string; totalAmountCny: string | null; form: { includes_tax: boolean | null } }
+    expect(state.loadError).toBe(''); expect(state.totalAmountCny).toBeNull(); expect(state.form.includes_tax).toBeNull()
+    expect(page.dirty).toBe(false)
+    expect(wrapper.text()).toContain('待补')
+    await page.save(); expect(api.updateProductionTask).not.toHaveBeenCalled()
+    page.form.special_requirements_html = '<p>只补备注</p>'
+    await page.save()
+    expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', { special_requirements_html: '<p>只补备注</p>' }, {}, {}, 'unknown-v1')
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('原价%s已知时，上传图片分别保留原币种、原汇率和原价，不把未知字段补零', async priceKnown => {
+    const task = unknownTask()
+    if (priceKnown) Object.assign(task.products[0]!, { currency_id: 'currency-1', currency_code: 'CNY', unit_price: '5.0000' })
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: 'unknown-v1' })
+    vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue({ employees: [], units: [{ id: 'unit-1', unit_name: '件', unit_code: 'PCS' }], currencies: [{ id: 'currency-1', code: 'CNY', name: '人民币' }], colors: [], products: [] } as never)
+    const { wrapper, page } = await mountPage(true)
+    const editor = wrapper.vm as unknown as { editProduct: (row: unknown) => void; editorItem: InquiryItem; editorAllowsUnknownPrice: boolean; confirmProduct: (value: unknown) => void }
+    const editButton = wrapper.findAll('button').find(button => button.text() === '编辑产品')!
+    expect(editButton.attributes('disabled')).toBeUndefined()
+    await editButton.trigger('click')
+    expect(editor.editorAllowsUnknownPrice).toBe(!priceKnown)
+    expect(editor.editorItem.target_unit_price).toBe(priceKnown ? '5.0000' : '')
+    const file = new File(['image'], 'product.png', { type: 'image/png' })
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:unknown-product' })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    try {
+      editor.confirmProduct({ item: editor.editorItem, imageChanged: true, imageFile: file, removeImage: false })
+      await page.save()
+      const call = vi.mocked(api.updateProductionTask).mock.calls[0]!
+      expect(call[1].products![0]).toMatchObject({ currency_id: priceKnown ? 'currency-1' : null, unit_price: priceKnown ? '5.0000' : null, exchange_rate: null })
+      expect(call[1].products![0]!.details[0]!.is_selected).toBeNull()
+      expect(call[1]).not.toHaveProperty('includes_tax'); expect(call[1]).not.toHaveProperty('freight_amount')
+      expect(call[2]['product-line-1']).toEqual([file])
+    } finally {
+      wrapper.unmount()
+      if (originalCreate) Object.defineProperty(URL, 'createObjectURL', originalCreate)
+      else Reflect.deleteProperty(URL, 'createObjectURL')
+      if (originalRevoke) Object.defineProperty(URL, 'revokeObjectURL', originalRevoke)
+      else Reflect.deleteProperty(URL, 'revokeObjectURL')
+    }
+  })
+
+  it('原币种或汇率未知不放宽已知单价，已知含税也不能清为未知', async () => {
+    const task = unknownTask()
+    task.includes_tax = false
+    task.products[0]!.unit_price = '5'
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: 'known-price' })
+    vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue({ employees: [], units: [{ id: 'unit-1', unit_name: '件', unit_code: 'PCS' }], currencies: [{ id: 'currency-1', code: 'CNY' }], products: [] } as never)
+    const { wrapper, page } = await mountPage()
+    const editor = wrapper.vm as unknown as { editProduct: (row: unknown) => void; editorItem: InquiryItem; editorAllowsUnknownPrice: boolean; confirmProduct: (value: unknown) => void; form: { includes_tax: boolean | null }; products: Array<{ payload: ProductionTaskProductInput }> }
+    editor.editProduct(page.products[0]); expect(editor.editorAllowsUnknownPrice).toBe(false)
+    editor.confirmProduct({ item: { ...editor.editorItem, target_unit_price: '' }, imageChanged: false, imageFile: null, removeImage: false })
+    expect(editor.products[0]!.payload.unit_price).toBe('5')
+    expect(ElMessage.warning).toHaveBeenCalledWith('请填写正确的人民币单价。')
+    editor.form.includes_tax = null
+    page.form.special_requirements_html = '<p>备注</p>'
+    await page.save(); expect(api.updateProductionTask).not.toHaveBeenCalled()
+    expect(ElMessage.warning).toHaveBeenCalledWith('请选择是否含税。')
+    wrapper.unmount()
+  })
   it('计划编辑只提交后端允许的四项，产品或财务改动不会夹带提交', async () => {
     const task = { ...legacyTask(), allowed_update_fields: ['planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids'] }
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: 'plan-v1' })

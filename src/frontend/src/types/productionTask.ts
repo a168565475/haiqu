@@ -74,7 +74,7 @@ export interface ProductionTaskDetailInput {
   template_key: string
   detail_type: string
   category_label: string
-  is_selected: boolean
+  is_selected: boolean | null
   description: string
 }
 
@@ -99,10 +99,10 @@ export interface ProductionTaskProductInput {
   material?: string
   quantity: string
   unit_id: string | null
-  currency_id: string
-  unit_price: string
+  currency_id: string | null
+  unit_price: string | null
   exchange_rate_record_id?: string | null
-  exchange_rate: string
+  exchange_rate: string | null
   special_requirements: string
   packaging_method: string
   retained_image_ids: string[]
@@ -118,8 +118,6 @@ export interface ProductionTaskProductUpdateDraft {
 export interface ProductionDeliveryBatchInput { quantity: string; delivery_date: string; note: string }
 
 export interface ProductionTaskInput {
-  import_object_id?: string
-  result_revision?: number
   planned_start_date?: string | null
   planned_end_date?: string | null
   production_priority?: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
@@ -154,7 +152,7 @@ export interface ProductionTaskInput {
 export interface ProductionTaskPatchInput {
   salesperson_id?: string
   order_date?: string
-  includes_tax?: boolean
+  includes_tax?: boolean | null
   tax_rate?: 3 | 5 | 7 | null
   order_tolerance_percent?: string
   is_repeat_order?: boolean
@@ -208,15 +206,15 @@ export interface ProductionTaskProduct {
   unit_id: string | null
   unit_code: string
   unit_name: string
-  currency_id: string
+  currency_id: string | null
   currency_code: string
-  unit_price: string
-  total_amount: string
+  unit_price: string | null
+  total_amount: string | null
   exchange_rate_record_id?: string | null
   exchange_rate_snapshot?: ProductionExchangeRate | null
-  exchange_rate: string
-  local_unit_price: string
-  local_total_amount: string
+  exchange_rate: string | null
+  local_unit_price: string | null
+  local_total_amount: string | null
   specification_display?: string
   special_requirements: string
   packaging_method: string
@@ -248,9 +246,9 @@ export interface ProductionTask {
   delivery_date: string
   salesperson: EmployeeOption
   followers: EmployeeOption[]
-  currency_id?: string
+  currency_id?: string | null
   currency_code?: string
-  includes_tax?: boolean
+  includes_tax?: boolean | null
   tax_rate?: 3 | 5 | 7 | null
   order_tolerance_percent?: string
   is_repeat_order?: boolean
@@ -258,14 +256,15 @@ export interface ProductionTask {
   delivery_method: ProductionDeliveryMethod
   delivery_method_display: string
   special_requirements_html?: string
-  freight_amount: string
-  other_fee_amount: string
-  product_total_amount: string
-  total_amount: string
+  freight_amount: string | null
+  other_fee_amount: string | null
+  product_total_amount: string | null
+  total_amount: string | null
   status: ProductionTaskStatus
   status_display: string
   bom_status?: ProductionTaskBomStatus
   bom_status_display?: string
+  has_confirmed_bom_product?: boolean
   purchase_status?: ProductionTaskPurchaseStatus
   purchase_status_display?: string
   status_reason?: string
@@ -344,7 +343,7 @@ export interface ProductionTaskListProduct extends Pick<ProductionTaskProduct,
 
 export interface ProductionTaskListItem extends Pick<ProductionTask,
   'id' | 'task_number' | 'source_sales_order_number' | 'delivery_date'
-  | 'status' | 'status_display' | 'bom_status' | 'bom_status_display'
+  | 'status' | 'status_display' | 'bom_status' | 'bom_status_display' | 'has_confirmed_bom_product'
   | 'purchase_status' | 'purchase_status_display' | 'allowed_permissions' | 'sales_order_id'> {
   salesperson: Pick<EmployeeOption, 'display_name'>
   followers: Array<Pick<EmployeeOption, 'display_name'>>
@@ -406,7 +405,7 @@ export interface ProductionTaskPmcDecisionInput {
   decision: 'CONFIRM' | 'RETURN'
   follower_ids?: string[]
   delivery_date?: string
-  includes_tax?: boolean
+  includes_tax?: boolean | null
   tax_rate?: 3 | 5 | 7 | null
   order_tolerance_percent?: string
   is_repeat_order?: boolean

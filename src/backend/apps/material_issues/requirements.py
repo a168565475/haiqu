@@ -5,17 +5,18 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomStatus
 from apps.procurement.models import PurchaseQuantityParseStatus
-from apps.procurement.services import _is_purchasable_bom_section, _source_quantity
+from apps.procurement.services import _is_purchasable_bom_section, _source_quantity, _first_direct_quantity, _derived_quantity
 from apps.products.material_identity import lock_bom_line_material_identities, resolve_bom_line_raw_material
 from apps.products.models import RawMaterialInformation
 from apps.production_tasks.models import ProductionTask
 
 from .models import (
+    MaterialIssueLine,
     MaterialIssueLineType,
     OrderMaterialRequirement,
     RequirementContribution,
@@ -41,8 +42,48 @@ SECTION_TITLE_CODES = {
 }
 
 
+def inventory_source_quantity(line, bom):
+    # 五金采购换成KG后，生产领料仍按BOM实际个片需求；不能复用采购计价重量。
+    if line.section.section_type == "ACCESSORY" and str((line.raw_values or {}).get("hardware_weight_mode", "")).upper() in {"AUTO", "MANUAL"}:
+        quantity, field, text, status = _first_direct_quantity(line, ["budget_quantity", "total_consumption"])
+        if not field:
+            quantity, field, text, status = _derived_quantity(line, bom, "unit_consumption")
+        return quantity, field, text, line.unit, status
+    return _source_quantity(line, bom)
+
+
 def _stable_requirement_id(task_id, raw_material_id, unit_id, line_type):
     return uuid.uuid5(REQUIREMENT_NAMESPACE, f"{task_id}:{raw_material_id}:{unit_id}:{line_type}")
+
+
+def product_material_usage(product_line_id, requirement_ids, *, exclude_issue_id=None):
+    """旧原料额度由整单共用，按单据所属产品还原已使用和待审数量。"""
+    from apps.outsourcing.models import OutsourcingDispatchLine, TubeOutsourcingMaterial
+
+    used = defaultdict(Decimal)
+    issues = MaterialIssueLine.objects.filter(requirement_id__in=requirement_ids,
+        issue__product_line_id=product_line_id, issue__status__in=["ISSUED", "PENDING_REVIEW"])
+    if exclude_issue_id:
+        issues = issues.exclude(issue_id=exclude_issue_id, issue__status="PENDING_REVIEW")
+    for row in issues.values("requirement_id").annotate(
+        issued=Sum("issued_quantity", filter=Q(issue__status="ISSUED"), default=0),
+        pending=Sum("requested_quantity", filter=Q(issue__status="PENDING_REVIEW"), default=0),
+    ):
+        used[row["requirement_id"]] += row["issued"] + row["pending"]
+
+    dispatched = OutsourcingDispatchLine.objects.filter(requirement_id__in=requirement_ids,
+        material_item__allocation__processing_item__order_product__bom__product_line_id=product_line_id)
+    for row in dispatched.values("pk", "requirement_id", "issued_quantity").annotate(
+        returned=Sum("raw_returns__quantity", default=0)
+    ):
+        used[row["requirement_id"]] += row["issued_quantity"] - row["returned"]
+
+    materials = TubeOutsourcingMaterial.objects.filter(requirement_id__in=requirement_ids,
+        order__product_line_id=product_line_id, order__is_plan=False,
+        order__status__in=["PENDING_DISPATCH", "PROCESSING", "COMPLETED"])
+    for row in materials.values("requirement_id").annotate(total=Sum("quantity")):
+        used[row["requirement_id"]] += row["total"]
+    return used
 
 
 def _bom_line_section_code(bom_line, source_key=""):
@@ -170,7 +211,7 @@ def build_requirement_specs(production_task_id, *, lock_material_identities=Fals
                     continue
                 material_id = material.pk
                 raw_ids.add(material_id)
-                quantity, source_field, source_text, source_unit, parse_status = _source_quantity(line, bom)
+                quantity, source_field, source_text, source_unit, parse_status = inventory_source_quantity(line, bom)
                 contributions.append(
                     {
                         "product_line": product_line,

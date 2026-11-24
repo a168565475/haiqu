@@ -581,7 +581,7 @@ function applyExisting(task: ProductionTask) {
      customer_color: item.customer_color ?? item.color_name ?? '', material: item.material || '',
     unit_label: `${item.unit_code} · ${item.unit_name}`, color_card: item.color_card || '', color_name: item.color_name || '',
     product_color_id: item.product_color_id || '', color_code: item.color_code, quantity: String(item.quantity),
-    unit_id: item.unit_id || '', currency_id: form.currency_id, unit_price: item.unit_price,
+    unit_id: item.unit_id || '', currency_id: form.currency_id, unit_price: item.unit_price ?? '',
     exchange_rate: Number(item.exchange_rate).toFixed(8),
     existingImages: item.images || [], newImages: [],
   })) : [blankProduct()]

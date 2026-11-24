@@ -18,6 +18,7 @@ import {
   finishProductionTask,
 } from '@/api/productionTasks'
 import searchIcon from '@/assets/crm-v2/search.svg'
+import { isLocalProductionSyncAvailable, syncLocalProduction } from '@/api/localProductionSync'
 import ProductionTaskScheduleDialog from '@/components/productionScheduling/ProductionTaskScheduleDialog.vue'
 import ProductionTaskCostPanel from './ProductionTaskCostPanel.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -51,6 +52,23 @@ const route = useRoute()
 const authStore = useAuthStore()
 const loading = ref(false)
 const exportLoading = ref(false)
+const syncLoading = ref(false)
+const canSyncLocalProduction = computed(() => isLocalProductionSyncAvailable() && authStore.user?.is_superuser)
+
+async function resetAndSyncProduction() {
+  if (syncLoading.value) return
+  syncLoading.value = true
+  try {
+    const result = await syncLocalProduction()
+    await loadRows()
+    ElMessage.success(`已同步 ${result.tasks} 张生产任务单、${result.boms} 份 BOM 及后续生产数据。`)
+  } catch (error) {
+    ElMessage.error(error instanceof AxiosError && error.response
+      ? apiError(error) : '无法连接本地同步工具，请检查本地 ERP 启动状态。')
+  } finally {
+    syncLoading.value = false
+  }
+}
 let latestRowsRequest = 0
 let latestOptionsRequest = 0
 const optionsLoading = ref(false)
@@ -469,6 +487,7 @@ onBeforeUnmount(() => {
     </section>
     <section class="table-card erp-list-data">
       <div class="list-filter-actions erp-list-toolbar">
+        <ElButton v-if="canSyncLocalProduction" plain type="danger" :loading="syncLoading" @click="resetAndSyncProduction">清空并同步</ElButton>
         <ElButton class="erp-button-motion" :icon="Upload" :loading="exportLoading" :disabled="!total" @click="exportList">导出</ElButton>
         <ElButton class="erp-button-motion" v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新建生产任务单</ElButton>
       </div>

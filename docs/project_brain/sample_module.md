@@ -98,9 +98,9 @@ source_links:
 | 样品主单 | `SampleRequest`、`SampleProduct`、`SampleItem` | `src/backend/apps/samples/models.py` | `verified` |
 | 材料链 | `SampleMaterialRequest` → `SampleMaterialProcurementRequest` → `SampleMaterialPurchaseSource` → `SampleMaterialArrival` → `SampleMaterialIssue` | `models.py`、`material_services.py`、`material_arrival_services.py`、`sample_issue_services.py` | `verified`；当前代码已有样品采购来源预览、建单绑定和事务写入，真实环境闭环仍需验收 |
 | 费用 | `SampleFeeRecord`、费用审批关联 | `models.py`、`services.py` | `verified`；正式财务制度 `deferred` |
-| 物流反馈 | `SampleShipment`、`SampleShipmentEvent`、`SampleFeedback` | `models.py`、`services.py` | `verified`；外部物流接口 `deferred` |
+| 物流反馈 | `SampleShipment`、`SampleShipmentEvent`、`SampleFeedback` | `models.py`、`services.py` | `verified`；旧寄送写流程已删除，历史寄送记录仅在详情中只读展示 |
 | 样品库存 | `SampleInventoryReceipt`、`SampleInventoryLine`、`SampleInventoryOutbound`、`SampleInventoryLoan` | `models.py`、`inventory_services.py` | `verified`；历史与新入库规则有冲突 |
-| 主 API | `sample-requests`、`sample-items`、`sample-shipments` | `src/backend/apps/samples/api/urls.py`、`views.py` | `verified` |
+| 主 API | `sample-requests`、`sample-items` | `src/backend/apps/samples/api/urls.py`、`views.py` | `verified` |
 | 材料 API | 材料需求、仓库核对、生产报工、专用领料动作 | `application_views.py`、`material_views.py`、`sample_issue_views.py` | `verified`；部分写链路缺失或未闭环 |
 | 库存 API | `sample-inventory`、`sample-outbound`、`sample-loans` | `inventory_views.py`、`outbound_views.py`、`loan_views.py` | `verified` |
 | 权限 | `samples.decide_sample_fee`、`samples.ship_sample`、材料/仓库/采购/库存相关权限 | `models.py`、API 视图 | `verified`；需运行角色矩阵验收 |

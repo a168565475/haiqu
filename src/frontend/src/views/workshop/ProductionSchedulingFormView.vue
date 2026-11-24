@@ -48,7 +48,11 @@ function errorText(error: unknown) {
   return data?.error?.message || '保存排产失败。'
 }
 function blankDraft(task: ScheduleTaskCandidate, product: NonNullable<ScheduleTaskCandidate['products']>[number]): Draft {
-  return { product_line_id: product.id, planned_quantity: product.quantity, material_inbound_date: '', metal_return_date: '', sewing_return_date: '', finished_inbound_date: '', craft_ids: [], selected: true, source_quantity: product.quantity, production_task_id: task.id, task_number: task.task_number, product }
+  return { product_line_id: product.id, planned_quantity: product.quantity, material_inbound_date: '', metal_return_date: '', sewing_return_date: '', finished_inbound_date: '', craft_ids: [], selected: product.bom_status === 'VERIFIED', source_quantity: product.quantity, production_task_id: task.id, task_number: task.task_number, product }
+}
+function productBlocker(item: Draft) {
+  if (item.product.bom_status === 'VERIFIED') return ''
+  return item.product.bom_status === 'NOT_CREATED' ? '未建立 BOM，暂不可排产' : '最新 BOM 未确认，暂不可排产'
 }
 function selectTasks(tasks: ScheduleTaskCandidate[]) {
   selectedTasks.value = tasks
@@ -121,6 +125,7 @@ function validate() {
   ))
   if (emptyTask) return `生产任务单 ${emptyTask.task_number} 至少勾选一个产品。`
   for (const [index, item] of selectedRows.value.entries()) {
+    if (item.product.bom_status !== 'VERIFIED') return `${item.product.product_name}：${productBlocker(item)}。`
     if (!Number.isInteger(item.planned_quantity) || item.planned_quantity < 1 || item.planned_quantity > item.source_quantity) return `第 ${index + 1} 个产品的排产数量必须是 1 到 ${item.source_quantity} 的整数。`
     if (!item.material_inbound_date || !item.metal_return_date || !item.sewing_return_date || !item.finished_inbound_date) return `第 ${index + 1} 个产品的四个计划日期均为必填。`
     if (!item.craft_ids.length) return `第 ${index + 1} 个产品至少选择一项厂内或厂外工艺。`
@@ -196,8 +201,8 @@ onMounted(async () => {
         <table class="erp-table-editor">
           <colgroup><col class="sequence-col" /><col class="product-col" /><col class="source-quantity-col" /><col class="planned-quantity-col" /><col class="specification-col" /><col class="material-col" /><col class="date-col" span="4" /><col class="internal-craft-col" /><col class="external-craft-col" /></colgroup>
           <thead><tr><th>序号</th><th>产品信息</th><th>订单数量</th><th>排产数量</th><th>产品规格</th><th>材质</th><th>材料入库时间</th><th>金工回货时间</th><th>车缝回货时间</th><th>成品入库时间</th><th>厂内工艺</th><th>厂外工艺</th></tr></thead><tbody>
-          <tr v-for="(item, index) in selectedRows" :key="item.product_line_id">
-            <td><span class="entry-sequence">{{ index + 1 }}</span></td>
+          <tr v-for="(item, index) in drafts" :key="item.product_line_id">
+            <td><ElCheckbox v-model="item.selected" :disabled="item.product.bom_status !== 'VERIFIED'" :aria-label="`选择${item.product.product_name}`"><span class="entry-sequence">{{ index + 1 }}</span></ElCheckbox></td>
             <td>
               <div class="entry-product" :title="`${item.product.item_number || '—'}｜${item.product.product_name || '—'}｜${(item.product.specification_display ?? item.product.specification) || '—'}｜${item.product.color_name || '—'}`">
                 <ProtectedImage
@@ -206,19 +211,19 @@ onMounted(async () => {
                   :alt="`${item.product.product_name || '产品'}图片`"
                   @error="useProductImageFallback"
                 />
-                <div><strong>{{ item.product.item_number || '—' }}</strong><small>{{ item.task_number }} · {{ item.product.product_name || '—' }} · {{ item.product.color_name || '—' }}</small></div>
+                <div><strong>{{ item.product.item_number || '—' }}</strong><small>{{ item.task_number }} · {{ item.product.product_name || '—' }} · {{ item.product.color_name || '—' }}</small><small v-if="productBlocker(item)" class="product-blocker">{{ productBlocker(item) }}</small></div>
               </div>
             </td>
             <td><strong class="entry-source-quantity">{{ item.source_quantity.toLocaleString('zh-CN') }} {{ item.product.unit_name }}</strong></td>
-            <td><ElInputNumber v-model="item.planned_quantity" :min="1" :max="item.source_quantity" :step="1" :precision="0" :controls="false" /><small class="quantity-limit">最多 {{ item.source_quantity }} {{ item.product.unit_name }}</small></td>
+            <td><ElInputNumber v-model="item.planned_quantity" :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" :min="1" :max="item.source_quantity" :step="1" :precision="0" :controls="false" /><small class="quantity-limit">最多 {{ item.source_quantity }} {{ item.product.unit_name }}</small></td>
             <td><span class="entry-specification" :title="(item.product.specification_display ?? item.product.specification) || '—'">{{ (item.product.specification_display ?? item.product.specification) || '—' }}</span></td>
             <td><span class="entry-specification" :title="item.product.material || '—'">{{ item.product.material || '—' }}</span></td>
-            <td><ElDatePicker v-model="item.material_inbound_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
-            <td><ElDatePicker v-model="item.metal_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
-            <td><ElDatePicker v-model="item.sewing_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
-            <td><ElDatePicker v-model="item.finished_inbound_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
-            <td><div class="craft-select"><ElSelect :model-value="craftIdsByType(item, 'INTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂内工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(item, 'INTERNAL', value)"><ElOption v-for="craft in internalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><span v-if="craftIdsByType(item, 'INTERNAL').length" class="craft-select__summary">{{ craftSummary(item, 'INTERNAL') }}</span></div></td>
-            <td><div class="craft-select"><ElSelect :model-value="craftIdsByType(item, 'EXTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂外工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(item, 'EXTERNAL', value)"><ElOption v-for="craft in externalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><span v-if="craftIdsByType(item, 'EXTERNAL').length" class="craft-select__summary">{{ craftSummary(item, 'EXTERNAL') }}</span></div></td>
+            <td><ElDatePicker v-model="item.material_inbound_date" :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
+            <td><ElDatePicker v-model="item.metal_return_date" :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
+            <td><ElDatePicker v-model="item.sewing_return_date" :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
+            <td><ElDatePicker v-model="item.finished_inbound_date" :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
+            <td><div class="craft-select"><ElSelect :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" :model-value="craftIdsByType(item, 'INTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂内工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(item, 'INTERNAL', value)"><ElOption v-for="craft in internalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><span v-if="craftIdsByType(item, 'INTERNAL').length" class="craft-select__summary">{{ craftSummary(item, 'INTERNAL') }}</span></div></td>
+            <td><div class="craft-select"><ElSelect :disabled="!item.selected || item.product.bom_status !== 'VERIFIED'" :model-value="craftIdsByType(item, 'EXTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂外工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(item, 'EXTERNAL', value)"><ElOption v-for="craft in externalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><span v-if="craftIdsByType(item, 'EXTERNAL').length" class="craft-select__summary">{{ craftSummary(item, 'EXTERNAL') }}</span></div></td>
           </tr>
         </tbody></table>
         <ElEmpty v-if="!drafts.length" description="请先选择生产任务单" :image-size="72" />
@@ -242,5 +247,7 @@ onMounted(async () => {
   overflow: visible;
   color: var(--erp-color-text-primary);
   background: transparent;
+  .sequence-col { width: 64px; }
+  .product-blocker { white-space: normal; }
 }
 </style>

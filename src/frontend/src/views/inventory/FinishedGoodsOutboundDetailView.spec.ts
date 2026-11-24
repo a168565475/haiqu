@@ -1,6 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
+import ProtectedAttachmentLink from '@/components/common/ProtectedAttachmentLink.vue'
 import FinishedGoodsOutboundDetailView from './FinishedGoodsOutboundDetailView.vue'
 
 const api = vi.hoisted(() => ({ detail: vi.fn() }))
@@ -22,10 +24,13 @@ afterEach(() => wrapper?.unmount())
 it('详情展示产品数量、来源仓库、负责人、费用和装卸图片', async () => {
   wrapper = mount(FinishedGoodsOutboundDetailView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  for (const text of ['CK-TEST', 'SC-TEST', '钢管', '测试负责人', '12.50', '2.00']) expect(wrapper.text()).toContain(text)
+  for (const text of ['CK-TEST', 'SC-TEST', '钢管', '测试负责人']) expect(wrapper.text()).toContain(text)
+  const fees = wrapper.findAll('dt').filter(label => ['装卸费用', '其他费用'].includes(label.text()))
+  expect(fees.map(label => label.element.nextElementSibling?.textContent)).toEqual(['12.5', '2'])
   const cells = wrapper.findAll('tbody tr:first-child td').map(cell => cell.text())
   expect(cells.slice(7, 11)).toEqual(['10 个', '6 个', '2 个', '成品仓 / A1'])
-  expect(wrapper.get('img').attributes('src')).toBe('/api/v1/test-image/')
+  expect(wrapper.getComponent(ProtectedImage).props('src')).toBe('/api/v1/test-image/')
+  expect(wrapper.getComponent(ProtectedAttachmentLink).props('src')).toBe('/api/v1/test-image/')
 })
 
 it('订单数量缺失显示空值，入库数量为零时仍显示真实零值', async () => {

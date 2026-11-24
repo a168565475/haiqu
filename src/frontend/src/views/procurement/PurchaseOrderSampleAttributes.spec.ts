@@ -38,17 +38,17 @@ function expectSavedAttributes(page: VueWrapper) {
 }
 
 describe('样品采购属性浮层（组件契约）', () => {
-  it('确认页保持材质规格列和文字，鼠标经过显示已保存的完整属性', async () => {
+  it('确认页规格列只显示规格，鼠标经过物料信息显示已保存的完整属性', async () => {
     wrapper = mount(PurchaseOrderConfirmView, { global: { plugins: [ElementPlus], stubs: { ElTooltip: tooltipStub, ElDatePicker: true } } })
     await flushPromises()
     const headers = wrapper.findAll('.el-table__header th').map(cell => cell.text())
-    expect(headers).toContain('材质规格')
+    expect(headers).toContain('规格')
     expect(headers).not.toContain('厚度')
     const row = wrapper.get('.el-table__body tbody tr')
-    const specification = row.findAll('td')[headers.indexOf('材质规格')]!
-    expect(specification.text()).toBe('铁 · 20*20 · 蓝色')
+    const cells = row.findAll('td')
+    expect(cells[headers.indexOf('规格')]!.text()).toBe('20*20')
     expect(wrapper.find('.material-attribute-tooltip').exists()).toBe(false)
-    await specification.trigger('mouseenter')
+    await cells[headers.indexOf('物料信息')]!.trigger('mouseenter')
     await flushPromises()
     expectSavedAttributes(wrapper)
     await wrapper.get('.detail-table').trigger('mouseleave')

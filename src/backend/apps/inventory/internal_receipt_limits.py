@@ -8,6 +8,18 @@ from .stock_services import InventoryStockValidationError
 
 
 def validate_combined_output(*, source, identity, quantity, quality):
+    # 外发按实际回货记录，不再将计划、发出或订单需求作为回货上限。
+    if source['source_type'] != 'INTERNAL_SEMI_RECEIPT':
+        return
+    if identity['identity_snapshot'].get('schema_version') == 3:
+        from .part_flow_quantities import first_output_available
+        line = BomLine.objects.select_related('parent_part', 'section__bom').get(pk=source['bom_line_id'])
+        product = ProductionTaskProduct.objects.get(pk=source['product_line_id'])
+        available = first_output_available(product.pk, line, product.quantity, exclude_receipt_id=source['source_id'])
+        if quantity > available:
+            raise InventoryStockValidationError({'detail': '已入库、车间直发及待发占用超过本次可登记的首次产出。'},
+                code='PART_FLOW_OUTPUT_RESERVED')
+        return
     types = ['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN']
     if source['source_type'] not in types or identity['stock_kind'] not in ('SEMI', 'CATALOG_SEMI') or quality != 'AVAILABLE':
         return

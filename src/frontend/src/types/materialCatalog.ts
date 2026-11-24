@@ -18,6 +18,7 @@ export interface MaterialSelectionInput extends MaterialColorSelection {
   semi_kind?: 'PIPE' | 'CUTTING' | 'HARDWARE' | null
 }
 export interface MaterialSelectionSnapshot extends MaterialSelectionInput {
+  selection_kind?: 'BOM_COMPONENT_REFERENCE'
   schema_version: 1
   catalog_id: string
   category_key: string
@@ -126,6 +127,7 @@ export interface MaterialCatalogSummary {
   updated_at: string
 }
 export interface MaterialAttributeValue extends MaterialColorSelection {
+  selectable?: boolean
   id: string
   scope: MaterialScope
   field_key: string
@@ -133,6 +135,7 @@ export interface MaterialAttributeValue extends MaterialColorSelection {
   parent_id: string | null
 }
 export interface MaterialAllowedUnit {
+  selectable?: boolean
   id: string
   scope: MaterialScope
   unit_id: string
@@ -155,7 +158,7 @@ export interface MaterialCatalogDraft {
   spray_enabled: boolean
   base_warehouse_id: string | null
   semi_warehouse_id: string | null
-  values: MaterialAttributeValue[]
+  values: Omit<MaterialAttributeValue, 'selectable'>[]
   units: { id: string; scope: MaterialScope; unit_name: string }[]
 }
 export interface MaterialCatalogInput extends Partial<Omit<MaterialCatalogDraft, 'name'>> {
@@ -163,7 +166,7 @@ export interface MaterialCatalogInput extends Partial<Omit<MaterialCatalogDraft,
   category_key: string
   template_key: string
 }
-export interface MaterialAttributeInput { scope: MaterialScope; field_key: string; value: string; parent_id?: string | null }
+export interface MaterialAttributeInput extends MaterialColorSelection { scope: MaterialScope; field_key: string; value: string; parent_id?: string | null }
 export type MaterialUnitSelection = { unit_id: string; unit_name?: never } | { unit_name: string; unit_id?: never }
 export type MaterialUnitInput = MaterialUnitSelection & { scope: MaterialScope }
 export interface MaterialCatalogPatch { spray_enabled?: boolean; base_warehouse_id?: string | null; semi_warehouse_id?: string | null }

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  archiveBom,
   confirmBomProduct,
   createBom,
+  deleteBom,
   deleteBomDraftLineImage,
   deleteBomLineImage,
   exportBoms,
@@ -15,6 +15,7 @@ import {
   fetchBoms,
   previewBomWorkbook,
   previewBomMaterialSave,
+  previewBomHardwareWeight,
   saveBomDraft,
   syncBomOrderQuantity,
   uploadBomLineImages,
@@ -23,6 +24,7 @@ import {
 } from '@/api/boms'
 import { apiClient } from '@/api/request'
 import { emptyProductEntry } from '@/utils/productEntryDraft'
+import { blankLine, editableSection } from '@/views/boms/bomEditorHelpers'
 
 vi.mock('@/api/request', () => ({
   apiClient: {
@@ -44,6 +46,72 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('五金预览只请求单重，保存剔除只读快照和本地状态', async () => {
+    const input = { kind: 'PLAIN_WASHER' as const, material: '钢', specification: 'GB/T 97.1-2002 M6' }
+    const result = { unit_material_weight_kg: '0.00102', unit_weight_g: '1.02', calculation_snapshot: { version: '1' } }
+    mockedPost.mockResolvedValueOnce({ data: { data: result } })
+    expect(await previewBomHardwareWeight(input)).toEqual(result)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/hardware-weight-preview/', input)
+    const line = { ...blankLine('个'), part_name: '平垫片', hardware_weight_mode: 'AUTO' as const,
+      hardware_weight_input: input, unit_material_weight_kg: result.unit_material_weight_kg,
+      hardware_weight_snapshot: { secret: '只读快照' }, hardware_weight_preview: { ...result, input_key: 'local' },
+      hardware_weight_saved: { input_key: 'saved', unit_material_weight_kg: result.unit_material_weight_kg } }
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'b1' } }, headers: { etag: 'v2' } })
+    await saveBomDraft('b1', [{ title: '五金件', section_type: 'ACCESSORY', lines: [line] }], 'v1')
+    const payload = mockedPatch.mock.calls[0]![1] as { sections: { lines: Record<string, unknown>[] }[] }
+    expect(payload.sections[0]!.lines[0]).toMatchObject({ hardware_weight_mode: 'AUTO', hardware_weight_input: input })
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_snapshot')
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_preview')
+    expect(payload.sections[0]!.lines[0]).not.toHaveProperty('hardware_weight_saved')
+  })
+
+  it('读取后转为编辑行，再预检和保存时保留原表余量与长料长度', async () => {
+    const fields = { source_purchase_allowance_percent: '1.0000', source_raw_bar_length_m: '5.72' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{
+      id: 'pipe-1', part_name: '衬管', length_value: '470', unit_consumption: '3', tube_cut_piece_count: '12', ...fields,
+      raw_values: { ...fields, import_material_matching_deferred: true },
+    }] }] }
+    mockedGet.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v1' } })
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const fetched = await fetchBomForEdit('bom-1')
+    const sections = fetched.data.sections.map(editableSection)
+    await previewBomMaterialSave('bom-1', sections, fetched.etag, { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, fetched.etag, { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ intent: 'draft', sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
+    }
+    expect(detail.sections[0]!.lines[0]!.raw_values.import_material_matching_deferred).toBe(true)
+  })
+
+  it('保存和预检保留手动采购余量选项，原表来源信息不丢失', async () => {
+    const fields = { purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5', source_purchase_allowance_percent: '1.0000' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{ id: 'pipe-1', ...fields }] }] }
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const sections = detail.sections.map(section => editableSection(section as never))
+    await previewBomMaterialSave('bom-1', sections, 'v1', { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+    }
+  })
+
+  it('手工长料单重重开后随预检和保存请求提交，与切割单支重量分开', async () => {
+    const fields = { manual_tube_metrics: true, purchase_unit_weight_kg: '0.4', long_material_unit_weight_kg: '2.5' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{ ...blankLine('根'), id: 'pipe-1', ...fields }] }] }
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const sections = detail.sections.map(section => editableSection(section as never))
+    await previewBomMaterialSave('bom-1', sections, 'v1', { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
+    }
   })
 
   it('产品核对保留无目录关联的逐项草稿与版本头，不请求产品建档', async () => {
@@ -245,12 +313,12 @@ describe('BOM API', () => {
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { signal: controller.signal })
   })
 
-  it('列表删除使用归档接口并携带当前 BOM ETag', async () => {
-    mockedPost.mockResolvedValueOnce({ data: { data: { id: 'bom-1', archived: true } } })
+  it('永久删除 BOM 时携带当前 ETag', async () => {
+    mockedDelete.mockResolvedValueOnce({ status: 204 })
 
-    await archiveBom('bom-1', '"bom-etag"')
+    await deleteBom('bom-1', '"bom-etag"')
 
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/archive/', {}, {
+    expect(mockedDelete).toHaveBeenCalledWith('/api/v1/boms/bom-1/', {
       headers: { 'If-Match': '"bom-etag"' },
     })
   })

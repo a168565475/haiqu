@@ -32,7 +32,7 @@ const statusOptions: { value: MaterialIssueStatus; label: string }[] = [
   { value: 'RETURNED', label: '已退回' }, { value: 'ISSUED', label: '已出库' },
 ]
 const recipients = () => options.value.recipients.filter((item) => !filters.workshop_id || item.workshop_id === filters.workshop_id)
-const apiMessage = (error: unknown) => (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || '生产领料列表加载失败。'
+const apiMessage = (error: unknown) => (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || '车间领料列表加载失败。'
 const dateText = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 
 async function load() {
@@ -80,7 +80,7 @@ onMounted(async () => {
   <section class="material-issue-page material-issue-list erp-glass-list" :class="{ 'has-plan-context': hasPlanContext }" data-testid="material-issue-list">
     <section v-glass-spotlight class="erp-list-filter">
     <header class="mi-page-head erp-list-heading">
-      <div><h1>生产领料</h1></div>
+      <div><h1>车间领料</h1></div>
     </header>
     <section v-if="!hasPlanContext" class="mi-filter-row erp-list-filters">
       <ElInput v-model="filters.search" clearable placeholder="搜索领料单号、订单或领料人" :prefix-icon="Search" @keyup.enter="apply" />
@@ -94,7 +94,7 @@ onMounted(async () => {
     <section class="erp-list-data">
     <section class="mi-toolbar erp-list-toolbar" aria-label="列表工具栏"><span>领料申请从金工、裁剪、车缝或装配作业计划发起。</span><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></section>
     <section class="mi-table-panel erp-list-table-frame">
-      <ElTable v-loading="loading" :data="rows" row-key="id" height="100%" empty-text="暂无生产领料单" @row-dblclick="open">
+      <ElTable v-loading="loading" :data="rows" row-key="id" height="100%" empty-text="暂无车间领料单" @row-dblclick="open">
         <ElTableColumn prop="issue_number" label="领料单号" min-width="160" />
         <ElTableColumn label="状态" width="116"><template #default="{ row }"><span class="mi-status-tag erp-list-tag" :class="statusTone(row.status).replace('is-', 'erp-list-tag--')">{{ row.status_display }}</span></template></ElTableColumn>
         <ElTableColumn label="生产订单" min-width="160"><template #default="{ row }">{{ row.production_task?.task_number || '—' }}</template></ElTableColumn>

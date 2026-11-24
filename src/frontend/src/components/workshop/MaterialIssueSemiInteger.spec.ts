@@ -149,13 +149,13 @@ describe('半成品按整数支领用显示', () => {
     await flushPromises()
     const semi = wrapper.get('[data-testid="semi-partition"]')
     expect(semi.text()).toContain('7 支')
-    expect(semi.text()).toContain('不扣原材料根数、米数')
+    expect(semi.text()).not.toContain('不扣原材料根数、米数')
     expect(semi.text()).not.toContain('预计扣根')
     expect(semi.text()).not.toContain('预计扣米')
     expect(semi.text()).not.toContain('整根')
   })
 
-  it('原材料管材主表只显示库区，同时保留支、根、米换算结果', async () => {
+  it('原材料管材主表显示库区和支、根换算，隐藏预计米数', async () => {
     const wrapper = mount(MaterialIssuePartitions, {
       props: { requirements: [raw], selected: { 'raw-1': '6' }, allocations: { 'raw-1': [
         { inbound_line_id: 'inbound-1', inbound_number: '入库-1', zone_name: '原料库', requested_pieces: '6', available_quantity: '2', available_meters: '6.10' },
@@ -178,7 +178,7 @@ describe('半成品按整数支领用显示', () => {
     expect(partition.text()).not.toContain('按现有合格库存领用')
     expect(partition.text()).toContain('6 支')
     expect(partition.text()).toContain('1 根')
-    expect(partition.text()).toContain('3.05 米')
+    expect(partition.text()).not.toContain('3.05 米')
     expect(partition.text()).toContain('系统按相同物料和规格的合格库存自动分配')
     expect(partition.text()).not.toContain('分配批次')
     expect(partition.find('.quota-line').exists()).toBe(false)
@@ -274,7 +274,8 @@ describe('半成品按整数支领用显示', () => {
     wrappers.push(wrapper)
     await flushPromises()
     const tables = wrapper.findAll('section.detail-table')
-    expect(tables[0]!.text()).toContain('6 支 → 1 根 / 3.05 米')
+    expect(tables[0]!.text()).toContain('6 支 → 1 根')
+    expect(tables[0]!.text()).not.toContain('3.05 米')
     expect(tables[0]!.text()).not.toContain('入库-1')
     expect(tables[0]!.text()).not.toContain('批次')
     expect(tables[1]!.text()).toContain('不扣原材料根数和米数')

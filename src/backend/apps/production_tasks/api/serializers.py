@@ -1,6 +1,7 @@
 import json
 from decimal import Decimal
 
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -31,6 +32,27 @@ from ..models import (
 )
 
 
+def _allow_incomplete_import(context):
+    """只对AI入口或已经保存未知值的任务保留null，不放宽普通手工建单。"""
+    if context.get("allow_incomplete_import"):
+        return True
+    task = context.get("current_task")
+    if task is None:
+        return False
+    if "_preserve_import_unknowns" not in context:
+        has_unknown = any(getattr(task, name, False) is None for name in (
+            "currency_id", "includes_tax", "freight_amount", "other_fee_amount",
+        ))
+        products = getattr(task, "products", None)
+        if not has_unknown and products is not None:
+            has_unknown = products.filter(
+                Q(currency__isnull=True) | Q(unit_price__isnull=True) | Q(exchange_rate__isnull=True)
+                | Q(details__id__isnull=False, details__is_selected__isnull=True)
+            ).exists()
+        context["_preserve_import_unknowns"] = has_unknown
+    return context["_preserve_import_unknowns"]
+
+
 class ProductionTaskDetailInputSerializer(serializers.Serializer):
     client_key = serializers.RegexField(r"^[A-Za-z0-9_-]{1,64}$", required=False)
     template_key = serializers.CharField(max_length=64, required=False, allow_blank=True)
@@ -38,6 +60,13 @@ class ProductionTaskDetailInputSerializer(serializers.Serializer):
     category_label = serializers.CharField(max_length=100, required=False, allow_blank=True, trim_whitespace=True)
     is_selected = serializers.BooleanField(default=False)
     description = serializers.CharField(max_length=2000, required=False, allow_blank=True, trim_whitespace=True)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if _allow_incomplete_import(self.context):
+            fields["is_selected"].allow_null = True
+            fields["is_selected"].default = None
+        return fields
 
 class ProductionTaskProductInputSerializer(serializers.Serializer):
     product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
@@ -109,6 +138,15 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
     )
     replace_primary_image = serializers.BooleanField(required=False)
     details = ProductionTaskDetailInputSerializer(many=True, required=False)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if _allow_incomplete_import(self.context):
+            for name in ("currency_id", "unit_price", "exchange_rate"):
+                fields[name].allow_null = True
+                fields[name].required = False
+                fields[name].default = None
+        return fields
 
     def validate(self, attrs):
         # 外层 PATCH 的 partial 会跳过嵌套必填校验，产品行仍采用完整替换契约。
@@ -205,7 +243,18 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
     products = ProductionTaskProductInputSerializer(many=True, allow_empty=False)
     delivery_batches = ProductionDeliveryBatchInputSerializer(many=True, required=False)
 
+    def get_fields(self):
+        fields = super().get_fields()
+        if _allow_incomplete_import(self.context):
+            for name in ("currency_id", "includes_tax", "freight_amount", "other_fee_amount"):
+                fields[name].allow_null = True
+                fields[name].required = False
+                fields[name].default = None
+        return fields
+
     def to_internal_value(self, data):
+        if "import_object_id" in data:
+            raise serializers.ValidationError({"import_object_id": "旧版 Codex 导入已停用，不能通过手动建单提交旧导入记录。"})
         forbidden = set(data) & {
             "company_id", "company", "customer_company_id", "sales_order_id",
             "sales_order_delivery_batch_id", "sales_order_line_id", "factory_merchandiser_id",
@@ -237,6 +286,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        allow_incomplete = _allow_incomplete_import(self.context)
         if self.context.get("require_contract_number_token") and not attrs.get("contract_number_token"):
             raise serializers.ValidationError({"contract_number_token": "请先生成合同编号。"})
         current_task = self.context.get("current_task")
@@ -251,7 +301,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
                 attrs.setdefault("order_number", attrs["task_number"])
             includes_tax = attrs.get("includes_tax")
             tax_rate = attrs.get("tax_rate")
-            if includes_tax and tax_rate is None:
+            if includes_tax and tax_rate is None and not allow_incomplete:
                 raise serializers.ValidationError({"tax_rate": "含税时必须选择税率。"})
             if includes_tax is False and tax_rate is not None:
                 raise serializers.ValidationError({"tax_rate": "不含税时税率必须为空。"})
@@ -277,7 +327,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             and customer.pk not in accessible_ids
         ):
             raise serializers.ValidationError({"customer_account_id": "客户不存在或当前账号无权使用。"})
-        if current_task is None and attrs.get("currency") is not None and attrs["currency"].code != "CNY":
+        if current_task is None and not allow_incomplete and attrs.get("currency") is not None and attrs["currency"].code != "CNY":
             raise serializers.ValidationError({"currency_id": "手动生产任务单必须使用人民币 CNY。"})
         products = attrs.get("products")
         product_keys = [item["client_key"] for item in products or []]
@@ -318,7 +368,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条明细的单位必须使用产品生产维护单位。"}
                 )
-            if currency is not None and item["currency"].pk != currency.pk:
+            if currency is not None and item.get("currency") is not None and item["currency"].pk != currency.pk:
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条明细的币种必须与基础信息一致。"}
                 )
@@ -326,7 +376,9 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条明细的色号与所选色卡、颜色不匹配。"}
                 )
-            if item["currency"].code == "CNY" and item["exchange_rate"] != Decimal("1"):
+            if (item.get("currency") is not None and item["currency"].code == "CNY"
+                    and item["exchange_rate"] != Decimal("1")
+                    and not (allow_incomplete and item["exchange_rate"] is None)):
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条明细使用 CNY 时汇率必须为 1。"}
                 )
@@ -347,6 +399,14 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             if order_date and batch_delivery_date < order_date:
                 raise serializers.ValidationError({"delivery_batches": "分批交期不能早于下单日期。"})
         return attrs
+
+
+class AiProductionTaskWriteSerializer(ProductionTaskWriteSerializer):
+    """AI预览确认创建允许价税待补；标记只由服务端入口设置。"""
+
+    def __init__(self, *args, **kwargs):
+        kwargs["context"] = {**kwargs.get("context", {}), "allow_incomplete_import": True}
+        super().__init__(*args, **kwargs)
 
 
 class ProductionDeliveryBatchDateInputSerializer(serializers.Serializer):
@@ -414,9 +474,9 @@ class ProductionTaskPatchSerializer(ProductionTaskWriteSerializer):
                 raise serializers.ValidationError("销售来源任务的业务员、下单日期和产前样要求不可修改。")
             includes_tax = attrs.get("includes_tax", task.includes_tax)
             tax_rate = attrs.get("tax_rate", task.tax_rate)
-            if includes_tax and tax_rate not in {3, 5, 7}:
+            if includes_tax and tax_rate not in {3, 5, 7} and not (_allow_incomplete_import(self.context) and tax_rate is None):
                 raise serializers.ValidationError({"tax_rate": "含税时必须选择 3%、5% 或 7% 税率。"})
-            if not includes_tax and tax_rate is not None:
+            if includes_tax is False and tax_rate is not None:
                 raise serializers.ValidationError({"tax_rate": "不含税时税率必须为空。"})
         if "delivery_batch_dates" in attrs:
             if set(attrs) - {"delivery_date", "delivery_batch_dates"}:
@@ -535,7 +595,7 @@ class ProductionTaskDetailReadSerializer(serializers.Serializer):
     template_key = serializers.CharField()
     detail_type = serializers.CharField()
     category_label = serializers.CharField()
-    is_selected = serializers.BooleanField()
+    is_selected = serializers.BooleanField(allow_null=True)
     description = serializers.CharField()
     image_name = serializers.CharField(source="image_file.original_name", allow_null=True)
 
@@ -601,11 +661,11 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     unit_id = serializers.UUIDField(allow_null=True)
     unit_code = serializers.CharField()
     unit_name = serializers.CharField()
-    currency_id = serializers.UUIDField()
-    currency_code = serializers.CharField(source="currency.code")
-    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4)
-    total_amount = serializers.DecimalField(max_digits=22, decimal_places=4)
-    exchange_rate = serializers.DecimalField(max_digits=25, decimal_places=8)
+    currency_id = serializers.UUIDField(allow_null=True)
+    currency_code = serializers.CharField(source="currency.code", allow_null=True)
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, allow_null=True)
+    total_amount = serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True)
+    exchange_rate = serializers.DecimalField(max_digits=25, decimal_places=8, allow_null=True)
     exchange_rate_record_id = serializers.UUIDField(allow_null=True)
     exchange_rate_snapshot = serializers.JSONField()
     unit_price_base = serializers.SerializerMethodField(method_name="get_local_unit_price")
@@ -617,8 +677,10 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     images = ProductionTaskProductImageReadSerializer(many=True)
     details = ProductionTaskDetailReadSerializer(many=True)
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_local_unit_price(self, instance) -> str:
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_local_unit_price(self, instance) -> str | None:
+        if instance.unit_price is None or instance.exchange_rate is None or instance.currency_id is None:
+            return None
         return format((instance.unit_price * instance.exchange_rate).quantize(Decimal("0.0001")), ".4f")
 
     @staticmethod
@@ -638,8 +700,10 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
         source_item = getattr(source_line, "source_inquiry_item", None) if source_line else None
         return source_item.pk if source_item else None
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_local_total_amount(self, instance) -> str:
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_local_total_amount(self, instance) -> str | None:
+        if instance.total_amount is None or instance.exchange_rate is None or instance.currency_id is None:
+            return None
         return format((instance.total_amount * instance.exchange_rate).quantize(Decimal("0.0001")), ".4f")
 
 
@@ -683,8 +747,8 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer_account.account_name", allow_null=True)
     salesperson = EmployeeBriefSerializer()
     followers = EmployeeBriefSerializer(many=True)
-    currency_id = serializers.UUIDField()
-    currency_code = serializers.CharField(source="currency.code")
+    currency_id = serializers.UUIDField(allow_null=True)
+    currency_code = serializers.CharField(source="currency.code", allow_null=True)
     products = ProductionTaskProductReadSerializer(many=True)
     delivery_batches = ProductionDeliveryBatchReadSerializer(many=True)
     total_quantity = serializers.SerializerMethodField()
@@ -712,6 +776,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     audit_timeline = serializers.SerializerMethodField()
     bom_status = serializers.SerializerMethodField()
     bom_status_display = serializers.SerializerMethodField()
+    has_confirmed_bom_product = serializers.SerializerMethodField()
     purchase_status = serializers.SerializerMethodField()
     purchase_status_display = serializers.SerializerMethodField()
 
@@ -733,7 +798,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             "start_waiver_reason", "start_waiver_by", "start_waiver_at", "actual_quantity",
             "actual_good_quantity", "excess_quantity", "run_batches", "current_boms",
             "pmc_confirmation", "audit_timeline",
-            "bom_status", "bom_status_display", "purchase_status", "purchase_status_display",
+            "bom_status", "bom_status_display", "has_confirmed_bom_product", "purchase_status", "purchase_status_display",
             "allowed_permissions", "allowed_update_fields",
         ]
 
@@ -870,19 +935,26 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def _sum(items, field):
-        return sum((getattr(item, field) for item in items), Decimal("0"))
+        values = [getattr(item, field) for item in items]
+        return None if any(value is None for value in values) else sum(values, Decimal("0"))
 
     @extend_schema_field(serializers.DecimalField(max_digits=18, decimal_places=4))
     def get_total_quantity(self, instance) -> Decimal:
         return self._sum(instance.products.all(), "quantity")
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_product_total_amount(self, instance) -> Decimal:
-        return self._sum(instance.products.all(), "total_amount")
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_product_total_amount(self, instance) -> Decimal | None:
+        products = list(instance.products.all())
+        if instance.currency_id is None or any(row.currency_id != instance.currency_id for row in products):
+            return None
+        return self._sum(products, "total_amount")
 
-    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_total_amount(self, instance) -> Decimal:
-        return self.get_product_total_amount(instance) + instance.freight_amount + instance.other_fee_amount
+    @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4, allow_null=True))
+    def get_total_amount(self, instance) -> Decimal | None:
+        product_total = self.get_product_total_amount(instance)
+        if any(value is None for value in (product_total, instance.freight_amount, instance.other_fee_amount)):
+            return None
+        return product_total + instance.freight_amount + instance.other_fee_amount
 
     @extend_schema_field(serializers.DecimalField(max_digits=18, decimal_places=4))
     def get_batch_total_quantity(self, instance) -> Decimal:
@@ -917,7 +989,11 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             seen_product_lines.add(bom.product_line_id)
             latest_boms.append(bom)
 
-        product_count = len(instance.products.all())
+        product_ids = {line.pk for line in instance.products.all()}
+        product_count = len(product_ids)
+        instance._serialized_has_confirmed_bom_product = any(
+            bom.product_line_id in product_ids and bom.status == "VERIFIED" for bom in latest_boms
+        )
         if not latest_boms:
             summary = ("NOT_CREATED", "未建立")
         elif len(latest_boms) < product_count:
@@ -978,6 +1054,11 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     def get_bom_status_display(self, instance):
         return self._bom_status_summary(instance)[1]
 
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_confirmed_bom_product(self, instance):
+        self._bom_status_summary(instance)
+        return instance._serialized_has_confirmed_bom_product
+
     @extend_schema_field(serializers.CharField())
     def get_purchase_status(self, instance):
         return self._purchase_status_summary(instance)[0]
@@ -1027,7 +1108,7 @@ class ProductionTaskListSerializer(ProductionTaskReadSerializer):
         fields = [
             "id", "task_number", "source_sales_order_number", "delivery_date", "salesperson", "followers",
             "status", "status_display", "sales_order_id", "products", "bom_status", "bom_status_display", "purchase_status",
-            "purchase_status_display", "allowed_permissions",
+            "purchase_status_display", "has_confirmed_bom_product", "allowed_permissions",
         ]
 
 
@@ -1201,6 +1282,13 @@ class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
         allow_null=True,
     )
     reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        task = self.context.get("current_task")
+        if task is not None and task.includes_tax is None:
+            fields["includes_tax"].allow_null = True
+        return fields
 
     def validate(self, attrs):
         if attrs["decision"] == "RETURN" and not attrs.get("reason", "").strip():

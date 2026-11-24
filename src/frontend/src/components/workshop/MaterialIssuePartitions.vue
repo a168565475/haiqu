@@ -35,7 +35,8 @@ const processingStatusLabel = (row: MaterialRequirement) => {
   return row.completed_craft || '—'
 }
 const candidates = computed(() => props.requirements.filter(r => r.line_type === picker.value
-  && (picker.value !== 'SEMI' || (decimalUnits(String(r.available_stock ?? '0')) || 0n) > 0n)
+  && (picker.value !== 'SEMI' || (decimalUnits(String(r.available_stock ?? '0')) || 0n) > 0n
+    || (decimalUnits(String(r.direct_available_quantity ?? '0')) || 0n) > 0n)
   && (!processingStatus.value || processingStatusLabel(r) === processingStatus.value)
   && `${r.material_name} ${(r.part_names || []).join(' ')} ${r.conversion_snapshot?.part_name || ''} ${r.material || ''} ${r.specification} ${r.color}`.includes(search.value)))
 const pipeRows = computed(() => raw.value.filter(isPipe))
@@ -95,6 +96,7 @@ function zoneNames(row: MaterialRequirement) {
   return [...new Set(row.warehouse_zones || [])]
 }
 function remainder(row: MaterialRequirement) {
+  if (row.source_kind === 'CUTTING_DIRECT') return '车间直交，不扣库存'
   const value = (decimalUnits(row.available_stock) || 0n) - (decimalUnits(props.selected[row.requirement_id]) || 0n)
   return value < 0n ? '库存不足' : `${value / 10000n}.${String(value % 10000n).padStart(4, '0')}`.replace(/\.?0+$/, '') || '0'
 }
@@ -102,9 +104,8 @@ function remainder(row: MaterialRequirement) {
 
 <template>
   <div class="issue-partitions">
-    <p class="partition-note">BOM 需求仅供参考；本次可领按扣除其他占用后的合格库存计算，可超过 BOM 建议量。</p>
     <section class="mi-surface partition" data-testid="raw-partition">
-      <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根及米数扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
+      <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
       <ElTable class="erp-table-editor scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
          <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
@@ -121,35 +122,34 @@ function remainder(row: MaterialRequirement) {
         <ElTableColumn label="申请数量" width="160" align="center"><template #default="{ row }"><ElTooltip :visible="Boolean(quantityRuleError(row))" placement="bottom" effect="light" popper-class="material-issue-rule-tooltip" :show-after="0" :hide-after="0" :teleported="true"><template #content><span role="alert">{{ quantityRuleError(row) }}</span></template><ElInput v-model="selected[row.requirement_id]" class="quantity-input" :class="{ 'is-rule-error': Boolean(quantityRuleError(row)) }" :aria-invalid="Boolean(quantityRuleError(row))" :aria-label="`${name(row)}申请数量`" /></ElTooltip></template></ElTableColumn>
         <ElTableColumn v-if="showPipeDeduction" label="每根切割" width="110"><template #default="{ row }">{{ isPipe(row) ? `${row.conversion_snapshot?.pieces_per_bar} 支` : '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="showPipeDeduction" label="预计扣根数" width="115"><template #default="{ row }">{{ isPipe(row) ? `${plan(row).bars} 根` : '—' }}</template></ElTableColumn>
-        <ElTableColumn v-if="showPipeDeduction" label="预计扣米数" width="130"><template #default="{ row }">{{ isPipe(row) ? `${plan(row).meters} 米` : '—' }}</template></ElTableColumn>
         <ElTableColumn label="操作" width="72" fixed="right"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
       </ElTable>
-      <div v-if="showPipeDeduction" class="partition-note"><b>换算规则</b>　申请支数 ÷ 每根切割支数 = 整根数；整根数 × 原材料长度 = 扣库米数。系统按相同物料和规格的合格库存自动分配。</div>
+      <div v-if="showPipeDeduction" class="partition-note"><b>换算规则</b>　申请支数 ÷ 每根切割支数 = 整根数。系统按相同物料和规格的合格库存自动分配。</div>
     </section>
     <section class="mi-surface partition" data-testid="semi-partition">
-      <header><div><h2>外发回库半成品领料</h2><span>管材按支、裁片按套领取，按部位分别计算</span></div><ElButton @click="open('SEMI')">＋ 添加半成品</ElButton></header>
-      <ElTable class="erp-table-editor scroll-actions-table" :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
+      <header><div><h2>裁片与部位半成品领料</h2><span>管材按支，裁片和部位按各行单位领取</span></div><ElButton @click="open('SEMI')">＋ 添加半成品</ElButton></header>
+      <ElTable class="erp-table-editor scroll-actions-table" :data="semi" border empty-text="本次尚未选择裁片或部位半成品" row-key="requirement_id">
+        <ElTableColumn v-if="requirements.some(row => row.direct_available_quantity !== undefined)" label="来源" width="165"><template #default="{ row }"><ElSelect v-if="row.direct_available_quantity !== undefined" :model-value="row.source_kind || 'STOCK'" :aria-label="`${row.material_name}领料来源`" @update:model-value="row.source_kind = $event"><ElOption label="库存领料" value="STOCK" /><ElOption label="裁剪车间直交" value="CUTTING_DIRECT" /></ElSelect><span v-else>库存领料</span></template></ElTableColumn>
          <ElTableColumn label="半成品 / 部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="颜色" width="100"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
         <ElTableColumn label="加工状态" width="110"><template #default="{ row }">{{ processingStatusLabel(row) }}</template></ElTableColumn>
-        <ElTableColumn label="库区" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.warehouse_zone || '—' }}</template></ElTableColumn>
+        <ElTableColumn label="库区" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.source_kind === 'CUTTING_DIRECT' ? '裁剪车间直交' : row.warehouse_zone || '—' }}</template></ElTableColumn>
         <template v-if="hasPublicSemi">
           <ElTableColumn label="本订单需求" width="110"><template #default="{ row }">{{ row.stock_mode === 'PUBLIC_V2' ? issueQuantityText(row.required_quantity) : '—' }}</template></ElTableColumn>
           <ElTableColumn label="本订单已领取" width="120"><template #default="{ row }">{{ row.stock_mode === 'PUBLIC_V2' ? issueQuantityText(row.internal_issued_quantity) : '—' }}</template></ElTableColumn>
           <ElTableColumn label="本订单待审核" width="120"><template #default="{ row }">{{ row.stock_mode === 'PUBLIC_V2' ? issueQuantityText(row.pending_issue_quantity || '0') : '—' }}</template></ElTableColumn>
         </template>
         <ElTableColumn v-if="!hasPublicSemi" label="合格库存" width="130"><template #default="{ row }">{{ issueQuantityText(row.available_stock) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn v-if="hasPublicSemi" label="本次可领" width="110"><template #default="{ row }">{{ issueQuantityText(row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
+        <ElTableColumn v-if="hasPublicSemi" label="本次可领" width="110"><template #default="{ row }">{{ issueQuantityText(row.source_kind === 'CUTTING_DIRECT' ? row.direct_available_quantity : row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="申请数量" width="150"><template #default="{ row }"><ElTooltip :visible="Boolean(quantityRuleError(row))" placement="bottom" effect="light" popper-class="material-issue-rule-tooltip" :show-after="0" :hide-after="0" :teleported="true"><template #content><span role="alert">{{ quantityRuleError(row) }}</span></template><ElInput v-model="selected[row.requirement_id]" class="quantity-input" :class="{ 'is-rule-error': Boolean(quantityRuleError(row)) }" :aria-invalid="Boolean(quantityRuleError(row))" :aria-label="`${row.material_name}半成品申请数量`" inputmode="numeric"><template #suffix>{{ row.unit }}</template></ElInput></ElTooltip></template></ElTableColumn>
-        <ElTableColumn :label="hasPublicSemi ? '预计库存结余' : '预计结余'" width="130"><template #default="{ row }">{{ remainder(row) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="可用说明" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ row.stock_mode === 'PUBLIC_V2' ? `公共半成品可用 ${issueQuantityText(row.available_stock)} ${row.unit}` : '按当前订单半成品库存' }}</template></ElTableColumn>
+        <ElTableColumn :label="hasPublicSemi ? '预计库存结余' : '预计结余'" width="130"><template #default="{ row }">{{ remainder(row) }} {{ row.source_kind === 'CUTTING_DIRECT' ? '' : row.unit }}</template></ElTableColumn>
+        <ElTableColumn label="可用说明" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ row.source_kind === 'CUTTING_DIRECT' ? '占用本产品裁片产出，避免再次入库或外发' : row.stock_mode === 'PUBLIC_V2' ? `公共半成品可用 ${issueQuantityText(row.available_stock)} ${row.unit}` : '按当前订单半成品库存' }}</template></ElTableColumn>
         <ElTableColumn label="操作" width="72" fixed="right"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
       </ElTable>
-      <div class="partition-note">管材半成品按正整数支领取，裁片按正整数套领取；<template v-if="hasPublicSemi">按本订单 BOM 部位选择，系统从匹配规格、颜色和工艺的公共合格半成品中分配；不受来源订单限制，不扣原材料根数、米数及原料额度。</template><template v-else>只扣所选订单、产品、部位、工艺及库区的合格半成品，不扣原材料根数、米数及原料额度。</template></div>
     </section>
-    <AppWindowDialog v-model="visible" :title="picker === 'RAW' ? '添加原材料' : '添加外发回库半成品'" :width="1680">
+    <AppWindowDialog v-model="visible" :title="picker === 'RAW' ? '添加原材料' : '添加裁片或部位半成品'" :width="1680">
       <div class="selector-content">
         <div class="selector-filters">
           <ElInput v-model="search" clearable placeholder="搜索物料、部位、规格或颜色" aria-label="搜索可领材料" />
@@ -167,6 +167,7 @@ function remainder(row: MaterialRequirement) {
            <ElTableColumn label="颜色" width="90"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
           <ElTableColumn label="加工状态" width="110"><template #default="{ row }">{{ processingStatusLabel(row) }}</template></ElTableColumn>
           <ElTableColumn label="公共可用" width="120" align="center"><template #default="{ row }">{{ issueQuantityText(row.available_stock) }} {{ row.unit }}</template></ElTableColumn>
+          <ElTableColumn v-if="requirements.some(row => row.direct_available_quantity !== undefined)" label="车间可直交" width="120"><template #default="{ row }">{{ row.direct_available_quantity === undefined ? '—' : `${issueQuantityText(row.direct_available_quantity)} ${row.unit}` }}</template></ElTableColumn>
           <ElTableColumn label="匹配依据" min-width="190" show-overflow-tooltip><template #default> BOM部位 + 材质 + 规格 + 颜色 </template></ElTableColumn>
           <ElTableColumn label="操作" width="90" align="center"><template #default="{ row }"><ElButton size="small" :type="draftSelectedIds.has(row.requirement_id) ? 'success' : 'primary'" @click.stop="addCandidate(row)">{{ draftSelectedIds.has(row.requirement_id) ? '已添加' : '添加' }}</ElButton></template></ElTableColumn>
         </template>

@@ -14,6 +14,13 @@ def color_metadata(color):
             "color_code": color.color_code, "color_name": color.color_name}
 
 
+def catalog_color_metadata(option):
+    if option.product_color_id:
+        return color_metadata(option.product_color)
+    return {"product_color_id": None, "color_card": option.color_card,
+            "color_code": option.color_code, "color_name": option.value}
+
+
 def color_identity(value, data=None):
     data = data or {}
     identity = {"color_card": data.get("color_card", ""), "color_code": data.get("color_code", ""),
@@ -39,8 +46,9 @@ def unchanged_color(option, data):
         color = option.product_color
         return (str(data.get("product_color_id") or color.pk) == str(color.pk)
                 and identity == {key: getattr(color, key) for key in identity})
-    return (not data.get("product_color_id") and not identity["color_card"] and not identity["color_code"]
-            and option.value == identity["color_name"])
+    return not data.get("product_color_id") and identity == {
+        key: catalog_color_metadata(option)[key] for key in identity
+    }
 
 
 def unchanged_snapshot_color(selection, snapshot):

@@ -1,6 +1,7 @@
 from datetime import timedelta
 from uuid import uuid4
 
+from django.conf import settings
 from django.core import signing
 from django.db import DatabaseError, connection, transaction
 from django.utils import timezone
@@ -28,6 +29,11 @@ PREVIEW_SALT = "wecom.notification-preview.v1"
 PREVIEW_SECONDS = 600
 
 
+def _tracking_preview_blocked(event_code):
+    return (event_code in {"PURCHASE_TRACKING_RISK", "PURCHASE_TRACKING_DIGEST"}
+        and not getattr(settings, "PURCHASE_TRACKING_WECOM_ENABLED", False))
+
+
 def require_preview_manager(request):
     if not can_manage(request.user, "access_control.manage_notifications"):
         raise PermissionDenied("需要业务通知规则管理权限。")
@@ -47,6 +53,8 @@ def signed_preview(request, event_code, draft, source_etag, preview):
         card = build_preview_card(preview["title"], preview["body"], config.erp_origin + "/" if config else "")
     except ValueError as exc:
         blocked_reason = str(exc)
+    if _tracking_preview_blocked(event_code):
+        blocked_reason = "采购企微外发尚未启用，当前仅生成站内提醒。"
     payload = {"actor": str(actor.pk), "event": event_code, "preview_id": str(uuid4()),
                "rule_etag": source_etag, "catalog_hash": _hash(get_event(event_code)),
                "draft_hash": _hash(draft), "title": preview["title"], "body": preview["body"],
@@ -78,6 +86,8 @@ def _audit(request, attempt):
 @sensitive_variables()
 def prepare_attempt(request, event_code, data):
     actor = require_preview_manager(request)
+    if _tracking_preview_blocked(event_code):
+        raise Conflict("采购企微外发尚未启用，不能试发采购通知。")
     require_preview_schema()
     payload = _decode(data["preview_token"])
     if payload["actor"] != str(actor.pk) or payload["event"] != event_code:

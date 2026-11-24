@@ -5,10 +5,10 @@ const props = defineProps<{ entry: CatalogEntry; grants: Grant[]; disabled?: boo
 const emit = defineEmits<{ change: [code: string, scopes: AccessScope[]]; configure: [code: string] }>()
 const scopes = computed(() => props.grants.filter(g => g.permission === props.entry.code).map(g => g.scope).sort())
 const joined = computed(() => scopes.value.join(','))
-const restricted = computed(() => scopes.value.some(scope => scope === 'WORKSHOP' || scope === 'CRAFT'))
+const restricted = computed(() => scopes.value.some(scope => ['WORKSHOP', 'CRAFT', 'MATERIAL'].includes(scope)))
 const choices = computed(() => [
   ['OWN', '本人'], ['TEAM', '所管团队'], ['OWN,TEAM', '本人及团队'], ['ALL', '全部'],
-  ['MODULE', '按模块'], ['WORKSHOP', '指定车间'], ['CRAFT', '指定工艺'], ['STOCK', '库存来源'], ['FOLLOWED', '本人跟单任务'],
+  ['MODULE', '按模块'], ['WORKSHOP', '指定车间'], ['CRAFT', '指定工艺'], ['MATERIAL', '指定材料分区'], ['STOCK', '库存来源'], ['FOLLOWED', '本人跟单任务'],
 ].filter(([value]) => value!.split(',').every(scope => props.entry.scopes.includes(scope as AccessScope))))
 const custom = computed(() => joined.value && !choices.value.some(c => c[0] === joined.value))
 function check(event: Event) {

@@ -22,6 +22,7 @@ export function purchaseSheetSourceFields(line: SupplierPurchaseSheetLine, sampl
     if (!field || typeof field !== 'object') continue
     const key = text(field.key), label = text(field.label), value = text(field.value)
     if (!label || !value || key === 'tube_coating_color' || label === '喷塑颜色') continue
+    if (['unit', 'flow_unit'].includes(key) || ['单位', '流转单位'].includes(label)) continue
     if (['part_name', 'material', 'specification'].includes(key) || ['品名', '部件名称', '材质', '规格'].includes(label)) continue
     if (!sampleSource && (colorKeys.has(key) || label === '颜色')) {
       if (!result.colors.includes(value)) result.colors.push(value)

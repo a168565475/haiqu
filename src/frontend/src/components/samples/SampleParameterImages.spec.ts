@@ -5,13 +5,12 @@ import SampleParameterImages from './SampleParameterImages.vue'
 
 enableAutoUnmount(afterEach)
 const mocks = vi.hoisted(() => ({
-  upload: vi.fn(), remove: vi.fn(), fetchFile: vi.fn(),
+  upload: vi.fn(), remove: vi.fn(),
   success: vi.fn(), warning: vi.fn(), error: vi.fn(),
 }))
 vi.mock('@/api/samples', () => ({
   uploadSampleParameterImage: mocks.upload,
   deleteSampleParameterImage: mocks.remove,
-  fetchSampleBusinessFile: mocks.fetchFile,
 }))
 vi.mock('element-plus', async importOriginal => ({
   ...await importOriginal<typeof import('element-plus')>(),

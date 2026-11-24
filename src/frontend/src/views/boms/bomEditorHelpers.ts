@@ -6,7 +6,7 @@ import type {
   BomSectionInput,
   BomSectionType,
 } from '@/types/bom'
-import { pipePlanForBomLine } from '@/utils/materialFlow'
+import { pipePlan, pipePlanForBomLine } from '@/utils/materialFlow'
 
 export interface FixedSectionDefinition {
   title: string
@@ -42,7 +42,7 @@ export function blankLine(defaultUnit = ''): BomLineInput {
     branch_count: '', budget_quantity: '', inventory_quantity: '', weight_grams: '', cut_piece_quantity: '',
     purchase_consumption: '', source_order_quantity: '', total_purchase_quantity: '', notes: '',
     tube_shape: '', tube_diameter: '', tube_thickness: '', tube_coating_color: '',
-    coating_unit_area_sqm: '', purchase_unit_weight_kg: '', tube_cut_piece_count: '',
+    coating_unit_area_sqm: '', purchase_unit_weight_kg: '', long_material_unit_weight_kg: '', tube_cut_piece_count: '',
     source_inventory_material_id: null,
     source_raw_material_id: null, hardware_material_number: '', hardware_color: '', hardware_flow_unit: '',
     unit_material_weight_kg: '', powder_coating_color: '', powder_coating_unit_area_sqm: '',
@@ -61,6 +61,11 @@ export function blankLine(defaultUnit = ''): BomLineInput {
 
 export function editableLine(line: BomLine): BomLineInput {
   return {
+    purchase_required: line.purchase_required ?? true,
+    component_kind: line.component_kind || '',
+    parent_part_id: line.parent_part_id || null,
+    pieces_per_part: line.pieces_per_part ?? null,
+    parts_per_product: line.parts_per_product ?? null,
     material_catalog_id: line.material_catalog_id,
     material_quantity: line.material_quantity,
     material_selection_snapshot: line.material_selection_snapshot,
@@ -92,7 +97,12 @@ export function editableLine(line: BomLine): BomLineInput {
     manual_tube_metrics: line.manual_tube_metrics ?? false,
     coating_unit_area_sqm: line.coating_unit_area_sqm,
     purchase_unit_weight_kg: line.purchase_unit_weight_kg,
+    long_material_unit_weight_kg: line.long_material_unit_weight_kg || '',
     tube_cut_piece_count: line.tube_cut_piece_count,
+    purchase_allowance_mode: line.purchase_allowance_mode || undefined,
+    purchase_allowance_rule: line.purchase_allowance_rule || undefined,
+    source_purchase_allowance_percent: line.source_purchase_allowance_percent ?? line.raw_values?.source_purchase_allowance_percent,
+    source_raw_bar_length_m: line.source_raw_bar_length_m ?? line.raw_values?.source_raw_bar_length_m,
     source_inventory_material_id: line.source_inventory_material_id || null,
     fabric_source_line_id: line.fabric_source_line_id || null,
     fabric_meters_per_set: line.fabric_meters_per_set || null,
@@ -104,6 +114,12 @@ export function editableLine(line: BomLine): BomLineInput {
     hardware_color: line.hardware_color || '',
     hardware_flow_unit: line.hardware_flow_unit || '',
     unit_material_weight_kg: line.unit_material_weight_kg || '',
+    hardware_weight_mode: line.hardware_weight_mode,
+    hardware_weight_input: line.hardware_weight_input ? { ...line.hardware_weight_input } : undefined,
+    hardware_weight_snapshot: line.hardware_weight_snapshot ? JSON.parse(JSON.stringify(line.hardware_weight_snapshot)) : undefined,
+    hardware_weight_saved: line.hardware_weight_mode === 'AUTO' && line.hardware_weight_input && line.hardware_weight_snapshot
+      ? { input_key: JSON.stringify({ ...line.hardware_weight_input, material: line.material, specification: line.specification }), unit_material_weight_kg: line.unit_material_weight_kg }
+      : undefined,
     powder_coating_color: line.powder_coating_color || '',
     powder_coating_unit_area_sqm: line.powder_coating_unit_area_sqm || '',
     plastic_material_number: line.plastic_material_number || '',
@@ -150,12 +166,12 @@ export function editableSection(section: BomSection): BomSectionInput {
     id: section.id,
     section_type: section.section_type,
     title: section.title,
-    lines: lines.length || section.section_type !== 'PROFILE' ? lines : [blankLine('根')],
+    lines,
   }
 }
 
 export function defaultTubeSection(): BomSectionInput {
-  return { section_type: 'PROFILE', title: '管材类', lines: [blankLine('根')] }
+  return { section_type: 'PROFILE', title: '管材类', lines: [] }
 }
 
 export function emptyFixedSection(definition: FixedSectionDefinition): BomSectionInput {
@@ -221,8 +237,6 @@ export function withFixedSections(sourceSections: BomSection[]) {
   for (const definition of fixedSectionDefinitions) {
     if (!sectionByTitle.has(definition.title)) sectionByTitle.set(definition.title, emptyFixedSection(definition))
   }
-  const tubeSection = sectionByTitle.get('管材类')
-  if (tubeSection && !tubeSection.lines.length) tubeSection.lines.push(blankLine('根'))
   const preserved = [...sectionByTitle.values()]
   return preserved.sort((left, right) => (
     (fixedOrder.get(left.title) ?? fixedSectionDefinitions.length)
@@ -256,7 +270,11 @@ export type TubeCalculationKey =
   | 'total_consumption'
   | 'tube_cut_length_m'
   | 'suggested_purchase_meters'
+  | 'suggested_purchase_weight_kg'
   | 'branch_count'
+  | 'base_purchase_bar_count'
+  | 'purchase_allowance_bar_count'
+  | 'purchase_allowance_rule'
   | 'long_material_unit_weight_kg'
   | 'tube_unit_weight_kg'
   | 'long_material_total_weight_kg'
@@ -306,14 +324,26 @@ export function calculationText(value: number | null, fractionDigits = 4, keepTr
   return keepTrailingZeros ? text : text.replace(/\.?0+$/, '')
 }
 
+export function supportsTubeFormula(line: BomLineInput): boolean {
+  return ['圆', '圆管', '方', '方管', '矩形', '矩形管', '椭圆', '椭圆管', '扁圆', '扁圆管'].includes(String(line.tube_shape || '').trim())
+}
+
 export function manualTubeMetricError(line: BomLineInput): string {
-  if (!line.manual_tube_metrics) return ''
-  for (const [field, label] of [['coating_unit_area_sqm', '喷塑单支面积'], ['purchase_unit_weight_kg', '单支重量']] as const) {
+  if (!line.manual_tube_metrics && supportsTubeFormula(line)) return ''
+  for (const [field, label] of (line.manual_tube_metrics ? [['coating_unit_area_sqm', '喷塑单支面积'], ['purchase_unit_weight_kg', '单支重量']] as const : [])) {
     const text = String(line[field] ?? '').trim()
     const value = decimalFraction(text)
     if (text.length > 100 || !/^(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(text) || !value || value.numerator < 0n
       || value.numerator * 10000n > 9999999999999999n * value.denominator) {
       return `请填写有效的${label}，范围为 0 至 999999999999.9999，最多保留 4 位小数。`
+    }
+  }
+  const longWeight = String(line.long_material_unit_weight_kg ?? '').trim()
+  if (longWeight) {
+    const value = decimalFraction(longWeight)
+    if (longWeight.length > 100 || !/^(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(longWeight) || !value || value.numerator <= 0n
+      || value.numerator * 10000n > 9999999999999999n * value.denominator) {
+      return '请填写有效的长料单重，须大于 0 且不超过 999999999999.9999，最多保留 4 位小数。'
     }
   }
   return ''
@@ -322,17 +352,24 @@ export function manualTubeMetricError(line: BomLineInput): string {
 export function tubeCalculations(line: BomLineInput, bom: BomDetail | null): Record<TubeCalculationKey, string> {
   const savedLine = line.id ? bom?.sections.flatMap(section => section.lines).find(saved => saved.id === line.id) : undefined
   const plan = pipePlanForBomLine(line, String(bom?.order_quantity || ''), savedLine)
+  const basePlan = pipePlan(line.length_value || '', line.unit_consumption || '', line.tube_cut_piece_count || '', String(bom?.order_quantity || ''))
+  const baseRoots = plan?.base_purchase_bar_count ?? basePlan?.branch_count
+  const allowanceRoots = plan?.purchase_allowance_bar_count ?? (plan && baseRoots ? String(BigInt(plan.branch_count) - BigInt(baseRoots)) : undefined)
   const metrics = line.tube_calculation_preview
   const unchanged = savedLine && ['tube_shape', 'tube_diameter', 'tube_thickness', 'length_value', 'tube_cut_piece_count'].every(
     key => String(line[key as keyof BomLineInput] ?? '') === String(savedLine[key as keyof typeof savedLine] ?? ''),
   )
-  const longWeight = line.manual_tube_metrics ? '' : metrics?.long_material_unit_weight_kg ?? (unchanged ? savedLine.long_material_unit_weight_kg : '')
+  const longWeight = line.manual_tube_metrics || !supportsTubeFormula(line) ? line.long_material_unit_weight_kg : metrics?.long_material_unit_weight_kg ?? (unchanged ? savedLine.long_material_unit_weight_kg : '')
   const unitWeight = line.manual_tube_metrics ? line.purchase_unit_weight_kg : metrics?.purchase_unit_weight_kg ?? (unchanged && savedLine.raw_values?.tube_formula_snapshot ? savedLine.purchase_unit_weight_kg : '')
   return {
     total_consumption: plan?.total_consumption || '—', tube_cut_length_m: plan?.tube_cut_length_m || '—',
     branch_count: plan?.branch_count || '—', suggested_purchase_meters: plan?.suggested_purchase_meters || '—',
+    base_purchase_bar_count: plan && baseRoots ? baseRoots : '—',
+    purchase_allowance_bar_count: allowanceRoots ?? '—',
+    purchase_allowance_rule: plan?.purchase_allowance_rule || '',
     long_material_unit_weight_kg: longWeight || '—',
     tube_unit_weight_kg: unitWeight || '—',
     long_material_total_weight_kg: calculationText(plan && longWeight ? Number(plan.branch_count) * Number(longWeight) : null),
+    suggested_purchase_weight_kg: calculationText(plan && longWeight ? Number(plan.branch_count) * Number(longWeight) : null),
   }
 }

@@ -27,17 +27,18 @@ import type {
 
 const router = useRouter()
 const route = useRoute()
-const showingGroups = computed(() => route.query?.view !== 'orders')
+const packaging = computed(() => route.name === 'packaging-purchases')
+const showingGroups = computed(() => packaging.value || route.query?.view !== 'orders')
 const authStore = useAuthStore()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
 const can = (permission: string) => isSuperuser.value || authStore.hasPermission(permission)
-const canView = computed(() => can('procurement.view_purchaseorder'))
+const canView = computed(() => can(packaging.value ? 'procurement.manage_packagingpurchase' : 'procurement.view_purchaseorder'))
 const canViewSuppliers = computed(() => can('procurement.view_supplier'))
-const canAdd = computed(() => can('procurement.add_purchaseorder'))
+const canAdd = computed(() => can(packaging.value ? 'procurement.manage_packagingpurchase' : 'procurement.add_purchaseorder'))
 const canEdit = computed(() => authStore.moduleCan('procurement.change_purchaseorder', 'procurement.add_purchaseorder'))
 const canComplete = computed(() => authStore.moduleCan('access_control.complete_purchaseorder', 'procurement.submit_purchaseorder'))
 const canSubmit = computed(() => can('procurement.submit_purchaseorder'))
-const canDelete = computed(() => can('procurement.delete_purchaseorder'))
+const canDelete = computed(() => can(packaging.value ? 'procurement.manage_packagingpurchase' : 'procurement.delete_purchaseorder'))
 
 const emptyOptions = (): PurchaseOrderFilterOptions => ({
   production_tasks: [],
@@ -91,8 +92,10 @@ function formatMoney(value: string | null | undefined): string {
   const normalized = value.trim()
   const matched = /^(-?)(\d+)(?:\.(\d+))?$/.exec(normalized)
   if (!matched) return normalized
-  const grouped = (matched[2] || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return `${matched[1] || ''}${grouped}${matched[3]?.replace(/0+$/, '') ? `.${matched[3].replace(/0+$/, '')}` : ''}`
+  const fraction = (matched[3] || '').padEnd(3, '0')
+  const cents = BigInt(matched[2] || '0') * 100n + BigInt(fraction.slice(0, 2)) + (fraction[2]! >= '5' ? 1n : 0n)
+  const grouped = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${matched[1] || ''}${grouped}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 
 function formatDateTime(value: string): string {
@@ -230,7 +233,7 @@ function openConfirm(row: PurchaseOrderListItem): void {
 }
 
 function openSheets(row: PurchaseOrderListItem): void {
-  void router.push({ name: 'purchase-sheet-template-select', params: { id: row.id } })
+  void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: row.id } })
 }
 
 function returnActionLabel(row: PurchaseOrderListItem): string {
@@ -340,7 +343,7 @@ async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
       row.purchase_group_id
-        ? `确定删除采购批次 ${row.order_number} 吗？系统将校验关联采购表及下游记录；删除后可在原总单中追加新批次。`
+        ? `确定删除采购批次 ${row.order_number} 吗？系统将校验关联采购表及下游记录；删除后可在原采购需求中追加新批次。`
         : `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及归档文件也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
       '删除采购订单',
       {
@@ -371,7 +374,7 @@ async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
 }
 
 onMounted(() => {
-  if (canView.value) void reloadAll()
+  if (canView.value && !packaging.value) void reloadAll()
 })
 onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; completionVisible.value = false; completionSnapshot.value = null })
 </script>
@@ -382,11 +385,15 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
     <section v-glass-spotlight class="erp-list-filter">
     <header class="page-heading erp-list-heading">
       <div class="page-heading__title">
-        <h1>{{ showingGroups ? '采购总单' : '采购订单' }}</h1>
+        <h1>{{ packaging ? '包材采购' : showingGroups ? '采购需求' : '采购订单' }}</h1>
         <span v-if="canView && !showingGroups" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
       </div>
-      <div v-if="canViewSuppliers && (!canView || showingGroups)" class="page-heading__actions">
-        <ElButton class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
+      <div v-if="packaging && canView" class="page-heading__actions">
+        <ElButton @click="router.push({ name: 'purchase-return-records', query: { purchase_scope: 'PACKAGING', from: 'orders' } })">包材退货</ElButton>
+      </div>
+      <div v-else-if="!packaging && ((canView && showingGroups) || (canViewSuppliers && !canView))" class="page-heading__actions">
+        <ElButton v-if="canView && showingGroups" data-testid="purchase-tracking-entry" @click="router.push({ name: 'purchase-tracking' })">采购跟踪</ElButton>
+        <ElButton v-if="canViewSuppliers" class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
           <BuildingOne theme="outline" size="18" :stroke-width="3" aria-hidden="true" />
           <span>供应商管理</span>
         </ElButton>
@@ -426,7 +433,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
       <p>请联系管理员开通“采购订单查看”权限后重试。</p>
     </div>
 
-    <PurchaseGroupList v-else-if="showingGroups" :can-add="canAdd" />
+    <PurchaseGroupList v-else-if="showingGroups" :key="route.name as string" :can-add="canAdd" :can-delete="canDelete" :packaging="packaging" />
     <template v-else>
       <ElAlert v-if="listError" class="load-error" type="error" :title="listError" :closable="false" show-icon>
         <ElButton link @click="loadList">重新加载</ElButton>
@@ -482,9 +489,6 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
           </ElTableColumn>
           <ElTableColumn label="采购金额" width="146" show-overflow-tooltip>
             <template #default="{ row }"><span class="amount" :class="{ 'amount--pending erp-list-tag erp-list-tag--neutral': !row.currency_code || row.total_amount === null }">{{ row.currency_code && row.total_amount !== null ? `${row.currency_code} ${formatMoney(row.total_amount)}` : '待计算' }}</span></template>
-          </ElTableColumn>
-          <ElTableColumn label="是否邮寄" width="88" align="center">
-            <template #default="{ row }">{{ row.is_mailed === null ? '待填写' : row.is_mailed ? '是' : '否' }}</template>
           </ElTableColumn>
           <ElTableColumn label="订单来源" width="112" align="center">
             <template #default="{ row }"><span class="purchase-source-tag erp-list-tag" :class="row.source_type === 'SAMPLE' ? 'is-sample erp-list-tag--warning' : 'erp-list-tag--info'" data-testid="purchase-source-tag">{{ row.source_type === 'SAMPLE' ? '打样单' : '生产订单' }}</span></template>

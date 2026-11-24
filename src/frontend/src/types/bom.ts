@@ -6,6 +6,31 @@ import type { RawMaterialInput } from './rawMaterial'
 export type BomStatus = 'PENDING_CONFIRMATION' | 'VERIFIED'
 export type BomCreationMethod = 'IMPORT' | 'COPY' | 'BLANK'
 export type BomSectionType = 'PROFILE' | 'ACCESSORY' | 'FABRIC'
+export type PurchaseAllowanceRule = 'NONE' | 'PLUS_5' | 'PLUS_8' | 'PERCENT_0_5' | 'PERCENT_1'
+export type PurchaseAllowanceMode = 'AUTO' | 'MANUAL'
+
+export type HardwareWeightKind = 'RIVET_GB873_STEEL' | 'PLAIN_WASHER'
+export interface HardwareWeightInput {
+  kind: HardwareWeightKind
+  material: string
+  specification: string
+  diameter_mm?: string
+  length_mm?: string
+  outer_diameter_mm?: string
+  inner_diameter_mm?: string
+  thickness_mm?: string
+  density_g_cm3?: string
+}
+export interface HardwareWeightPreview {
+  unit_material_weight_kg: string
+  unit_weight_g: string
+  calculation_snapshot: Record<string, unknown>
+}
+export interface HardwareWeightFields {
+  hardware_weight_mode?: 'AUTO' | 'MANUAL' | null
+  hardware_weight_input?: HardwareWeightInput | null
+  hardware_weight_snapshot?: Record<string, unknown> | null
+}
 
 export interface BomLineImage {
   id: string
@@ -34,7 +59,12 @@ export interface BomSectionSummary {
   count: number
 }
 
-export interface BomLine {
+export interface BomLine extends HardwareWeightFields {
+  purchase_required?: boolean
+  component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'
+  parent_part_id?: string | null
+  pieces_per_part?: number | null
+  parts_per_product?: number | null
   material_quantity?: string | null
   material_catalog_id?: string | null
   material_selection_snapshot?: MaterialSelectionSnapshot
@@ -50,6 +80,11 @@ export interface BomLine {
   raw_bar_length_m?: string | null
   suggested_bar_count?: number | null
   suggested_purchase_meters?: string | null
+  suggested_purchase_weight_kg?: string | null
+  base_purchase_bar_count?: number | null
+  purchase_allowance_bar_count?: number | null
+  purchase_allowance_rule?: PurchaseAllowanceRule | ''
+  purchase_allowance_mode?: PurchaseAllowanceMode | ''
   fabric_source_line_id?: string | null
   fabric_meters_per_set?: string | null
   id: string
@@ -83,6 +118,8 @@ export interface BomLine {
   coating_unit_area_sqm: string
   purchase_unit_weight_kg: string
   tube_cut_piece_count: string
+  source_purchase_allowance_percent?: string
+  source_raw_bar_length_m?: string
   tube_cut_length_m: string
   long_material_unit_weight_kg: string
   tube_unit_weight_kg: string
@@ -198,6 +235,7 @@ export interface Bom {
 }
 
 export interface BomDetail extends Bom {
+  component_structure?: { required: boolean; pending: boolean; message: string }
   source_metadata: Record<string, string>
   calculation_summary: Record<string, unknown>
   maintenance_unmatched_values: Array<{ field: string; value: string }>
@@ -222,6 +260,7 @@ export interface TubeCalculationInput {
   tube_thickness: string
   length_value: string
   tube_cut_piece_count?: string
+  source_raw_bar_length_m?: string
 }
 
 export interface TubeCalculationPreview {
@@ -231,7 +270,18 @@ export interface TubeCalculationPreview {
   long_material_unit_weight_kg: string
 }
 
-export interface BomLineInput {
+export interface BomLineInput extends HardwareWeightFields {
+  purchase_required?: boolean
+  component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'
+  parent_part_id?: string | null
+  parent_part_client_key?: string | null
+  pieces_per_part?: number | string | null
+  parts_per_product?: number | string | null
+  /** 仅用于校验编辑器中预览是否仍匹配当前参数，不发送给服务端。 */
+  hardware_weight_preview?: HardwareWeightPreview & { input_key: string }
+  hardware_weight_saved?: { input_key: string; unit_material_weight_kg: string }
+  purchase_allowance_rule?: PurchaseAllowanceRule | ''
+  purchase_allowance_mode?: PurchaseAllowanceMode | ''
   material_quantity?: string | null
   material_catalog_id?: string | null
   material_selection_snapshot?: MaterialSelectionSnapshot
@@ -241,6 +291,8 @@ export interface BomLineInput {
   expected_tube_formula_version?: string
   /** 编辑器预览状态，不作为服务端公式或结果的权威来源。 */
   tube_calculation_preview?: TubeCalculationPreview
+  long_material_unit_weight_kg?: string
+  raw_values?: Record<string, string>
   pending_raw_material?: RawMaterialInput
   client_key?: string
   fabric_source_client_key?: string | null
@@ -277,6 +329,8 @@ export interface BomLineInput {
   coating_unit_area_sqm: string
   purchase_unit_weight_kg: string
   tube_cut_piece_count: string
+  source_purchase_allowance_percent?: string
+  source_raw_bar_length_m?: string
   source_inventory_material_id: string | null
   source_raw_material_id: string | null
   hardware_material_number: string
@@ -517,6 +571,7 @@ export interface BomProductColorOption {
 }
 
 export interface BomEditorReferenceOptions {
+  component_units?: { id: string; unit_name: string; unit_code: string }[]
   auxiliary_products: BomAuxiliaryProductOption[]
   accessory_materials: BomAccessoryMaterialOption[]
   fabric_materials: BomFabricMaterialOption[]
@@ -542,8 +597,10 @@ export interface BomProductionTaskProduct {
   product_number: string
   product_code: string
   product_name: string
+  color_name?: string
   specification: string
   order_quantity: string | number
+  unit_name?: string
   source_delivery_batch_line_id: string | null
   batch_quantity: string | number | null
   delivery_date: string
@@ -570,6 +627,7 @@ export interface BomOptions {
 }
 
 export interface BomWorkbookPreview {
+  component_structure?: { required: boolean; pending: boolean; message: string }
   file_name: string
   sheet_name: string
   sheet_number: number

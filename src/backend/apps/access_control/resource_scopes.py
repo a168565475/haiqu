@@ -20,6 +20,10 @@ def enforcing(request, code):
 
 
 def scope_kind(code):
+    if code == 'inventory.receive_material':
+        return 'MATERIAL'
+    if code in {'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee'}:
+        return 'WORKSHOP'
     if code in {f'inventory.{action}_{kind}' for action in ('view', 'add', 'delete')
                 for kind in ('internalsemifinishedreceipt', 'finishedgoodsreceipt')}:
         return 'WORKSHOP'
@@ -161,24 +165,27 @@ def require_workshop(request, permission, workshop_id):
 
 def scope_options():
     if not configured():
-        return {'enabled': False, 'workshops': [], 'crafts': []}
+        return {'enabled': False, 'workshops': [], 'crafts': [], 'material_sections': []}
+    from apps.inventory.purchase_receiving_sections import MATERIAL_SECTIONS
     from apps.workshop_config.models import Workshop, Craft
     # Include inactive historical selections for honest display; no business activation implied.
     def rows(queryset):
         return [{'id': str(obj.pk), 'name': obj.name, 'active': obj.status == 'ACTIVE'} for obj in queryset.order_by('name', 'id')]
     return {'enabled': True, 'workshops': rows(Workshop.objects.all()),
+            'material_sections': [{'id': key, 'name': name, 'active': True} for key, name in MATERIAL_SECTIONS.items()],
             'crafts': rows(Craft.objects.filter(craft_type='EXTERNAL'))}
 
 
 def validate_resources(rows):
+    from apps.inventory.purchase_receiving_sections import MATERIAL_SECTIONS
     from apps.workshop_config.models import Workshop, Craft
     result = {}
     for row in rows:
         ids = [str(pk) for pk in row.get('resource_ids', [])]
         scope = row['scope']
-        if scope not in {'WORKSHOP', 'CRAFT'}:
+        if scope not in {'WORKSHOP', 'CRAFT', 'MATERIAL'}:
             if ids:
-                raise ValidationError({'grants': '只有指定车间或工艺范围可以选择资源。'})
+                raise ValidationError({'grants': '当前权限范围不能选择资源。'})
             continue
         supported = scope_kind(row['permission']) == scope or (
             scope == 'WORKSHOP' and row['permission'].startswith('outsourcing.')
@@ -187,6 +194,11 @@ def validate_resources(rows):
             raise ValidationError({'grants': '当前操作不支持该资源范围。'})
         if len(ids) != len(set(ids)):
             raise ValidationError({'grants': '所选资源不能重复。'})
+        if scope == 'MATERIAL':
+            if not set(ids) <= MATERIAL_SECTIONS.keys():
+                raise ValidationError({'grants': '所选材料分区不存在。'})
+            result[(row['permission'], scope)] = sorted(ids)
+            continue
         model = Workshop if scope == 'WORKSHOP' else Craft
         qs = model.objects.filter(pk__in=ids)
         if scope == 'CRAFT':
@@ -201,18 +213,34 @@ def validate_resources(rows):
 def save_resources(role, selections):
     if not configured():
         return
-    from .models import RoleGrantResource
+    from .models import MaterialSectionGrant, RoleGrantResource
     from .selectors import role_grants
     from .catalog import permission_code
     resources = []
+    material_grants = []
     for grant in role_grants(role):
+        ids = selections.get((permission_code(grant.permission), grant.scope), [])
+        if grant.scope == 'MATERIAL':
+            material_grants.append(MaterialSectionGrant(grant=grant, sections=ids))
+            continue
         field = 'workshop_id' if grant.scope == 'WORKSHOP' else 'craft_id'
-        resources.extend(RoleGrantResource(grant=grant, **{field: pk})
-                         for pk in selections.get((permission_code(grant.permission), grant.scope), []))
+        resources.extend(RoleGrantResource(grant=grant, **{field: pk}) for pk in ids)
     RoleGrantResource.objects.bulk_create(resources)
+    if material_grants:
+        MaterialSectionGrant.objects.bulk_create(material_grants)
+
+
+def delete_material_grants(role):
+    from .models import MaterialSectionGrant
+    grants = role.action_grants.filter(scope='MATERIAL')
+    if grants.exists():
+        MaterialSectionGrant.objects.filter(grant__in=grants).delete()
 
 
 def selected_ids(grant):
+    if grant.scope == 'MATERIAL':
+        selection = getattr(grant, 'materialsectiongrant', None)
+        return sorted(selection.sections) if selection else []
     if not configured() or grant.scope not in {'WORKSHOP', 'CRAFT'}:
         return []
     return sorted(str(row.workshop_id or row.craft_id) for row in grant.resource_selections.all())

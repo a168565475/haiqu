@@ -29,7 +29,7 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
                                          on_delete=models.PROTECT, related_name='internal_receipts')
     completed_craft = models.ForeignKey('workshop_config.Craft', on_delete=models.PROTECT,
                                        related_name='internal_semi_receipts')
-    plan_category = models.CharField(max_length=20, choices=[('METAL','金工'),('SEWING','车缝')])
+    plan_category = models.CharField(max_length=20, choices=[('METAL','金工'),('CUTTING','裁剪'),('SEWING','车缝')])
     receipt_date = models.DateField()
     zone = models.ForeignKey('inventory.WarehouseZone', on_delete=models.PROTECT,
                             related_name='internal_semi_receipts')
@@ -54,7 +54,7 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
         permissions = (
             ('confirm_internalsemifinishedreceipt', '确认厂内半成品入库'),
         )
-        constraints = [models.CheckConstraint(condition=Q(plan_category__in=['METAL','SEWING']),
+        constraints = [models.CheckConstraint(condition=Q(plan_category__in=['METAL','CUTTING','SEWING']),
                                                name='inv_internal_receipt_stage'),
                        models.CheckConstraint(condition=Q(status__in=InternalReceiptStatus.values),
                                                name='inv_internal_receipt_status')]
@@ -74,8 +74,8 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
                             related_name='internal_receipt_lines')
     # 材料需求是订单级汇总；不关联采购批次，前端也不选择领料批次。
     input_requirement = models.ForeignKey('material_issues.OrderMaterialRequirement',
-                                         on_delete=models.PROTECT, related_name='internal_receipt_lines')
-    input_unit_name = models.CharField(max_length=10, choices=[('支','支'),('米','米')])
+                                         null=True, blank=True, on_delete=models.PROTECT, related_name='internal_receipt_lines')
+    input_unit_name = models.CharField(max_length=10, choices=[('支','支'),('米','米'),('片','片')])
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
     input_per_output = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     input_quantity = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
@@ -104,10 +104,18 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
             models.CheckConstraint(condition=Q(input_per_output__isnull=False,input_quantity__isnull=False,
                                                input_per_output__gt=0,input_quantity__gt=0,
                                                input_quantity=F('quantity')*F('input_per_output'))
-                                               | Q(input_unit_name='米',input_per_output__isnull=True,input_quantity__isnull=True),
+                                               | Q(input_unit_name='米',input_per_output__isnull=True,input_quantity__isnull=True)
+                                               | Q(input_unit_name='片',input_requirement__isnull=True,
+                                                   input_per_output__isnull=True,input_quantity__isnull=True,
+                                                   attribute_snapshot__schema_version=3,
+                                                   attribute_snapshot__semi_kind__in=['CUT_PIECE','SEWN_PART']),
                                    name='inv_int_receipt_input'),
-            models.CheckConstraint(condition=Q(input_unit_name='米') | Q(input_unit_name='支',input_per_output=1),
+            models.CheckConstraint(condition=Q(input_unit_name__in=['米','片']) | Q(input_unit_name='支',input_per_output=1),
                                    name='inv_int_receipt_input_unit'),
+            models.CheckConstraint(condition=Q(input_requirement__isnull=False)
+                                   | Q(input_unit_name='片',attribute_snapshot__schema_version=3,
+                                       attribute_snapshot__semi_kind__in=['CUT_PIECE','SEWN_PART']),
+                                   name='inv_int_receipt_source'),
         ]
         indexes = [models.Index(fields=['component_identity','receipt'],name='inv_int_receipt_part'),
                    models.Index(fields=['input_requirement','receipt'],name='inv_int_receipt_input_use')]

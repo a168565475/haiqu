@@ -12,7 +12,7 @@ from rest_framework import serializers
 from apps.core.models import currency_code_validator, uppercase_code_validator
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.serializers import EmployeeSummarySerializer
-from apps.customers.models import CustomerAccount, CustomerContact, CustomerEntityAddress, CustomerTransactionEntity
+from apps.customers.models import CustomerAccount, CustomerContact, CustomerTransactionEntity
 from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inquiries.models import Inquiry, InquiryItem
@@ -30,6 +30,7 @@ from ..models import (
     SampleFileLink,
     SampleParameterImage,
     SampleItem,
+    SampleProduct,
     SampleRequest,
     SampleRequestStatus,
     SampleShipment,
@@ -336,56 +337,6 @@ class SampleShipmentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
-
-class SampleShipmentCreateSerializer(serializers.Serializer):
-    items = SampleShipmentItemSerializer(many=True)
-    notes = serializers.CharField(required=False, allow_blank=True)
-
-    def validate_items(self, items):
-        request_obj = self.context["sample_request"]
-        if not items:
-            raise serializers.ValidationError("寄送记录至少包含一条明细。")
-        ids = [item["sample_item"].pk for item in items]
-        if len(ids) != len(set(ids)):
-            raise serializers.ValidationError("寄送明细不能重复。")
-        if any(item["sample_item"].sample_request_id != request_obj.pk for item in items):
-            raise serializers.ValidationError("寄送明细必须属于当前样品申请。")
-        return items
-
-
-class SampleShipSerializer(serializers.Serializer):
-    address_id = serializers.PrimaryKeyRelatedField(
-        source="address",
-        queryset=CustomerEntityAddress.objects.filter(archived_at__isnull=True),
-    )
-    contact_id = serializers.PrimaryKeyRelatedField(
-        source="contact",
-        queryset=CustomerContact.objects.filter(status="ACTIVE", archived_at__isnull=True),
-    )
-    carrier_code = serializers.CharField(max_length=50, validators=[uppercase_code_validator])
-    tracking_number = serializers.CharField(max_length=150)
-    fee_warning_acknowledged = serializers.BooleanField(default=False)
-    fee_warning_reason = serializers.CharField(required=False, allow_blank=True, max_length=1000)
-    notes = serializers.CharField(required=False, allow_blank=True)
-
-    def validate(self, attrs):
-        shipment = self.context["shipment"]
-        sample_request = shipment.sample_request
-        errors = {}
-        address = attrs["address"]
-        if sample_request.transaction_entity_id:
-            if address.transaction_entity_id != sample_request.transaction_entity_id:
-                errors["address_id"] = "寄送地址必须属于样品申请交易主体。"
-        elif address.transaction_entity.customer_account_id != sample_request.customer_account_id:
-            errors["address_id"] = "寄送地址必须属于样品申请客户。"
-        if attrs["contact"].customer_account_id != sample_request.customer_account_id:
-            errors["contact_id"] = "收件联系人必须属于样品申请客户。"
-        if attrs["fee_warning_acknowledged"] and not attrs.get("fee_warning_reason", "").strip():
-            errors["fee_warning_reason"] = "确认收费风险时必须填写原因。"
-        if errors:
-            raise serializers.ValidationError(errors)
-        return attrs
 
 
 class SampleFeedbackSerializer(serializers.ModelSerializer):
@@ -847,6 +798,53 @@ class SampleRequestListSerializer(ModuleAccessSerializerMixin, serializers.Model
         ]
 
 
+class SampleRequestListSummaryProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category_name_snapshot")
+    color = serializers.SerializerMethodField()
+    total_sample_quantity = serializers.SerializerMethodField()
+    get_color = SampleRequestListProductSerializer.get_color
+    get_total_sample_quantity = SampleRequestListProductSerializer.get_total_sample_quantity
+
+    class Meta:
+        model = SampleProduct
+        fields = ["id", "line_number", "category_name", "product_name", "specification", "color", "total_sample_quantity"]
+
+
+class SampleRequestListOwnerSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    display_name = serializers.CharField()
+
+
+class SampleRequestListSummarySerializer(SampleRequestListSerializer):
+    """列表保留展示和操作摘要；详情继续沿用完整字段契约。"""
+    owner = SampleRequestListOwnerSerializer(source="owner_employee", read_only=True)
+    products = SampleRequestListSummaryProductSerializer(many=True, read_only=True)
+
+    def get_material_summary(self, instance) -> dict | None:
+        if not instance.application_payload_hash:
+            return None
+        from ..material_arrival_services import material_progress
+        progress = material_progress(instance, summary_only=True)
+        return {key: progress[key] for key in ["label", "status"]}
+
+    def get_application_actions(self, instance) -> dict:
+        actions = application_actions(instance, self.context.get("request"))
+        return {key: actions[key] for key in (
+            "is_application", "can_resubmit", "can_edit_products", "can_edit_materials", "can_director_review",
+        )}
+
+    def get_latest_shipment(self, instance):
+        shipment = max(instance.shipments.all(), key=lambda item: (item.shipped_at or item.created_at, item.pk), default=None)
+        return {"status": shipment.status, "status_display": shipment.get_status_display()} if shipment else None
+
+    class Meta(SampleRequestListSerializer.Meta):
+        fields = [
+            "id", "request_number", "submitted_on", "customer_name", "owner", "status", "status_display",
+            "sample_type_display", "sample_due_date", "requested_at", "requested_due_at", "products",
+            "item_summary", "application_actions", "material_summary", "allowed_permissions", "latest_shipment",
+        ]
+
+
 class SampleRequestDetailSerializer(SampleRequestListSerializer):
     items = SampleItemSerializer(many=True, read_only=True)
     fee_records = SampleFeeRecordSerializer(many=True, read_only=True)
@@ -1116,50 +1114,6 @@ class SampleRequestCreateSerializer(SampleRequestWritableSerializer):
         return items
 
 
-class SampleRequestUpdateSerializer(SampleRequestWritableSerializer):
-    class Meta:
-        model = SampleRequest
-        fields = [
-            "transaction_entity_id",
-            "customer_contact_id",
-            "owner_employee_id",
-            "source_inquiry_id",
-            "source_quotation_version_id",
-            "sample_type",
-            "purpose",
-            "requested_at",
-            "requested_due_at",
-            "expected_shipped_at",
-            "expected_received_at",
-            "collaborator_employee_ids",
-            "notes",
-        ]
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if self.instance is None:
-            return
-        customer = self.instance.customer_account
-        self.fields["transaction_entity_id"].queryset = CustomerTransactionEntity.objects.filter(
-            customer_account=customer, archived_at__isnull=True
-        )
-        self.fields["customer_contact_id"].queryset = CustomerContact.objects.filter(
-            customer_account=customer, archived_at__isnull=True
-        )
-        self.fields["source_inquiry_id"].queryset = Inquiry.objects.filter(
-            customer_account=customer, archived_at__isnull=True
-        )
-        self.fields["source_quotation_version_id"].queryset = QuotationVersion.objects.filter(
-            quotation__customer_account=customer,
-            quotation__archived_at__isnull=True,
-        )
-
-    def validate(self, attrs):
-        if not attrs:
-            raise serializers.ValidationError({"detail": "请至少提交一个需要修改的字段。"})
-        return super().validate(attrs)
-
-
 class SampleSourceItemSerializer(serializers.Serializer):
     requested_quantity = serializers.IntegerField(min_value=1)
 
@@ -1255,46 +1209,8 @@ class SampleFromQuotationCreateSerializer(SampleFromSourceCreateSerializer):
         return attrs
 
 
-class SampleBatchSelectionSerializer(serializers.Serializer):
-    sample_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        min_length=1,
-        max_length=100,
-    )
-    etags = serializers.DictField(child=serializers.CharField(max_length=100))
-
-    def validate(self, attrs):
-        sample_ids = {str(value) for value in attrs["sample_ids"]}
-        missing = sample_ids.difference(attrs["etags"].keys())
-        if missing:
-            raise serializers.ValidationError({"etags": "每条样品记录都必须提供当前 ETag。"})
-        return attrs
-
-
-class SampleBulkTransferSerializer(SampleBatchSelectionSerializer):
-    owner_employee_id = serializers.PrimaryKeyRelatedField(
-        source="owner_employee",
-        queryset=active_department_employees("DEPT_BUSINESS"),
-    )
-    note = serializers.CharField(max_length=500, trim_whitespace=True)
-
-
-class SampleBulkReminderSerializer(SampleBatchSelectionSerializer):
-    note = serializers.CharField(required=False, allow_blank=True, max_length=500, trim_whitespace=True)
-
-
 class SampleActionSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=500)
-
-
-class SampleShipmentProgressSerializer(serializers.Serializer):
-    occurred_at = serializers.DateTimeField()
-    material_status = serializers.CharField(max_length=1000, trim_whitespace=True)
-
-    def validate_occurred_at(self, value):
-        if value > timezone.now():
-            raise serializers.ValidationError("进度时间不能晚于当前时间。")
-        return value
 
 
 class SampleReasonSerializer(serializers.Serializer):

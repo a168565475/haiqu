@@ -22,7 +22,8 @@ const apiPrefix = '/api/v1/material-catalog/';
 const viewports = [[1673, 941], [1920, 1080], [1440, 900]];
 const report = {
   schemaVersion: 1, startedAt: new Date().toISOString(), status: 'RUNNING', mode: 'real-api-read-only',
-  apiReads: [], checks: [], screenshots: [], blockedWrites: [], pageErrors: [], httpErrors: [], notCovered: [],
+  apiReads: [], checks: [], screenshots: [], blockedWrites: [], blockedForeignRequests: [], pageErrors: [], httpErrors: [], notCovered: [],
+  detailIdMap: [], detailComparisons: [], detailDigestAlgorithm: 'SHA256 of canonical JSON: sorted object keys, array order preserved, UTF-8',
   resources: { browserTemp, created: false, browserClosed: false, removed: false, verifiedAbsent: false },
 };
 const snapshots = new Map();
@@ -31,6 +32,12 @@ let base, browser, page, visualBaseline, catalogOptions, ownsTemp = false, evide
 
 function stop(code, message, blocked = false) { const error = new Error(message); Object.assign(error, { code, safeQaMessage: true, blocked }); throw error; }
 function check(condition, code, message) { if (!condition) stop(code, message); }
+function canonicalJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonicalJson(value[key])).join(',') + '}';
+  return JSON.stringify(value);
+}
+function detailDigest(value) { return crypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex'); }
 function digest(value) { return crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 16); }
 function samePath(left, right) { const normalize = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value); return normalize(left) === normalize(right); }
 function safePath(url) { return new URL(url, base).pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ':id'); }
@@ -60,12 +67,82 @@ function checkFixedFields(options) {
     const matches = options.spray_fields.filter(field => field?.key === key);
     check(matches.length === 1 && matches[0].label === label && matches[0].kind === kind, 'FIXED_SPRAY_FIELD_CONTRACT', `SPRAY/${key} 必须唯一、名称为“${label}”、类型为 ${kind}。`);
   }
+  check(options.categories.find(item => item.key === 'FABRIC_SEMI')?.label === '裁片', 'CUTTING_LABEL', '当前裁片分区名称不符。');
   record('confirmed-field-definitions', { baseFields: expectedBase.length, sprayFields: expectedSpray.length });
+}
+
+// context.route仅覆盖初始URL；每页在放行前安装CDP请求阶段守卫，逐跳检查重定向。
+async function installRequestGuard(context, origin, result) {
+  const pages = new Map();
+  let closing = false;
+  result.guardErrors = [];
+  result.redirectChecks = [];
+  result.guardCoverage = { stage: 'Request', guardedPages: 0, checkedRequests: 0 };
+  context.on('close', () => { closing = true; });
+  function violation(url, method) {
+    const parsed = new URL(url);
+    if (parsed.origin !== origin) return { field: 'blockedForeignRequests', method, origin: parsed.origin, path: safePath(url) };
+    if (!['GET', 'HEAD'].includes(method)) return { field: 'blockedWrites', method, path: safePath(url) };
+    return null;
+  }
+  function recordViolation(issue) {
+    const {field, ...evidence} = issue;
+    result[field].push(evidence);
+  }
+  function failClosed(error, operation, page) {
+    // 关闭期间未完成的favicon等请求已被浏览器销毁，不再有出网能力。
+    if (closing || page?.isClosed()) return;
+    result.guardErrors.push({ operation, name: error.name, digest: digest(error.message) });
+    void context.close({ reason: 'QA逐跳请求守卫失败，已关闭上下文' }).catch(closeError => {
+      result.guardErrors.push({ operation: 'context.close', name: closeError.name, digest: digest(closeError.message) });
+    });
+  }
+  function preparePage(page) {
+    if (!pages.has(page)) pages.set(page, (async () => {
+      const session = await context.newCDPSession(page);
+      session.on('Fetch.requestPaused', event => {
+        result.guardCoverage.checkedRequests++;
+        const issue = violation(event.request.url, event.request.method);
+        if (event.redirectedRequestId) result.redirectChecks.push({ method: event.request.method, origin: new URL(event.request.url).origin, path: safePath(event.request.url), allowed: !issue });
+        if (issue) recordViolation(issue);
+        // Fetch在发出下一跳（包括Cookie）之前暂停；不读取/记录请求头。
+        void session.send(issue ? 'Fetch.failRequest' : 'Fetch.continueRequest', issue
+          ? { requestId: event.requestId, errorReason: 'BlockedByClient' }
+          : { requestId: event.requestId }).catch(error => failClosed(error, 'Fetch.requestPaused', page));
+      });
+      await session.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
+      result.guardCoverage.guardedPages++;
+    })());
+    return pages.get(page);
+  }
+  await context.route('**/*', async route => {
+    const request = route.request(), issue = violation(request.url(), request.method());
+    if (issue) { recordViolation(issue); await route.abort('blockedbyclient'); return; }
+    try {
+      // 初始页、子页首次请求都先暂停；未能建立逐跳守卫时不继续请求。
+      await preparePage(request.frame().page());
+    } catch (error) {
+      result.guardErrors.push({operation: 'preparePage', name: error.name, digest: digest(error.message)});
+      await route.abort('blockedbyclient'); return;
+    }
+    await route.continue();
+  });
+  return { preparePage };
+}
+
+async function themeValue(expression, property = 'backgroundColor') {
+  return page.evaluate(({value, property}) => {
+    const probe = document.createElement('span');
+    probe.style[property] = value; probe.hidden = true; document.body.append(probe);
+    const color = getComputedStyle(probe)[property]; probe.remove(); return color;
+  }, {value: expression, property});
 }
 
 async function readApi(context, route, kind) {
   let response;
-  try { response = await context.request.get(new URL(route, base).href, { maxRedirects: 0 }); }
+  const url = new URL(route, base);
+  check(url.origin === base.origin, 'API_ORIGIN', 'API读取必须使用明确目标的同源地址。');
+  try { response = await context.request.get(url.href, { maxRedirects: 0 }); }
   catch { stop('API_UNREACHABLE', `${kind} 请求不可达；未保存请求细节。`, true); }
   report.apiReads.push({ kind, status: response.status() });
   if ([401, 403].includes(response.status())) stop('API_PERMISSION', `${kind} 缺少有效 Session 或读取权限。`, true);
@@ -124,7 +201,9 @@ async function openSelect(trigger) {
 async function selectValue(trigger, value) {
   if (await selectRoot(trigger).getAttribute('data-model-value') === '') {
     const color = await selectRoot(trigger).locator('.el-select__placeholder').evaluate(node => getComputedStyle(node).color);
-    check(color === 'rgb(150, 143, 132)', 'SELECT_EMPTY_PLACEHOLDER', '空选择器应使用 #968F84 占位文字。');
+    const inFlatForm = await selectRoot(trigger).evaluate(node => Boolean(node.closest('.erp-flat-form')));
+    // 当前公共平面表单把select文字（含占位节点）统一为输入字色；不恢复旧V2灰色门禁。
+    check(color === await themeValue(inFlatForm ? 'var(--erp-input-text)' : 'var(--erp-input-placeholder)'), 'SELECT_EMPTY_PLACEHOLDER', '空选择器文字未遵从当前表单/普通选择器的主题规则。');
     record('select-empty-placeholder', { label: await trigger.getAttribute('aria-label'), color });
   }
   await openSelect(trigger);
@@ -142,35 +221,39 @@ async function checkDropdown(trigger, expected, width, height, kind) {
   const actual = await panel.locator('[role="option"]').evaluateAll(items => items.map(item => ({ value: item.dataset.value, label: item.textContent.trim() })));
   check(actual.length === expected.length && actual.every(item => expected.some(option => option.value === item.value && option.label === item.label)), 'SELECT_REAL_OPTIONS', `${kind} 面板选项与真实 API 不一致。`);
   const measurement = await panel.evaluate(node => {
-    const style = item => { const css = getComputedStyle(item), box = item.getBoundingClientRect(); return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: box.width, height: box.height, background: css.backgroundColor, color: css.color, radius: css.borderRadius, shadow: css.boxShadow, overflow: css.overflow, borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => ({ width: css[`border${side}Width`], color: css[`border${side}Color`], style: css[`border${side}Style`] })) }; };
+    const style = item => { const css = getComputedStyle(item), box = item.getBoundingClientRect(); return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: box.width, height: box.height, fontSize: css.fontSize, background: css.backgroundColor, color: css.color, radius: css.borderRadius, shadow: css.boxShadow, overflow: css.overflow, borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => ({ width: css[`border${side}Width`], color: css[`border${side}Color`], style: css[`border${side}Style`] })) }; };
     const wrap = node.querySelector('.el-select-dropdown__wrap');
     const rect = node.getBoundingClientRect();
     return { ...style(node), placement: node.getAttribute('data-popper-placement'), layers: [...node.querySelectorAll('.el-select-dropdown')].map(style), wrap: { clientHeight: wrap.clientHeight, scrollHeight: wrap.scrollHeight, maxHeight: getComputedStyle(wrap).maxHeight, overflowY: getComputedStyle(wrap).overflowY }, items: [...node.querySelectorAll('[role="option"]')].map(item => ({ ...style(item), selected: item.getAttribute('aria-selected') === 'true', disabled: item.getAttribute('aria-disabled') === 'true', checked: Boolean(item.querySelector('.material-catalog-select-check')?.getClientRects().length) })), unclipped: [[rect.left + 3, rect.top + 3], [rect.right - 3, rect.top + 3], [rect.left + 3, rect.bottom - 3], [rect.right - 3, rect.bottom - 3]].every(([x, y]) => node.contains(document.elementFromPoint(x, y))) };
   });
   const triggerBox = await root.locator('.el-select__wrapper').boundingBox(), after = await page.locator('.material-catalog-page').boundingBox();
   const triggerLabelColor = await root.locator('.el-select__placeholder').evaluate(node => getComputedStyle(node).color);
+  const colors = {};
+  for (const [key, token] of Object.entries({ text: '--erp-input-text', background: '--erp-dropdown-background', border: '--erp-dropdown-border', selectedBackground: '--erp-dropdown-selected-background', selectedText: '--erp-dropdown-selected-text', ordinaryText: '--erp-dropdown-text', hover: '--erp-dropdown-hover-background' })) colors[key] = await themeValue('var(' + token + ')');
+  const radius = await themeValue('var(--erp-radius-control)', 'borderRadius');
   report.failedDropdown = { width, height, kind, measurement, triggerBox, triggerLabelColor };
   await screenshot(`${width}-dropdown-${kind}`);
-  check(triggerLabelColor === 'rgb(31, 29, 24)', 'SELECT_VALUE_TEXT', `${kind} 展开时已有值应保留 #1F1D18，不应使用占位灰。`);
-  check(measurement.background === 'rgb(252, 251, 247)' && measurement.radius === '5px' && measurement.borders.every(item => item.width === '1px' && item.style === 'solid' && item.color === 'rgb(221, 214, 201)'), 'SELECT_PANEL_STYLE', `${kind} 面板底色、四边或圆角不符。`);
-  check(measurement.shadow === 'none' && measurement.overflow === 'hidden' && measurement.layers.every(item => item.shadow === 'none' && item.borders.every(border => border.width === '0px')), 'SELECT_SINGLE_BORDER_OWNER', `${kind} 面板只能由外层绘制一圈边框，首末行背景应受5px圆角裁切。`);
-  check(measurement.items.every(item => Math.abs(item.height - 32) < 1) && measurement.wrap.clientHeight <= 240 && parseFloat(measurement.wrap.maxHeight) <= 240 && measurement.wrap.overflowY === 'auto', 'SELECT_OPTION_ROWS', `${kind} 选项应为32px，列表最高240px并内部滚动。`);
+  check(triggerLabelColor === colors.text, 'SELECT_VALUE_TEXT', `${kind} 展开时已有值应保留当前主题输入字色，不应使用占位灰。`);
+  check(measurement.background === colors.background && measurement.radius === radius && measurement.borders.every(item => item.width === '1px' && item.style === 'solid' && item.color === colors.border), 'SELECT_PANEL_STYLE', `${kind} 面板底色、四边或圆角不符。`);
+  check(measurement.overflow === 'hidden' && measurement.layers.every(item => item.shadow === 'none' && item.borders.every(border => border.width === '0px')), 'SELECT_SINGLE_BORDER_OWNER', `${kind} 面板只能由外层绘制一圈边框，首末行背景应受当前主题圆角裁切。`);
+  check(measurement.items.every(item => Math.abs(item.height - 32) < 1 && item.fontSize === '13px') && measurement.wrap.clientHeight <= 240 && parseFloat(measurement.wrap.maxHeight) <= 240 && measurement.wrap.overflowY === 'auto', 'SELECT_OPTION_ROWS', `${kind} 选项应为32px，列表最高240px并内部滚动。`);
   check(triggerBox && measurement.width >= triggerBox.width - 1 && measurement.x >= 0 && measurement.right <= width + 1 && measurement.y >= 0 && measurement.bottom <= height + 1 && measurement.unclipped && JSON.stringify(before) === JSON.stringify(after), 'SELECT_PANEL_BOUNDS', `${kind} 面板宽度、视口避让或浮层裁切不符，或推挤了正文。`);
-  check(measurement.items.filter(item => item.selected).length === 1 && measurement.items.filter(item => item.selected).every(item => item.background === 'rgb(255, 244, 230)' && item.color === 'rgb(200, 78, 40)' && item.checked), 'SELECT_SELECTED_STYLE', `${kind} 应有唯一选中项，需浅橙底、品牌字色和勾。`);
-  check(measurement.items.filter(item => !item.selected && !item.disabled).every(item => item.color === 'rgb(31, 29, 24)'), 'SELECT_OPTION_TEXT', `${kind} 普通选项文字应为 #1F1D18。`);
+  check(measurement.items.filter(item => item.selected).length === 1 && measurement.items.filter(item => item.selected).every(item => item.background === colors.selectedBackground && item.color === colors.selectedText && item.checked), 'SELECT_SELECTED_STYLE', `${kind} 应有唯一选中项，需当前主题选中底色/字色和勾。`);
+  check(measurement.items.filter(item => !item.selected && !item.disabled).every(item => item.color === colors.ordinaryText), 'SELECT_OPTION_TEXT', `${kind} 普通选项文字应使用当前主题下拉字色。`);
   check(measurement.placement?.startsWith('top') ? measurement.bottom <= triggerBox.y + 1 : measurement.placement?.startsWith('bottom') && measurement.y >= triggerBox.y + triggerBox.height - 1, 'SELECT_PLACEMENT', `${kind} 弹层应位于触发框上方或下方，不遮住触发框。`);
   const ordinary = panel.locator('[role="option"]:not([aria-selected="true"]):not([aria-disabled="true"])').first();
   if (await ordinary.count()) {
     await ordinary.hover();
-    check(await ordinary.evaluate(node => getComputedStyle(node).backgroundColor) === 'rgb(255, 246, 234)', 'SELECT_HOVER', `${kind} 普通选项悬停颜色不符。`);
+    check(await ordinary.evaluate(node => getComputedStyle(node).backgroundColor) === colors.hover, 'SELECT_HOVER', `${kind} 普通选项悬停颜色不符。`);
   }
   const selected = panel.locator('[role="option"][aria-selected="true"]').first();
   if (await selected.count()) {
     await selected.hover();
-    check(await selected.evaluate(node => getComputedStyle(node).backgroundColor) === 'rgb(255, 244, 230)', 'SELECT_SELECTED_HOVER', `${kind} 选中项悬停不应覆盖选中底色。`);
+    check(await selected.evaluate(node => getComputedStyle(node).backgroundColor) === colors.selectedBackground, 'SELECT_SELECTED_HOVER', `${kind} 选中项悬停不应覆盖选中底色。`);
   }
   await page.mouse.move(0, 0);
   const valueBefore = await root.getAttribute('data-model-value');
+  if (expected.length > 1) {
   await trigger.press('ArrowDown');
   check(await root.getAttribute('data-model-value') === valueBefore && await trigger.getAttribute('aria-expanded') === 'true', 'SELECT_ARROW_NO_COMMIT', `${kind} 方向键不应直接修改值或关闭面板。`);
   const active = panel.locator('[role="option"].is-hovering');
@@ -181,15 +264,19 @@ async function checkDropdown(trigger, expected, width, height, kind) {
   await trigger.press('ArrowDown');
   const activeValue = await active.getAttribute('data-value');
   const activeColor = await active.evaluate(node => getComputedStyle(node).backgroundColor);
-  check(await root.getAttribute('data-model-value') === valueBefore && activeColor === (await active.getAttribute('aria-selected') === 'true' ? 'rgb(255, 244, 230)' : 'rgb(255, 246, 234)'), 'SELECT_KEYBOARD_COLOR', `${kind} 键盘活动项应使用规定的活动色，选中项保留选中色。`);
+  check(await root.getAttribute('data-model-value') === valueBefore && activeColor === (await active.getAttribute('aria-selected') === 'true' ? colors.selectedBackground : colors.hover), 'SELECT_KEYBOARD_COLOR', `${kind} 键盘活动项应使用规定的活动色，选中项保留选中色。`);
   await trigger.press('Enter'); await selectPanel().waitFor({ state: 'hidden' });
   check(await root.getAttribute('data-model-value') === activeValue, 'SELECT_ENTER', `${kind} Enter 未确认活动选项。`);
+  } else {
+    await trigger.press('Escape'); await selectPanel().waitFor({ state: 'hidden' });
+  }
+  const selectedValue = await root.getAttribute('data-model-value');
   for (const key of ['Escape', 'Tab']) {
     await openSelect(trigger); await trigger.press(key); await selectPanel().waitFor({ state: 'hidden' });
-    check(await root.getAttribute('data-model-value') === activeValue, 'SELECT_DISMISS', `${kind} ${key} 关闭时意外改值。`);
+    check(await root.getAttribute('data-model-value') === selectedValue, 'SELECT_DISMISS', `${kind} ${key} 关闭时意外改值。`);
   }
   check(report.blockedWrites.length === 0, 'SELECT_BUSINESS_WRITE', `${kind} 仅选草稿却触发业务写请求。`);
-  record('dropdown-real-panel', { width, height, kind, optionCount: actual.length, triggerLabelColor, activeColor, keyboard: ['ArrowDown', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'], measurement });
+  record('dropdown-real-panel', { width, height, kind, optionCount: actual.length, triggerLabelColor, keyboard: ['ArrowDown', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'], measurement });
   delete report.failedDropdown;
 }
 
@@ -240,9 +327,10 @@ async function checkDetail(detail, options) {
         check(!await row.locator('.attribute-label').isVisible(), 'SHAPE_DUPLICATE_LABEL', '右侧添加形状区域不应重复显示属性标题。');
         const expectedShapes = detail.values.filter(value => value.scope === scope && value.field_key === field.key);
         const actualShapes = await page.locator('.shape-dimensions [data-shape-id]').evaluateAll(items => items.map(item => {
+          const editable = item.querySelector('.edit-shape')?.textContent.trim();
           const label = item.querySelector('.shape-label')?.cloneNode(true);
           label?.querySelectorAll('button').forEach(button => button.remove());
-          return { id: item.getAttribute('data-shape-id'), value: label?.textContent.trim() };
+          return { id: item.getAttribute('data-shape-id'), value: editable || label?.textContent.trim() };
         }));
         check(actualShapes.length === expectedShapes.length && actualShapes.every(actual => expectedShapes.some(expectedShape => expectedShape.id === actual.id && expectedShape.value === actual.value)), 'SHAPE_GROUPS', '真实截面形状没有按左标签与右尺寸分组完整展示。');
         check(await row.locator('.option-chip').count() === 0, 'DUPLICATE_SHAPE_CHIPS', '形状在分组标题下又重复展示成属性值条目。');
@@ -257,8 +345,25 @@ async function checkDetail(detail, options) {
   }
   const spray = page.getByTestId('spray-enabled');
   check(await spray.count() === (template.supports_spray ? 1 : 0), 'SPRAY_VISIBILITY', '喷塑入口与模板支持范围不一致。');
+  if (detail.category_key === 'TUBE') check(await page.getByRole('heading', {name: '半成品属性', exact: true}).count() === 1, 'SEMI_SECTION_LABEL', '管材应显示半成品属性标题。');
   if (template.supports_spray) check(await spray.isChecked() === detail.spray_enabled, 'SPRAY_STATE', '喷塑勾选与真实 API 不一致。');
+  await checkWarehouses(detail, template);
   record('detail-fields', { reference: digest(detail.id), template: detail.template_key, sprayEnabled: detail.spray_enabled, rows });
+}
+
+async function checkWarehouses(detail, template) {
+  const fields = detail.category_key === 'FABRIC_SEMI' ? [['semi_warehouse_id', '半成品仓库']] : [['base_warehouse_id', '原料仓库'], ...(template.supports_spray ? [['semi_warehouse_id', '半成品仓库']] : [])];
+  check(await page.locator('.warehouse-row').count() === fields.length, 'WAREHOUSE_FIELDS', '仓库入口与原料/半成品作用域不一致。');
+  for (const [field, label] of fields) {
+    const row = page.locator('.warehouse-row').filter({ has: page.locator('label', { hasText: label }) });
+    check(await row.count() === 1, 'WAREHOUSE_LABEL', '缺少对应仓库控件。');
+    const trigger = row.getByRole('combobox', { name: label, exact: true });
+    check(await selectRoot(trigger).getAttribute('data-model-value') === (detail[field] || ''), 'WAREHOUSE_VALUE', '仓库控件与已保存详情不一致。');
+    const canChange = report.permissions.change;
+    check(await row.getByRole('button', { name: '保存', exact: true }).count() === (canChange ? 1 : 0), 'WAREHOUSE_LOCAL_SAVE', '局部仓库保存入口未按维护权限呈现。');
+    check(await trigger.isDisabled() === !canChange, 'WAREHOUSE_PERMISSION', '仓库只读/维护状态与权限不一致。');
+  }
+  record('warehouse-fields-readonly', { reference: digest(detail.id), fields: fields.map(([key]) => key), sprayEnabled: detail.spray_enabled });
 }
 
 async function measure(width, height, state) {
@@ -268,7 +373,7 @@ async function measure(width, height, state) {
     const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
     const styles = node => { const css = getComputedStyle(node); return { ...rect(node), fontFamily: css.fontFamily, fontSize: css.fontSize, fontWeight: css.fontWeight, lineHeight: css.lineHeight, color: css.color, background: css.backgroundColor, radius: css.borderRadius, padding: css.padding, margin: css.margin, minHeight: css.minHeight, opacity: css.opacity, gap: css.gap, textAlign: css.textAlign, justifyContent: css.justifyContent, overflowX: css.overflowX, overflowY: css.overflowY, shadow: css.boxShadow, borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => ({ side, width: css[`border${side}Width`], color: css[`border${side}Color`], style: css[`border${side}Style`] })), pseudo: ['::before', '::after'].map(pseudo => { const rule = getComputedStyle(node, pseudo); return { pseudo, content: rule.content, display: rule.display, width: rule.width, border: rule.borderWidth, topWidth: rule.borderTopWidth, topStyle: rule.borderTopStyle, topColor: rule.borderTopColor, shadow: rule.boxShadow }; }) }; };
     const sidebar = element.querySelector('.catalog-sidebar'), detail = element.querySelector('.catalog-detail');
-    const controls = [...element.querySelectorAll('button:not([data-catalog-id]),input:not([type="checkbox"]):not(.el-select__input),select,.el-input__wrapper,.el-select__wrapper')].filter(visible).map(node => ({ tag: node.tagName, className: node.className, action: node.dataset.action || node.dataset.testid || null, isSelect: node.matches('.el-select__wrapper'), disabled: node.disabled === true || node.classList.contains('is-disabled'), readOnly: node.readOnly === true, invalid: node.getAttribute('aria-invalid') === 'true' || node.closest('.material-catalog-select')?.classList.contains('is-invalid') === true, focused: node === document.activeElement || (node.matches('.el-select__wrapper') && node.contains(document.activeElement)), placeholderColor: node.hasAttribute('placeholder') ? getComputedStyle(node, '::placeholder').color : null, hovered: node.matches(':hover'), expectedHeight: 32, ...styles(node) }));
+    const controls = [...element.querySelectorAll('button:not([data-catalog-id]),input:not([type="checkbox"]):not(.el-select__input),select,.el-input__wrapper,.el-select__wrapper')].filter(visible).map(node => ({ tag: node.tagName, className: node.className, action: node.dataset.action || node.dataset.testid || null, isSelect: node.matches('.el-select__wrapper'), disabled: node.disabled === true || node.classList.contains('is-disabled'), readOnly: node.readOnly === true, invalid: node.getAttribute('aria-invalid') === 'true' || node.closest('.material-catalog-select')?.classList.contains('is-invalid') === true, focused: node === document.activeElement || (node.matches('.el-select__wrapper') && node.contains(document.activeElement)), placeholderColor: node.hasAttribute('placeholder') ? getComputedStyle(node, '::placeholder').color : null, hovered: node.matches(':hover'), compact: Boolean(node.closest('.inline-editor,.warehouse-row')), textFontSize: getComputedStyle(node.querySelector('.el-select__selected-item') || node).fontSize, ...styles(node) }));
     const names = [...element.querySelectorAll('[data-testid="material-names"] [data-catalog-id]')].map(node => ({ selected: node.classList.contains('selected'), ...styles(node) }));
     const heads = [...element.querySelectorAll('h1,h2,h3')].map(node => ({ tag: node.tagName, text: node.textContent.trim(), ...styles(node) }));
     const chips = [...element.querySelectorAll('.option-chip')].map(styles);
@@ -283,7 +388,7 @@ async function measure(width, height, state) {
     // 与修改前基线采用同一结构；不保存外部导航文本、用户信息或 HTML。
     const shellStyle = node => { const css = getComputedStyle(node), box = node.getBoundingClientRect(); return { fontFamily: css.fontFamily, fontSize: css.fontSize, fontWeight: css.fontWeight, lineHeight: css.lineHeight, color: css.color, background: css.backgroundColor, border: css.border, borderRadius: css.borderRadius, padding: css.padding, margin: css.margin, display: css.display, x: box.x, y: box.y, width: box.width, height: box.height }; };
     const outer = ['.erp-layout__sidebar', '.erp-layout__header'].map(selector => { const node = document.querySelector(selector); if (!node) return { selector, missing: true }; const nodes = [node, ...node.querySelectorAll('*')]; return { selector, root: shellStyle(node), dom: nodes.map(item => ({ tag: item.tagName, className: typeof item.className === 'string' ? item.className : item.getAttribute('class'), role: item.getAttribute('role'), childCount: item.children.length })), styles: nodes.map(shellStyle) }; });
-    return { viewport: [innerWidth, innerHeight], bodyFontFamily: getComputedStyle(document.body).fontFamily, main: element.closest('#erp-main-content') ? rect(element.closest('#erp-main-content')) : null, page: styles(element), sidebar: sidebar ? styles(sidebar) : null, detail: detail ? styles(detail) : null, controls, names, heads, chips, labels, shapeLabels, rows, groups, optionLines, outer, scrolls, parentScrolls, documentOverflow: document.documentElement.scrollWidth > innerWidth + 1, documentVerticalOverflow: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) > innerHeight + 1, globalSave: [...element.querySelectorAll('button')].some(node => visible(node) && node.textContent.trim() === '保存' && !node.closest('.inline-editor') && node.dataset.testid !== 'save-name') };
+    return { viewport: [innerWidth, innerHeight], bodyFontFamily: getComputedStyle(document.body).fontFamily, main: element.closest('#erp-main-content') ? rect(element.closest('#erp-main-content')) : null, page: styles(element), sidebar: sidebar ? styles(sidebar) : null, detail: detail ? styles(detail) : null, controls, names, heads, chips, labels, shapeLabels, rows, groups, optionLines, outer, scrolls, parentScrolls, documentOverflow: document.documentElement.scrollWidth > innerWidth + 1, documentVerticalOverflow: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) > innerHeight + 1, globalSave: [...element.querySelectorAll('button')].some(node => visible(node) && node.textContent.trim() === '保存' && !node.closest('.inline-editor,.warehouse-row') && node.dataset.testid !== 'save-name') };
   });
   for (const item of measurement.outer) {
     check(!item.missing, 'OUTER_NAVIGATION_MISSING', '现有外部导航或顶栏不存在。');
@@ -298,45 +403,23 @@ async function measure(width, height, state) {
     check(measurement.outer.every(item => { const before = expected.outer.find(value => value.selector === item.selector); return before.domDigest === item.domDigest && before.styleDigest === item.styleDigest; }), 'OUTER_NAVIGATION_CHANGED', '外部导航或顶栏的 DOM、几何或计算样式与修改前基线不一致。');
   }
   check(await page.locator('.material-catalog-page select').count() === 0, 'NATIVE_SELECT_REMAINS', '原料管理不应残留原生下拉。');
-  const borderIs = (node, color) => node.borders.every(border => border.width === '1px' && border.style === 'solid' && border.color === color);
-  const noPseudoBorder = node => node.pseudo.every(pseudo => ['none', 'normal'].includes(pseudo.content) || (pseudo.border.split(' ').every(value => value === '0px') && pseudo.shadow === 'none'));
-  check(JSON.stringify(measurement.viewport) === JSON.stringify([width, height]), 'VIEWPORT', '浏览器实际视口与目标不符。');
-  check(measurement.sidebar && Math.abs(measurement.sidebar.width - 240) < 1, 'SIDEBAR_WIDTH', '桌面品名卡片应为 240px。');
-  // 外层 PageContainer 已提供 14px；核对最终几何，避免把留白的实现层级当作视觉要求。
-  check(measurement.main && [measurement.sidebar.x - measurement.main.x, measurement.sidebar.y - measurement.main.y, measurement.main.right - measurement.detail.right, measurement.main.bottom - measurement.sidebar.bottom, measurement.main.bottom - measurement.detail.bottom].every(value => Math.abs(value - 14) < 1) && Math.abs(measurement.detail.x - measurement.sidebar.right - 8) < 1, 'CARD_SPACING', '主内容区至卡片四边应留白 14px，左右卡片间隔应为 8px。');
-  check(!measurement.documentOverflow && measurement.scrolls.every(item => item.scrollWidth <= item.clientWidth + 1), 'HORIZONTAL_OVERFLOW', '原料管理出现整页或内容区横向溢出。');
-  check(!measurement.documentVerticalOverflow && measurement.page.bottom <= height + 1 && [measurement.scrolls[0], ...measurement.parentScrolls].every(item => item.scrollHeight <= item.clientHeight + 1), 'PARENT_VERTICAL_OVERFLOW', '内容撑开页面或父容器，未限制在独立内容区内滚动。');
-  check(measurement.scrolls.slice(1).every(item => item.overflowY === 'auto'), 'INDEPENDENT_SCROLL', '目录与属性区应按实际内容自动滚动，不能强制显示滚动条或截断溢出内容。');
-  check(measurement.page.background === 'rgb(247, 245, 242)' && measurement.page.color === 'rgb(23, 25, 28)', 'PAGE_COLORS', '页面背景或正文颜色与 V2 参数不符。');
-  check([measurement.page, ...measurement.controls, ...measurement.names, ...measurement.heads, ...measurement.labels, ...measurement.chips].every(item => item.fontFamily === measurement.bodyFontFamily), 'FONT_INHERITANCE', '原料管理字体族应继续继承现有全局字体。');
-  check(measurement.page.fontSize === '13px' && measurement.controls.every(item => item.fontSize === '13px') && measurement.names.every(item => item.fontSize === '13px'), 'BODY_FONT_SIZE', '正文、控件与品名行应使用 13px 字号。');
-  check(measurement.heads.every(item => item.fontSize === '17px' && item.fontWeight === '600' && item.lineHeight === '24px'), 'SECTION_HEADING', '属性区标题应使用 17px、600 字重、24px 行高。');
-  check([measurement.sidebar, measurement.detail].every(item => borderIs(item, 'rgb(236, 232, 226)') && item.background === 'rgb(252, 251, 249)' && item.radius === '5px' && item.padding === '16px'), 'CARD_BORDERS', '两侧卡片四边应为单层 1px #ECE8E2，背景 #FCFBF9、圆角 5px、内边距 16px。');
-  check(measurement.page.borders.every(border => border.width === '0px') && [measurement.page, measurement.sidebar, measurement.detail, ...measurement.chips].every(item => item.shadow === 'none' && noPseudoBorder(item)), 'SINGLE_BORDER_OWNER', '页面、卡片、属性框或伪元素出现重复边线或阴影。');
-  check(measurement.chips.every(item => item.width >= 83.5 && item.height >= 31.5 && item.radius === '5px' && borderIs(item, 'rgb(218, 220, 224)') && item.textAlign === 'center' && item.justifyContent === 'center'), 'OPTION_CHIPS', '已存属性框应至少 84×32px、单层实线边框且值居中。');
-  check(measurement.optionLines.every(item => item.gap === '8px' && item.wrap === 'wrap'), 'OPTION_WRAP', '属性选项应以 8px 间距自然换行。');
-  check(measurement.rows.every(item => item.minHeight === '40px' && item.height >= 39.5) && measurement.groups.every(group => group.margin === '12px 0px') && measurement.shapeLabels.every(item => Math.abs(item.width - 84) < 1), 'COMPACT_ATTRIBUTE_ROWS', '属性行至少40px、分组间距12px、形状子标签84px。');
+  check(JSON.stringify(measurement.viewport) === JSON.stringify([width, height]), 'VIEWPORT', '浏览器视口与目标不符。');
+  check(measurement.sidebar && Math.abs(measurement.sidebar.width - 240) < 1, 'SIDEBAR_WIDTH', '现有紧凑品名栏应保持240px。');
+  check(measurement.sidebar.right <= measurement.detail.x && measurement.detail.right <= width && measurement.sidebar.y >= 0, 'CARD_SPACING', '卡片重叠或超出视口。');
+  check(!measurement.documentOverflow && measurement.scrolls.every(item => item.scrollWidth <= item.clientWidth + 1), 'HORIZONTAL_OVERFLOW', '出现整页或内容区横向溢出。');
+  check(!measurement.documentVerticalOverflow && measurement.page.bottom <= height + 1 && [measurement.scrolls[0], ...measurement.parentScrolls].every(item => item.scrollHeight <= item.clientHeight + 1), 'PARENT_VERTICAL_OVERFLOW', '内容撑开页面或父容器。');
+  check(measurement.scrolls.slice(2).every(item => item.overflowY === 'auto'), 'INDEPENDENT_SCROLL', '目录或属性区不能按实际内容滚动。');
+  check([...measurement.chips, ...measurement.labels].every(item => item.fontFamily === measurement.bodyFontFamily), 'FONT_INHERITANCE', '属性框和标签应继承当前全局字体。');
+  check(measurement.chips.every(item => item.width >= 67.5 && item.height >= 27.5 && item.fontSize === '12px' && item.radius === '5px' && item.borders.every(border => border.width === '1px' && border.style === 'solid') && item.textAlign === 'center' && item.justifyContent === 'center'), 'OPTION_CHIPS', '已存属性框应至少68×28px、12px字、5px圆角、单层实线边框且值居中。');
+  check(measurement.controls.filter(item => item.compact && !item.className.includes('el-select__input')).every(item => Math.abs(item.height - 28) < 1 && (!item.isSelect || item.textFontSize === '12px')), 'COMPACT_CONTROLS', '行内输入及仓库框/局部保存应为28px，选择文字12px。');
+  check(measurement.optionLines.every(item => item.gap === '6px' && item.wrap === 'wrap'), 'OPTION_WRAP', '当前小框应6px间距自然换行。');
+  check(measurement.rows.every(item => item.minHeight === '36px' && item.height >= 35.5) && measurement.shapeLabels.every(item => Math.abs(item.width - 84) < 1), 'COMPACT_ATTRIBUTE_ROWS', '属性行至少36px、形状子标签84px。');
+  check(measurement.labels.every(item => Math.abs(item.width - 120) < 1) && measurement.groups.every(group => Math.abs(group.labels.width - 120) < 1), 'ATTRIBUTE_LABEL_WIDTH', '属性标签区应为120px。');
   const leaders = [...measurement.labels, ...measurement.groups.flatMap(group => group.leaders)];
-  check(measurement.labels.every(item => Math.abs(item.width - 120) < 1) && measurement.groups.every(group => Math.abs(group.labels.width - 120) < 1), 'ATTRIBUTE_LABEL_WIDTH', '属性标签区应为 120px。');
-  check(leaders.every(item => item.pseudo.some(pseudo => pseudo.pseudo === '::after' && pseudo.display !== 'none' && parseFloat(pseudo.width) > 0 && pseudo.topWidth === '1px' && pseudo.topStyle === 'dashed' && pseudo.topColor === 'rgb(218, 220, 224)')), 'ATTRIBUTE_LEADERS', '属性标签后应显示单层浅灰虚线。');
-  check(measurement.groups.every(group => group.dimensions.borders.every(border => border.side === 'Left' ? border.width === '1px' && border.style === 'solid' && border.color === 'rgb(220, 216, 210)' : border.width === '0px') && (!group.headingVisible || (Math.abs(group.heading.x - (group.firstShapeLabel?.x ?? group.dimensions.x + 13)) < 1 && (!group.shapeRows.length || (group.heading.y >= group.shapeRows[group.shapeRows.length - 1].bottom - 1 && group.heading.y <= group.shapeRows[group.shapeRows.length - 1].bottom + 12)) && group.heading.right <= group.dimensions.right + 1))), 'SHAPE_GROUP_LAYOUT', '形状尺寸组应有左侧细竖线；添加形状及草稿应紧接列表底部，与形状名称左对齐。');
-  check(measurement.controls.filter(item => item.action === 'add' && !item.disabled && !item.hovered).every(item => borderIs(item, 'rgb(236, 229, 220)') && item.background === 'rgb(248, 245, 240)'), 'ADD_SOLID_BORDER', '添加按钮应使用浅色背景和实线边框。');
-  check(measurement.controls.filter(item => ['save', 'save-name', 'create-name'].includes(item.action) && !item.disabled).every(item => borderIs(item, 'rgb(255, 81, 10)') && item.color === 'rgb(240, 75, 9)' && ['rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)', 'rgb(255, 240, 226)'].includes(item.background)), 'ORANGE_OUTLINE_ACTION', '保存与新品名按钮应为橙色描边，不能填成实心橙色。');
-  check(measurement.names.filter(item => item.selected).every(item => item.background === 'rgb(255, 240, 226)' && item.fontWeight === '600' && item.color === 'rgb(23, 25, 28)' && item.borders.some(border => border.side === 'Left' && border.width === '4px' && border.color === 'rgb(255, 81, 10)')), 'SELECTED_NAME', '选中品名应为浅橙背景、左侧 4px 橙线和深色粗体文字。');
-  check(!measurement.globalSave, 'GLOBAL_SAVE', '出现未确认的页面总保存按钮。');
-  check(!measurement.heads.some(item => item.tag === 'H1' || parseFloat(item.fontSize) > 20 || ['品名目录', '选择分类'].includes(item.text)), 'GIANT_HEADER', '页面保留了被取消的大标题或冗余目录标题。');
-  for (const control of measurement.controls) {
-    check(Math.abs(control.height - control.expectedHeight) < 1, 'CONTROL_HEIGHT', `控件实际高度不是 ${control.expectedHeight}px：${control.tag}/${control.action || control.className}。`);
-  }
-  check(measurement.names.every(item => Math.abs(item.height - 32) < 1), 'NAME_ROW_HEIGHT', '品名行实际高度不是 32px。');
-  check([...measurement.controls, ...measurement.names].every(item => item.radius === '5px'), 'CONTROL_RADIUS', '输入、选择器和按钮圆角应统一为5px。');
-  for (const control of measurement.controls.filter(item => ['INPUT', 'SELECT'].includes(item.tag) || item.isSelect)) {
-    const background = control.disabled ? 'rgb(232, 225, 213)' : control.readOnly ? 'rgb(240, 234, 223)' : 'rgb(252, 251, 247)';
-    const color = control.disabled ? 'rgb(111, 106, 97)' : control.readOnly ? 'rgb(77, 76, 72)' : 'rgb(31, 29, 24)';
-    const border = control.disabled || control.readOnly ? 'rgb(221, 214, 201)' : control.invalid ? 'rgb(181, 51, 51)' : control.focused ? 'rgb(56, 152, 236)' : 'rgb(221, 214, 201)';
-    check(control.background === background && control.color === color && borderIs(control, border) && control.opacity === '1', 'INPUT_STATE_COLORS', '输入框或选择器的底色、字色、边框或透明度不符合 DESIGN 状态规范。');
-    if (control.placeholderColor) check(control.placeholderColor === 'rgb(150, 143, 132)', 'INPUT_PLACEHOLDER', '输入占位文字应为 #968F84。');
-  }
+  check(leaders.every(item => item.pseudo.some(pseudo => pseudo.pseudo === '::after' && pseudo.display !== 'none' && parseFloat(pseudo.width) > 0 && pseudo.topWidth === '2px' && pseudo.topStyle === 'solid')), 'ATTRIBUTE_LEADERS', '属性标签后应保留当前2px实线连接。');
+  check(measurement.groups.every(group => group.dimensions.borders.every(border => border.side === 'Left' ? border.width === '2px' && border.style === 'solid' : border.width === '0px') && (!group.headingVisible || (group.heading.right <= group.dimensions.right + 1))), 'SHAPE_GROUP_LAYOUT', '形状/尺寸分组竖线或添加入口越界。');
+  check(measurement.heads.filter(item => item.tag === 'H2').every(item => item.fontSize === '17px' && item.fontWeight === '600' && item.lineHeight === '24px'), 'SECTION_HEADING', '属性区标题应保留17px/600/24px。');
+  check(!measurement.globalSave, 'GLOBAL_SAVE', '出现属性小保存/新品名保存/仓库局部保存以外的总保存入口。');
   record('desktop-layout', { width, height, state, measurement });
   delete report.failedMeasurement;
 }
@@ -360,7 +443,7 @@ async function safeInlineChecks(detail, width, height, sprayDetail) {
     await page.waitForFunction(node => getComputedStyle(node).opacity === '1', await remove.elementHandle());
     const focus = await geometry();
     check(before.opacity === '0' && hover.opacity === '1' && focus.opacity === '1', 'DELETE_VISIBILITY', '删除图标未按悬停与键盘聚焦展示。');
-    check(Math.abs(before.buttonWidth - 32) < 0.5 && [hover, focus].every(item => Math.abs(item.width - before.width) < 0.5 && Math.abs(item.height - before.height) < 0.5 && Math.abs(item.x - before.x) < 0.5), 'DELETE_LAYOUT_SHIFT', '删除按钮未预留 32px 位置，悬停或聚焦导致条目跳动。');
+    check(Math.abs(before.buttonWidth - 20) < 0.5 && [hover, focus].every(item => Math.abs(item.width - before.width) < 0.5 && Math.abs(item.height - before.height) < 0.5 && Math.abs(item.x - before.x) < 0.5), 'DELETE_LAYOUT_SHIFT', '删除按钮未预留20px 位置，悬停或聚焦导致条目跳动。');
     record('delete-hover-focus', { before, hover, focus });
   } else note('缺少真实材质选项，删除悬停与键盘焦点未覆盖。');
   await add.click();
@@ -368,15 +451,35 @@ async function safeInlineChecks(detail, width, height, sprayDetail) {
   await input.fill('QA 未保存草稿');
   await page.getByLabel('搜索品名', { exact: true }).focus();
   await page.waitForTimeout(450);
-  check(await input.inputValue() === 'QA 未保存草稿', 'DRAFT_LOST_ON_BLUR', '输入失焦后草稿被清除。');
+  check(await editor.locator('.material-catalog-select').getAttribute('data-model-value') === 'QA 未保存草稿', 'DRAFT_LOST_ON_BLUR', '输入失焦后草稿被清除。');
   check(report.blockedWrites.length === 0, 'AUTO_SAVE_ON_BLUR', '输入失焦触发了业务写请求，已拦截。');
-  const positions = { input: await input.boundingBox(), save: await save.boundingBox() };
+  const positions = { input: await editor.locator('.el-select__wrapper').boundingBox(), save: await save.boundingBox() };
   check(positions.input && positions.save && positions.save.x >= positions.input.x + positions.input.width - 1 && Math.abs(positions.save.y - positions.input.y) < 1, 'INLINE_SAVE_POSITION', '小保存按钮不在输入框右侧同一行。');
   record('inline-draft-no-autosave', positions);
   await input.focus();
   await measure(width, height, `inline-material-${digest(detail.id)}`);
   await screenshot(`${width}-inline-draft-${digest(detail.id)}`);
   await openPage(); // 丢弃未保存的浏览器草稿，不调用保存接口。
+  await chooseDetail(detail);
+  for (const label of ['原料仓库', '半成品仓库']) {
+    const row = page.locator('.warehouse-row').filter({ has: page.locator('label', { hasText: label }) });
+    if (!await row.count()) continue;
+    const trigger = row.getByRole('combobox', { name: label, exact: true });
+    if (await trigger.isDisabled()) continue;
+    const available = catalogOptions.warehouses.map(item => ({ value: item.id, label: item.warehouse_number + ' / ' + item.warehouse_name }));
+    if (available.length) {
+      await selectValue(trigger, available[0].value);
+      await checkDropdown(trigger, available, width, height, label === '原料仓库' ? 'base-warehouse' : 'semi-warehouse');
+    } else {
+      await openSelect(trigger);
+      check(await selectPanel().locator('[role="option"]').count() === 0, 'EMPTY_WAREHOUSE_OPTIONS', '无现有仓库时不能伪造仓库选项。');
+      await trigger.press('Escape'); await selectPanel().waitFor({ state: 'hidden' });
+    }
+    check(await row.getByRole('button', { name: '保存', exact: true }).count() === 1, 'WAREHOUSE_LOCAL_SAVE', '仓库应只有本行局部保存入口（只检查，不点击）。');
+    check(report.blockedWrites.length === 0, 'WAREHOUSE_DRAFT_NO_WRITE', '仓库仅改草稿时尝试了写入，已拦截。');
+    record('warehouse-draft-readonly', { width, label, optionCount: available.length });
+    await openPage(); await chooseDetail(detail);
+  }
   for (const [scope, sample] of [['BASE', detail], ['SPRAY', sprayDetail]]) {
     if (!sample) { note('缺少真实喷塑样本，SPRAY 单位下拉未覆盖。'); continue; }
     await chooseDetail(sample);
@@ -384,10 +487,18 @@ async function safeInlineChecks(detail, width, height, sprayDetail) {
     if (await unitAdd.count() && await unitAdd.isEnabled()) {
       await unitAdd.click();
       const trigger = unitRow.getByRole('combobox', { name: '添加可用单位', exact: true });
-      const available = catalogOptions.units.map(unit => ({ value: unit.id, label: unit.unit_name }));
-      check(available.length > 1, 'UNIT_OPTIONS_REQUIRED', '真实单位不足两项，无法验收方向键移动与确认。');
-      await selectValue(trigger, available[0].value);
-      await checkDropdown(trigger, available, width, height, scope.toLowerCase() + '-unit');
+      const available = sample.units.filter(unit => unit.scope === scope).map(unit => ({ value: unit.unit_name, label: unit.unit_name }));
+      await openSelect(trigger);
+      const actual = await selectPanel().locator('[role="option"]').evaluateAll(items => items.map(item => ({ value: item.dataset.value, label: item.textContent.trim() })));
+      check(JSON.stringify(actual) === JSON.stringify(available), 'PRIVATE_UNIT_OPTIONS', '单位候选必须只取当前品名/属性组，不能回读全局或其他品名。');
+      await trigger.press('Escape'); await selectPanel().waitFor({ state: 'hidden' });
+      if (available.length) {
+        await selectValue(trigger, available[0].value);
+        await checkDropdown(trigger, available, width, height, scope.toLowerCase() + '-unit');
+      }
+      await trigger.fill('QA 未保存私有单位'); await page.getByLabel('搜索品名', { exact: true }).focus();
+      check(await selectRoot(trigger).getAttribute('data-model-value') === 'QA 未保存私有单位', 'PRIVATE_UNIT_CREATE_DRAFT', '私有单位应可输入，失焦后保留未保存文字。');
+      record('private-unit-options', { width, scope, optionCount: available.length, reference: digest(sample.id) });
       await measure(width, height, 'inline-' + scope.toLowerCase() + '-unit-' + digest(sample.id));
       await screenshot(width + '-inline-' + scope.toLowerCase() + '-unit-' + digest(sample.id));
       record('unit-draft-readonly', { width, scope, availableCount: available.length });
@@ -405,7 +516,7 @@ async function safeInlineChecks(detail, width, height, sprayDetail) {
       const geometry = () => shapeLabel.evaluate(node => { const button = node.querySelector('.delete-shape'), box = node.getBoundingClientRect(); return { width: box.width, height: box.height, opacity: getComputedStyle(button).opacity, buttonWidth: button.getBoundingClientRect().width, buttonHeight: button.getBoundingClientRect().height }; });
       const before = await geometry(); await shapeLabel.hover(); const hover = await geometry();
       await page.mouse.move(0, 0); await remove.focus(); const focus = await geometry();
-      check(before.opacity === '0' && hover.opacity === '1' && focus.opacity === '1' && before.buttonWidth === 32 && before.buttonHeight === 32 && [hover, focus].every(item => Math.abs(item.width - before.width) < 0.5 && Math.abs(item.height - before.height) < 0.5), 'SHAPE_DELETE_LAYOUT_SHIFT', '形状删除应预留 32px 点击区，悬停与键盘聚焦显示且不跳动。');
+      check(before.opacity === '0' && hover.opacity === '1' && focus.opacity === '1' && before.buttonWidth === 20 && before.buttonHeight === 20 && [hover, focus].every(item => Math.abs(item.width - before.width) < 0.5 && Math.abs(item.height - before.height) < 0.5), 'SHAPE_DELETE_LAYOUT_SHIFT', '形状删除应预留20px 点击区，悬停与键盘聚焦显示且不跳动。');
       record('shape-delete-hover-focus', { width, before, hover, focus });
     }
     const fields = ['BASE:shape:', 'BASE:section_size:' + shape.id];
@@ -420,11 +531,11 @@ async function safeInlineChecks(detail, width, height, sprayDetail) {
     if (opened === fields.length) {
       await page.getByLabel('搜索品名', { exact: true }).focus();
       await page.waitForTimeout(150);
-      for (const field of fields) check(await page.locator('[data-field="' + field + '"] .inline-editor input').inputValue() === 'QA 未保存草稿', 'SHAPE_DRAFT_SAFETY', '同时展开的形状或尺寸草稿在失焦后丢失。');
+      for (const field of fields) check(await page.locator('[data-field="' + field + '"] .inline-editor .material-catalog-select').getAttribute('data-model-value') === 'QA 未保存草稿', 'SHAPE_DRAFT_SAFETY', '同时展开的形状或尺寸草稿在失焦后丢失。');
       const geometry = await page.locator('.section-group').evaluate(node => {
         const rect = item => { const box = item.getBoundingClientRect(); return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: box.width, height: box.height }; };
         const card = node.closest('.catalog-detail');
-        return { card: rect(card), editors: [...node.querySelectorAll('.inline-editor')].map(form => ({ form: rect(form), input: rect(form.querySelector('input')), save: rect(form.querySelector('[data-action="save"]')), clientWidth: form.clientWidth, scrollWidth: form.scrollWidth })), containers: [node, node.querySelector('.section-body'), node.querySelector('.shape-dimensions')].map(item => ({ className: item.className, clientWidth: item.clientWidth, scrollWidth: item.scrollWidth })) };
+        return { card: rect(card), editors: [...node.querySelectorAll('.inline-editor')].map(form => ({ form: rect(form), input: rect(form.querySelector('.el-select__wrapper')), save: rect(form.querySelector('[data-action="save"]')), clientWidth: form.clientWidth, scrollWidth: form.scrollWidth })), containers: [node, node.querySelector('.section-body'), node.querySelector('.shape-dimensions')].map(item => ({ className: item.className, clientWidth: item.clientWidth, scrollWidth: item.scrollWidth })) };
       });
       check(geometry.editors.length === 2 && geometry.editors.every(item => item.form.x >= geometry.card.x && item.form.right <= geometry.card.right + 1 && item.form.y >= geometry.card.y && item.form.bottom <= geometry.card.bottom + 1 && item.scrollWidth <= item.clientWidth + 1 && item.save.x >= item.input.right - 1 && Math.abs(item.save.y - item.input.y) < 1) && geometry.containers.every(item => item.scrollWidth <= item.clientWidth + 1), 'SIMULTANEOUS_DRAFT_LAYOUT', '形状与尺寸同时展开时应在卡片内、无横向溢出，小保存与各输入同行。');
       check(report.blockedWrites.length === 0, 'SHAPE_DRAFT_SAFETY', '形状或尺寸草稿尝试自动写入，已拦截。');
@@ -495,17 +606,14 @@ async function main() {
   for (const key of Object.keys(previousTemp)) process.env[key] = browserTemp;
   browser = await chromium.launch({ headless: true, executablePath, downloadsPath: browserTemp });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai', serviceWorkers: 'block', ...(statePath ? { storageState: path.resolve(statePath) } : {}) });
-  await context.route('**/*', async route => {
-    if (!['GET', 'HEAD'].includes(route.request().method())) {
-      report.blockedWrites.push({ method: route.request().method(), path: safePath(route.request().url()) });
-      await route.abort('blockedbyclient'); return;
-    }
-    await route.continue();
-  });
-  stage = 'authentication'; await authenticate(context);
+  const networkGuard = await installRequestGuard(context, base.origin, report);
+  stage = 'authentication'; const user = await authenticate(context);
+  report.permissions = { change: (user.permissions || []).includes('material_catalog.change_materialcatalog'), add: (user.permissions || []).includes('material_catalog.add_materialcatalog') };
   stage = 'real-api';
   const options = (await readApi(context, apiPrefix + 'options/', 'options')).body.data;
   catalogOptions = options;
+  check(Array.isArray(options.units) && options.units.length === 0, 'NO_GLOBAL_UNIT_CANDIDATES', '目录定义不能再提供公共单位候选。');
+  check(Array.isArray(options.warehouses), 'WAREHOUSE_OPTIONS', '应返回现有仓库的必要候选。');
   check(Array.isArray(options?.categories) && Array.isArray(options?.spray_fields) && Array.isArray(options?.units), 'OPTIONS_CONTRACT', '类别、属性或单位选项契约不符。');
   const categoryKeys = ['TUBE', 'FABRIC', 'HARDWARE', 'PLASTIC', 'PACKAGING', 'AUXILIARY', 'FABRIC_SEMI'];
   const templateKeys = ['TUBE', 'FABRIC', 'HARDWARE', 'PLASTIC', 'CARTON', 'BAG', 'PACKAGING_GENERAL', 'TAPE', 'COTTON', 'AUXILIARY_GENERAL', 'FABRIC_SEMI'];
@@ -541,7 +649,7 @@ async function main() {
       const before = await readApi(context, apiPrefix + candidate.id + '/', `detail-${template.key}`);
       const detail = before.body.data;
       check(detail?.id === candidate.id && Array.isArray(detail.values) && Array.isArray(detail.units) && Boolean(before.etag), 'DETAIL_CONTRACT', '真实详情数据或 ETag 缺失。');
-      snapshots.set(detail.id, { etag: before.etag, hash: digest(JSON.stringify(detail)) });
+      snapshots.set(detail.id, { etag: before.etag, hash: detailDigest(detail) });
       samples.push(detail);
     }
   }
@@ -551,11 +659,11 @@ async function main() {
     const detail = before.body.data;
     check(detail?.id === id && Array.isArray(detail.values) && Array.isArray(detail.units) && Boolean(before.etag), 'DETAIL_CONTRACT', '指定样本的真实详情数据或 ETag 缺失。');
     check(options.categories.some(category => category.key === detail.category_key && category.templates.some(template => template.key === detail.template_key)), 'TEMPLATE_CONTRACT', '指定样本引用了未定义的类别或模板。');
-    snapshots.set(detail.id, { etag: before.etag, hash: digest(JSON.stringify(detail)) });
+    snapshots.set(detail.id, { etag: before.etag, hash: detailDigest(detail) });
     samples.push(detail);
   }
   report.discovery = categories;
-  page = await context.newPage(); page.setDefaultTimeout(15000);
+  page = await context.newPage(); await networkGuard.preparePage(page); page.setDefaultTimeout(15000);
   page.on('pageerror', error => report.pageErrors.push({ name: error.name, digest: digest(error.message) }));
   page.on('response', response => { if (response.status() >= 400 && new URL(response.url()).origin === base.origin) report.httpErrors.push({ status: response.status(), path: safePath(response.url()) }); });
   for (const [width, height] of viewports) {
@@ -566,13 +674,14 @@ async function main() {
     const ordinaryName = page.locator('[data-testid="material-names"] [data-catalog-id]:not(.selected)').first();
     if (await ordinaryName.count()) {
       await ordinaryName.hover();
-      check(await ordinaryName.evaluate(node => getComputedStyle(node).backgroundColor) === 'rgb(245, 242, 237)', 'NAME_HOVER', '普通品名悬停应使用 #F5F2ED 背景。');
+      check(await ordinaryName.getAttribute('aria-current') !== 'true', 'NAME_HOVER', '普通品名悬停不能改变当前选中项。');
       await page.mouse.move(0, 0); record('name-hover', { width });
     }
     const selectedName = page.locator('[data-testid="material-names"] [data-catalog-id].selected').first();
     if (await selectedName.count()) {
+      const selectedBackground = await selectedName.evaluate(node => getComputedStyle(node).backgroundColor);
       await selectedName.hover();
-      check(await selectedName.evaluate(node => getComputedStyle(node).backgroundColor) === 'rgb(255, 240, 226)', 'SELECTED_NAME_HOVER', '选中品名悬停时应保留浅橙选中背景。');
+      check(await selectedName.evaluate(node => getComputedStyle(node).backgroundColor) === selectedBackground, 'SELECTED_NAME_HOVER', '选中品名悬停时应保留当前主题选中背景。');
       await page.mouse.move(0, 0); record('selected-name-hover', { width });
     }
     for (const detail of samples) {
@@ -608,13 +717,23 @@ async function main() {
   if (editable) for (const [width, height] of viewports) { stage = `inline-readonly-${width}`; await page.setViewportSize({ width, height }); await chooseDetail(editable); await safeInlineChecks(editable, width, height, samples.find(item => item.spray_enabled)); }
   else note('真实档案为空，详情与行内交互均未覆盖。');
   stage = 'unchanged-check';
+  report.detailIdMap = [...snapshots.keys()].map(id => ({ reference: digest(id), catalog_id: id }));
   for (const [id, before] of snapshots) {
     const after = await readApi(context, apiPrefix + id + '/', 'unchanged-detail');
-    check(before.etag === after.etag && before.hash === digest(JSON.stringify(after.body.data)), 'DATA_CHANGED', '只读验收期间真实详情发生变化，需排查并发编辑，不能声称未变。');
+    const afterHash = detailDigest(after.body.data);
+    const unchanged = before.etag === after.etag && before.hash === afterHash;
+    report.detailComparisons.push({ reference: digest(id), before: { etag: before.etag, detail_sha256: before.hash }, after: { etag: after.etag, detail_sha256: afterHash }, unchanged });
+    check(unchanged, 'DATA_CHANGED', '只读验收期间真实详情发生变化，需排查并发编辑，不能声称未变。');
   }
   const dropdowns = report.checks.filter(item => item.id === 'dropdown-real-panel');
-  check(viewports.every(([width]) => ['category', 'new-name-template', 'base-unit', 'spray-unit'].every(kind => dropdowns.some(item => item.width === width && item.kind === kind))), 'DROPDOWN_MATRIX_REQUIRED', '三视口必须覆盖分类、模板、BASE与SPRAY单位的真实展开面板，不能以未覆盖代替。');
-  check(['top', 'bottom'].every(direction => dropdowns.some(item => item.measurement.placement?.startsWith(direction))), 'DROPDOWN_PLACEMENT_REQUIRED', '真实面板需覆盖向下展开与空间不足向上避让。');
+  check(viewports.every(([width]) => dropdowns.some(item => item.width === width && item.kind === 'category')), 'DROPDOWN_MATRIX_REQUIRED', '三视口必须验证分类真实下拉。');
+  if (report.permissions.add) check(viewports.every(([width]) => dropdowns.some(item => item.width === width && item.kind === 'new-name-template')), 'TEMPLATE_MATRIX_REQUIRED', '有新增权限时三视口必须覆盖模板下拉。');
+  if (report.permissions.change && editable) {
+    const scopes = ['BASE', ...(samples.some(item => item.spray_enabled) ? ['SPRAY'] : [])];
+    check(viewports.every(([width]) => scopes.every(scope => report.checks.some(item => item.id === 'private-unit-options' && item.width === width && item.scope === scope))), 'PRIVATE_UNIT_MATRIX_REQUIRED', '各视口必须按当前品名/属性组验证私有单位，包括空候选及输入草稿。');
+  }
+  check(report.guardErrors.length === 0, 'GUARD_FAILURE', '逐跳请求守卫发生错误，不能声明只读隔离通过。');
+  check(report.blockedForeignRequests.length === 0, 'FOREIGN_REQUEST_BLOCKED', '页面请求了目标源之外的地址，已拦截（检查同源配置及默认8000）。');
   check(report.blockedWrites.length === 0, 'BUSINESS_WRITE_BLOCKED', '页面尝试了业务写入，已全部拦截。');
   check(report.pageErrors.length === 0 && report.httpErrors.length === 0, 'PAGE_ERRORS', '页面出现脚本或 HTTP 错误，报告只保存摘要。');
   note('未提交新建、属性保存、删除、喷塑切换；写入、权限拒绝、CSRF、412/428 恢复由独立业务/API 验收负责。');
@@ -624,7 +743,8 @@ async function main() {
   report.status = 'PASS_WITH_GAPS';
 }
 
-(async () => {
+module.exports = { installRequestGuard };
+if (require.main === module) (async () => {
   try { await main(); }
   catch (error) {
     report.status = error.blocked ? 'BLOCKED' : 'FAIL'; process.exitCode = 1;
@@ -651,6 +771,6 @@ async function main() {
       } catch { report.resources.cleanupFailed = true; report.status = 'FAIL'; process.exitCode = 1; }
     } else if (!ownsTemp) report.resources.verifiedAbsent = !fs.existsSync(browserTemp);
     report.finishedAt = new Date().toISOString(); saveReport();
-    console.log(JSON.stringify({ qa_result_version: 1, status: report.status, not_covered: report.notCovered, checks: report.checks.length, gaps: report.notCovered.length, blockedWrites: report.blockedWrites.length, failure: report.failure, report: evidenceVerified ? reportPath : null, cleanup: report.resources.verifiedAbsent }));
+    console.log(JSON.stringify({ qa_result_version: 1, status: report.status, not_covered: report.notCovered, checks: report.checks.length, gaps: report.notCovered.length, blockedWrites: report.blockedWrites.length, blockedForeignRequests: report.blockedForeignRequests.length, failure: report.failure, report: evidenceVerified ? reportPath : null, cleanup: report.resources.verifiedAbsent }));
   }
 })();

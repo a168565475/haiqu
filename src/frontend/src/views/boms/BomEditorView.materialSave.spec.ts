@@ -7,6 +7,7 @@ import HardwareRawMaterialCreateDialog from '@/components/HardwareRawMaterialCre
 import type { BomLineInput, BomSectionInput } from '@/types/bom'
 import type { RawMaterialInput } from '@/types/rawMaterial'
 import BomEditorView from './BomEditorView.vue'
+import { blankLine } from './bomEditorHelpers'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { bomId: 'b1' } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
 const permissions = vi.hoisted(() => ({ editable: true }))
@@ -32,13 +33,15 @@ interface Editor {
   confirmCuttingSelection: () => void
 }
 let wrapper: VueWrapper | undefined
-async function open() {
+async function open(prepareAuxiliary = true) {
   wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' }, BomMaterialCreateDialogs: false } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
-  vm.sections.forEach(section => { section.lines = [] })
   const auxiliary = vm.sections.find(section => section.title === '辅料类')!
-  auxiliary.lines.push({ ...vm.blankLine('米'), part_name: '织带', material: '涤纶', specification: '25mm', unit_consumption: '1', source_accessory_product_name_id: 'name', source_accessory_specification_id: 'spec', source_accessory_color_id: 'color', source_accessory_material_id: 'material' })
+  if (prepareAuxiliary) {
+    vm.sections.forEach(section => { section.lines = [] })
+    auxiliary.lines.push({ ...vm.blankLine('米'), part_name: '织带', material: '涤纶', specification: '25mm', unit_consumption: '1', source_accessory_product_name_id: 'name', source_accessory_specification_id: 'spec', source_accessory_color_id: 'color', source_accessory_material_id: 'material' })
+  }
   return { wrapper, vm, auxiliary }
 }
 beforeEach(() => {
@@ -53,6 +56,69 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('整份 BOM 原料自动保存', () => {
+  it.each([true, false])('面料及部位 BOM 读取空管材分区（接口含分区：%s）后可保存，回读不会再插入空行', async includeEmptyTube => {
+    const sections = [
+      ...(includeEmptyTube ? [{ id: 'tube', title: '管材类', section_type: 'PROFILE', lines: [] }] : []),
+      { id: 'fabric-section', title: '面料类', section_type: 'FABRIC', lines: [
+        { ...blankLine('米'), id: 'fabric', part_name: '面布', material: '涤纶', specification: '600D', unit_consumption: '1', source_inventory_material_id: 'raw-fabric' },
+      ] },
+      { id: 'cutting-section', title: '裁剪明细', section_type: 'FABRIC', lines: [
+        { ...blankLine('个'), id: 'part', part_name: '床面', component_kind: 'SEWN_PART', parts_per_product: 1 },
+        { ...blankLine('片'), id: 'piece', part_name: '床面布片', component_kind: 'CUT_PIECE', parent_part_id: 'part',
+          pieces_per_part: 2, fabric_source_line_id: 'fabric', specification: '50*40cm' },
+      ] },
+    ]
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue({ ...versioned, data: { ...versioned.data, sections } } as never)
+    const { vm } = await open(false)
+    expect(vm.sections.find(section => section.title === '管材类')!.lines).toHaveLength(0)
+    // 前轮已保存的 typed 行可保持原身份调整目标量，不强制补绑目录。
+    vm.sections.find(section => section.title === '裁剪明细')!.lines[0]!.parts_per_product = 2
+    expect(await vm.persistDraft()).toBe(true)
+    expect(await vm.persistDraft()).toBe(true)
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(2)
+    for (const [, submitted] of vi.mocked(api.saveBomDraft).mock.calls) {
+      expect(submitted.find(section => section.title === '管材类')!.lines).toHaveLength(0)
+      expect(submitted.flatMap(section => section.lines)).toHaveLength(3)
+      expect(submitted.find(section => section.title === '裁剪明细')!.lines[0]).toMatchObject({ parts_per_product: 2 })
+      expect(submitted.find(section => section.title === '裁剪明细')!.lines[0]!.material_catalog_id).toBeFalsy()
+      expect(submitted.find(section => section.title === '裁剪明细')!.lines[1]).toMatchObject({
+        parent_part_id: 'part', fabric_source_line_id: 'fabric', pieces_per_part: 2, specification: '50*40cm',
+      })
+    }
+  })
+
+  it('已有 ID 的旧 blank 行改成部位也必须选档案，不能借历史 ID 豁免', async () => {
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue({ ...versioned, data: { ...versioned.data, sections: [
+      { id: 'cut-section', title: '裁剪明细', section_type: 'FABRIC', calculation_rows: [], lines: [{ ...blankLine('套'), id: 'old-blank', part_name: '旧裁片' }] },
+    ] } } as never)
+    const { vm } = await open(false)
+    const line = vm.sections.find(section => section.title === '裁剪明细')!.lines[0]!
+    Object.assign(line, { component_kind: 'SEWN_PART', parts_per_product: 1, unit: '个' })
+    const notify = vi.spyOn(ElMessage, 'warning')
+    try {
+      expect(await vm.persistDraft()).toBe(false)
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining('请选择已有的部位或裁片档案'))
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+    } finally { notify.mockRestore() }
+  })
+
+  it('空管材分区主动新增时仍默认根与自动余量，有输入但缺少名称仍阻止保存', async () => {
+    const notify = vi.spyOn(ElMessage, 'warning')
+    try {
+      const { vm } = await open(false)
+      vm.activeSectionIndex = vm.sections.findIndex(section => section.title === '管材类')
+      vm.addCatalogLine()
+      const line = vm.sections[vm.activeSectionIndex]!.lines[0]!
+      expect(line).toMatchObject({ unit: '根', purchase_allowance_mode: 'AUTO' })
+      line.length_value = '500'
+      expect(await vm.persistDraft()).toBe(false)
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining('名称不能为空'))
+      expect(api.previewBomMaterialSave).not.toHaveBeenCalled()
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+      expect(line.length_value).toBe('500')
+    } finally { notify.mockRestore() }
+  })
+
   it('新建面料与复用空白行默认米，连续新增面料也使用米且不改原行', async () => {
     const { vm, auxiliary } = await open()
     vm.activeSectionIndex = vm.sections.findIndex(section => section.title === '面料类')
@@ -143,6 +209,79 @@ describe('整份 BOM 原料自动保存', () => {
     expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
     expect(api.saveBomDraft).toHaveBeenCalledWith('b1', previewSections, 'v1', { intent: 'verify', quantity_confirmation_reason: '数量核对说明', confirmation_token: 'token-1' })
     expect(api.verifyBom).not.toHaveBeenCalled()
+  })
+
+  it.each(['empty', 'normal'] as const)('确认 BOM 遇到%s来源面料快照时继承可用属性并正常预检保存', async snapshotKind => {
+    const { vm } = await open()
+    const fabric = vm.sections.find(section => section.title === '面料类')!
+    const cutting = vm.sections.find(section => section.title === '裁剪明细')!
+    const snapshot = snapshotKind === 'empty' ? {} : {
+      schema_version: 1, catalog_id: 'fabric-catalog', catalog_version: 'v1', category_key: 'FABRIC', template_key: 'FABRIC',
+      name: '网布', scope: 'BASE', processing_state: 'RAW', processing_stage: 'RAW', display_name: '网布',
+      attributes: { material: '快照涤纶', width: '1.6', color: '快照蓝色', fabric_spec: '600D' }, unit_id: 'meter', unit_name: '米',
+    }
+    // 旧面料可能已没有目录关联，接口仍返回空对象快照。
+    fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '旧字段涤纶',
+      specification: '600D', fabric_width: '1.5', fabric_color_name: '旧字段黑色', unit_consumption: '1.5',
+      material_selection_snapshot: snapshot as never })
+    cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', fabric_source_line_id: 'saved-fabric',
+      cutting_pieces_per_set: 2, cutting_sets_per_product: 1 })
+    vm.quantityReason = '确认用料'
+
+    await vm.submitVerification()
+
+    expect(api.previewBomMaterialSave).toHaveBeenCalledTimes(1)
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
+    const previewSections = vi.mocked(api.previewBomMaterialSave).mock.calls[0]![1]
+    expect(api.saveBomDraft).toHaveBeenCalledWith('b1', previewSections, 'v1', { intent: 'verify', quantity_confirmation_reason: '确认用料' })
+    expect(previewSections.find(section => section.title === '裁剪明细')!.lines[0]).toMatchObject({
+      fabric_source_line_id: 'saved-fabric', specification: '600D',
+      material: snapshotKind === 'empty' ? '旧字段涤纶' : '快照涤纶',
+      fabric_width: snapshotKind === 'empty' ? '1.5' : '1.6',
+      cutting_color: snapshotKind === 'empty' ? '旧字段黑色' : '快照蓝色',
+    })
+    expect(previewSections.find(section => section.title === '面料类')!.lines[0]!.material_selection_snapshot).toEqual(snapshot)
+    expect(api.verifyBom).not.toHaveBeenCalled()
+  })
+
+  it('确认 BOM 时来源面料已丢失仍提示重新选择，不预检、不保存', async () => {
+    const notify = vi.spyOn(ElMessage, 'warning')
+    try {
+      const { vm } = await open()
+      const cutting = vm.sections.find(section => section.title === '裁剪明细')!
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', fabric_source_line_id: 'deleted-fabric',
+        material: '旧材质', specification: '600D', cutting_color: '旧颜色', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 })
+
+      await vm.submitVerification()
+
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining('请选择当前 BOM 中的来源面料'))
+      expect(api.previewBomMaterialSave).not.toHaveBeenCalled()
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+      expect(api.verifyBom).not.toHaveBeenCalled()
+      expect(cutting.lines[0]!.fabric_source_line_id).toBe('deleted-fabric')
+    } finally { notify.mockRestore() }
+  })
+
+  it('确认 BOM 时目录裁片缺少属性对象仍提示补齐，不补造属性或提交保存', async () => {
+    const notify = vi.spyOn(ElMessage, 'warning')
+    try {
+      const { vm } = await open()
+      const fabric = vm.sections.find(section => section.title === '面料类')!
+      const cutting = vm.sections.find(section => section.title === '裁剪明细')!
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '涤纶', specification: '600D',
+        fabric_width: '1.5', fabric_color_name: '黑色', unit_consumption: '1.5' })
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', fabric_source_line_id: 'saved-fabric',
+        cutting_pieces_per_set: 2, cutting_sets_per_product: 1, material_catalog_id: 'cutting-catalog',
+        material_selection: { catalog_version: 'v1', scope: 'BASE', processing_state: 'PROCESSED' } as never })
+
+      await vm.submitVerification()
+
+      expect(notify).toHaveBeenCalledWith('请选择具体属性和本次数量单位。')
+      expect(cutting.lines[0]!.material_selection?.attributes).toBeUndefined()
+      expect(api.previewBomMaterialSave).not.toHaveBeenCalled()
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+      expect(api.verifyBom).not.toHaveBeenCalled()
+    } finally { notify.mockRestore() }
   })
 
   it('新增清单缺少令牌时仍停止保存，不绕过服务端确认凭据', async () => {

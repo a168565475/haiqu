@@ -5,14 +5,15 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
 from apps.material_catalog.definitions import TEMPLATES
-from apps.material_catalog.colors import COLOR_FIELDS, color_identity, color_metadata, unchanged_snapshot_color, uses_product_color_identity
+from apps.material_catalog.colors import COLOR_FIELDS, catalog_color_metadata, color_identity, color_metadata, unchanged_snapshot_color, uses_product_color_identity
 from apps.material_catalog.models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog
 from apps.material_catalog.public_configuration import ensure_public_value, require_public_value
-from apps.material_catalog.selectors import catalog_detail
+from apps.material_catalog.selectors import catalog_detail, find_catalog_attribute, require_catalog_attribute, require_catalog_unit
 from apps.material_catalog.services import _finish_change, _restore, resolve_unit
 from apps.material_catalog.snapshots import build_material_snapshot
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
+from .component_parts import is_cut_piece, is_sewn_part
 
 
 SECTION_CATEGORIES = {
@@ -84,8 +85,122 @@ def _craft_input(selection, category):
     return actual, "CUTTING"
 
 
-def apply_catalog_selection(line, data, *, old, request, persist, versions, allow_public_creation=True, require_tube_length=True, require_fabric_meter=False, inherit_fabric_source=False, selection_permission="material_catalog.view_materialcatalog"):
+def _snapshot_with_shared_options(catalog, selection, *, attrs, scope, required, craft, semi_kind,
+                                  ordinary_color, inherited, result_color, result_field, request, persist, allow_public_creation, prefer_catalog_options):
+    """样品、仓库等沿用各自入口已有的公共候选维护策略。"""
+    before = catalog_detail(catalog) if persist else None
+    unit_data = {key: selection[key] for key in ("unit_id", "unit_name") if selection.get(key)}
+    unit_lookup = {"pk": unit_data["unit_id"]} if "unit_id" in unit_data else {"unit_name": unit_data["unit_name"]}
+    allowed = None
+    if prefer_catalog_options:
+        matching_units = ProductionUnit.for_catalog(catalog).filter(**unit_lookup)
+        allowed = catalog.allowed_units.filter(scope=scope, archived_at__isnull=True, unit__in=matching_units).select_related(
+            "unit").order_by("unit__catalog_owner_id").first()
+    unit = allowed.unit if allowed else ProductionUnit.objects.filter(**unit_lookup).first()
+    if unit is None and "unit_id" in unit_data:
+        raise ValidationError({"unit_id": "请选择当前品名可用的单位。"})
+    if unit is None and prefer_catalog_options and ProductionUnit.all_objects.filter(
+            unit_name=unit_data["unit_name"], catalog_owner__isnull=False).exists():
+        raise ValidationError({"unit_name": "请先在当前品名中添加这个单位。"})
+    if unit and (unit.status != "ACTIVE" or unit.archived_at is not None):
+        raise ValidationError({"unit_id": "所选单位已停用或归档。"})
+    selected_unit_name = unit.unit_name if unit else unit_data["unit_name"]
+
+    def check_public_value(scope, key, value, *, parent_value=None):
+        # 来自本次 BOM 已校验的来源面料，不要求用户再维护一份裁片颜色/规格公共候选。
+        if scope == "BASE" and key in inherited:
+            return None
+        color = selection if scope == "BASE" and key == "color" and ordinary_color else None
+        if allow_public_creation:
+            return ensure_public_value(catalog, scope, key, value, parent_value=parent_value,
+                                       unit_name=selected_unit_name, request=request, persist=persist, color=color)
+        return require_public_value(catalog, scope, key, value, parent_value=parent_value, lock=persist, color=color)
+
+    missing = []
+    shape = None
+    selected_color = None
+    color_option = None
+    for key in sorted(attrs, key=lambda key: (key != "shape", key == "section_size", key)):
+        value = attrs[key].strip()
+        if key == "section_size" and not attrs.get("shape"):
+            raise ValidationError({"attributes": "截面尺寸必须同时选择本品名的形状。"})
+        if prefer_catalog_options:
+            own = find_catalog_attribute(catalog, "BASE", key, value, parent_value=attrs.get("shape"), color=selection)
+            if own:
+                if key == "shape":
+                    shape = own
+                if key == "color" and ordinary_color:
+                    color_option = own
+                continue
+        public = check_public_value("BASE", key, value, parent_value=attrs.get("shape"))
+        lookup = dict(catalog=catalog, scope="BASE", field_key=key, value=value)
+        if key == "color" and ordinary_color:
+            selected_color = public
+            lookup["product_color_id"] = public.pk if public else None
+            if public:
+                lookup.pop("value")
+        if key == "section_size":
+            lookup["parent"] = shape
+        option = MaterialAttributeValue.objects.filter(**lookup).first() if key != "section_size" or shape else None
+        if option is None or option.archived_at is not None:
+            missing.append(key)
+            # 公共值已通过校验；记录当前品名使用值属于正常选料，不能额外要求维护权限。
+            if persist:
+                if option:
+                    _restore(option)
+                else:
+                    option = MaterialAttributeValue.objects.create(**{**lookup, "value": value})
+        if key == "shape":
+            shape = option
+    if result_color and catalog.category_key in {"TUBE", "HARDWARE"}:
+        if not catalog.spray_enabled:
+            raise ValidationError({result_field: "请先在当前品名维护中启用半成品属性。"})
+        result_option = catalog.attribute_values.filter(scope="SPRAY", field_key="color", value=result_color, parent=None).first()
+        if not (prefer_catalog_options and result_option and result_option.archived_at is None):
+            check_public_value("SPRAY", "color", result_color)
+        if result_option is None or result_option.archived_at is not None:
+            missing.append("result_color")
+            if persist:
+                if result_option:
+                    _restore(result_option)
+                else:
+                    MaterialAttributeValue.objects.create(catalog=catalog, scope="SPRAY", field_key="color", value=result_color)
+    if not allowed:
+        check_public_value(scope, "unit", selected_unit_name)
+        allowed = catalog.allowed_units.filter(scope=scope, unit=unit).first() if unit else None
+    if allowed is None or allowed.archived_at is not None:
+        missing.append("unit")
+        if persist:
+            unit = resolve_unit(unit_data)
+            if allowed:
+                _restore(allowed)
+            else:
+                MaterialAllowedUnit.objects.create(catalog=catalog, scope=scope, unit=unit)
+    if persist:
+        if missing:
+            _finish_change(catalog, before, "BOM_OPTIONS_ADDED", request)
+        snapshot = build_material_snapshot(catalog=catalog, scope=scope, processing_state=selection["processing_state"],
+            attributes=attrs, unit_id=unit.pk, required_fields=required, completed_craft=craft, semi_kind=semi_kind,
+            product_color=selected_color, color_option=color_option)
+    else:
+        # 预检仅投影输入参与现有计算；不向数据库补录，也不伪造已保存的版本/单位ID。
+        snapshot = {"catalog_id": str(catalog.pk), "name": catalog.name, "category_key": catalog.category_key,
+                    "attributes": attrs, "unit_name": unit.unit_name if unit else unit_data["unit_name"],
+                    "unit_id": str(unit.pk) if unit else None, "processing_state": selection["processing_state"],
+                    "processing_stage": craft["code"] if craft else "RAW", "completed_craft": craft, "semi_kind": semi_kind}
+        if ordinary_color:
+            snapshot.update(catalog_color_metadata(color_option) if color_option else color_metadata(selected_color) if selected_color else
+                            {"product_color_id": None, **color_identity(attrs["color"], selection)})
+    return snapshot
+
+
+def apply_catalog_selection(line, data, *, old, request, persist, versions, allow_public_creation=True, require_tube_length=True, require_catalog_options=False, prefer_catalog_options=False, require_fabric_meter=False, inherit_fabric_source=False, selection_permission="material_catalog.view_materialcatalog"):
     validate_catalog_input(data, old)
+    if is_cut_piece(line) or is_sewn_part(line):
+        from .component_catalog import apply_component_catalog_selection
+        if apply_component_catalog_selection(line, data, old=old, request=request, persist=persist,
+                versions=versions, selection_permission=selection_permission):
+            return
     inherited = {}
     if inherit_fabric_source and line.section.title.strip() == "裁剪明细":
         from .material_flow_bom import cutting_fabric_attributes, inherit_cutting_fabric_attributes, validate_cutting_specification
@@ -94,6 +209,12 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
             raise ValidationError({"fabric_source_line_id": "请先选择当前 BOM 中的来源面料。"})
         validate_cutting_specification(source.specification, line.line_number)
         inherited = cutting_fabric_attributes(source)
+        if is_cut_piece(line):
+            inherited.pop("specification", None)
+            if source.specification:
+                inherited["fabric_spec"] = source.specification
+            if line.specification:
+                inherited["size"] = line.specification
         selected = deepcopy(data.get("material_selection") or (old.material_selection_snapshot if old else {}))
         attrs = {key: value for key, value in selected.get("attributes", {}).items()
                  if key not in {"material", "width", "color", "fabric_spec", "specification", "size", "model", "process"}}
@@ -102,7 +223,7 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
         source_snapshot = source.material_selection_snapshot or {}
         for key in COLOR_FIELDS:
             selected.pop(key, None)
-        if source_snapshot.get("product_color_id"):
+        if any(source_snapshot.get(key) for key in ("product_color_id", "color_card", "color_code")):
             selected.update({key: source_snapshot.get(key, "") for key in COLOR_FIELDS})
         data = {**data, "material_selection": selected}
     selection = data.get("material_selection")
@@ -149,95 +270,26 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
         ordinary_color = bool(attrs.get("color")) and uses_product_color_identity(catalog, scope)
         if not ordinary_color and not inherited and any(selection.get(key) for key in COLOR_FIELDS):
             raise ValidationError({"product_color_id": "色卡、色号和普通颜色标识仅适用于面料基础颜色。"})
-        before = catalog_detail(catalog) if persist else None
-        selected_unit_name = selection.get("unit_name", "")
-        if selection.get("unit_id"):
-            selected_unit_name = ProductionUnit.objects.filter(pk=selection["unit_id"]).values_list("unit_name", flat=True).first() or ""
-
-        def check_public_value(scope, key, value, *, parent_value=None):
-            # 来自本次 BOM 已校验的来源面料，不要求用户再维护一份裁片颜色/规格公共候选。
-            if scope == "BASE" and key in inherited:
-                return None
-            color = selection if scope == "BASE" and key == "color" and ordinary_color else None
-            if allow_public_creation:
-                return ensure_public_value(catalog, scope, key, value, parent_value=parent_value,
-                                           unit_name=selected_unit_name, request=request, persist=persist, color=color)
-            return require_public_value(catalog, scope, key, value, parent_value=parent_value, lock=persist, color=color)
-
-        missing = []
-        shape = None
-        selected_color = None
-        for key in sorted(attrs, key=lambda key: (key != "shape", key == "section_size", key)):
-            value = attrs[key].strip()
-            if key == "section_size" and not attrs.get("shape"):
-                raise ValidationError({"attributes": "截面尺寸必须同时选择本品名的形状。"})
-            public = check_public_value("BASE", key, value, parent_value=attrs.get("shape"))
-            lookup = dict(catalog=catalog, scope="BASE", field_key=key, value=value)
-            if key == "color" and ordinary_color:
-                selected_color = public
-                lookup["product_color_id"] = public.pk if public else None
-                if public:
-                    lookup.pop("value")
-            if key == "section_size":
-                lookup["parent"] = shape
-            option = MaterialAttributeValue.objects.filter(**lookup).first() if key != "section_size" or shape else None
-            if option is None or option.archived_at is not None:
-                missing.append(key)
-                # 公共值已通过校验；记录当前品名使用值属于正常选料，不能额外要求维护权限。
-                if persist:
-                    if option:
-                        _restore(option)
-                    else:
-                        option = MaterialAttributeValue.objects.create(**{**lookup, "value": value})
-            if key == "shape":
-                shape = option
         result_color = str(data.get(result_field, "")).strip()
-        if result_color and catalog.category_key in {"TUBE", "HARDWARE"}:
-            if not catalog.spray_enabled:
-                raise ValidationError({result_field: "请先在当前品名维护中启用半成品属性。"})
-            check_public_value("SPRAY", "color", result_color)
-            result_option = catalog.attribute_values.filter(scope="SPRAY", field_key="color", value=result_color, parent=None).first()
-            if result_option is None or result_option.archived_at is not None:
-                missing.append("result_color")
-                if persist:
-                    if result_option:
-                        _restore(result_option)
-                    else:
-                        MaterialAttributeValue.objects.create(catalog=catalog, scope="SPRAY", field_key="color", value=result_color)
-        unit_data = {key: selection[key] for key in ("unit_id", "unit_name") if selection.get(key)}
-        unit_query = ProductionUnit.objects.filter(**({"pk": unit_data["unit_id"]} if "unit_id" in unit_data else {"unit_name": unit_data["unit_name"]}))
-        unit = unit_query.first()
-        if unit is None and "unit_id" in unit_data:
-            raise ValidationError({"unit_id": "所选单位不存在。"})
-        if unit and (unit.status != "ACTIVE" or unit.archived_at is not None):
-            raise ValidationError({"unit_id": "所选单位已停用或归档。"})
-        check_public_value(scope, "unit", unit.unit_name if unit else unit_data["unit_name"])
-        allowed = catalog.allowed_units.filter(scope=scope, unit=unit).first() if unit else None
-        if allowed is None or allowed.archived_at is not None:
-            missing.append("unit")
-            if persist:
-                unit = resolve_unit(unit_data)
-                if allowed:
-                    _restore(allowed)
-                else:
-                    MaterialAllowedUnit.objects.create(catalog=catalog, scope=scope, unit=unit)
-        if persist:
-            if missing:
-                _finish_change(catalog, before, "BOM_OPTIONS_ADDED", request)
+        if require_catalog_options:
+            if result_color and catalog.category_key in {"TUBE", "HARDWARE"}:
+                if not catalog.spray_enabled:
+                    raise ValidationError({result_field: "请先在当前品名维护中启用半成品属性。"})
+                require_catalog_attribute(catalog, "SPRAY", "color", result_color)
+            unit = require_catalog_unit(catalog, scope, unit_id=selection.get("unit_id"), unit_name=selection.get("unit_name"))
+            color_option = require_catalog_attribute(catalog, scope, "color", attrs["color"], color=selection) if ordinary_color else None
             snapshot = build_material_snapshot(catalog=catalog, scope=scope, processing_state=selection["processing_state"],
                 attributes=attrs, unit_id=unit.pk, required_fields=required, completed_craft=craft, semi_kind=semi_kind,
-                product_color=selected_color)
+                color_option=color_option, inherited_attributes=inherited)
         else:
-            # 预检仅投影输入参与现有计算；不向数据库补录，也不伪造已保存的版本/单位ID。
-            snapshot = {"catalog_id": str(catalog.pk), "name": catalog.name, "category_key": catalog.category_key,
-                        "attributes": attrs, "unit_name": unit.unit_name if unit else unit_data["unit_name"],
-                        "unit_id": str(unit.pk) if unit else None, "processing_state": selection["processing_state"],
-                        "processing_stage": craft["code"] if craft else "RAW", "completed_craft": craft, "semi_kind": semi_kind}
-            if ordinary_color:
-                snapshot.update(color_metadata(selected_color) if selected_color else
-                                {"product_color_id": None, **color_identity(attrs["color"], selection)})
+            snapshot = _snapshot_with_shared_options(catalog, selection, attrs=attrs, scope=scope, required=required,
+                craft=craft, semi_kind=semi_kind, ordinary_color=ordinary_color, inherited=inherited,
+                result_color=result_color, result_field=result_field, request=request, persist=persist,
+                allow_public_creation=allow_public_creation, prefer_catalog_options=prefer_catalog_options)
     if snapshot["category_key"] != SECTION_CATEGORIES.get(line.section.title.strip()):
         raise ValidationError({"material_catalog_id": "已保存材料的目录类别不能移入不匹配的BOM分区。"})
+    if is_cut_piece(line) and (snapshot["unit_name"] != "片" or (snapshot.get("completed_craft") or {}).get("code") != "CUTTING"):
+        raise ValidationError({"material_selection": "新裁片须选择按片记录的裁剪完成工艺，不能沿用车缝或套数身份。"})
     line.material_catalog_id = catalog_id
     line.material_selection_snapshot = snapshot
     if not unchanged and line.section.section_type == "PROFILE" and snapshot["unit_name"] != "根":
@@ -252,7 +304,7 @@ def apply_catalog_selection(line, data, *, old, request, persist, versions, allo
     line.part_name, line.material, line.unit = snapshot["name"], attrs.get("material", ""), snapshot["unit_name"]
     line.category = line.section.title.strip()
     line.raw_material = ""
-    line.specification = " / ".join(attrs[key] for key in ("fabric_spec", "specification", "section_size", "size", "model", "width") if attrs.get(key))
+    line.specification = attrs.get("size", "") if is_cut_piece(line) else " / ".join(attrs[key] for key in ("fabric_spec", "specification", "section_size", "size", "model", "width") if attrs.get(key))
     for key in LEGACY_SOURCE_FIELDS:
         line.raw_values.pop(key, None)
     line.raw_values.pop("pipe_source_sync_pending", None)

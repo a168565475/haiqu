@@ -1,5 +1,8 @@
 """仅连接专属运行进程；外部消息在此收敛为白名单，不返回原始 RPC。"""
 import json
+import base64
+import binascii
+import hashlib
 import math
 import socket
 import struct
@@ -16,9 +19,13 @@ from django.views.decorators.debug import sensitive_variables
 MAX_FRAME = 16 * 1024 * 1024
 RUNTIME_ERRORS = frozenset({
     'INVALID_REQUEST', 'BUSY', 'NOT_FOUND', 'NOT_READY', 'UPSTREAM_UNAVAILABLE',
-    'AUTH_REQUIRED', 'MODEL_UNAVAILABLE', 'USAGE_LIMIT_EXCEEDED', 'TIMEOUT', 'INTERRUPTED',
+    'AUTH_REQUIRED', 'MODEL_UNAVAILABLE', 'USAGE_LIMIT_EXCEEDED', 'TIMEOUT', 'INTERRUPTED', 'UNSUPPORTED_CAPABILITY', 'CODEX_INVALID_PROPOSAL',
+    'DXF_INVALID', 'DXF_BINARY', 'DXF_TOO_LARGE', 'DXF_UNIT_UNKNOWN', 'DXF_UNSUPPORTED', 'DXF_COMPLEXITY',
+    'DXF_OPEN_CONTOUR', 'DXF_INVALID_CONTOUR', 'DXF_AMBIGUOUS_CONTOUR', 'DXF_NO_PIECES',
+    'NEST_PARAMETERS', 'NEST_TOO_MANY_PIECES', 'NEST_TOO_WIDE', 'NEST_TIMEOUT', 'NEST_VALIDATION',
+    'SOURCE_CHANGED', 'SOURCE_MISSING', 'STORAGE_UNSAFE', 'RESULT_LIMIT', 'TOOL_SEQUENCE', 'TOOL_LIMIT',
 })
-ACTIONS = ('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract')
+ACTIONS = ('login', 'switch', 'disconnect', 'refresh', 'test', 'discover', 'extract', 'nest')
 
 
 class RuntimeFailure(Exception):
@@ -130,9 +137,15 @@ def clean_snapshot(value):
         models.append({'id': text(model['id'], 200, empty=False), 'display_name': text(model['display_name'])})
     if len({model['id'] for model in models}) != len(models):
         invalid()
+    capabilities = value.get('capabilities', [])
+    if not isinstance(capabilities, list) or len(capabilities) > 32:
+        invalid()
+    for capability in capabilities:
+        text(capability, 80, empty=False)
     return {'boot_id': identifier(value['boot_id']), 'cli_version': text(value['cli_version'], 64),
             'account': account, 'models': models, 'rate_limits': clean_limits(value['rate_limits']),
-            'limits_updated_at': timestamp(value['limits_updated_at']), 'operation': clean_operation(value['operation'])}
+            'limits_updated_at': timestamp(value['limits_updated_at']), 'operation': clean_operation(value['operation']),
+            'capabilities': [name for name in ('nest_tools_v1',) if name in capabilities]}
 
 
 @sensitive_variables()
@@ -162,6 +175,19 @@ class RuntimeClient:
     def __init__(self):
         self.path = getattr(settings, 'CODEX_RUNTIME_SOCKET', '/run/haiqu-codex/runtime.sock')
 
+    @sensitive_variables()
+    def fetch_artifact(self, params, expected):
+        mapping(expected, ('name', 'size_bytes', 'sha256', 'content_type'))
+        types = {'layout.svg': 'image/svg+xml', 'layout.dxf': 'application/dxf'}
+        if (type(expected['name']) is not str or expected['name'] not in types
+                or expected['content_type'] != types[expected['name']] or params.get('name') != expected['name']
+                or type(expected['size_bytes']) is not int or not 0 < expected['size_bytes'] <= 8 * 1024 * 1024):
+            invalid()
+        response = self.call('artifact', params)
+        if response['size_bytes'] != expected['size_bytes'] or response['sha256'] != expected['sha256']:
+            invalid()
+        return response['data']
+
     @staticmethod
     def _receive(sock, size, deadline):
         chunks = []
@@ -180,20 +206,25 @@ class RuntimeClient:
 
     @sensitive_variables()
     def call(self, method, params):
-        if method not in ('status', 'start', 'operation', 'cancel', 'challenge', 'result'):
+        if method not in ('status', 'start', 'operation', 'cancel', 'challenge', 'result', 'artifact'):
             raise RuntimeFailure('INVALID_REQUEST')
         request = json.dumps({'method': method, 'params': params}, separators=(',', ':'), allow_nan=False).encode()
         if len(request) > MAX_FRAME:
             raise RuntimeFailure('INVALID_REQUEST')
         try:
-            deadline = time.monotonic() + 5
+            budget = 30 if method == 'artifact' or (method == 'start' and params.get('action') == 'nest') else 5
+            deadline = time.monotonic() + budget
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(5)
+                sock.settimeout(budget)
                 sock.connect(self.path)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeFailure('UPSTREAM_UNAVAILABLE')
+                sock.settimeout(remaining)
                 sock.sendall(struct.pack('!I', len(request)) + request)
                 length = struct.unpack('!I', self._receive(sock, 4, deadline))[0]
                 # 状态/账号响应仍维持原 256 KiB 上限，只有解析结果可携带较大正文。
-                response_limit = MAX_FRAME if method == 'result' else 256 * 1024
+                response_limit = MAX_FRAME if method in ('result', 'artifact') else 256 * 1024
                 if not 0 < length <= response_limit:
                     invalid()
                 response = json.loads(self._receive(sock, length, deadline))
@@ -208,6 +239,23 @@ class RuntimeClient:
         if response['ok'] is not True or 'data' not in response:
             invalid()
         data = response['data']
+        if method == 'artifact':
+            mapping(data, ('boot_id', 'operation_id', 'generation', 'name', 'size_bytes', 'sha256', 'data_base64'))
+            if (identifier(data['operation_id']) != params.get('operation_id')
+                    or integer(data['generation']) != params.get('generation')
+                    or identifier(data['boot_id']) != params.get('boot_id')
+                    or data['name'] not in ('layout.svg', 'layout.dxf') or data['name'] != params.get('name')
+                    or type(data['size_bytes']) is not int or not 0 < data['size_bytes'] <= 8 * 1024 * 1024
+                    or type(data['data_base64']) is not str or len(data['data_base64']) > ((8 * 1024 * 1024 + 2) // 3) * 4):
+                invalid()
+            try:
+                content = base64.b64decode(data['data_base64'], validate=True)
+            except (ValueError, binascii.Error):
+                invalid()
+            if len(content) != data['size_bytes'] or hashlib.sha256(content).hexdigest() != data['sha256']:
+                invalid()
+            return {'boot_id': data['boot_id'], 'name': data['name'], 'size_bytes': len(content),
+                    'sha256': data['sha256'], 'data': content}
         if method == 'result':
             mapping(data, ('boot_id', 'operation_id', 'generation', 'result'))
             if (identifier(data['operation_id']) != params.get('operation_id')

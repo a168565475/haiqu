@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/purchaseOrders'
 import type { SupplierPurchaseSheet } from '@/types/purchaseOrder'
 import SupplierPurchaseSheetListView from './SupplierPurchaseSheetListView.vue'
+import PurchaseSheetTemplateSelectView from './PurchaseSheetTemplateSelectView.vue'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: {} }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, moduleCan: () => true }) }))
+const state = vi.hoisted(() => ({ query: {} as Record<string, string>, canGenerate: true }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: state.query, params: { id: 'order-1' } }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, moduleCan: (permission: string) => permission === 'access_control.generate_purchasesheets' ? state.canGenerate : true }) }))
 vi.mock('@/api/purchaseOrders', () => ({
   fetchSupplierPurchaseSheets: vi.fn(), batchDownloadSupplierPurchaseSheets: vi.fn(),
   batchPublishSupplierPurchaseSheets: vi.fn(), downloadSupplierPurchaseSheetXlsx: vi.fn(),
+  ensureDefaultPurchaseSheets: vi.fn(), fetchPurchaseSheetOptions: vi.fn(), generatePurchaseSheets: vi.fn(),
 }))
 
 const rows = [
@@ -19,6 +22,9 @@ const rows = [
 
 beforeEach(() => {
   vi.resetAllMocks()
+  state.query = {}
+  state.canGenerate = true
+  vi.mocked(api.ensureDefaultPurchaseSheets).mockResolvedValue(undefined)
   vi.mocked(api.fetchSupplierPurchaseSheets).mockResolvedValue({ data: rows, meta: { total: rows.length } } as never)
   vi.mocked(api.batchDownloadSupplierPurchaseSheets).mockResolvedValue(new Blob(['excel-zip'], { type: 'application/zip' }))
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:excel-export') })
@@ -36,6 +42,84 @@ async function renderList() {
 }
 
 describe('供应商采购表只提供Excel导出', () => {
+  it('金额统一显示两位，零和待结算分开且不改后端值', async () => {
+    const values = ['0', '12.3456', '999.9950', '123456789012345678.1234', null]
+    const items = values.map((total_amount, index) => ({ ...rows[0]!, id: `amount-${index}`, total_amount }))
+    vi.mocked(api.fetchSupplierPurchaseSheets).mockResolvedValue({ data: items, meta: { total: items.length } } as never)
+    const wrapper = await renderList()
+    try {
+      const text = wrapper.text()
+      for (const expected of ['¥0.00', '¥12.35', '¥1,000.00', '¥123,456,789,012,345,678.12', '待结算']) expect(text).toContain(expected)
+      expect(items.map(item => item.total_amount)).toEqual(values)
+    } finally { wrapper.unmount() }
+  })
+
+  it('模板选择总额和供应商金额显示两位，空值不冒充零', async () => {
+    const data = { purchase_order: { id: 'order-1', order_number: '采购单', total_amount: '12.3456' },
+      suppliers: [{ supplier_id: 'supplier-1', supplier_name: '供应商甲', total_amount: '0', line_count: 1 },
+        { supplier_id: 'supplier-2', supplier_name: '供应商乙', total_amount: null, line_count: 1 }],
+      templates: [], existing_sheet_count: 0 }
+    vi.mocked(api.fetchPurchaseSheetOptions).mockResolvedValue(data as never)
+    const wrapper = mount(PurchaseSheetTemplateSelectView, { global: { plugins: [ElementPlus] } })
+    try {
+      await flushPromises()
+      expect(wrapper.get('.order-total strong').text()).toBe('¥12.35')
+      expect(wrapper.findAll('.supplier-total strong').map(item => item.text())).toEqual(['¥0.00', '¥—'])
+      expect(data.purchase_order.total_amount).toBe('12.3456')
+      expect(api.generatePurchaseSheets).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+
+  it('订单确认后自动准备默认草稿，再显示供应商采购表列表', async () => {
+    state.query = { purchase_order_id: 'order-1' }
+    const wrapper = await renderList()
+    try {
+      expect(api.ensureDefaultPurchaseSheets).toHaveBeenCalledExactlyOnceWith('order-1')
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenCalledWith(expect.objectContaining({ purchase_order_id: 'order-1' }))
+      expect(wrapper.text()).not.toContain('生成采购表')
+      expect(api.batchPublishSupplierPurchaseSheets).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+
+  it('按采购需求查看各批采购表，只读列表并按关联采购单显示批次号', async () => {
+    state.query = { purchase_group_id: 'group-1' }
+    const items = [
+      { ...rows[0]!, purchase_batch_number: 2 },
+      { ...rows[1]!, purchase_batch_number: 2 },
+      { ...rows[0]!, id: 'third', purchase_batch_number: 3 },
+    ]
+    vi.mocked(api.fetchSupplierPurchaseSheets).mockResolvedValue({ data: items, meta: { total: 3 } } as never)
+    const wrapper = await renderList()
+    try {
+      expect(api.ensureDefaultPurchaseSheets).not.toHaveBeenCalled()
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenCalledWith(expect.objectContaining({ purchase_group_id: 'group-1' }))
+      const columns = wrapper.findAll('thead th')
+      const batchColumn = columns.findIndex(cell => cell.text() === '采购批次')
+      expect(batchColumn).toBeGreaterThanOrEqual(0)
+      expect(wrapper.findAll('tbody tr').map(row => row.findAll('td')[batchColumn]?.text())).toEqual(['第 2 批', '第 2 批', '第 3 批'])
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([false, true])('只读账号或无订单范围列表不自动生成：有权限=%s', async canGenerate => {
+    state.canGenerate = canGenerate
+    state.query = canGenerate ? {} : { purchase_order_id: 'order-1' }
+    const wrapper = await renderList()
+    try {
+      expect(api.ensureDefaultPurchaseSheets).not.toHaveBeenCalled()
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenCalledTimes(1)
+    } finally { wrapper.unmount() }
+  })
+
+  it('缺少模板等生成失败直接显示真实原因，不显示假成功列表', async () => {
+    state.query = { purchase_order_id: 'order-1' }
+    vi.mocked(api.ensureDefaultPurchaseSheets).mockRejectedValueOnce(new Error('暂无可用采购合同模板'))
+    const wrapper = await renderList()
+    try {
+      expect(wrapper.text()).toContain('暂无可用采购合同模板')
+      expect(api.fetchSupplierPurchaseSheets).not.toHaveBeenCalled()
+      expect(api.batchPublishSupplierPurchaseSheets).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
   it('列表使用更多菜单，保留编辑、查看、Excel和批量下载入口', async () => {
     const wrapper = await renderList()
     try {

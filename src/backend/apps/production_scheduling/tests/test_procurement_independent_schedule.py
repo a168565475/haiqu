@@ -8,12 +8,12 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.audit.models import AuditLog
-from apps.boms.models import BomStatus
+from apps.boms.models import Bom, BomCreationMethod, BomStatus
 from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus
 from apps.production_tasks.models import ProductionTaskStatus
 from apps.workshop_config.models import RecordStatus
 
-from ..models import ProductionSchedule
+from ..models import ProductionSchedule, ScheduleStatus
 from . import test_production_scheduling_api as schedule_fixtures
 
 
@@ -143,7 +143,7 @@ class ProcurementIndependentScheduleTests(APITestCase):
         source = self.detail()
         self.assertFalse(source["scheduling_ready"])
         self.assertFalse(source["selectable"])
-        self.assertIn("生产任务单内所有产品的 BOM 必须已确认", source["scheduling_blockers"])
+        self.assertIn("至少一个产品的 BOM 必须已确认", source["scheduling_blockers"])
         response = self.client.post("/api/v1/production-schedules/", self.payload(), format="json")
         self.assertEqual(response.status_code, 409, response.data)
         self.assertIn("BOM 必须已确认", response.data["error"]["message"])
@@ -219,4 +219,140 @@ class ProcurementIndependentScheduleTests(APITestCase):
         self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         read = self.client.get("/api/v1/production-schedules/task-candidates/")
         self.assertEqual(read.status_code, 403, read.data)
+        self.assertFalse(ProductionSchedule.objects.filter(production_task=self.task).exists())
+
+
+class ProductBomScheduleTests(APITestCase):
+    setUp = schedule_fixtures.ProductionSchedulingApiTests.setUp
+    detail = schedule_fixtures.ProductionSchedulingApiTests.detail
+    payload = schedule_fixtures.ProductionSchedulingApiTests.payload
+    create_schedule = schedule_fixtures.ProductionSchedulingApiTests.create_schedule
+    _remove_purchase = ProcurementIndependentScheduleTests._remove_purchase
+    _candidate_ids = ProcurementIndependentScheduleTests._candidate_ids
+
+    def _add_product(self):
+        return type(self.line).objects.create(
+            production_task=self.task, line_number=2, product=self.product,
+            product_number_snapshot=self.product.product_number,
+            product_code_snapshot=self.product.product_code,
+            item_number_snapshot=self.product.product_item.item_number,
+            product_name_snapshot="第二个待排产品", specification_snapshot=self.product.specification,
+            product_color=self.color, color_card_snapshot=self.color.color_card,
+            color_name_snapshot=self.color.color_name, color_code_snapshot=self.color.color_code,
+            quantity=60, unit=self.product.unit, currency=self.currency,
+            unit_price="10", total_amount="600", exchange_rate="1",
+        )
+
+    def _create_pending_bom(self, line, version=1):
+        return Bom.objects.create(
+            bom_number=f"BOM-PARTIAL-{line.line_number}-{version}",
+            production_task=self.task, product_line=line, version_number=version,
+            creation_method=BomCreationMethod.BLANK, status=BomStatus.PENDING_CONFIRMATION,
+            product_number_snapshot=line.product_number_snapshot,
+            product_code_snapshot=line.product_code_snapshot,
+            product_name_snapshot=line.product_name_snapshot,
+            specification_snapshot=line.specification_snapshot,
+            product_category_snapshot=self.product.category.category_name,
+            order_quantity=line.quantity, created_by_employee=self.employee,
+        )
+
+    def _assert_confirmed_product_can_be_scheduled(self, *, pending_bom):
+        self._remove_purchase()
+        other_line = self._add_product()
+        if pending_bom:
+            self._create_pending_bom(other_line)
+        self.assertIn(str(self.task.pk), self._candidate_ids())
+        source = self.detail()
+        self.assertTrue(source["scheduling_ready"])
+        self.assertTrue(source["selectable"])
+        self.assertEqual(source["scheduling_blockers"], [])
+        statuses = {row["id"]: row["bom_status"] for row in source["products"]}
+        self.assertEqual(statuses[str(self.line.pk)], "VERIFIED")
+        self.assertEqual(statuses[str(other_line.pk)], "PENDING_CONFIRMATION" if pending_bom else "NOT_CREATED")
+        created = self.create_schedule()
+        schedule = ProductionSchedule.objects.get(pk=created.data["data"]["id"])
+        self.assertEqual(list(schedule.products.values_list("product_line_id", flat=True)), [self.line.pk])
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, ProductionTaskStatus.IN_PRODUCTION)
+        self.assertFalse(PurchaseOrder.objects.filter(production_task=self.task).exists())
+
+    def test_confirmed_product_can_be_scheduled_when_other_product_has_no_bom(self):
+        self._assert_confirmed_product_can_be_scheduled(pending_bom=False)
+
+    def test_confirmed_product_can_be_scheduled_when_other_product_has_pending_bom(self):
+        self._assert_confirmed_product_can_be_scheduled(pending_bom=True)
+
+    def test_unconfirmed_product_submission_is_rejected_without_side_effects(self):
+        self._remove_purchase()
+        other_line = self._add_product()
+        for pending_bom in (False, True):
+            with self.subTest(pending_bom=pending_bom):
+                if pending_bom:
+                    self._create_pending_bom(other_line)
+                payload = self.payload()
+                payload["items"].append({
+                    **payload["items"][0], "product_line_id": str(other_line.pk), "planned_quantity": 60,
+                })
+                response = self.client.post("/api/v1/production-schedules/", payload, format="json")
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertIn("BOM 必须已确认", response.data["error"]["message"])
+                self.assertFalse(ProductionSchedule.objects.filter(production_task=self.task).exists())
+                self.task.refresh_from_db()
+                self.assertEqual(self.task.status, ProductionTaskStatus.READY)
+                self.assertFalse(AuditLog.objects.filter(
+                    object_type="PRODUCTION_TASK", object_id=self.task.pk, action="SCHEDULED",
+                ).exists())
+
+    def test_later_confirmed_product_is_appended_to_the_same_schedule(self):
+        self._remove_purchase()
+        other_line = self._add_product()
+        other_bom = self._create_pending_bom(other_line)
+        initial_payload = self.payload()
+        created = self.create_schedule(initial_payload)
+        schedule_id = created.data["data"]["id"]
+        schedule = ProductionSchedule.objects.get(pk=schedule_id)
+        initial_version = schedule.version
+        original_product_id = schedule.products.get(product_line=self.line).pk
+        self.assertNotIn(str(self.task.pk), self._candidate_ids())
+        update = {
+            "source_revision_hash": self.detail()["source_revision_hash"],
+            "items": [initial_payload["items"][0], {
+                **initial_payload["items"][0], "product_line_id": str(other_line.pk), "planned_quantity": 60,
+            }],
+        }
+        url = f"/api/v1/production-schedules/{schedule_id}/"
+        rejected = self.client.patch(url, update, format="json", HTTP_IF_MATCH=created["ETag"])
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        schedule.refresh_from_db()
+        self.assertEqual(schedule.version, initial_version)
+        self.assertEqual(list(schedule.products.values_list("product_line_id", flat=True)), [self.line.pk])
+        self.assertFalse(AuditLog.objects.filter(
+            object_type="PRODUCTION_SCHEDULE", object_id=schedule_id, action="UPDATED",
+        ).exists())
+
+        other_bom.status = BomStatus.VERIFIED
+        other_bom.confirmed_by_employee = self.employee
+        other_bom.confirmed_at = timezone.now()
+        other_bom.save(update_fields=["status", "confirmed_by_employee", "confirmed_at", "updated_at"])
+        update["source_revision_hash"] = self.detail()["source_revision_hash"]
+        edited = self.client.patch(url, update, format="json", HTTP_IF_MATCH=created["ETag"])
+        self.assertEqual(edited.status_code, 200, edited.data)
+        self.assertEqual(edited.data["data"]["id"], schedule_id)
+        self.assertEqual(set(schedule.products.filter(removed_at__isnull=True).values_list(
+            "product_line_id", flat=True,
+        )), {self.line.pk, other_line.pk})
+        self.assertEqual(schedule.products.get(product_line=self.line).pk, original_product_id)
+        self.assertEqual(ProductionSchedule.objects.filter(
+            production_task=self.task, record_status=ScheduleStatus.ACTIVE,
+        ).count(), 1)
+
+    def test_newest_pending_bom_cannot_fall_back_to_older_confirmed_version(self):
+        self._remove_purchase()
+        self._create_pending_bom(self.line, version=2)
+        self.assertNotIn(str(self.task.pk), self._candidate_ids())
+        source = self.detail()
+        self.assertFalse(source["scheduling_ready"])
+        self.assertEqual(source["products"][0]["bom_status"], "PENDING_CONFIRMATION")
+        rejected = self.client.post("/api/v1/production-schedules/", self.payload(), format="json")
+        self.assertEqual(rejected.status_code, 409, rejected.data)
         self.assertFalse(ProductionSchedule.objects.filter(production_task=self.task).exists())

@@ -1,4 +1,11 @@
 import { compactDecimal } from '@/utils/compactDecimal'
+import type { ProcurementInboundProductSummary } from '@/types/inventory'
+
+type InboundProductFields = Omit<ProcurementInboundProductSummary, 'product_line_id'>
+
+export function formatInboundProductField(products: InboundProductFields[], field: keyof InboundProductFields): string {
+  return products.map(product => product[field].trim() || '—').join('、') || '—'
+}
 // 使用定点整数处理数量合计，避免小数累加误差及不同单位相加。
 export function quantityValue(value: unknown): bigint | null {
   if (typeof value !== 'string' || !/^\d{1,18}(\.\d{1,4})?$/.test(value)) return null
@@ -18,9 +25,9 @@ export function quantityWithUnit(value: unknown, unit: string): string {
   return quantity === '—' ? quantity : `${quantity}${unit ? ` ${unit}` : ''}`
 }
 
-// 管材主数量直接使用已记录的根数，不能把计价米数改名为根数。
-export function purchaseQuantityText(quantity: unknown, unit: string, rawBarLength: string | null | undefined, barCount: number | string | null | undefined): string {
-  if (rawBarLength) return barCount === null || barCount === undefined ? '根数未记录' : quantityWithUnit(String(barCount), '根')
+// 采购相关页面统一使用采购单冻结的计价单位，不在展示时改成库存根数或件数。
+export function purchaseQuantityText(quantity: unknown, unit: string, _rawBarLength: string | null | undefined, _barCount: number | string | null | undefined): string {
+  if (['KG', '千克', '公斤'].includes(String(unit || '').trim().toUpperCase())) return quantityWithUnit(quantity, 'kg')
   return quantityWithUnit(quantity, unit)
 }
 
@@ -36,7 +43,7 @@ export function formatMoney(value: unknown): string {
   const amount = quantityValue(value)
   if (amount === null) return '—'
   const cents = (amount + 50n) / 100n
-  return compactDecimal(`${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`)
+  return `${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 
 export function formatUnitPrice(value: unknown): string {

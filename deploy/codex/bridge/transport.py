@@ -39,20 +39,36 @@ def exact(stream, count, deadline):
     return bytes(data)
 
 
-def frame(stream, *, idle=False):
+def request_timeout(packet):
+    # 完整请求只识别文件方法；不改变权限或转发内容，非法 JSON 交运行端拒绝。
+    try:
+        value = json.loads(packet[4:])
+    except (ValueError, UnicodeError):
+        return 5
+    if (type(value) is dict and type(value.get('params')) is dict
+            and (value.get('method') == 'artifact'
+                 or (value.get('method') == 'start' and value['params'].get('action') == 'nest'))):
+        return 30
+    return 5
+
+
+def frame(stream, *, idle=False, timeout=5):
     # 空闲 stdin 可长期等待；收到第一个字节后整帧限时，避免半帧拖住连接。
-    first = os.read(stream.fileno(), 1) if idle else exact(stream, 1, time.monotonic() + 5)
+    first = os.read(stream.fileno(), 1) if idle else exact(stream, 1, time.monotonic() + timeout)
     if not first:
         raise EOFError('FRAME_EOF')
-    deadline = time.monotonic() + 5
+    started = time.monotonic()
+    deadline = started + timeout
     header = first + exact(stream, 3, deadline)
     count = struct.unpack('!I', header)[0]
     require(0 < count <= MAX_FRAME, 'FRAME_LIMIT')
+    if count > 256 * 1024:
+        deadline = started + max(timeout, 30)
     return header + exact(stream, count, deadline)
 
 
 def send(stream, data):
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + (30 if len(data) > 256 * 1024 else 5)
     view = memoryview(data)
     while view:
         remaining = deadline - time.monotonic()
@@ -106,7 +122,7 @@ def remote():
             client.settimeout(5)
             client.connect(str(REMOTE_SOCKET))
             send(client, request)
-            response = frame(client)
+            response = frame(client, timeout=request_timeout(request))
         send(sys.stdout.buffer, response)
 
 
@@ -170,7 +186,7 @@ def local_locked():
                     continue  # 尚未发送请求，下一客户端不会串帧。
                 send(sys.stdout.buffer, request)
                 # 已发请求的管道失败必须退出整个连接，禁止把旧响应送给下一请求。
-                response = frame(sys.stdin.buffer)
+                response = frame(sys.stdin.buffer, timeout=request_timeout(request))
                 try:
                     send(client, response)
                 except (ConnectionError, TimeoutError):

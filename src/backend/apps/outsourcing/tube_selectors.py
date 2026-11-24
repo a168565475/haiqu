@@ -18,7 +18,8 @@ from apps.workshop_config.models import Craft
 
 from .models import OutsourcingFactory, TubeSourceKind
 from .selectors import outsourcing_source_schedules
-from .tube_prices import line_price_data, planned_amount
+from .tube_prices import line_area_data, line_price_data, planned_amount, total_area
+from .component_source_snapshots import frozen_component_source_materials
 from .tube_kinds import CUTTING_SOURCES, CUTTING_CRAFT_CODES, CUTTING_FIELDS, DIRECT_SOURCES, output_unit, source_category, display_operations
 
 
@@ -28,7 +29,8 @@ DISPATCH_PERMISSION = 'outsourcing.confirm_dispatch_outsourcingorder'
 CANCEL_PERMISSION = 'outsourcing.cancel_outsourcingorder'
 RETURN_PERMISSION = 'outsourcing.confirm_return_outsourcingorder'
 SOURCE_LABELS = {'RAW_PIPE': '原材料', 'PUBLIC_SEMI': '未喷塑半成品', 'METAL': '未入库半成品',
-                 'PUBLIC_CUTTING': '已入库裁片半成品', 'SEWING': '未入库车缝完成件'}
+                 'PUBLIC_CUTTING': '已入库裁片半成品', 'SEWING': '未入库车缝完成件',
+                 'CUTTING': '车间裁片直发', 'PUBLIC_PIECE': '裁片库存', 'PUBLIC_PART': '车缝部位库存'}
 
 
 def require_tube_feature():
@@ -159,7 +161,8 @@ def tube_options(request, *, category='tube'):
                 craft_type_snapshot='EXTERNAL', craft__in=crafts).values_list('craft_id', flat=True)]})
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
         warehouse__warehouse_type__in=['MATERIAL', 'SEMI_FINISHED']).select_related('warehouse').order_by('warehouse_id', 'zone_name', 'pk')
-    kinds = ([TubeSourceKind.PUBLIC_CUTTING, TubeSourceKind.SEWING] if category == 'cutting' else
+    kinds = ([TubeSourceKind.CUTTING, TubeSourceKind.PUBLIC_PIECE, TubeSourceKind.PUBLIC_PART,
+              TubeSourceKind.SEWING, TubeSourceKind.PUBLIC_CUTTING] if category == 'cutting' else
              [TubeSourceKind.RAW_PIPE, TubeSourceKind.PUBLIC_SEMI, TubeSourceKind.METAL])
     from .source_access import allowed_source_kinds
     kinds = [kind for kind in kinds if kind in allowed_source_kinds(request, VIEW_PERMISSION)]
@@ -215,7 +218,9 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
                     continue
                 permissions[field] = True
     lines, total_quantity, total_stock, total_meters = [], 0, 0, Decimal('0')
-    for line in order.lines.all():
+    input_batch = bool(order.plan_id and order.source_snapshot.get('sewing_inputs'))
+    order_lines = list(order.inputs.all() if input_batch else order.lines.all())
+    for line in order_lines:
         snapshot = line.snapshot if isinstance(line.snapshot, dict) else {}
         output_identity = snapshot.get('public_output_identity')
         output_snapshot = output_identity.get('identity_snapshot') if isinstance(output_identity, dict) else None
@@ -224,11 +229,14 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         meters = snapshot.get('meters')
         component = basis['components'].get(str(line.component_identity)) if basis else None
         lines.append({'id': str(line.pk), 'component_identity': str(line.component_identity),
-            'input_material_catalog_id': str(line.input_material_catalog_id) if line.input_material_catalog_id else None,
-            'output_material_catalog_id': str(line.output_material_catalog_id) if line.output_material_catalog_id else None,
-            'input_material_selection_snapshot': line.input_material_selection_snapshot,
-            'output_material_selection_snapshot': line.output_material_selection_snapshot,
-            **line_price_data(line),
+            'input_material_catalog_id': str(line.input_material_catalog_id) if getattr(line, 'input_material_catalog_id', None) else None,
+            'output_material_catalog_id': str(line.output_material_catalog_id) if getattr(line, 'output_material_catalog_id', None) else None,
+            'input_material_selection_snapshot': getattr(line, 'input_material_selection_snapshot', {}),
+            'output_material_selection_snapshot': getattr(line, 'output_material_selection_snapshot', {}),
+            'component_material_selection_snapshot': snapshot.get('component_material_selection_snapshot', {}),
+            'component_source_materials': frozen_component_source_materials(snapshot, line.input_identity),
+            **({'price_unit': 'PIECE', 'unit_area_sqm': None, 'line_area_sqm': None,
+                'unit_price': None, 'planned_amount': None} if input_batch else {**line_area_data(line), **line_price_data(line)}),
             **{key: snapshot.get(key) for key in CUTTING_FIELDS},
             'part_name': snapshot.get('part_name', ''), 'factory_id': str(line.factory_id),
             'factory_name': snapshot.get('factory_name', ''), 'quantity': str(line.quantity),
@@ -255,6 +263,10 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
     task_order_number = summary.pop('order_number')
     from .tube_materials import material_data
     result = {**summary, 'task_order_number': task_order_number,
+        'part_flow': bool(order.source_snapshot.get('part_flow')),
+        'sewing_inputs': bool(order.source_snapshot.get('sewing_inputs')),
+        'fees_deferred': bool(order.source_snapshot.get('fees_deferred')),
+        'billing_basis': order.source_snapshot.get('billing_basis'),
         'id': str(order.pk), 'order_number': order.order_number, 'status': order.status,
         'is_plan': order.is_plan, 'plan_id': str(order.plan_id) if order.plan_id else None,
         'version': order.version, 'etag': etag_for_instance(order), 'created': created,
@@ -279,12 +291,16 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'planned_dispatch_date': str(order.planned_dispatch_date), 'expected_return_date': str(order.expected_return_date),
         'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind in DIRECT_SOURCES else str(total_stock),
         'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines,
-        'planned_amount': planned_amount(order.lines.all()),
+        'total_area_sqm': None if input_batch else total_area(order_lines),
+        'planned_amount': None if input_batch else planned_amount(order_lines),
         'materials': [{**material_data(value), 'unit_consumption': None} for value in order.materials.all()]}
     if action_record:
         result['action'] = {'id': str(action_record.pk), 'kind': action_record.kind,
             'client_request_id': str(action_record.client_request_id),
             'confirmed_at': action_record.created_at.isoformat(), 'actor_name': action_record.actor_employee.display_name}
+    if result['part_flow']:
+        units = {line.snapshot.get('unit') for line in order_lines}
+        result['output_unit'] = next(iter(units)) if len(units) == 1 else ''
     if order.is_plan:
         from .plan_selectors import plan_detail_data
         result = plan_detail_data(order, result, request)

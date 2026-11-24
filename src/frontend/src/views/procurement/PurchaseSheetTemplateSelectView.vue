@@ -29,8 +29,10 @@ const emptyReason = computed(() => {
 
 function money(value: string | null): string {
   if (value === null || value.trim() === '') return '—'
-  const amount = Number(value)
-  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
+  const parts = /^(\d+)(?:\.(\d{1,4}))?$/.exec(value.trim())
+  if (!parts) return '—'
+  const cents = (BigInt(parts[1]!) * 10000n + BigInt((parts[2] || '').padEnd(4, '0')) + 50n) / 100n
+  return `${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`
 }
 function apiErrorMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response

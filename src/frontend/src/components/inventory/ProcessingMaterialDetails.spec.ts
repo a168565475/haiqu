@@ -13,6 +13,33 @@ const output: MaterialSelectionSnapshot = { ...input, processing_state: 'PROCESS
 const global = { stubs: { ElPopover: { template: '<div><slot name="reference" /><slot /></div>' } } }
 
 describe('加工材料详情', () => {
+  it('部位布料按真实来源分组，旧品名引用的独立布料属性不再显示', () => {
+    const wrapper = mount(ProcessingMaterialDetails, { global, slots: { default: '床面' }, props: { materials: {
+      component_material_selection_snapshot: { ...output, name: '床面', processing_stage: '', unit_name: '个',
+        attributes: { material: '错误父材质', color: '错误父颜色', fabric_spec: '错误父规格', width: '错误父门幅', model: 'A版' } },
+      component_source_materials: [
+        { source_bom_line_id: 'fabric', name: '面布', material: '涤纶', color: '蓝色', color_code: 'B1', fabric_spec: '600D', width: '150', unit: '米' },
+        { source_bom_line_id: 'cotton', name: '棉料', material: '无胶棉', color: '白色', color_code: '', fabric_spec: '200g', width: '160', unit: '米' },
+      ],
+    } } })
+    const sources = wrapper.findAll('.material-source')
+    expect(sources).toHaveLength(2)
+    expect(sources[0]!.text()).toContain('来源布料：面布材质涤纶颜色蓝色色号B1面料规格600D门幅150')
+    expect(sources[1]!.text()).toContain('来源布料：棉料材质无胶棉颜色白色')
+    expect(sources[1]!.text()).not.toContain('600D')
+    expect(wrapper.text()).not.toContain('错误父')
+    expect(wrapper.text()).toContain('型号A版')
+  })
+  it('部位档案展示实际属性与自己的单位，不伪造完成工艺', () => {
+    const wrapper = mount(ProcessingMaterialDetails, { global, slots: { default: '床面' }, props: { materials: {
+      component_material_selection_snapshot: { ...output, name: '床面', processing_stage: '', unit_name: '个',
+        attributes: { model: '规格A', process: '双车线' } },
+    } } })
+    expect(wrapper.text()).toContain('部位 / 裁片档案：床面')
+    expect(wrapper.text()).toContain('型号规格A')
+    expect(wrapper.text()).toContain('工艺版本双车线')
+    expect(wrapper.text()).not.toContain('金工完成')
+  })
   it('旧单没有新材料快照时不增加空的材料说明', () => {
     const wrapper = mount(ProcessingMaterialDetails, { props: { materials: {} }, slots: { default: '前脚管' } })
     expect(wrapper.find('button').exists()).toBe(false)

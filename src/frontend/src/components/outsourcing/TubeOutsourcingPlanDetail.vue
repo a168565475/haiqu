@@ -8,13 +8,15 @@ import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import TubeOutsourcingDetailTable from './TubeOutsourcingDetailTable.vue'
 import TubeOutsourcingPlanRecords from './TubeOutsourcingPlanRecords.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
+import ComponentSourceMaterials from './ComponentSourceMaterials.vue'
 import { correctTubePlanRecord, dispatchTubePlan, fetchTubeOrder, fetchTubeSource, findTubePlanRecordCorrection, receiveTubePlan, updateTubePlanQuantity } from '@/api/tubeOutsourcing'
 import { fetchTubeReceiptPreview } from '@/api/tubeReceipts'
-import type { TubeDetailLine, TubeOrderDetail, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { TubeDetailLine, TubeOrderDetail, TubePieceSource, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
 import type { TubeReceiptPreview } from '@/types/tubeReceipts'
-import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeQuantityError, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
-import { formatOutsourcingMoney, outsourcingPriceError } from '@/utils/outsourcingPrices'
+import { defaultOutsourcingReceiptWarehouse, isCuttingSource, isDirectSource, tubeMaterialColumn, tubeQuantityError, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
+import { formatOutsourcingMoney, outsourcingLineAmount, outsourcingPriceError } from '@/utils/outsourcingPrices'
 import { createClientUuid } from '@/utils/clientUuid'
+import { componentSourceColumns, materialSpecificationValue, plannedMaterialSpecification } from '@/utils/componentSourceColumns'
 import '@/styles/tubeOutsourcingDetail.scss'
 
 const props = withDefaults(defineProps<{ order: TubeOrderDetail; warehouse: boolean; entryAction?: string; blocked?: boolean; actionOnly?: boolean }>(), { actionOnly: false })
@@ -28,12 +30,13 @@ const correctionActive = ref(false), correctionRefreshRequired = ref(false)
 const correctionOrder = ref<TubeOrderDetail | null>(null)
 const quantityEditing = ref(false), quantityRefreshRequired = ref(false), quantityError = ref('')
 const quantityOrder = ref<TubeOrderDetail | null>(null), quantityValues = ref<Record<string, string>>({})
+const priceValues = ref<Record<string, string>>({})
 const source = ref<TubeSourceKind>(props.order.source_kind)
 const zone = ref(props.order.zone_id || ''), warehouseId = ref(''), remark = ref('')
 const date = ref('')
 const context = ref<TubeSourceContext | null>(null)
 const receiptPreview = ref<TubeReceiptPreview | null>(null)
-const entries = ref<Array<{ id: string; component: string; name: string; quantity: string; factory: string; price: string; zone: string }>>([])
+const entries = ref<Array<{ id: string; component: string; name: string; quantity: string; factory: string; zone: string }>>([])
 const materialEntries = ref<Array<{ id: string; name: string; quantity: string; factory: string; zone: string }>>([])
 const ownedOrderId = props.order.id
 const ownedWarehouse = props.warehouse
@@ -56,7 +59,9 @@ function storageAvailable(): boolean {
   return false
 }
 const cutting = computed(() => isCuttingSource(props.order.source_kind))
-const unit = computed(() => cutting.value ? '套' : '支')
+const partFlow = computed(() => props.order.part_flow === true)
+const inputMode = computed(() => mode.value === 'DISPATCH' && props.order.sewing_inputs === true)
+const unit = computed(() => partFlow.value ? props.order.output_unit || '各行单位' : cutting.value ? '套' : '支')
 const summary = computed(() => props.order.plan_summary)
 const locked = computed(() => !isCurrent() || props.order.id !== ownedOrderId || props.blocked || loading.value || checkingPending.value || saving.value || Boolean(pending.value) || storageError.value || correctionActive.value || quantityEditing.value)
 const canEditQuantity = computed(() => !props.warehouse && props.order.permissions.can_edit_quantity === true && !locked.value && !mode.value)
@@ -77,7 +82,20 @@ const actionUnavailable = computed(() => {
   if (!props.warehouse || !(requestedMode.value === 'DISPATCH' ? props.order.permissions.can_dispatch : props.order.permissions.can_receive)) return '当前没有此委外总单的办理权限，请刷新核对。'
   return pending.value ? '请先核对上次提交结果，再办理新的收发。' : '请重新加载后办理本次收发。'
 })
-const columns = computed(() => [
+const columns = computed(() => partFlow.value ? [
+  { key: 'part_name', label: '部位', width: 160 }, { key: 'specification', label: '规格', width: 160 }, { key: 'unit', label: '单位', width: 70 },
+  ...componentSourceColumns,
+  { key: 'factory_name', label: '计划加工厂', width: 160 },
+  { key: 'bom_quantity', label: 'BOM需求', width: 120, num: true },
+  { key: 'quantity', label: '目标数量', width: 120, num: true },
+  ...(!props.order.sewing_inputs ? [{ key: 'dispatched_quantity', label: '累计实发', width: 120, num: true }] : []),
+  { key: 'received_quantity', label: '累计入库', width: 120, num: true },
+  ...(!props.warehouse ? [
+    { key: 'unit_price', label: '部位单价', width: 145, num: true },
+    { key: 'planned_amount', label: '计划金额（元）', width: 130, num: true },
+    { key: 'received_amount', label: '回货金额（元）', width: 150, num: true },
+  ] : []),
+] : [
   { key: 'part_name', label: '部位', width: 130 }, { key: cutting.value ? 'fabric_material' : 'material', label: '材质', width: 90 },
   ...(!cutting.value ? [{ key: 'shape', label: '形状', width: 80 }] : []),
   { key: 'specification', label: '规格', width: 150 },
@@ -89,9 +107,22 @@ const columns = computed(() => [
   { key: 'quantity', label: `计划数量（${unit.value}）`, width: 120, num: true },
   { key: 'dispatched_quantity', label: '累计实发', width: 110, num: true },
   { key: 'received_quantity', label: '累计入库', width: 110, num: true },
-  ...(!props.warehouse ? [{ key: 'unit_price', label: `计划单价（元/${unit.value}）`, width: 145, num: true }] : []),
+  ...(!props.warehouse ? [
+    ...(!cutting.value ? [
+      { key: 'unit_area_sqm', label: '单支面积（㎡）', width: 120, num: true },
+      { key: 'line_area_sqm', label: '计划面积（㎡）', width: 120, num: true },
+      { key: 'price_unit', label: '计价方式', width: 95 },
+    ] : []),
+    { key: 'unit_price', label: cutting.value ? `计划单价（元/${unit.value}）` : '计划单价', width: 145, num: true },
+    { key: 'planned_amount', label: '计划金额（元）', width: 130, num: true },
+  ] : []),
 ])
-const quantityColumns = computed(() => [
+const quantityColumns = computed(() => partFlow.value ? [
+  { key: 'part_name', label: '部位', width: 180 }, { key: 'specification', label: '规格', width: 160 },
+  ...componentSourceColumns, { key: 'unit', label: '单位', width: 80 },
+  { key: 'quantity', label: '目标数量', width: 150, num: true },
+  { key: 'unit_price', label: '部位单价', width: 170, num: true },
+] : [
   ...columns.value.filter(column => ['part_name', 'material', 'fabric_material', 'shape', 'specification', 'fabric_color', 'pieces_per_set', 'thickness', 'spray_color'].includes(column.key)),
   ...(!cutting.value ? [{ key: 'cutting_length_mm', label: '切割长度 mm', width: 100 }] : []),
   { key: 'purchase_reference', label: `采购入库参考（${unit.value}）`, width: 150, num: true },
@@ -105,10 +136,14 @@ function errorText(cause: unknown, fallback: string) {
   return cause instanceof Error ? cause.message : fallback
 }
 function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` }
-function remaining(id: string) { return props.order.lines.find(line => line.id === id)?.receivable_quantity ?? '0' }
 function received(id: string) { return props.order.lines.find(line => line.id === id)?.received_quantity ?? '0' }
-function sent(id: string) { return props.order.lines.find(line => line.id === id)?.dispatched_quantity ?? '0' }
-function planned(id: string) { return props.order.lines.find(line => line.id === id)?.quantity }
+function sent(id: string) { return (inputMode.value ? props.order.inputs?.find(line => line.component_identity === id)?.dispatched_quantity : props.order.lines.find(line => line.id === id)?.dispatched_quantity) ?? '0' }
+function planned(id: string) { return inputMode.value ? props.order.inputs?.find(line => line.component_identity === id)?.target_quantity : props.order.lines.find(line => line.id === id)?.quantity }
+function entryUnit(id: string) { return (inputMode.value ? props.order.inputs?.find(line => line.component_identity === id)?.unit : props.order.lines.find(line => line.id === id)?.unit) || unit.value }
+function totalText(field: 'bom_quantity' | 'planned_quantity' | 'dispatched_quantity' | 'received_quantity') {
+  if (field === 'dispatched_quantity' && props.order.sewing_inputs) return (summary.value?.input_totals || []).map(row => `${number(row.dispatched_quantity)} ${row.unit}`).join(' / ') || '—'
+  return (summary.value?.quantity_totals || []).map(row => `${number(row[field])} ${row.unit}`).join(' / ')
+}
 function dispatchRemaining(id: string) { return Math.max(Number(planned(id)) - Number(sent(id)), 0) }
 function quantityReferenceKnown(line: TubeDetailLine) {
   const reference = line.purchase_reference
@@ -117,12 +152,14 @@ function quantityReferenceKnown(line: TubeDetailLine) {
 async function openQuantityEditor() {
   if (!canEditQuantity.value || !storageAvailable()) return
   quantityEditing.value = true; quantityOrder.value = null; quantityValues.value = {}; quantityError.value = ''; quantityRefreshRequired.value = false
+  priceValues.value = {}
   await loadQuantityEditor()
 }
 function closeQuantityEditor() {
   if (saving.value) return
   requestSequence += 1; quantityEditing.value = false; loading.value = false
   quantityOrder.value = null; quantityValues.value = {}; quantityError.value = ''; quantityRefreshRequired.value = false
+  priceValues.value = {}
 }
 async function loadQuantityEditor() {
   if (!quantityEditing.value || !isCurrent() || props.warehouse || props.blocked || loading.value || saving.value || checkingPending.value || pending.value || storageError.value) return
@@ -136,6 +173,7 @@ async function loadQuantityEditor() {
     if (latest.id !== ownedOrderId || !latest.is_plan || !latest.etag) throw new Error('总单核对结果不完整，请重新加载。')
     const previous = quantityValues.value
     quantityValues.value = Object.fromEntries(latest.lines.map(line => [line.id, previous[line.id] ?? line.quantity]))
+    priceValues.value = Object.fromEntries(latest.lines.map(line => [line.id, priceValues.value[line.id] ?? line.unit_price ?? '']))
     quantityOrder.value = latest; quantityRefreshRequired.value = false
     if (latest.permissions.can_edit_quantity !== true) quantityError.value = '当前没有修改计划数量的权限，请关闭后刷新核对。'
     emit('updated', latest)
@@ -147,10 +185,16 @@ async function saveQuantity() {
   if (!quantityEditing.value || quantityLocked.value || !quantityOrder.value) return
   quantityError.value = ''
   const original = quantityOrder.value
-  const lines = original.lines.map(line => ({ order_line_id: line.id, quantity: (quantityValues.value[line.id] ?? '').trim() }))
+  const lines = original.lines.map(line => ({ order_line_id: line.id, quantity: (quantityValues.value[line.id] ?? '').trim(),
+    ...(partFlow.value && priceValues.value[line.id]?.trim() ? { unit_price: priceValues.value[line.id]!.trim() } : {}) }))
   if (!lines.length || lines.some(line => wholeTubeQuantity(line.quantity) === null || Number(line.quantity) <= 0)) { quantityError.value = '每个部件的计划数量须为正整数。'; return }
   let changed = false
   for (const line of original.lines) {
+    if (partFlow.value) {
+      const price = priceValues.value[line.id]?.trim() || ''
+      if ((price || line.unit_price != null) && outsourcingPriceError(price)) { quantityError.value = `${line.part_name}：${outsourcingPriceError(price)}`; return }
+      if (price && (line.unit_price == null || outsourcingLineAmount('1', price) !== outsourcingLineAmount('1', line.unit_price))) changed = true
+    }
     const quantity = Number(quantityValues.value[line.id])
     if (quantity === Number(line.quantity)) continue
     changed = true
@@ -173,16 +217,17 @@ async function saveQuantity() {
     quantityError.value = errorText(cause, '保存结果尚未确认。') + (quantityRefreshRequired.value ? ' 请重新加载最新总单，核对填写数量后再保存。' : '')
   } finally { if (current()) saving.value = false }
 }
-function entryMaterial(row: { id: string; component: string }): Partial<Pick<TubeSourceRow, 'input_material_selection_snapshot' | 'output_material_selection_snapshot' | 'material' | 'fabric_material' | 'fabric_color' | 'pieces_per_set' | 'specification' | 'cutting_length_mm' | 'thickness' | 'spray_color'>> {
+function entryMaterial(row: { id: string; component: string }): Partial<Pick<TubeSourceRow, 'component_source_materials' | 'component_material_selection_snapshot' | 'input_material_selection_snapshot' | 'output_material_selection_snapshot' | 'material' | 'fabric_material' | 'fabric_color' | 'pieces_per_set' | 'specification' | 'cutting_length_mm' | 'thickness' | 'spray_color'>> {
   return (mode.value === 'DISPATCH'
-    ? context.value?.rows.find(item => item.component_identity === row.component)
+    ? (inputMode.value ? context.value?.inputs : context.value?.rows)?.find(item => item.component_identity === row.component)
     : props.order.lines.find(item => item.id === row.id)) || {}
 }
 function entryAttribute(row: { id: string; component: string }, key: 'material' | 'specification' | 'cutting_length_mm' | 'fabric_color') {
   const material = entryMaterial(row)
   return (key === 'material' && cutting.value ? material.fabric_material || material.material : material[key]) || '—'
 }
-function entryFactory(id: string) { return props.order.lines.find(line => line.id === id)?.factory_name || '—' }
+function entryFactory(id: string) { return (inputMode.value ? props.order.inputs?.find(line => line.component_identity === id)?.factory_name : props.order.lines.find(line => line.id === id)?.factory_name) || '—' }
+function materialSource(id: string) { return context.value?.material_rows?.find(row => row.bom_line_id === id) }
 function materialFactory(id: string) {
   const planned = (props.order.planned_materials || []).filter(row => row.bom_line_id === id)
   const ids = [...new Set(planned.map(row => row.factory_id).filter(Boolean))]
@@ -216,11 +261,17 @@ async function changeSource() {
   zone.value = direct.value ? '' : sourceZones.value[0]?.id || ''
   await loadSource()
 }
+function changeReceiptWarehouse(id: string) {
+  warehouseId.value = id
+  const defaultZone = receiptZones.value.length === 1 ? receiptZones.value[0]!.id : ''
+  entries.value.forEach(row => { row.zone = defaultZone })
+}
 async function open(kind: 'DISPATCH' | 'RECEIPT') {
   if (kind === 'DISPATCH' ? !canDispatch.value : !canReceive.value) return
   mode.value = kind; message.value = ''; date.value = today(); remark.value = ''; receiptPreview.value = null
   materialEntries.value = []
-  entries.value = props.order.lines.map(line => ({ id: line.id, component: line.component_identity, name: line.part_name, quantity: '', factory: line.factory_id, price: line.unit_price || '', zone: '' }))
+  entries.value = props.order.lines.map(line => ({ id: line.id, component: line.component_identity, name: line.part_name, quantity: '', factory: line.factory_id, zone: '' }))
+  if (kind === 'DISPATCH' && props.order.sewing_inputs) entries.value = (props.order.inputs || []).map(line => ({ id: line.component_identity, component: line.component_identity, name: `${line.parent_name} / ${line.part_name}`, quantity: '', factory: line.factory_id, zone: '' }))
   if (kind === 'DISPATCH') {
     source.value = props.order.source_kind
     zone.value = props.order.zone_id || ''
@@ -236,7 +287,7 @@ async function open(kind: 'DISPATCH' | 'RECEIPT') {
       receiptPreview.value = preview
       if (preview.order.etag !== props.order.etag) emit('updated', preview.order)
       if (!isCurrent()) return
-      warehouseId.value = preview.warehouses[0]?.id || ''
+      changeReceiptWarehouse(defaultOutsourcingReceiptWarehouse(preview.order.source_kind, preview.warehouses) ?? preview.warehouses[0]?.id ?? '')
       if (!preview.can_receive) message.value = preview.blockers.join('；') || '当前不能办理入库。'
     } catch (cause) { if (isCancel(cause)) return; if (isCurrent() && !disposed && sequence === requestSequence) message.value = errorText(cause, '入库选项读取失败。') }
     finally { if (isCurrent() && !disposed && sequence === requestSequence) loading.value = false }
@@ -419,6 +470,24 @@ async function postPending() {
     }
   } finally { if (isCurrent()) saving.value = false }
 }
+function partQuantityError(basis: TubePieceSource | TubeSourceRow, name: string, requested: string) {
+  if (basis.blockers.length) return basis.blockers.join('；')
+  if (Number(requested) <= Number(basis.max_quantity)) return ''
+  if (source.value !== 'CUTTING' || !('parent_component_identity' in basis)) return `${name}：来源可用数量不足。`
+
+  const remaining = dispatchRemaining(basis.component_identity)
+  if (Number(requested) > remaining) {
+    return `${name}：本单已发 ${number(sent(basis.component_identity))} ${basis.unit}，剩余可发 ${number(remaining)} ${basis.unit}。`
+  }
+  const reason = `${name}：车间可直发 ${number(basis.max_quantity)} ${basis.unit}。`
+  const stock = basis.stock_zones?.find(item => Number(item.available_quantity) >= Number(requested))
+  const stockZone = stock && sourceZones.value.find(item => item.id === stock.zone_id)
+  if (stockZone) {
+    return `${reason}请在本单改选「裁片库存」，来源库区选「${stockZone.warehouse_name} / ${stockZone.name}」（可发 ${number(stock.available_quantity)} ${basis.unit}）。`
+  }
+  return `${reason}本次填写 ${number(requested)} ${basis.unit}，请核对数量。`
+}
+
 async function submit() {
   if (!storageAvailable()) return
   if (locked.value || !mode.value || (mode.value === 'DISPATCH' ? !canDispatch.value : !canReceive.value)) return
@@ -431,32 +500,32 @@ async function submit() {
   if (mode.value === 'DISPATCH') {
     if (!context.value?.ready || (!direct.value && !zone.value)) { message.value = '请先选择并核对实际发货来源。'; return }
     for (const row of positive) {
-      const basis = context.value.rows.find(item => item.component_identity === row.component)
+      const basis = (inputMode.value ? context.value.inputs : context.value.rows)?.find(item => item.component_identity === row.component)
       if (!basis) { message.value = `${row.name}：当前来源没有该部件。`; return }
-      const issue = tubeQuantityError(row.quantity, basis, source.value === 'RAW_PIPE', unit.value)
+      const issue = partFlow.value
+        ? partQuantityError(basis, row.name, row.quantity)
+        : tubeQuantityError(row.quantity, basis as TubeSourceRow, source.value === 'RAW_PIPE', unit.value)
       if (issue) { message.value = issue; return }
-      if (Number(row.quantity) > dispatchRemaining(row.id)) { message.value = `${row.name}：本次最多可发 ${number(dispatchRemaining(row.id))} ${unit.value}，累计外发不能超过总单填写数量。`; return }
+      if (Number(row.quantity) > dispatchRemaining(row.id)) { message.value = `${row.name}：本次最多可发 ${number(dispatchRemaining(row.id))} ${entryUnit(row.id)}，累计外发不能超过总单填写数量。`; return }
       if (!context.value.factories.some(factory => factory.id === row.factory)) { message.value = `${row.name}：总单指定的加工厂当前不可用，请核对总单。`; return }
-      const priceIssue = outsourcingPriceError(row.price)
-      if (priceIssue) { message.value = `${row.name}：${props.warehouse ? '总单加工资料不完整，请联系制单人核对。' : priceIssue}`; return }
     }
     const materials = materialEntries.value.filter(row => row.quantity.trim() && Number(row.quantity) !== 0)
     for (const row of materials) {
       const basis = context.value.material_rows?.find(item => item.bom_line_id === row.id)
       const sourceZone = basis?.zones.find(item => item.zone_id === row.zone)
-      if (!materialFactory(row.id) || materialFactory(row.id)?.id !== row.factory) { message.value = `${row.name}：总单未指定唯一加工厂。`; return }
+      if (!partFlow.value && (!materialFactory(row.id) || materialFactory(row.id)?.id !== row.factory)) { message.value = `${row.name}：总单未指定唯一加工厂。`; return }
       if (!/^\d+(?:\.\d{1,4})?$/.test(row.quantity.trim()) || !basis || !sourceZone || Number(row.quantity) > Number(sourceZone.available_quantity)
         || !context.value.factories.some(factory => factory.id === row.factory)) { message.value = `${row.name}：请核对辅料数量、总单加工厂和来源库区库存。`; return }
     }
     action = { kind: 'DISPATCH', order_id: props.order.id, etag: props.order.etag, payload: {
       client_request_id: createClientUuid(), source_kind: source.value, zone_id: direct.value ? null : zone.value, actual_dispatch_date: date.value, remark: remark.value.trim(),
-      lines: positive.map(row => ({ component_identity: row.component, quantity: row.quantity.trim(), factory_id: row.factory, unit_price: row.price.trim() })),
+      lines: inputMode.value ? [] : positive.map(row => ({ component_identity: row.component, quantity: row.quantity.trim(), factory_id: row.factory })),
+      ...(inputMode.value ? { inputs: positive.map(row => ({ component_identity: row.component, quantity: row.quantity.trim() })) } : {}),
       ...(materials.length ? { material_source_revision: context.value.material_source_revision, materials: materials.map(row => ({ bom_line_id: row.id, quantity: row.quantity.trim(), factory_id: row.factory, zone_id: row.zone })) } : {}),
     } }
   } else {
     if (!receiptPreview.value?.can_receive || !warehouseId.value) { message.value = '请核对入库权限并选择目标仓库。'; return }
     for (const row of positive) {
-      if (Number(row.quantity) > Number(remaining(row.id))) { message.value = `${row.name}：本次最多可入 ${number(remaining(row.id))} ${unit.value}，累计入库不能超过累计实际外发。`; return }
       if (!receiptZones.value.some(item => item.id === row.zone)) { message.value = `${row.name}：请选择入库库区。`; return }
     }
     action = { kind: 'RECEIPT', order_id: props.order.id, etag: props.order.etag, payload: {
@@ -486,6 +555,8 @@ onMounted(async () => {
           || !Array.isArray(input.lines) || !input.lines.length
           || input.lines.some(line => typeof line.component_identity !== 'string' || !line.component_identity || typeof line.quantity !== 'string' || wholeTubeQuantity(line.quantity) === null || Number(line.quantity) <= 0)
           || new Set(input.lines.map(line => line.component_identity)).size !== input.lines.length))) throw new Error('待核对更正记录不完整')
+    } else if (action.kind === 'DISPATCH' && action.payload.inputs?.length) {
+      if (!Array.isArray(action.payload.inputs) || action.payload.inputs.some(row => !row.component_identity || typeof row.quantity !== 'string' || wholeTubeQuantity(row.quantity) === null || Number(row.quantity) <= 0)) throw new Error('待核对裁片投入不完整')
     } else if (!Array.isArray(action.payload.lines) || !action.payload.lines.length) throw new Error('待核对记录不完整')
     pending.value = action
     if (action.kind === 'CORRECTION') { await checkCorrection(); return }
@@ -518,17 +589,27 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
     <ElAlert v-if="storageError" :title="storageReason" type="warning" :closable="false" />
     <ElAlert v-if="message && !mode" :title="message" type="warning" :closable="false" />
     <section class="panel">
-      <div class="section-heading"><h2>{{ order.product_name }} · {{ order.craft_name }}</h2><div><ElButton v-if="!warehouse && order.permissions.can_edit_quantity === true" :disabled="!canEditQuantity" @click="openQuantityEditor">编辑计划数量</ElButton><ElButton v-if="!warehouse && order.permissions.can_cancel" :disabled="locked" @click="!identityBlocked && emit('cancel')">取消委外总单</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="!identityBlocked && emit('refresh')">刷新</ElButton></div></div>
+      <div class="section-heading"><h2>{{ order.product_name }} · {{ order.craft_name }}</h2><div><ElButton v-if="!warehouse && order.permissions.can_edit_quantity === true" :disabled="!canEditQuantity" @click="openQuantityEditor">{{ partFlow ? '编辑计划数量与单价' : '编辑计划数量' }}</ElButton><ElButton v-if="!warehouse && order.permissions.can_cancel" :disabled="locked" @click="!identityBlocked && emit('cancel')">取消委外总单</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="!identityBlocked && emit('refresh')">刷新</ElButton></div></div>
       <div class="plan-context"><span>生产任务 {{ order.task_number }}</span><span>排产 {{ order.schedule_number }}</span><span>计划发出 {{ order.planned_dispatch_date }}</span><span>预计回货 {{ order.expected_return_date }}</span></div>
-      <div class="plan-summary">
+      <div v-if="partFlow" class="plan-summary">
+        <div><span>BOM需求</span><strong>{{ totalText('bom_quantity') }}</strong></div>
+        <div><span>目标部位</span><strong>{{ totalText('planned_quantity') }}</strong></div>
+        <div><span>累计实际外发</span><strong>{{ totalText('dispatched_quantity') }}</strong></div>
+        <div><span>累计入库</span><strong>{{ totalText('received_quantity') }}</strong></div>
+        <div v-if="!warehouse"><span>实际回货金额</span><strong>{{ formatOutsourcingMoney(summary?.received_amount) }} 元</strong><small v-if="summary?.has_unknown_receipt_amount">另有历史回货费用未知</small><small v-else-if="order.fees_deferred">未填写单价，后续回货费用未知</small></div>
+      </div>
+      <div v-else class="plan-summary">
         <div><span>BOM数量</span><strong>{{ number(summary?.bom_quantity) }} {{ unit }}</strong></div>
         <div><span>计划委外</span><strong>{{ number(summary?.planned_quantity) }} {{ unit }}</strong></div>
         <div><span>累计实际外发</span><strong>{{ number(summary?.dispatched_quantity) }} {{ unit }}</strong><small>外发进度 {{ number(summary?.dispatch_progress) }}%</small></div>
         <div><span>累计入库</span><strong>{{ number(summary?.received_quantity) }} {{ unit }}</strong></div>
         <div><span>入库进度</span><strong>{{ number(summary?.receipt_progress) }}%</strong><ElProgress :percentage="progress" :show-text="false" :stroke-width="6" /></div>
+        <div v-if="!warehouse && !cutting"><span>喷塑总面积</span><strong>{{ formatOutsourcingMoney(order.total_area_sqm, '—') }} ㎡</strong></div>
+        <div v-if="!warehouse"><span>计划加工金额</span><strong>{{ formatOutsourcingMoney(order.planned_amount) }} 元</strong></div>
       </div>
     </section>
-    <section class="panel"><div class="section-heading"><h2>委外部件</h2><span class="muted">按 BOM 数量计算进度，实际数量如实累计</span></div><TubeOutsourcingDetailTable :columns="columns" :rows="order.lines"><template #cell-purchase_reference="{ row }"><span :title="row.purchase_reference?.conversion_note">{{ quantityReferenceKnown(row) ? number(row.purchase_reference?.quantity) : '—' }}</span></template><template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template><template #cell-shape="{ row }">{{ tubeMaterialColumn(row, 'shape') }}</template><template #cell-thickness="{ row }">{{ tubeMaterialColumn(row, 'thickness') }}</template><template #cell-spray_color="{ row }">{{ tubeMaterialColumn(row, 'spray_color') }}</template><template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}</template></TubeOutsourcingDetailTable><p v-if="cutting && order.planned_materials?.length" class="muted">计划附带辅料：<template v-for="(material, index) in order.planned_materials" :key="material.bom_line_id">{{ index ? '、' : '' }}<ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: material.material_selection_snapshot }">{{ material.name }}</ProcessingMaterialDetails> {{ number(material.quantity) }} {{ material.unit }}</template>；每次实际发货时填写本次数量。</p><p class="muted">{{ order.remark || '无备注' }}</p></section>
+    <section class="panel"><div class="section-heading"><h2>委外部件</h2><span class="muted">按 BOM 数量计算进度，实际数量如实累计</span></div><TubeOutsourcingDetailTable class="plan-parts-table" :columns="columns" :rows="order.lines"><template #cell-purchase_reference="{ row }"><span :title="row.purchase_reference?.conversion_note">{{ quantityReferenceKnown(row) ? number(row.purchase_reference?.quantity) : '—' }}</span></template><template v-for="column in componentSourceColumns" :key="column.key" #[`cell-${column.key}`]="{ row }"><ComponentSourceMaterials :sources="row.component_source_materials" :field="column.sourceField" /></template><template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template><template #cell-shape="{ row }">{{ tubeMaterialColumn(row, 'shape') }}</template><template #cell-thickness="{ row }">{{ tubeMaterialColumn(row, 'thickness') }}</template><template #cell-spray_color="{ row }">{{ tubeMaterialColumn(row, 'spray_color') }}</template><template #cell-unit_area_sqm="{ row }">{{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}</template><template #cell-line_area_sqm="{ row }">{{ formatOutsourcingMoney(row.line_area_sqm, '—') }}</template><template #cell-price_unit="{ row }">{{ row.price_unit === 'SQUARE_METER' ? '按㎡' : '按支' }}</template><template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="partFlow"> 元/{{ row.unit }}</template><template v-else-if="!cutting"> 元/{{ row.price_unit === 'SQUARE_METER' ? '㎡' : '支' }}</template></template><template #cell-planned_amount="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template><template #cell-received_amount="{ row }">{{ formatOutsourcingMoney(row.received_amount) }}<small v-if="row.has_unknown_receipt_amount"> + 未知</small></template></TubeOutsourcingDetailTable><div v-if="partFlow && order.planned_materials?.length" class="planned-materials"><h3>计划附带辅料</h3><div class="tube-detail-table-wrap"><table class="tube-detail-table planned-material-table"><thead><tr><th>辅料</th><th>规格</th><th>材质</th><th>颜色</th><th>数量</th><th>单位</th><th>加工厂</th></tr></thead><tbody><tr v-for="material in order.planned_materials" :key="`${material.bom_line_id}:${material.factory_id}`"><td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: material.material_selection_snapshot }">{{ material.name }}</ProcessingMaterialDetails></td><td>{{ plannedMaterialSpecification(material) }}</td><td>{{ material.material || material.material_selection_snapshot?.attributes?.material || '—' }}</td><td>{{ material.color || material.material_selection_snapshot?.attributes?.color || '—' }}</td><td class="num">{{ number(material.quantity) }}</td><td>{{ material.unit }}</td><td>{{ material.factory_name || '—' }}</td></tr></tbody></table></div><p class="muted">每次实际发货时填写本次数量。</p></div><p v-else-if="cutting && order.planned_materials?.length" class="muted">计划附带辅料：<template v-for="(material, index) in order.planned_materials" :key="material.bom_line_id">{{ index ? '、' : '' }}<ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: material.material_selection_snapshot }">{{ material.name }}</ProcessingMaterialDetails> {{ number(material.quantity) }} {{ material.unit }}</template>；每次实际发货时填写本次数量。</p><p class="muted">{{ order.remark || '无备注' }}</p></section>
+    <section v-if="order.sewing_inputs" class="panel"><h2>裁片投入</h2><p class="muted">各裁片按各行单位记录，可分批发出、补发；回货按部位记录。</p><div class="tube-detail-table-wrap"><table class="tube-detail-table plan-input-table"><thead><tr><th>部位</th><th>裁片</th><th>规格</th><th v-for="column in componentSourceColumns" :key="column.key" :style="{ width: `${column.width}px` }">{{ column.label }}</th><th>单位</th><th>每部位数量</th><th>目标对应数量</th><th>累计已发数量</th></tr></thead><tbody><tr v-for="piece in order.inputs" :key="piece.component_identity"><td>{{ piece.parent_name }}</td><td><ProcessingMaterialDetails :materials="piece">{{ piece.part_name }}</ProcessingMaterialDetails></td><td>{{ piece.specification || '—' }}</td><td v-for="column in componentSourceColumns" :key="column.key"><ComponentSourceMaterials :sources="piece.component_source_materials" :field="column.sourceField" /></td><td>{{ piece.unit }}</td><td>{{ number(piece.pieces_per_part) }}</td><td>{{ number(piece.target_quantity) }}</td><td>{{ number(piece.dispatched_quantity) }}</td></tr></tbody></table></div></section>
     <TubeOutsourcingPlanRecords ref="records" :order="order" :warehouse="warehouse" :blocked="Boolean(blocked || identityBlocked || mode || quantityEditing)"
       :busy="saving || checkingPending" :pending="pending?.kind === 'CORRECTION'" :write-blocked="Boolean(storageError || loading || (pending && pending.kind !== 'CORRECTION'))"
       :request-conflict="pending?.kind === 'CORRECTION' && pending.request_conflict"
@@ -539,19 +620,20 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
     </TubeOutsourcingPlanRecords>
     <template v-if="pending"><ElButton type="primary" :loading="saving || checkingPending" :disabled="storageError || identityBlocked || blocked || loading || checkingPending" @click="pending.kind === 'CORRECTION' ? checkCorrection() : postPending()">核对本次提交</ElButton><ElButton v-if="pending.kind === 'CORRECTION' && !pending.request_conflict" :disabled="saving || checkingPending || storageError || identityBlocked || blocked" @click="postPending">按原请求重试</ElButton></template>
   </div>
-  <AppWindowDialog :model-value="quantityEditing" title="编辑计划数量" :width="1500" class="tube-outsourcing-detail-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving" @update:model-value="closeQuantityEditor">
+  <AppWindowDialog :model-value="quantityEditing" :title="partFlow ? '编辑计划数量与单价' : '编辑计划数量'" :width="1500" class="tube-outsourcing-detail-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving" @update:model-value="closeQuantityEditor">
     <ElAlert v-if="quantityError" :title="quantityError" type="warning" :closable="false" />
-    <p class="muted">计划数量按委外需求填写，采购入库数量仅供参考；修改后的计划数量不能小于累计已发。</p>
+    <p class="muted">{{ partFlow ? '按各部位单位填写目标和单价；对应投入数量不能少于累计已发。修改单价仅用于后续回货，历史回货保持原价，原空价保持未知。' : '计划数量按委外需求填写，采购入库数量仅供参考；修改后的计划数量不能小于累计已发。' }}</p>
     <TubeOutsourcingDetailTable v-loading="loading" class="plan-quantity-table" :columns="quantityColumns" :rows="quantityOrder?.lines || []">
-      <template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template>
+      <template v-for="column in componentSourceColumns" :key="column.key" #[`cell-${column.key}`]="{ row }"><ComponentSourceMaterials :sources="row.component_source_materials" :field="column.sourceField" /></template><template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template>
       <template #cell-shape="{ row }">{{ tubeMaterialColumn(row, 'shape') }}</template>
       <template #cell-thickness="{ row }">{{ tubeMaterialColumn(row, 'thickness') }}</template>
       <template #cell-spray_color="{ row }">{{ tubeMaterialColumn(row, 'spray_color') }}</template>
       <template #cell-purchase_reference="{ row }"><span :title="row.purchase_reference?.conversion_note">{{ quantityReferenceKnown(row) ? number(row.purchase_reference?.quantity) : '—' }}</span></template>
       <template #cell-dispatched_quantity="{ row }">{{ number(row.dispatched_quantity ?? '0') }}</template>
+      <template #cell-unit_price="{ row }"><ElInput v-model="priceValues[row.id]" :disabled="quantityLocked" inputmode="decimal" placeholder="历史空价可补填" :aria-label="`${row.part_name}加工单价`"><template #suffix>元/{{ row.unit }}</template></ElInput></template>
       <template #cell-quantity="{ row }"><ElInput v-model="quantityValues[row.id]" :disabled="quantityLocked" inputmode="numeric" :aria-label="`${row.part_name}计划数量`" /></template>
     </TubeOutsourcingDetailTable>
-    <template #footer><ElButton :disabled="saving" @click="closeQuantityEditor">关闭</ElButton><ElButton v-if="quantityError || quantityRefreshRequired" :disabled="loading || saving || identityBlocked || blocked" @click="loadQuantityEditor">重新加载</ElButton><ElButton type="primary" :disabled="quantityLocked" :loading="saving" @click="saveQuantity">保存数量</ElButton></template>
+    <template #footer><ElButton :disabled="saving" @click="closeQuantityEditor">关闭</ElButton><ElButton v-if="quantityError || quantityRefreshRequired" :disabled="loading || saving || identityBlocked || blocked" @click="loadQuantityEditor">重新加载</ElButton><ElButton type="primary" :disabled="quantityLocked" :loading="saving" @click="saveQuantity">{{ partFlow ? '保存数量与单价' : '保存数量' }}</ElButton></template>
   </AppWindowDialog>
   <AppWindowDialog :model-value="actionOnly || Boolean(mode)" :title="pending?.kind === 'CORRECTION' ? '收发记录更正核对' : dialogMode === 'DISPATCH' ? '材料发出' : '外发入库'" :width="1800" class="tube-outsourcing-detail-dialog plan-action-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving" @update:model-value="close">
     <p>{{ order.order_number }} · {{ order.product_name }} · {{ order.craft_name }}</p>
@@ -565,24 +647,32 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
       <div class="plan-fields">
         <label class="form-field"><span>{{ mode === 'DISPATCH' ? '实际发出日期' : '入库日期' }}</span><ElDatePicker v-model="date" type="date" value-format="YYYY-MM-DD" :disabled="locked" :aria-label="mode === 'DISPATCH' ? '实际发出日期' : '入库日期'" /></label>
         <template v-if="mode === 'DISPATCH'"><label class="form-field"><span>实际材料来源</span><ElSelect v-model="source" :disabled="locked" aria-label="实际材料来源" @change="changeSource"><ElOption v-for="item in options?.source_kinds || []" :key="item.value" :value="item.value" :label="item.label" /></ElSelect></label><label v-if="!direct" class="form-field"><span>实际来源库区</span><ElSelect v-model="zone" :disabled="locked" aria-label="实际来源库区" @change="loadSource"><ElOption v-for="item in sourceZones" :key="item.id" :value="item.id" :label="`${item.warehouse_name} / ${item.name}`" /></ElSelect></label></template>
-        <label v-else class="form-field"><span>入库仓库</span><ElSelect v-model="warehouseId" :disabled="locked" aria-label="入库仓库" @change="entries.forEach(row => row.zone = '')"><ElOption v-for="item in receiptPreview?.warehouses || []" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
+        <label v-else class="form-field"><span>入库仓库</span><ElSelect :model-value="warehouseId" :disabled="locked" aria-label="入库仓库" @update:model-value="changeReceiptWarehouse"><ElOption v-for="item in receiptPreview?.warehouses || []" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
       </div>
-      <div v-loading="loading" class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table" :class="{ 'plan-entry-table--tube': !cutting }">
-        <colgroup><col style="width:90px" /><col style="width:70px" /><col style="width:110px" /><template v-if="cutting"><col style="width:80px" /><col style="width:75px" /></template><template v-else><col style="width:60px" /><col style="width:65px" /><col style="width:75px" /><col style="width:75px" /></template><col v-if="mode === 'DISPATCH'" style="width:90px" /><col style="width:80px" /><col style="width:80px" /><col v-if="mode === 'RECEIPT'" style="width:95px" /><col style="width:105px" /><col style="width:110px" /><col v-if="mode === 'RECEIPT'" style="width:130px" /></colgroup>
-        <thead><tr><th>部位</th><th>材质</th><th>规格</th><template v-if="cutting"><th>颜色</th><th class="num">每套片数</th></template><template v-else><th>形状</th><th>厚度 mm</th><th>喷塑颜色</th><th>切割长度 mm</th></template><th v-if="mode === 'DISPATCH'" class="num">需要外发（{{ unit }}）</th><th class="num">累计已发</th><th class="num">累计入库</th><th v-if="mode === 'RECEIPT'" class="num">本次最多可入</th><th class="num">本次{{ mode === 'DISPATCH' ? '外发' : '入库' }}（{{ unit }}）</th><th>{{ mode === 'RECEIPT' ? '计划加工厂' : '加工厂' }}</th><th v-if="mode === 'RECEIPT'">入库库区</th></tr></thead>
+      <div v-if="partFlow" v-loading="loading" class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table plan-entry-table--parts">
+        <thead><tr><th>{{ inputMode ? '部位 / 裁片' : '部位' }}</th><th>规格</th><th v-for="column in componentSourceColumns" :key="column.key" :style="{ width: `${column.width}px` }">{{ column.label }}</th><th>单位</th><th v-if="mode === 'DISPATCH'">可外发多少</th><th v-if="mode === 'DISPATCH'">已外发</th><th v-else>累计入库</th><th>本次数量</th><th>加工厂</th><th v-if="mode === 'RECEIPT'">入库库区</th></tr></thead>
+        <tbody><tr v-for="row in entries" :key="row.id"><td><ProcessingMaterialDetails :materials="entryMaterial(row)">{{ row.name }}</ProcessingMaterialDetails></td><td>{{ entryAttribute(row, 'specification') }}</td><td v-for="column in componentSourceColumns" :key="column.key"><ComponentSourceMaterials :sources="entryMaterial(row).component_source_materials" :field="column.sourceField" /></td><td>{{ entryUnit(row.id) }}</td>
+          <template v-if="mode === 'DISPATCH'"><td class="num">{{ number(dispatchRemaining(row.id)) }}</td><td class="num">{{ number(sent(row.id)) }}</td></template><td v-else class="num">{{ number(received(row.id)) }}</td>
+          <td class="num"><ElInput v-model="row.quantity" :disabled="locked" inputmode="numeric" placeholder="0或空白" :aria-label="`${row.name}本次数量`" /></td><td>{{ entryFactory(row.id) }}</td>
+          <td v-if="mode === 'RECEIPT'"><ElSelect v-model="row.zone" :disabled="locked || !(Number(row.quantity) > 0)" :aria-label="`${row.name}入库库区`"><ElOption v-for="item in receiptZones" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></td>
+        </tr></tbody>
+      </table></div>
+      <div v-else v-loading="loading" class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table" :class="{ 'plan-entry-table--tube': !cutting }">
+        <colgroup><col style="width:90px" /><col style="width:70px" /><col style="width:110px" /><template v-if="cutting"><col style="width:80px" /><col style="width:75px" /></template><template v-else><col style="width:60px" /><col style="width:65px" /><col style="width:75px" /><col style="width:75px" /></template><col v-if="mode === 'DISPATCH'" style="width:90px" /><col style="width:80px" /><col style="width:80px" /><col style="width:105px" /><col style="width:110px" /><col v-if="mode === 'RECEIPT'" style="width:130px" /></colgroup>
+        <thead><tr><th>部位</th><th>材质</th><th>规格</th><template v-if="cutting"><th>颜色</th><th class="num">每套片数</th></template><template v-else><th>形状</th><th>厚度 mm</th><th>喷塑颜色</th><th>切割长度 mm</th></template><th v-if="mode === 'DISPATCH'" class="num">需要外发（{{ unit }}）</th><th class="num">累计已发</th><th class="num">累计入库</th><th class="num">本次{{ mode === 'DISPATCH' ? '外发' : '入库' }}（{{ unit }}）</th><th>{{ mode === 'RECEIPT' ? '计划加工厂' : '加工厂' }}</th><th v-if="mode === 'RECEIPT'">入库库区</th></tr></thead>
         <tbody><tr v-for="row in entries" :key="row.id">
           <td><ProcessingMaterialDetails :materials="mode === 'DISPATCH' ? entryMaterial(row) : { output_material_selection_snapshot: order.lines.find(item => item.id === row.id)?.output_material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td>
           <td>{{ entryAttribute(row, 'material') }}</td><td>{{ entryAttribute(row, 'specification') }}</td>
           <template v-if="cutting"><td>{{ entryAttribute(row, 'fabric_color') }}</td><td class="num">{{ number(entryMaterial(row).pieces_per_set) }}</td></template><template v-else><td>{{ tubeMaterialColumn(entryMaterial(row), 'shape') }}</td><td>{{ tubeMaterialColumn(entryMaterial(row), 'thickness') }}</td><td>{{ tubeMaterialColumn(entryMaterial(row), 'spray_color') }}</td><td>{{ entryAttribute(row, 'cutting_length_mm') }}</td></template>
-          <td v-if="mode === 'DISPATCH'" class="num">{{ number(planned(row.id)) }}</td><td class="num">{{ number(sent(row.id)) }}</td><td class="num">{{ number(received(row.id)) }}</td><td v-if="mode === 'RECEIPT'" class="num">{{ number(remaining(row.id)) }}</td>
+          <td v-if="mode === 'DISPATCH'" class="num">{{ number(planned(row.id)) }}</td><td class="num">{{ number(sent(row.id)) }}</td><td class="num">{{ number(received(row.id)) }}</td>
           <td class="num"><ElInput v-model="row.quantity" :disabled="locked" inputmode="numeric" placeholder="0或空白" :aria-label="`${row.name}本次数量`" /></td>
           <td>{{ entryFactory(row.id) }}</td><td v-if="mode === 'RECEIPT'"><ElSelect v-model="row.zone" :disabled="locked || !(Number(row.quantity) > 0)" :aria-label="`${row.name}入库库区`"><ElOption v-for="item in receiptZones" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></td>
         </tr></tbody>
       </table></div>
-      <p class="muted">{{ mode === 'DISPATCH' ? '需要外发按总单填写的数量显示；本次外发不能超过总单数量减累计已发，库存来源还需满足实际库存。' : '只填写本次收到的部件，其余留空或填0；累计入库不能超过同部件累计实际外发。加工厂按总单计划显示，回货不匹配外发批次。' }}</p>
-      <template v-if="mode === 'DISPATCH' && cutting && materialEntries.length"><h3>本次附带辅料（选填）</h3><div class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table plan-material-table"><thead><tr><th>辅料</th><th class="num">本次数量</th><th>加工厂</th><th>来源库区</th></tr></thead><tbody><tr v-for="row in materialEntries" :key="row.id">
-        <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: context?.material_rows?.find(item => item.bom_line_id === row.id)?.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td>
-        <td class="num"><ElInput v-model="row.quantity" :disabled="locked || !row.factory" inputmode="decimal" :aria-label="`${row.name}本次辅料数量`" /></td><td>{{ materialFactory(row.id)?.name || '总单未指定唯一加工厂' }}</td>
+      <p class="muted">{{ mode === 'DISPATCH' ? '可外发多少 = 总单目标数量 - 已外发数量；本次外发不能超过可外发数量，库存来源还需满足实际库存。' : '按实际回货数量填写本次收到的部件，其余留空或填0。加工厂按总单计划显示，回货不匹配外发批次。' }}</p>
+      <template v-if="mode === 'DISPATCH' && cutting && materialEntries.length"><h3>本次附带辅料（选填）</h3><div class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table plan-material-table" :class="{ 'plan-material-table--parts': partFlow }"><thead><tr><th>辅料</th><template v-if="partFlow"><th>规格</th><th>材质</th><th>颜色</th><th>单位</th></template><th class="num">可外发多少</th><th class="num">已外发</th><th class="num">本次数量</th><th>加工厂</th><th>来源库区</th></tr></thead><tbody><tr v-for="row in materialEntries" :key="row.id">
+        <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: materialSource(row.id)?.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td><template v-if="partFlow"><td>{{ materialSpecificationValue(materialSource(row.id) || {}) }}</td><td>{{ materialSource(row.id)?.material || '—' }}</td><td>{{ materialSource(row.id)?.color || '—' }}</td><td>{{ materialSource(row.id)?.unit || '—' }}</td></template>
+        <td class="num">{{ number(materialSource(row.id)?.max_quantity ?? '0') }}</td><td class="num">{{ number(materialSource(row.id)?.outsourcing_issued_quantity ?? '0') }}</td><td class="num"><ElInput v-model="row.quantity" :disabled="locked || (!partFlow && !row.factory)" inputmode="decimal" :aria-label="`${row.name}本次辅料数量`" /></td><td><ElSelect v-if="partFlow" v-model="row.factory" :disabled="locked" :aria-label="`${row.name}辅料加工厂`"><ElOption v-for="factory in context?.factories || []" :key="factory.id" :value="factory.id" :label="factory.name" /></ElSelect><template v-else>{{ materialFactory(row.id)?.name || '总单未指定唯一加工厂' }}</template></td>
         <td><ElSelect v-model="row.zone" :disabled="locked || !row.factory" :aria-label="`${row.name}辅料库区`"><ElOption v-for="item in context?.material_rows?.find(item => item.bom_line_id === row.id)?.zones || []" :key="item.zone_id" :value="item.zone_id" :label="`${item.warehouse_name} / ${item.zone_name}（${item.available_quantity}）`" /></ElSelect></td>
       </tr></tbody></table></div></template>
       <label class="form-field"><span>备注（选填）</span><ElInput v-model="remark" type="textarea" :rows="2" :disabled="locked" maxlength="2000" aria-label="本次备注" /></label>
@@ -603,12 +693,16 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
 .plan-fields :deep(.el-date-editor) { width: 100%; }
 .plan-entry-table { min-width: 1040px; }
 .plan-entry-table--tube { min-width: 1255px; }
+.plan-entry-table--parts { min-width: 1600px; }
+.plan-input-table { min-width: 1380px; }
+.planned-material-table { min-width: 720px; }
 .plan-entry-table th, .plan-entry-table td { padding: 8px 6px; white-space: normal; overflow-wrap: anywhere; }
 .plan-entry-table .num { text-align: center; }
 .plan-entry-table :deep(.el-input__inner) { text-align: center; }
 .plan-quantity-table :deep(.el-input__inner) { text-align: center; }
 .plan-entry-table :deep(.el-select) { width: 100%; }
 .plan-material-table { min-width: 640px; }
+.plan-material-table--parts { min-width: 1080px; }
 .plan-action-status { min-height: 96px; padding: 16px 0; }
 @media(max-width:900px) { .plan-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.plan-fields { grid-template-columns: 1fr; } }
 </style>

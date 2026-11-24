@@ -2,10 +2,11 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from urllib.parse import urlencode
 
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 
-from apps.outsourcing.models import OutsourcingFactoryAllocation
-from apps.outsourcing.tube_models import TubeOutsourcingLine
+from apps.outsourcing.models import OutsourcingFactoryAllocation, TubePlanReceiptLine
+from apps.outsourcing.part_flow_prices import PART_RECEIPT, receipt_price_data
+from apps.outsourcing.tube_models import TubeOutsourcingLine, TubeOutsourcingOrder
 from apps.procurement.models import PurchaseOrder, PurchaseRequestAllocation, SupplierPurchaseSheet
 from apps.workshop_reporting.models import WorkReport
 
@@ -34,6 +35,12 @@ def _saved_line_amount(value):
 
 
 def _cost_sources(task):
+    receipt_priced_plans = TubeOutsourcingOrder.objects.filter(product_line__production_task=task,
+        is_plan=True, source_snapshot__part_flow=True, source_snapshot__billing_basis=PART_RECEIPT).values('pk')
+    dispatched_batches = TubeOutsourcingOrder.objects.filter(plan_id=OuterRef('pk'), is_plan=False,
+        status__in=['PROCESSING', 'COMPLETED'], actions__kind='DISPATCH')
+    received_lines = TubePlanReceiptLine.objects.filter(receipt__order_id=OuterRef('pk'),
+        receipt__voided_at__isnull=True, received_quantity__gt=0)
     return {
         'products': task.products.select_related('currency').all(),
         # 旧采购单自身保存完整采购金额，不再叠加其供应商采购表。
@@ -55,7 +62,21 @@ def _cost_sources(task):
         # 总单是计划，不计实际成本；新子单只计确认发出，旧单保留原记录成本口径。
         'tube': TubeOutsourcingLine.objects.filter(order__product_line__production_task=task, order__is_plan=False).filter(
             Q(order__plan__isnull=True) | Q(order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH')
-        ).exclude(order__status='CANCELLED').select_related('order'),
+        ).exclude(order__status='CANCELLED').exclude(order__plan_id__in=receipt_priced_plans).select_related('order'),
+        # 部位按每次有效实收及当次冻结价计费，不能再叠加对应发出批次费用。
+        'part_receipts': TubePlanReceiptLine.objects.filter(receipt__order_id__in=receipt_priced_plans,
+            receipt__voided_at__isnull=True, received_quantity__gt=0).exclude(receipt__order__status='CANCELLED'
+            ).select_related('receipt__order', 'order_line'),
+        # 新车缝批次只保存投入裁片，费用暂缓按整批列一项未知金额，不按片数计价。
+        'deferred_sewing': TubeOutsourcingOrder.objects.filter(product_line__production_task=task,
+            is_plan=False, plan__is_plan=True, status__in=['PROCESSING', 'COMPLETED'], actions__kind='DISPATCH',
+            source_snapshot__part_flow=True, source_snapshot__sewing_inputs=True, source_snapshot__fees_deferred=True
+        ).exclude(plan_id__in=receipt_priced_plans),
+        # 总单可先收后发：有实际回货但尚无有效实发时，仅按总单提示一次未知费用。
+        'receipt_only_deferred': TubeOutsourcingOrder.objects.filter(product_line__production_task=task,
+            is_plan=True, source_snapshot__part_flow=True, source_snapshot__fees_deferred=True
+        ).exclude(status='CANCELLED').exclude(pk__in=receipt_priced_plans).alias(has_dispatch=Exists(dispatched_batches),
+            has_receipt=Exists(received_lines)).filter(has_dispatch=False, has_receipt=True),
         'expenses': task.cost_expenses.filter(voided_at__isnull=True),
     }
 
@@ -80,17 +101,25 @@ def _task_cost_summary(*, task):
         warnings.append('生产任务尚无产品金额，订单金额未确定。')
         order_missing += 1
     for product in products:
-        code = product.currency.code
+        code = getattr(product.currency, 'code', None)
+        if product.total_amount is None or code is None:
+            order_missing += 1
+            warnings.append('订单产品价格或币种尚未完善。')
+            continue
         if code == 'CNY':
             order_amount += product.total_amount
-        elif product.exchange_rate_snapshot and product.exchange_rate > ZERO:
+        elif product.exchange_rate_snapshot and product.exchange_rate is not None and product.exchange_rate > ZERO:
             order_amount += product.total_amount * product.exchange_rate
         else:
             order_missing += 1
             warnings.append('订单产品缺少已保存人民币汇率快照。')
     # 任务运费和其他收费沿用任务币种；不拿某条产品汇率替整单收费换算。
-    extra = task.freight_amount + task.other_fee_amount
-    if extra and (not task.currency or task.currency.code != 'CNY'):
+    extra = (None if task.freight_amount is None or task.other_fee_amount is None
+             else task.freight_amount + task.other_fee_amount)
+    if extra is None:
+        order_missing += 1
+        warnings.append('订单运费或其他收费尚未完善。')
+    elif extra and (not task.currency or task.currency.code != 'CNY'):
         order_missing += 1
         warnings.append('订单运费或其他收费缺少人民币换算依据。')
     else:
@@ -160,6 +189,22 @@ def _task_cost_summary(*, task):
         add(outsourcing, 'TUBE_OUTSOURCING', order, order.order_number, '管材/裁片外发', amount,
             'CNY', f'/workshop/outsourcing/tube/{order.pk}', order.created_at,
             item_id=f'TUBE_OUTSOURCING:LINE:{line.pk}')
+    for line in sources.get('part_receipts', []):
+        order = line.receipt.order
+        value = receipt_price_data(line)['received_amount']
+        amount = Decimal(value) if value is not None else None
+        part_name = line.snapshot.get('part_name') or line.order_line.snapshot.get('part_name', '部位')
+        add(outsourcing, 'TUBE_OUTSOURCING', order, line.receipt.receipt_number, f'部位回货加工费：{part_name}', amount,
+            'CNY', f'/workshop/outsourcing/tube/{order.pk}', line.receipt.receipt_date,
+            item_id=f'TUBE_OUTSOURCING:RECEIPT_LINE:{line.pk}')
+    for order in sources['deferred_sewing']:
+        add(outsourcing, 'TUBE_OUTSOURCING', order, order.order_number, '车缝加工费暂缓', None,
+            'CNY', f'/workshop/outsourcing/tube/{order.plan_id}', order.created_at,
+            item_id=f'TUBE_OUTSOURCING:DEFERRED:{order.pk}')
+    for order in sources['receipt_only_deferred']:
+        add(outsourcing, 'TUBE_OUTSOURCING', order, order.order_number, '部位加工费暂缓', None,
+            'CNY', f'/workshop/outsourcing/tube/{order.pk}', order.created_at,
+            item_id=f'TUBE_OUTSOURCING:RECEIPT_ONLY:{order.pk}')
     for expense in sources['expenses']:
         add(other, 'EXPENSE', expense, '', expense.description, expense.amount,
             'CNY', None, expense.occurred_on)

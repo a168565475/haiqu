@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
-import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { createClientUuid } from '@/utils/clientUuid'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import PurchaseGridCell from './PurchaseGridCell.vue'
+import { pipeMeters, pipeRootsFromMeters, samplePipeSuggestedWeight } from '@/utils/pipeQuantities'
+import { computed, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
 import refreshIcon from '@/assets/procurement/create-refresh.svg'
 import calendarIcon from '@/assets/procurement/create-calendar.svg'
 import expandIcon from '@/assets/procurement/create-expand.svg'
 import rightIcon from '@/assets/procurement/create-right.svg'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -17,22 +21,37 @@ import {
   fetchSamplePurchaseOrderSource,
   fetchVersionedPurchaseOrder,
 } from '@/api/purchaseOrders'
-import { createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
-import type { PurchaseBatchInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
+import { confirmPurchaseBatchPage, createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup, submitPurchaseSupplierBatch } from '@/api/purchaseGroups'
+import { fetchPackagingPurchaseOptions, fetchPackagingPurchasePage, fetchPackagingPurchaseSources, preparePackagingPurchase, writePackagingPurchasePage } from '@/api/purchaseGroups'
+import type { PackagingPurchaseSource, PurchaseBatchInput, PurchaseBatchPageConfirmationInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
 import type { SupplierCategory } from '@/types/supplier'
 import { useAuthStore } from '@/stores/auth'
 import type {
+  PurchaseOrderSourceBlocker,
+  PurchaseOrderBomOption,
   PurchaseOrderInput,
   PurchaseOrderOptions,
   PurchaseOrderProductSource,
   PurchaseOrderProductionTaskOption,
   PurchaseOrderSource,
   PurchaseOrderSourceLine,
+  PurchaseOrderSupplierOption,
   PurchaseBatchType,
+  PurchaseSetPricing,
 } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
+import { isHardwareWeightLine, isWeightPurchaseLine as isWeightSourceLine } from './purchaseWeight'
+import { decimalParts, formatScaled, scaledProduct } from './purchaseAmounts'
+import { formatMoney } from './purchaseOrderDetailDisplay'
+import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
+import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
+import PurchaseQuantitySources from './PurchaseQuantitySources.vue'
+import { applySetPricing, isExplicitZeroPrice, orderSetQuantity, setPriceText, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
+  batch_source?: PurchaseGroupProgressLine
+  material_color?: string
+  set_pricing?: PurchaseSetPricing | null
   purchase_group_line_id?: string
   supplier_id: string | null
   delivery_date: string
@@ -41,41 +60,122 @@ interface PurchaseLineDraft extends PurchaseOrderSourceLine {
   unit_price: string
 }
 
+interface PendingSupplierBatch {
+  groupId: string
+  groupEtag: string
+  supplierName: string
+  payload: PurchaseBatchInput
+}
+
+interface SupplierBatchReview {
+  groupId: string
+  groupEtag: string
+  supplierName: string
+  lines: PurchaseLineDraft[]
+  error: string
+}
+
+interface FinalBatchReview {
+  groupId: string
+  etag: string
+  payload: PurchaseBatchPageConfirmationInput
+  additionalSummary: { suppliers: string; amount: string } | null
+  error: string
+  uncertain: boolean
+}
+
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
-const canAdd = computed(() => isSuperuser.value || authStore.hasPermission('procurement.add_purchaseorder'))
-const isBatchMode = computed(() => route.name === 'purchase-batch-create')
+const isPackaging = computed(() => route.name === 'packaging-purchase-create' || route.name === 'packaging-purchase-batch')
+const canAdd = computed(() => isSuperuser.value || authStore.hasPermission(isPackaging.value ? 'procurement.manage_packagingpurchase' : 'procurement.add_purchaseorder'))
+const isBatchMode = computed(() => route.name === 'purchase-batch-create' || route.name === 'packaging-purchase-batch')
+const packagingSources = ref<PackagingPurchaseSource[]>([])
+let packagingNoticeApplied = false
+const selectedPackagingGroupIds = computed(() => [route.query.group_ids].flat().filter((id): id is string => typeof id === 'string'))
+const packagingGroups = ref<PurchaseGroup[]>([])
+const packagingGroupIds = computed(() => selectedPackagingGroupIds.value.length ? selectedPackagingGroupIds.value : packagingGroups.value.map(item => item.id))
+const packagingLineGroup = computed(() => new Map(packagingGroups.value.flatMap(item => item.progress.lines.map(line => [line.id, item] as const))))
+const packagingDraftGroup = computed(() => new Map(packagingGroups.value.flatMap(item => (item.batch_page?.draft_orders ?? []).map(order => [order.id, item] as const))))
+const isMultiTask = computed(() => packagingGroupIds.value.length > 1)
 const group = ref<PurchaseGroup | null>(null)
 const groupEtag = ref('')
+const batchSessionId = computed(() => typeof route.query.batch_session_id === 'string' ? route.query.batch_session_id : undefined)
+const currentBatchNumber = ref<number | null>(null)
+const displayedBatchNumber = computed(() => currentBatchNumber.value ?? group.value?.batch_page?.next_batch_number)
 const batchType = ref<PurchaseBatchType>('NORMAL')
 const batchRequestId = ref('')
 let batchContentSignature = ''
 const batchConflict = ref('')
+const supplierBatchReview = ref<SupplierBatchReview | null>(null)
+const pendingSupplierBatch = ref<PendingSupplierBatch | null>(null)
+const lastSupplierBatch = ref<{ number: number; supplierName: string; lineCount: number } | null>(null)
+const finalBatchReview = ref<FinalBatchReview | null>(null)
+const savedSupplierOrders = computed(() => group.value?.batch_page?.draft_orders ?? [])
+const packagingPageConfirmed = computed(() => isPackaging.value && !savedSupplierOrders.value.length &&
+  group.value?.batches.some(batch => batch.batch_session_id === batchSessionId.value && batch.status !== 'DRAFT'))
+const canReadSupplierSheets = computed(() => isSuperuser.value || (isPackaging.value
+  ? canAdd.value : authStore.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder')))
+const fulfilledSupplierLineIds = new Set<string>()
 const selectedLines = computed(() => isBatchMode.value
-  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line)))
+  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line))
+    && (line.set_pricing || !isExplicitZeroPrice(line.unit_price)))
   : lines.value)
-const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
+const confirmationLines = computed(() => isBatchMode.value ? selectedLines.value.filter(hasPurchasePrice) : selectedLines.value)
+const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value && !pendingSupplierBatch.value && !packagingPageConfirmed.value) : Boolean(source.value?.can_create))
+const canSubmitSupplierBatch = computed(() => isBatchMode.value && (isSuperuser.value || (isPackaging.value ? canAdd.value : (
+  canAdd.value && authStore.hasPermission('procurement.submit_purchaseorder')
+  && authStore.hasPermission('procurement.view_purchaseorder')
+  && authStore.moduleCan('access_control.generate_purchasesheets', 'procurement.add_purchaseorder')
+))))
 
 const options = ref<PurchaseOrderOptions>({
   production_tasks: [], suppliers: [], currencies: [], default_currency_id: null,
 })
 const source = ref<PurchaseOrderSource | null>(null)
 const lines = ref<PurchaseLineDraft[]>([])
+// 表格只需观察行的增减和顺序，格内仍绑定原来的响应式明细。
+const gridRows = computed(() => markRaw(lines.value.slice()))
+const editingSetId = ref('')
+const setCandidates = computed(() => editingSetId.value ? lines.value.filter(line =>
+  !isPackaging.value || packagingLineGroup.value.get(line.purchase_group_line_id!) === packagingLineGroup.value.get(editingSetId.value),
+).map(line => ({
+  ...line, quantityText: effectivePurchaseQuantity(line),
+  eligible: isPositiveDecimal(effectivePurchaseQuantity(line)) && isPositiveDecimal(line.required_quantity || ''),
+})) : [])
+const setSource = computed(() => setCandidates.value.find(line => line.purchase_group_line_id === editingSetId.value))
+function saveSet(change: SetPricingChange) {
+  applySetPricing(lines.value, change)
+  editingSetId.value = ''
+  refreshBulkSupplier()
+  refreshBulkDeliveryDate()
+}
 const batchRemainingQuantities = computed(() => new Map((group.value?.progress.lines || []).map(line => {
   const snapshot = line.source_snapshot
   const isPipe = snapshot.section_type_snapshot === 'PROFILE'
-  const quantity = remainingPurchaseQuantity(isPipe ? snapshot.suggested_purchase_meters : line.required_quantity, line.purchased_quantity)
-  const roots = isPipe ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) : null
+  const isWeight = isWeightSourceLine({
+    section_type: snapshot.section_type_snapshot,
+    section_title: snapshot.section_title_snapshot,
+    source_unit_text: line.source_unit_text || snapshot.source_unit_text,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
+    calculation_snapshot: snapshot.calculation_snapshot,
+  })
+  const quantity = remainingForBatch(line, isWeight ? snapshot.suggested_purchase_weight_kg || line.required_quantity : isPipe ? snapshot.suggested_purchase_meters : line.required_quantity)
   return [line.id, {
-    primary: isPipe ? roots === null ? '根数待核对' : `${roots} 根` : quantity ?? '待核对',
-    detail: isPipe ? quantity === null ? '米数待核对' : `${quantity} 米` : line.source_unit_text || '单位未识别',
+    primary: isWeight ? quantity === null ? '重量待核对' : `${quantity} kg` : isPipe ? quantity === null ? '米数待核对' : `${quantity} 米` : quantity ?? '待核对',
+    detail: isWeight || isPipe ? '' : line.source_unit_text || '单位未识别',
   }]
 })))
 const selectedTaskId = ref('')
-const selectedBomId = ref('')
+const selectedBomIds = ref<string[]>([])
+const selectedBomId = computed(() => selectedBomIds.value.length === 1 ? selectedBomIds.value[0]! : '')
+const selectedBomSources = computed(() => selectedBomIds.value.map(bom_id => {
+  const option = source.value?.bom_options.find(item => item.bom_id === bom_id)
+  return { bom_id, source_revision: option?.combine_source_revision || option?.source_revision
+    || (source.value?.selected_bom_id === bom_id ? source.value.source_revision : '') }
+}))
 const sourceTypeFilter = ref<'ALL' | 'PRODUCTION' | 'SAMPLE'>('ALL')
 const detailFullscreen = ref(false)
 const bulkSupplierCategory = ref<string | null>(null)
@@ -86,13 +186,13 @@ const sourceLoading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
 const sourceError = ref('')
+const preselectionError = ref('')
 const formPage = ref<HTMLElement | null>(null)
 const hoveredLineKey = ref('')
 let sourceRequestId = 0
 
 const form = reactive({
   currencyId: '',
-  isMailed: null as boolean | null,
 })
 
 const sourceOptions = computed<PurchaseOrderProductionTaskOption[]>(() => [
@@ -106,11 +206,57 @@ const isSampleSource = computed(() => selectedTask.value?.source_type === 'SAMPL
 const sourceTypeLabel = computed(() => isSampleSource.value ? '打样单' : '生产订单')
 const selectedTask = computed(() => sourceOptions.value.find((item) => item.id === selectedTaskId.value) || null)
 const selectedProducts = computed(() => source.value?.production_task?.products || [])
+const productRows = computed(() => {
+  const options = new Map(source.value?.bom_options.map(option => [option.product_line_id, option]))
+  return selectedProducts.value.map(product => {
+    const option = options.get(product.id)
+    return { product, option, available: selectableProduct(option),
+      checked: selectedBomIds.value.includes(option?.bom_id || '') }
+  })
+})
 const existingSourceBlocker = computed(() => source.value?.blockers.find(blocker => ['PURCHASE_GROUP_EXISTS', 'PURCHASE_ORDER_EXISTS'].includes(blocker.code)))
+const existingGroupLinks = computed(() => {
+  const links = new Map<string, { id: string; label: string; blocker: PurchaseOrderSourceBlocker }>()
+  for (const option of source.value?.bom_options || []) {
+    const blocker = option.existing_purchase_group_id
+      ? { code: 'PURCHASE_GROUP_EXISTS', message: '', existing_purchase_group_id: option.existing_purchase_group_id }
+      : option.blockers?.find(item => item.existing_purchase_group_id || item.existing_purchase_order_id)
+    if (!blocker) continue
+    const id = blocker.existing_purchase_group_id || blocker.existing_purchase_order_id!
+    if (!links.has(id)) links.set(id, { id, label: `进入已有采购需求 · ${option.product_color || option.product_name}`, blocker })
+  }
+  if (links.size || !existingSourceBlocker.value) return [...links.values()]
+  return [{ id: 'existing', label: '进入已有采购需求', blocker: existingSourceBlocker.value }]
+})
+const sourceBlockerMessage = computed(() => [...new Set(source.value?.blockers.map(blocker => blocker.message))].join(' '))
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
 const selectedSupplierCount = computed(() => new Set(selectedLines.value.map((line) => line.supplier_id).filter(Boolean)).size)
+const supplierBatchOptions = computed(() => {
+  const counts = new Map<string, number>()
+  for (const line of selectedLines.value) {
+    if (line.supplier_id) counts.set(line.supplier_id, (counts.get(line.supplier_id) ?? 0) + 1)
+  }
+  return options.value.suppliers.filter(supplier => counts.has(supplier.id))
+    .map(supplier => ({ id: supplier.id, name: supplier.supplier_name, count: counts.get(supplier.id)! }))
+})
+const reviewedPurchaseLines = computed(() => (supplierBatchReview.value?.lines ?? []).filter(hasPurchasePrice))
+const reviewedPurchaseTotal = computed(() => formatScaled(
+  reviewedPurchaseLines.value.reduce((total, line) => total + (pricedAmount(line) ?? 0n), 0n),
+))
 const supplierCategories = computed(() => [...new Set(lines.value.map((line) => line.category || '未分类'))])
+const suppliersByCategory = computed(() => {
+  const grouped = new Map<SupplierCategory, PurchaseOrderSupplierOption[]>()
+  for (const supplier of options.value.suppliers) {
+    for (const category of supplier.supplier_categories) {
+      const suppliers = grouped.get(category)
+      if (suppliers) suppliers.push(supplier)
+      else grouped.set(category, [supplier])
+    }
+  }
+  return grouped
+})
+const noMatchingSupplierText = '暂无匹配供应商，请在供应商信息中维护对应类别'
 const bulkSupplierLines = computed(() => {
   if (!bulkSupplierCategory.value) return []
   return bulkSupplierCategory.value === '__all__'
@@ -126,17 +272,14 @@ const bulkSupplierOptions = computed(() => {
 })
 const bulkSupplierEmptyText = computed(() => bulkSupplierLines.value.some((line) => !line.suggested_supplier_category)
   ? '当前物料分类尚未对应供应商类别，请逐行选择供应商'
-  : '暂无匹配供应商，请在供应商信息中维护对应类别')
+  : noMatchingSupplierText)
 const completeLineCount = computed(() => selectedLines.value.filter(isLineComplete).length)
 const isPreviewMode = computed(() => Boolean(source.value && !source.value.can_create && lines.value.length))
 const detailTableHeight = computed(() => detailFullscreen.value ? 'calc(100dvh - 108px)'
   : isSampleSource.value && !lines.value.some(line => isPipePurchaseLine(line)) && lines.value.length <= 4 ? `${40 + lines.value.length * 40}px` : '100%')
-const canContinueToDetails = computed(() => Boolean(
-  source.value?.can_create
-  && lines.value.length
-  && selectedTaskId.value
-  && (isSampleSource.value || selectedBomId.value),
-))
+const canContinueToDetails = computed(() => isPackaging.value ? selectedBomIds.value.length > 0 : Boolean(selectedTaskId.value && (isSampleSource.value
+  ? source.value?.can_create && lines.value.length
+  : selectedBom.value?.existing_purchase_group_id || selectedBomSources.value.length && selectedBomSources.value.every(item => item.source_revision))))
 
 function apiErrorMessage(error: unknown, fallback: string): string {
   const response = (error as {
@@ -145,14 +288,17 @@ function apiErrorMessage(error: unknown, fallback: string): string {
       data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string }
     }
   })?.response
-  const firstFieldError = response?.data?.error?.field_errors
-    ? Object.values(response.data.error.field_errors).flat()[0]
+  const fields = response?.data?.error?.field_errors
+  const taskNumber = fields?.production_task_number?.[0]
+  const firstFieldError = fields
+    ? Object.entries(fields).find(([field]) => field !== 'production_task_number')?.[1]?.[0]
     : ''
   if (response?.status === 401) return '登录状态已失效，请刷新页面或重新登录。'
   if (response?.status === 403) return '当前账号没有新建采购订单的权限。'
-  if (response?.status === 412) return '总单已有更新，输入已保留。请重新读取总单版本后核对并重试。'
+  if (response?.status === 412) return '采购需求已有更新，输入已保留。请重新读取采购需求版本后核对并重试。'
   if (response?.status === 409) return response.data?.error?.message || response.data?.detail || '采购来源已变化，请重新读取采购需求。'
-  return firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
+  const message = firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
+  return taskNumber ? `${taskNumber} · ${message}` : message
 }
 
 function showActionError(message: string): void {
@@ -163,16 +309,19 @@ function resetSource(): void {
   source.value = null
   sourceLoading.value = false
   lines.value = []
-  selectedBomId.value = ''
+  selectedBomIds.value = []
   bulkSupplierCategory.value = null
   bulkSupplierId.value = null
   bulkDeliveryDate.value = ''
   sourceError.value = ''
+  preselectionError.value = ''
 }
 
-function applySource(result: PurchaseOrderSource): void {
+function applySource(result: PurchaseOrderSource, selectAvailable = false): void {
   source.value = result
-  selectedBomId.value = result.selected_bom_id || ''
+  selectedBomIds.value = selectAvailable && result.requires_bom_selection
+    ? result.bom_options.flatMap(option => selectableProduct(option) && option.bom_id ? [option.bom_id] : [])
+    : result.selected_bom_id && (result.can_create || result.bom_options.some(item => item.bom_id === result.selected_bom_id && item.can_combine)) ? [result.selected_bom_id] : []
   bulkSupplierCategory.value = null
   bulkSupplierId.value = null
   bulkDeliveryDate.value = ''
@@ -186,9 +335,9 @@ function applySource(result: PurchaseOrderSource): void {
     actual_purchase_quantity: '',
     unit_price: '',
   }))
-  sourceError.value = result.requires_bom_selection
-    ? '该生产订单包含多个产品，请先选择本次要采购的 BOM。'
-    : (!result.can_create ? result.blockers?.[0]?.message || '当前采购来源暂无可采购的明细。' : '')
+  sourceError.value = !result.can_create && !selectedBomIds.value.length
+    ? result.requires_bom_selection ? '本单暂无可新建采购需求的产品。' : sourceBlockerMessage.value || '当前采购来源暂无可采购的明细。'
+    : ''
 }
 
 async function loadOptions(): Promise<void> {
@@ -200,7 +349,18 @@ async function loadOptions(): Promise<void> {
   loadError.value = ''
   try {
     let result: PurchaseOrderOptions
-    if (isDetailStep.value) {
+    if (isPackaging.value) {
+      if (!isBatchMode.value) {
+        packagingSources.value = await fetchPackagingPurchaseSources()
+        if (!packagingNoticeApplied && typeof route.query.production_task_id === 'string') {
+          const matches = packagingSources.value.filter(item => item.production_task_id === route.query.production_task_id)
+          if (matches.length <= 100) selectedBomIds.value = matches.map(item => item.bom_id)
+          packagingNoticeApplied = true
+        }
+        return
+      }
+      result = await fetchPackagingPurchaseOptions()
+    } else if (isDetailStep.value) {
       const [detailOptions, sourceOptionsResult] = await Promise.all([
         fetchPurchaseOrderOptions('detail'),
         fetchPurchaseOrderOptions('sources'),
@@ -249,7 +409,7 @@ async function selectTask(task: PurchaseOrderProductionTaskOption): Promise<void
       ? await fetchSamplePurchaseOrderSource(task.source_id || '')
       : await fetchPurchaseOrderSource(task.id)
     if (currentRequestId !== sourceRequestId) return
-    applySource(result)
+    applySource(result, true)
   } catch (error) {
     if (currentRequestId !== sourceRequestId) return
     const message = apiErrorMessage(error, '采购来源读取失败，请稍后重试。')
@@ -260,40 +420,15 @@ async function selectTask(task: PurchaseOrderProductionTaskOption): Promise<void
   }
 }
 
-async function handleBomSelection(bomId: string): Promise<void> {
-  if (!selectedTaskId.value || !bomId) return
-  const currentRequestId = ++sourceRequestId
-  sourceLoading.value = true
+function selectableProduct(option?: PurchaseOrderBomOption): boolean {
+  return Boolean(option?.can_combine || (option?.can_create && !option.existing_purchase_group_id))
+}
+
+function handleProductSelection(option?: PurchaseOrderBomOption): void {
+  if (sourceLoading.value || saving.value || !option?.bom_id || !selectableProduct(option)) return
+  if (selectedBomIds.value.includes(option.bom_id)) selectedBomIds.value = selectedBomIds.value.filter(id => id !== option.bom_id)
+  else selectedBomIds.value = [...selectedBomIds.value, option.bom_id]
   sourceError.value = ''
-  lines.value = []
-  try {
-    const result = await fetchPurchaseOrderSource(selectedTaskId.value, bomId)
-    if (currentRequestId !== sourceRequestId) return
-    applySource(result)
-  } catch (error) {
-    if (currentRequestId !== sourceRequestId) return
-    selectedBomId.value = ''
-    const message = apiErrorMessage(error, '所选 BOM 读取失败，请稍后重试。')
-    sourceError.value = message
-    showActionError(message)
-  } finally {
-    if (currentRequestId === sourceRequestId) sourceLoading.value = false
-  }
-}
-
-function productBomOption(productId: string): PurchaseOrderSource['bom_options'][number] | null {
-  return source.value?.bom_options.find((item) => item.product_line_id === productId) || null
-}
-
-async function handleProductSelection(product: PurchaseOrderProductSource): Promise<void> {
-  if (sourceLoading.value) return
-  const option = productBomOption(product.id)
-  if (!option?.bom_id) {
-    ElMessage.warning('该产品尚未建立 BOM，暂时不能选择。')
-    return
-  }
-  if (option.bom_id === selectedBomId.value) return
-  await handleBomSelection(option.bom_id)
 }
 
 async function handleTaskSelection(taskId: string): Promise<void> {
@@ -340,18 +475,51 @@ function handleLineMouseLeave(): void {
 }
 
 /**
- * 样品管材按总米数提出需求，采购员在采购单中填写采购根数和每根长度。
- * 生产订单仍沿用来源快照中的 raw_bar_length_m，不进入这个分支。
+ * 样品管材来源保留米需求；新采购按手填的单根参数预算 KG，旧米单保留原输入。
  */
 function isPipePurchaseLine(line: PurchaseLineDraft): boolean {
   return isSampleSource.value && line.section_type === 'PROFILE'
 }
+
+function isWeightPipeLine(line: Pick<PurchaseLineDraft, 'section_type' | 'raw_bar_length_m' | 'source_unit_text' | 'suggested_purchase_weight_kg'>): boolean {
+  return line.section_type === 'PROFILE' && (String(line.source_unit_text || '').toUpperCase() === 'KG' || Boolean(line.suggested_purchase_weight_kg))
+}
+
+function isWeightLine(line: PurchaseLineDraft): boolean {
+  return isWeightPipeLine(line) || isHardwareWeightLine(line)
+}
+
+function weightSuggestedQuantity(line: PurchaseLineDraft): string {
+  if (isPipePurchaseLine(line) && line.calculation_snapshot?.schema_version === 4) {
+    return samplePipeSuggestedWeight(line.calculation_snapshot.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)
+  }
+  return line.suggested_purchase_weight_kg || (isWeightLine(line) ? line.required_quantity || line.source_quantity_text : '') || '—'
+}
+
+function pipeActualWeight(line: PurchaseLineDraft): string {
+  return line.actual_purchase_quantity.trim()
+}
+function purchasePriceUnit(line: PurchaseLineDraft): string {
+  return isWeightLine(line) ? '元/kg' : isPipePurchaseLine(line) || line.raw_bar_length_m ? '元/米' : line.source_unit_text ? `元/${line.source_unit_text}` : '元'
+}
+const pipePricingText = computed(() => [
+  lines.value.some(isWeightLine) ? '重量物料金额＝采购重量 × 元/kg 单价' : '',
+  lines.value.some(line => !isWeightLine(line) && (isPipePurchaseLine(line) || line.raw_bar_length_m)) ? '米制管材金额＝采购米数 × 元/米 单价' : '',
+  '其他物料按采购数量计价',
+].filter(Boolean).join('；'))
 
 function productColorText(product: PurchaseOrderProductSource): string {
   return [product.color_card, product.color_name, product.color_code]
     .map((value) => value.trim())
     .filter((value) => value && value !== '/')
     .join(' · ') || '—'
+}
+
+function sourceQuantityText(task: PurchaseOrderProductionTaskOption): string {
+  if (task.source_type === 'SAMPLE') return `${task.demand_count || 0} 项采购需求`
+  const remaining = task.remaining_product_count ?? task.product_count
+  if (!task.combinable_product_count) return `${remaining} 项待采购产品`
+  return [remaining ? `${remaining} 项待采购` : '', `${task.combinable_product_count} 项已有需求可合并`].filter(Boolean).join(' · ')
 }
 
 function disablePastDeliveryDate(date: Date): boolean {
@@ -367,7 +535,25 @@ function applyBulkSupplier(value: string | null): void {
     showActionError('该供应商不属于当前分类，请重新选择。')
     return
   }
-  for (const line of bulkSupplierLines.value) line.supplier_id = value || null
+  for (const line of bulkSupplierLines.value) {
+    line.supplier_id = value || null
+    syncSetTerm(lines.value, line, 'supplier_id')
+  }
+}
+
+function onLineSupplierChange(line: PurchaseLineDraft) {
+  syncSetTerm(lines.value, line, 'supplier_id')
+  refreshBulkSupplier()
+}
+
+function lineSupplierOptions(line: PurchaseLineDraft): PurchaseOrderSupplierOption[] {
+  const category = line.suggested_supplier_category
+  return category ? suppliersByCategory.value.get(category) ?? [] : options.value.suppliers
+}
+
+function onLineDeliveryChange(line: PurchaseLineDraft) {
+  syncSetTerm(lines.value, line, 'delivery_date')
+  refreshBulkDeliveryDate()
 }
 
 function refreshBulkSupplier(): void {
@@ -398,6 +584,74 @@ function refreshBulkDeliveryDate(): void {
     : ''
 }
 
+const supplierClipboardType = 'application/x-haiqu-supplier-id'
+
+function copyGridTerm(event: ClipboardEvent, line: PurchaseLineDraft, field: 'supplier_id' | 'delivery_date'): void {
+  const data = event.clipboardData
+  if (!data) return
+  let text = line.delivery_date
+  if (field === 'supplier_id') {
+    const supplier = options.value.suppliers.find(item => item.id === line.supplier_id)
+    if (!supplier) return
+    text = supplier.supplier_name
+    data.setData(supplierClipboardType, supplier.id)
+  }
+  if (!text) return
+  data.setData('text/plain', text)
+  event.preventDefault()
+}
+
+function pasteGridTerm(event: ClipboardEvent, line: PurchaseLineDraft, field: 'supplier_id' | 'delivery_date'): void {
+  const data = event.clipboardData
+  const input = event.target
+  if (!data || !(input instanceof HTMLInputElement)) return
+  if (!canWriteLines.value || saving.value || sourceLoading.value || input.disabled) {
+    event.preventDefault()
+    return
+  }
+  const text = data.getData('text/plain').trim()
+  let value = text
+  if (field === 'supplier_id') {
+    const id = data.getData(supplierClipboardType)
+    const matches = options.value.suppliers.filter(item => id ? item.id === id : item.supplier_name === text)
+    if (matches.length !== 1) return // 交给下拉框搜索，采购员可以继续选。
+    value = matches[0]!.id
+  } else {
+    const date = new Date(text + 'T00:00:00')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || date.getDate() !== Number(text.slice(-2)) || disablePastDeliveryDate(date)) {
+      event.preventDefault()
+      showActionError('请输入今天或以后的交期，日期格式为 YYYY-MM-DD。')
+      return
+    }
+  }
+  event.preventDefault()
+  // 收起下拉面板并结束此前的搜索或日期输入，下一次回车就能按表格规则向下填。
+  if (document.activeElement === input) input.blur()
+  if (field === 'supplier_id') {
+    line.supplier_id = value
+    onLineSupplierChange(line)
+  } else {
+    line.delivery_date = value
+    onLineDeliveryChange(line)
+  }
+  input.focus({ preventScroll: true })
+}
+
+function fillNextGridRow(rowIndex: number, columnIndex: number): void {
+  if (!canWriteLines.value || sourceLoading.value || saving.value || rowIndex < 0 || rowIndex >= lines.value.length - 1) return
+  if (columnIndex === 0) {
+    const value = lines.value[rowIndex]?.supplier_id
+    if (!value) return
+    lines.value[rowIndex + 1]!.supplier_id = value
+    onLineSupplierChange(lines.value[rowIndex + 1]!)
+  } else if (columnIndex === 1) {
+    const value = lines.value[rowIndex]?.delivery_date
+    if (!value) return
+    lines.value[rowIndex + 1]!.delivery_date = value
+    onLineDeliveryChange(lines.value[rowIndex + 1]!)
+  }
+}
+
 async function focusGridField(rowIndex: number, columnIndex: number): Promise<void> {
   if (rowIndex < 0 || rowIndex >= lines.value.length || columnIndex < 0 || columnIndex > 3) return
   await nextTick()
@@ -412,7 +666,7 @@ async function focusGridField(rowIndex: number, columnIndex: number): Promise<vo
 }
 
 function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnIndex: number): void {
-  if (event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
   const input = event.target instanceof HTMLInputElement ? event.target : null
   const pipeTrigger = event.target instanceof HTMLButtonElement && event.target.hasAttribute('data-pipe-quantity-trigger') ? event.target : null
   if ((!input && !pipeTrigger) || input?.disabled || pipeTrigger?.disabled) return
@@ -425,6 +679,12 @@ function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnInde
   let targetRow = rowIndex
   let targetColumn = columnIndex
   if (event.key === 'Enter') {
+    if (!event.shiftKey && (columnIndex === 0 || columnIndex === 1)) {
+      fillNextGridRow(rowIndex, columnIndex)
+      // 末行也消费回车，避免重新展开选择框或触发表单默认动作。
+      event.preventDefault()
+      event.stopPropagation()
+    }
     targetRow += event.shiftKey ? -1 : 1
   } else if (event.key === 'ArrowDown') {
     targetRow += 1
@@ -453,39 +713,45 @@ function formatSuggestedQuantity(value: string | null | undefined): string {
 }
 
 function defaultPurchaseQuantity(line: PurchaseLineDraft): string {
+  if (isWeightLine(line)) return weightSuggestedQuantity(line) || ''
   if (line.quantity_parse_status !== 'READY' || !line.required_quantity) return ''
   const quantity = formatSuggestedQuantity(line.required_quantity)
   return isPositiveDecimal(quantity) ? quantity : ''
 }
 
 function effectivePurchaseQuantity(line: PurchaseLineDraft): string {
-  if (isPipePurchaseLine(line) || line.raw_bar_length_m) return pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
+  if (isWeightLine(line)) return pipeActualWeight(line)
+  if (isPipePurchaseLine(line) || line.raw_bar_length_m) return line.actual_purchase_quantity.trim() || pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
   return line.actual_purchase_quantity.trim() || (isBatchMode.value ? '' : defaultPurchaseQuantity(line))
 }
 
-function pipeMetersLabel(line: PurchaseLineDraft): string {
-  const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
-  if (!meters) return '—'
-  return `${meters} 米 · ${line.raw_bar_length_m} 米/根`
+function pipeQuantitySummary(line: PurchaseLineDraft): string {
+  const meters = effectivePurchaseQuantity(line)
+  return meters ? `${formatSuggestedQuantity(meters)}米` : '米'
 }
 
-function pipeQuantitySummary(line: PurchaseLineDraft): string {
-  if (!line.actual_bar_count && !line.raw_bar_length_m) return '根/米'
-  const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
-  return `${line.actual_bar_count || '—'}根 / ${formatSuggestedQuantity(meters)}米`
+function setPipePurchaseMeters(line: PurchaseLineDraft, value: string): void {
+  line.actual_purchase_quantity = value
+  line.actual_bar_count = pipeRootsFromMeters(value.trim(), line.raw_bar_length_m)
+}
+
+function setPipeLength(line: PurchaseLineDraft, value: string): void {
+  const meters = effectivePurchaseQuantity(line)
+  line.raw_bar_length_m = value
+  setPipePurchaseMeters(line, meters)
+}
+
+function pipeMeterError(line: PurchaseLineDraft, allowZero = false): string {
+  const meters = effectivePurchaseQuantity(line)
+  if (!(allowZero ? isNonNegativeDecimal(meters) : isPositiveDecimal(meters))) return '实际采购米数应为大于 0、最多 4 位小数的数字。'
+  if (!pipeRootsFromMeters(meters, line.raw_bar_length_m)) return '实际采购米数必须为每根长度的整数倍，请核对数量。'
+  return ''
 }
 
 function focusPipeQuantity(lineKey: string): void {
   const editor = Array.from(document.querySelectorAll<HTMLElement>('[data-pipe-editor]'))
     .find(element => element.dataset.pipeEditor === lineKey)
   editor?.querySelector<HTMLInputElement>('input')?.focus()
-}
-
-function decimalParts(value: string): { digits: bigint; scale: number } | null {
-  const matched = /^(\d+)(?:\.(\d+))?$/.exec(value.trim())
-  if (!matched) return null
-  const fraction = matched[2] || ''
-  return { digits: BigInt(`${matched[1] || '0'}${fraction}`), scale: fraction.length }
 }
 
 function remainingPurchaseQuantity(target: string | number | null | undefined, purchased: string | null | undefined, roots = false): string | null {
@@ -501,32 +767,27 @@ function remainingPurchaseQuantity(target: string | number | null | undefined, p
   return scale ? compactDecimal(`${digits.slice(0, -scale)}.${digits.slice(-scale)}`) : digits
 }
 
-function scaledProduct(quantity: string, price: string): bigint | null {
-  const left = decimalParts(quantity)
-  const right = decimalParts(price)
-  if (!left || !right) return null
-  const raw = left.digits * right.digits
-  const rawScale = left.scale + right.scale
-  if (rawScale === 4) return raw
-  if (rawScale < 4) return raw * 10n ** BigInt(4 - rawScale)
-  const divisor = 10n ** BigInt(rawScale - 4)
-  return (raw + divisor / 2n) / divisor
-}
-
-function formatScaled(value: bigint): string {
-  const raw = value.toString().padStart(5, '0')
-  const whole = raw.slice(0, -4).replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '0'
-  const fraction = raw.slice(-4).replace(/0+$/, '')
-  return fraction ? `${whole}.${fraction}` : `${whole}.00`
+function remainingForBatch(line: PurchaseGroupProgressLine, target: string | null | undefined): string | null {
+  if (line.remaining_purchase_quantity === undefined) return remainingPurchaseQuantity(target, line.purchased_quantity)
+  return line.remaining_purchase_quantity === null ? null : compactDecimal(line.remaining_purchase_quantity)
 }
 
 function lineAmount(line: PurchaseLineDraft): string {
-  const amount = scaledProduct(effectivePurchaseQuantity(line), line.unit_price)
+  if (isBatchMode.value && !line.set_pricing && (isExplicitZeroPrice(line.unit_price)
+    || isExplicitZeroPrice(effectivePurchaseQuantity(line)))) return '本批不买'
+  if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
+  const amount = pricedAmount(line)
   return amount === null ? '—' : formatScaled(amount)
 }
 
+function pricedAmount(line: PurchaseLineDraft) {
+  const set = line.set_pricing
+  if (set) return set.anchor_id === line.purchase_group_line_id ? scaledProduct(String(set.quantity), set.unit_price) : 0n
+  return scaledProduct(effectivePurchaseQuantity(line), line.unit_price)
+}
+
 const totalAmount = computed(() => {
-  const amounts = selectedLines.value.map((line) => scaledProduct(effectivePurchaseQuantity(line), line.unit_price))
+  const amounts = selectedLines.value.map(pricedAmount)
   if (!amounts.length || amounts.some((amount) => amount === null)) return '待计算'
   let total = 0n
   for (const amount of amounts) {
@@ -539,6 +800,10 @@ function isPositiveDecimal(value: string): boolean {
   return /^\d+(?:\.\d{1,4})?$/.test(value.trim()) && Number(value) > 0
 }
 
+function hasPurchasePrice(line: PurchaseLineDraft): boolean {
+  return Boolean(line.set_pricing || isPositiveDecimal(line.unit_price))
+}
+
 function isNonNegativeDecimal(value: string): boolean {
   return /^\d+(?:\.\d{1,4})?$/.test(value.trim()) && Number(value) >= 0
 }
@@ -548,23 +813,36 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
     line.supplier_id
     && line.delivery_date
     && isPositiveDecimal(effectivePurchaseQuantity(line))
-    && isNonNegativeDecimal(line.unit_price),
+    && (!isPipePurchaseLine(line) || !isWeightPipeLine(line) || Boolean(samplePipeSuggestedWeight(line.calculation_snapshot?.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)))
+    && (line.set_pricing || isNonNegativeDecimal(line.unit_price)),
   )
 }
 
-function validateDraft(): string {
+function validateDraft(selection = selectedLines.value, reviewLines?: PurchaseLineDraft[], allowEmpty = false): string {
   if (isBatchMode.value) {
-    if (!canWriteLines.value || !groupEtag.value) return '总单不可用或版本信息缺失，请重新读取。'
+    if (!canWriteLines.value || !groupEtag.value) return '采购需求不可用或版本信息缺失，请重新读取。'
     // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
-    for (const [index, line] of lines.value.entries()) {
-      const quantity = (line.raw_bar_length_m ? line.actual_bar_count : line.actual_purchase_quantity).trim()
+    for (const [index, line] of (reviewLines ?? lines.value).entries()) {
+      const quantity = (isWeightLine(line) || !line.raw_bar_length_m ? line.actual_purchase_quantity : effectivePurchaseQuantity(line)).trim()
+      if (reviewLines) {
+        if (!line.set_pricing && (!quantity || isExplicitZeroPrice(quantity)
+          || !line.unit_price.trim() || isExplicitZeroPrice(line.unit_price))) continue
+        if (!line.set_pricing && !isPositiveDecimal(line.unit_price)) return `第 ${index + 1} 行采购单价应为大于 0、最多 4 位小数的数字。`
+      }
+      if (line.set_pricing && !isPositiveDecimal(quantity)) return `第 ${index + 1} 行属于套餐，请填写采购数量或从套餐中移除。`
       if (!quantity) continue
-      if (line.raw_bar_length_m ? !/^\d{1,14}$/.test(quantity) : !isNonNegativeDecimal(quantity)) {
-        return line.raw_bar_length_m ? `第 ${index + 1} 行管材根数应为整数，0 表示本批不采购。`
+      if (!isNonNegativeDecimal(quantity)) {
+        return isWeightLine(line) ? `第 ${index + 1} 行采购重量应为大于或等于 0、最多 4 位小数的数字。`
           : `第 ${index + 1} 行实际采购数量应为大于或等于 0、最多 4 位小数的数字。`
       }
+      if (!isWeightLine(line) && line.raw_bar_length_m) {
+        const error = pipeMeterError(line, true)
+        if (error) return `第 ${index + 1} 行：${error}`
+      }
     }
-    if (!selectedLines.value.length) return '请至少填写一项需求数量大于 0 的材料采购数量。'
+    if (!selection.length && !allowEmpty) return reviewLines
+      ? '本批暂无采购材料。普通材料的采购数量和单价都大于 0 才计入本批。'
+      : '本批没有需要采购的材料。请填写采购数量，明确填 0 的单价会跳过本行。'
   } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
@@ -572,43 +850,52 @@ function validateDraft(): string {
     if (source.value?.existing_purchase_order_number) {
       return `该采购来源已存在采购单 ${source.value.existing_purchase_order_number}，不能重复创建。`
     }
-    return source.value?.blockers?.[0]?.message || '所选 BOM 尚未校验、明细为空或已失效，暂不能保存采购草稿。'
+    return sourceBlockerMessage.value || '所选 BOM 尚未校验、明细为空或已失效，暂不能保存采购草稿。'
   }
   }
-  if (!lines.value.length) return '当前生产订单没有可保存的采购明细。'
-  for (const [index, line] of selectedLines.value.entries()) {
+  if (!lines.value.length && !allowEmpty) return '当前生产订单没有可保存的采购明细。'
+  for (const [index, line] of selection.entries()) {
     if (isBatchMode.value && !isPositiveDecimal(effectivePurchaseQuantity(line))) return `第 ${index + 1} 项实际采购数量应大于 0。`
-    if (isPipePurchaseLine(line)) {
+    if (isWeightLine(line)) {
+      const samplePipe = isPipePurchaseLine(line) && isWeightPipeLine(line)
+      if ((!samplePipe || pipeActualWeight(line)) && !isPositiveDecimal(pipeActualWeight(line))) return `第 ${index + 1} 行实际采购重量应为大于 0、最多 4 位小数的数字。`
+      if (isWeightPipeLine(line) && (!samplePipe || line.raw_bar_weight_kg) && !isPositiveDecimal(line.raw_bar_weight_kg || '')) return `第 ${index + 1} 行请填写大于 0、最多 4 位小数的每根标准重量。`
+      if (samplePipe && line.raw_bar_length_m && (!/^\d{1,14}(?:\.\d{1,3})?$/.test(line.raw_bar_length_m) || Number(line.raw_bar_length_m) <= 0)) return `第 ${index + 1} 行每根长度应大于 0，最多三位小数。`
+    } else if (isPipePurchaseLine(line)) {
       if (!isPositiveDecimal(line.raw_bar_length_m || '')) return `第 ${index + 1} 行：请填写大于 0 的每根长度（米）。`
-      const error = pipeRootError(line.actual_bar_count)
+      const error = pipeMeterError(line)
       if (error) return `第 ${index + 1} 行：${error}`
     } else if (line.raw_bar_length_m) {
-      const error = pipeRootError(line.actual_bar_count)
+      const error = pipeMeterError(line)
       if (error) return `第 ${index + 1} 行：${error}`
     }
     if (line.actual_purchase_quantity && !isPositiveDecimal(line.actual_purchase_quantity)) {
       return `第 ${index + 1} 行实际采购数量应为大于 0、最多 4 位小数的数字。`
     }
-    if (line.unit_price && !isNonNegativeDecimal(line.unit_price)) {
+    if (!line.set_pricing && line.unit_price && !isNonNegativeDecimal(line.unit_price)) {
       return `第 ${index + 1} 行采购单价应为大于或等于 0、最多 4 位小数的数字。`
     }
   }
   return ''
 }
 
-function validateConfirmation(): string {
-  const draftError = validateDraft()
+function validateConfirmation(selection = confirmationLines.value, reviewLines = isBatchMode.value ? lines.value : undefined, allowEmpty = false): string {
+  const draftError = validateDraft(selection, reviewLines, allowEmpty)
   if (draftError) return draftError
   const selectedCurrency = options.value.currencies.find((item) => item.id === form.currencyId)
   if (!selectedCurrency || selectedCurrency.code !== 'CNY') return '系统未找到人民币（CNY）采购币种，请联系管理员检查基础资料。'
-  for (const [index, line] of selectedLines.value.entries()) {
+  for (const [index, line] of selection.entries()) {
     const missing: string[] = []
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')
-    if (!isPositiveDecimal(effectivePurchaseQuantity(line))) missing.push('实际采购数量')
-    if (!isNonNegativeDecimal(line.unit_price)) missing.push('采购单价')
+    if (!isPositiveDecimal(effectivePurchaseQuantity(line))) missing.push(isWeightLine(line) ? '实际采购重量' : '实际采购数量')
+    if (isPipePurchaseLine(line) && isWeightPipeLine(line)) {
+      if (!isPositiveDecimal(line.raw_bar_weight_kg || '')) missing.push('每根标准重量')
+      if (!line.raw_bar_length_m) missing.push('每根长度')
+    }
+    if (!line.set_pricing && !isNonNegativeDecimal(line.unit_price)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
-    if (missing.length) return `第 ${index + 1} 行缺少或填写错误：${missing.join('、')}。`
+    if (missing.length) return `第 ${(reviewLines?.indexOf(line) ?? index) + 1} 行缺少或填写错误：${missing.join('、')}。`
   }
   return ''
 }
@@ -621,22 +908,39 @@ function buildPayload(): PurchaseOrderInput {
       : { production_task_id: selectedTaskId.value, bom_id: selectedBomId.value }),
     source_revision: source.value?.source_revision || '',
     currency_id: form.currencyId || null,
-    is_mailed: form.isMailed,
     lines: lines.value.map((line) => ({
       ...(isSampleSource.value ? { sample_line_key: line.sample_line_key } : { bom_line_id: line.bom_line_id }),
       supplier_id: line.supplier_id || null,
       delivery_date: line.delivery_date || null,
-      actual_purchase_quantity: isPipePurchaseLine(line) || line.raw_bar_length_m ? null : effectivePurchaseQuantity(line) || null,
-      ...(isPipePurchaseLine(line) || line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : {}),
+      actual_purchase_quantity: isWeightLine(line) ? effectivePurchaseQuantity(line) || null : (isPipePurchaseLine(line) || line.raw_bar_length_m ? null : effectivePurchaseQuantity(line) || null),
+      ...(isWeightLine(line) ? { ...(!isSampleSource.value ? { actual_purchase_weight_kg: effectivePurchaseQuantity(line) } : {}), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : {}),
+      ...(!isWeightLine(line) && (isPipePurchaseLine(line) || line.raw_bar_length_m) ? { actual_bar_count: line.actual_bar_count } : {}),
       ...(isPipePurchaseLine(line) ? { raw_bar_length_m: line.raw_bar_length_m || null } : {}),
       unit_price: line.unit_price.trim() || null,
     })),
   }
 }
 
+function batchContent(selection: PurchaseLineDraft[]): Omit<PurchaseBatchInput, 'request_id'> {
+  return {
+    ...(batchSessionId.value ? { batch_session_id: batchSessionId.value } : {}),
+    batch_type: batchType.value,
+    currency_id: form.currencyId,
+    lines: selection.map(line => ({
+      purchase_group_line_id: line.purchase_group_line_id!,
+      supplier_id: line.supplier_id || null,
+      delivery_date: line.delivery_date || null,
+      ...(isWeightLine(line) ? { actual_purchase_quantity: effectivePurchaseQuantity(line), actual_purchase_weight_kg: effectivePurchaseQuantity(line), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) } : line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
+      unit_price: line.set_pricing ? null : line.unit_price.trim() || null,
+      ...(line.set_pricing ? { set_pricing: line.set_pricing } : {}),
+    })),
+  }
+}
+
 async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
-  if (saving.value) return
-  const validationMessage = nextStep === 'confirm' ? validateConfirmation() : validateDraft()
+  if (saving.value || pendingSupplierBatch.value) return
+  const selection = nextStep === 'confirm' ? confirmationLines.value : selectedLines.value
+  const validationMessage = nextStep === 'confirm' ? validateConfirmation(selection) : validateDraft(selection)
   if (validationMessage) {
     showActionError(validationMessage)
     return
@@ -645,20 +949,9 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
   try {
     let batchInput: PurchaseBatchInput | null = null
     if (isBatchMode.value) {
-      const content = {
-        batch_type: batchType.value,
-        currency_id: form.currencyId,
-        is_mailed: form.isMailed,
-        lines: selectedLines.value.map(line => ({
-          purchase_group_line_id: line.purchase_group_line_id!,
-          supplier_id: line.supplier_id || null,
-          delivery_date: line.delivery_date || null,
-          ...(line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
-          unit_price: line.unit_price.trim() || null,
-        })),
-      }
+      const content = batchContent(selection)
       const signature = JSON.stringify(content)
-      if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = crypto.randomUUID()
+      if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = createClientUuid()
       batchContentSignature = signature
       batchInput = { ...content, request_id: batchRequestId.value }
     }
@@ -676,9 +969,113 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
     const message = apiErrorMessage(error, '采购订单草稿保存失败，请稍后重试。')
     if (isBatchMode.value) {
       const status = (error as { response?: { status?: number } })?.response?.status
-      batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回总单核对是否已创建批次。'
+      batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回采购需求核对是否已创建批次。'
     }
     ElMessage.error(message)
+  } finally {
+    saving.value = false
+  }
+}
+
+function openSupplierBatchReview(supplierId: string): void {
+  const supplier = supplierBatchOptions.value.find(item => item.id === supplierId)
+  if (!canSubmitSupplierBatch.value || !canWriteLines.value || !supplier || !group.value || sourceLoading.value) return
+  supplierBatchReview.value = {
+    groupId: group.value.id,
+    groupEtag: groupEtag.value,
+    supplierName: supplier.name,
+    lines: selectedLines.value.filter(line => line.supplier_id === supplierId).map(line => ({ ...line })),
+    error: '',
+  }
+}
+
+function updateSupplierReviewDate(row: PurchaseLineDraft, date: string | null): void {
+  const review = supplierBatchReview.value
+  if (!review) return
+  row.delivery_date = date ?? ''
+  syncSetTerm(review.lines, row, 'delivery_date')
+  review.error = ''
+}
+
+async function confirmSupplierBatch(): Promise<void> {
+  const review = supplierBatchReview.value
+  if (!review) return
+  if (!canSubmitSupplierBatch.value || !canWriteLines.value || sourceLoading.value
+    || group.value?.id !== review.groupId || groupEtag.value !== review.groupEtag) {
+    review.error = '采购需求已变化，请关闭弹窗后重新打开。'
+    return
+  }
+  const selection = reviewedPurchaseLines.value
+  const error = validateConfirmation(selection, review.lines)
+  if (error) {
+    review.error = error
+    return
+  }
+  const payload = { ...batchContent(selection), request_id: createClientUuid(), save_as_draft: true }
+  const edited = new Map(review.lines.map(line => [line.purchase_group_line_id, line]))
+  for (const line of lines.value) {
+    const draft = edited.get(line.purchase_group_line_id)
+    if (draft) {
+      line.unit_price = draft.unit_price
+      line.delivery_date = draft.delivery_date
+    }
+  }
+  refreshBulkDeliveryDate()
+  pendingSupplierBatch.value = { groupId: review.groupId, groupEtag: review.groupEtag, supplierName: review.supplierName, payload }
+  supplierBatchReview.value = null
+  await submitPendingSupplierBatch()
+}
+
+function hasNoRemainingPurchase(source: PurchaseGroupProgressLine): boolean {
+  return compactDecimal(source.remaining_purchase_quantity, '') === '0'
+}
+
+async function submitPendingSupplierBatch(): Promise<void> {
+  const submission = pendingSupplierBatch.value
+  if (!submission || saving.value) return
+  saving.value = true
+  try {
+    const result = isPackaging.value
+      ? await writePackagingPurchasePage('save', packagingGroupIds.value, batchSessionId.value!, submission.groupEtag, submission.payload)
+        .then(page => {
+          const display = packagingDisplayGroup(page.groups)
+          return { etag: page.etag, group: display, batchNumber: display.batch_page!.current_batch_number! }
+        })
+      : await submitPurchaseSupplierBatch(submission.groupId, submission.payload, submission.groupEtag)
+        .then(({ data, etag }) => ({ etag, group: data.group, batchNumber: data.batch_number }))
+    if (pendingSupplierBatch.value !== submission) return
+    group.value = result.group
+    groupEtag.value = result.etag
+    currentBatchNumber.value = result.batchNumber
+    const submitted = new Set(submission.payload.lines.map(line => line.purchase_group_line_id))
+    const remaining = new Map(result.group.progress.lines.map(line => [line.id, line]))
+    lines.value = lines.value.flatMap(line => {
+      const id = line.purchase_group_line_id!
+      if (!submitted.has(id)) return [line]
+      const source = remaining.get(id)
+      if (source && hasNoRemainingPurchase(source)) {
+        fulfilledSupplierLineIds.add(id)
+        return []
+      }
+      const draft = source ? groupDraft(source) : { ...line, actual_purchase_quantity: '', actual_bar_count: '' }
+      return [{ ...draft, supplier_id: line.supplier_id, delivery_date: line.delivery_date, unit_price: '', set_pricing: null }]
+    })
+    refreshBulkSupplier()
+    refreshBulkDeliveryDate()
+    lastSupplierBatch.value = {
+      number: result.batchNumber, supplierName: submission.supplierName, lineCount: submitted.size,
+    }
+    pendingSupplierBatch.value = null
+    batchConflict.value = ''
+  } catch (error) {
+    if (pendingSupplierBatch.value !== submission) return
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (!status || status >= 500) {
+      batchConflict.value = '保存结果尚未确认，输入已保留。请重试本次保存。'
+    } else {
+      pendingSupplierBatch.value = null
+      batchConflict.value = apiErrorMessage(error, '采购保存失败，请核对后重试。')
+    }
   } finally {
     saving.value = false
   }
@@ -689,7 +1086,78 @@ function saveDraft(): void {
 }
 
 function confirmPurchase(): void {
-  void createOrder('confirm')
+  const currentGroup = group.value
+  const sessionId = batchSessionId.value
+  if (isPackaging.value && (!currentGroup || !sessionId || (!savedSupplierOrders.value.length && !confirmationLines.value.length))) {
+    if (packagingPageConfirmed.value && sessionId) {
+      void router.push({ name: 'supplier-purchase-sheets', query: { purchase_scope: 'PACKAGING', batch_session_id: sessionId } })
+    } else {
+      showActionError('请至少填写一行采购数量和单价均大于 0 的包材。')
+    }
+    return
+  }
+  if (!currentGroup || !sessionId || (!isPackaging.value && !savedSupplierOrders.value.length)) {
+    if (currentGroup && currentBatchNumber.value !== null && !confirmationLines.value.length && canReadSupplierSheets.value
+      && currentGroup.batches.some(batch => batch.batch_number === currentBatchNumber.value && batch.status !== 'DRAFT')) {
+      void router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: currentGroup.id } })
+      return
+    }
+    void createOrder('confirm')
+    return
+  }
+  if (!canWriteLines.value || !groupEtag.value || !canSubmitSupplierBatch.value || sourceLoading.value) return
+  const selection = confirmationLines.value
+  const error = validateConfirmation(selection, lines.value, true)
+  if (error) {
+    showActionError(error)
+    return
+  }
+  const additional = selection.length ? { ...batchContent(selection), request_id: createClientUuid() } : undefined
+  const supplierIds = new Set(selection.map(line => line.supplier_id))
+  finalBatchReview.value = {
+    groupId: currentGroup.id,
+    etag: groupEtag.value,
+    payload: {
+      batch_session_id: sessionId,
+      ...(additional ? { additional } : {}),
+    },
+    additionalSummary: additional ? {
+      suppliers: options.value.suppliers.filter(supplier => supplierIds.has(supplier.id)).map(supplier => supplier.supplier_name).join('、'),
+      amount: formatScaled(selection.reduce((total, line) => total + (pricedAmount(line) ?? 0n), 0n)),
+    } : null,
+    error: '',
+    uncertain: false,
+  }
+}
+
+async function confirmSavedSupplierOrders(): Promise<void> {
+  const review = finalBatchReview.value
+  if (!review || saving.value) return
+  saving.value = true
+  try {
+    const result = isPackaging.value
+      ? await writePackagingPurchasePage('confirm', packagingGroupIds.value, review.payload.batch_session_id, review.etag, review.payload.additional)
+        .then(page => ({ etag: page.etag, data: packagingDisplayGroup(page.groups) }))
+      : await confirmPurchaseBatchPage(review.groupId, review.payload, review.etag)
+    if (finalBatchReview.value !== review) return
+    group.value = result.data
+    groupEtag.value = result.etag
+    finalBatchReview.value = null
+    lastSupplierBatch.value = null
+    ElMessage.success('本批采购已确认。')
+    if (isPackaging.value) await router.push({ name: 'supplier-purchase-sheets', query: { purchase_scope: 'PACKAGING', batch_session_id: review.payload.batch_session_id } })
+    else if (canReadSupplierSheets.value) await router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: review.groupId } })
+    else await router.push({ name: 'purchase-group-detail', params: { id: review.groupId } })
+  } catch (error) {
+    if (finalBatchReview.value === review) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      review.uncertain = !status || status >= 500
+      review.error = review.uncertain ? '确认结果尚未收到，请重试本次确认。' : apiErrorMessage(error, '本批采购确认失败，请核对后重试。')
+      if (status === 412) batchConflict.value = review.error
+    }
+  } finally {
+    saving.value = false
+  }
 }
 
 function queryValue(value: unknown): string {
@@ -713,7 +1181,7 @@ async function restoreDetailSource(): Promise<void> {
       : await fetchPurchaseOrderSource(sourceId, bomId || undefined)
     applySource(result)
     if (!result.can_create || !lines.value.length) {
-      showActionError(result.blockers?.[0]?.message || '当前来源没有可填写的采购明细。')
+      showActionError(sourceBlockerMessage.value || '当前来源没有可填写的采购明细。')
     }
   } catch (error) {
     showActionError(apiErrorMessage(error, '所选采购来源已不存在或已发生变化，请返回重新选择。'))
@@ -722,34 +1190,99 @@ async function restoreDetailSource(): Promise<void> {
   }
 }
 
+async function restoreTrackingSource(): Promise<void> {
+  const taskId = queryValue(route.query.production_task_id)
+  const bomId = queryValue(route.query.bom_id)
+  if (!taskId && !bomId) return
+  const requestId = ++sourceRequestId
+  selectedTaskId.value = ''
+  resetSource()
+  sourceTypeFilter.value = 'PRODUCTION'
+  if (!taskId) {
+    preselectionError.value = '采购跟踪来源信息不完整，请重新选择生产订单和产品 BOM。'
+    return
+  }
+  const task = visibleSourceOptions.value.find(item => item.id === taskId && item.source_type === 'PRODUCTION')
+  if (!task) {
+    preselectionError.value = '关联生产订单不在当前可选范围，可能已变更状态或权限，请重新核对来源。'
+    return
+  }
+  if (!bomId) {
+    await selectTask(task)
+    return
+  }
+  selectedTaskId.value = task.id
+  sourceLoading.value = true
+  try {
+    const result = await fetchPurchaseOrderSource(task.id, bomId)
+    if (requestId !== sourceRequestId) return
+    // 指定产品失效时不得静默接受接口返回的其他默认 BOM。
+    if (result.production_task?.id !== task.id || result.selected_bom_id !== bomId
+      || !result.bom_options.some(item => item.bom_id === bomId)) {
+      resetSource()
+      preselectionError.value = '指定产品 BOM 已不在当前可选来源中，请核对后重新选择。'
+      return
+    }
+    applySource(result)
+  } catch (error) {
+    if (requestId === sourceRequestId) preselectionError.value = apiErrorMessage(error, '采购跟踪来源读取失败，请重试或重新选择。')
+  } finally {
+    if (requestId === sourceRequestId) sourceLoading.value = false
+  }
+}
+
 async function initializePage(): Promise<void> {
+  const requestId = sourceRequestId
+  const initialPath = route.fullPath
   await loadOptions()
-  if (!canAdd.value || loadError.value) return
+  if (!canAdd.value || loadError.value || requestId !== sourceRequestId || initialPath !== route.fullPath) return
   if (isBatchMode.value) await loadGroup()
   else if (isDetailStep.value) await restoreDetailSource()
+  else if (!isPackaging.value) await restoreTrackingSource()
 }
 
 async function goToDetails(): Promise<void> {
+  if (isPackaging.value) {
+    if (saving.value || !canContinueToDetails.value) return
+    saving.value = true
+    let groupsPrepared = false
+    try {
+      const sessionId = createClientUuid()
+      const groups = await preparePackagingPurchase(packagingSources.value.filter(item => selectedBomIds.value.includes(item.bom_id)))
+      groupsPrepared = true
+      await router.push({ name: 'packaging-purchase-batch', query: { group_ids: groups.map(item => item.id), batch_session_id: sessionId } })
+    } catch (error) {
+      showActionError(apiErrorMessage(error, groupsPrepared
+        ? '包材采购需求已就绪。请从包材采购列表继续填写。'
+        : '创建包材采购需求失败，请刷新来源后重试。'))
+    } finally { saving.value = false }
+    return
+  }
   if (!selectedTaskId.value) {
     showActionError('请先选择采购来源。')
     return
   }
-  if (!isSampleSource.value && !selectedBomId.value) {
+  if (!isSampleSource.value && !selectedBomIds.value.length) {
     showActionError('请选择本次要采购的产品 BOM。')
     return
   }
   if (!canContinueToDetails.value) {
-    showActionError(source.value?.blockers?.[0]?.message || sourceError.value || '当前来源没有可采购的明细。')
+    showActionError(sourceBlockerMessage.value || sourceError.value || '当前来源没有可采购的明细。')
     return
   }
   const sourceId = isSampleSource.value ? selectedTask.value?.source_id || '' : selectedTaskId.value
   if (!isSampleSource.value) {
+    if (selectedBom.value?.existing_purchase_group_id) {
+      await router.push({ name: 'purchase-group-detail', params: { id: selectedBom.value.existing_purchase_group_id } })
+      return
+    }
     if (saving.value) return
     saving.value = true
     try {
-      const result = await createPurchaseGroup({ production_task_id: sourceId, bom_id: selectedBomId.value, source_revision: source.value!.source_revision })
+      const sources = selectedBomSources.value
+      const result = await createPurchaseGroup({ production_task_id: sourceId, ...(sources.length === 1 ? sources[0]! : { sources }) })
       await router.push({ name: 'purchase-batch-create', params: { groupId: result.data.id } })
-    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购总单失败，请重新读取来源。')) }
+    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购需求失败，请重新读取来源。')) }
     finally { saving.value = false }
     return
   }
@@ -764,6 +1297,12 @@ async function goToDetails(): Promise<void> {
 }
 
 function back(): void {
+  if (isPackaging.value) {
+    void router.push(packagingGroupIds.value.length === 1
+      ? { name: 'packaging-purchase-detail', params: { id: packagingGroupIds.value[0] } }
+      : { name: 'packaging-purchases' })
+    return
+  }
   void router.push(isBatchMode.value ? { name: 'purchase-group-detail', params: { id: route.params.groupId } } : { name: isDetailStep.value ? 'purchase-order-create' : 'purchase-orders' })
 }
 
@@ -791,7 +1330,18 @@ function groupSupplierCategory(snapshot: PurchaseGroupProgressLine['source_snaps
 
 function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
   const snapshot = line.source_snapshot
+  const weightLine = isWeightSourceLine({
+    section_type: snapshot.section_type_snapshot,
+    section_title: snapshot.section_title_snapshot,
+    source_unit_text: line.source_unit_text || snapshot.source_unit_text,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
+    calculation_snapshot: snapshot.calculation_snapshot,
+  })
+  const remaining = remainingForBatch(line, weightLine ? snapshot.suggested_purchase_weight_kg || line.required_quantity : line.required_quantity)
   return {
+    batch_source: line,
+    material_color: materialAttributeFields(snapshot).filter(field => ['色卡', '颜色', '色号'].includes(field.label))
+      .map(field => field.value).join(' / '),
     purchase_group_line_id: line.id,
     material_catalog_id: snapshot.material_catalog_id, material_selection_snapshot: snapshot.material_selection_snapshot,
     bom_id: snapshot.bom_id || undefined, bom_line_id: snapshot.bom_line_id || undefined,
@@ -806,12 +1356,42 @@ function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
     source_quantity_text: snapshot.source_quantity_text, source_unit_text: line.source_unit_text,
     quantity_parse_status: snapshot.quantity_parse_status, suggested_supplier_category: groupSupplierCategory(snapshot), category_source: 'UNKNOWN',
     material_attributes_snapshot: snapshot.material_attributes_snapshot,
+    calculation_snapshot: snapshot.calculation_snapshot,
     raw_bar_length_m: snapshot.raw_bar_length_m, suggested_bar_count: snapshot.suggested_bar_count,
     suggested_purchase_meters: snapshot.suggested_purchase_meters,
+    raw_bar_weight_kg: snapshot.raw_bar_weight_kg,
+    suggested_purchase_weight_kg: snapshot.suggested_purchase_weight_kg,
     supplier_id: null, delivery_date: '',
-    actual_bar_count: snapshot.raw_bar_length_m ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) ?? '' : '',
-    actual_purchase_quantity: snapshot.raw_bar_length_m ? '' : remainingPurchaseQuantity(line.required_quantity, line.purchased_quantity) ?? '',
+    actual_bar_count: snapshot.raw_bar_length_m && !weightLine ? (line.remaining_purchase_quantity === undefined
+      ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true)
+      : pipeRootsFromMeters(remaining || '', snapshot.raw_bar_length_m)) ?? '' : '',
+    actual_purchase_quantity: snapshot.raw_bar_length_m && !weightLine ? '' : remaining ?? '',
     unit_price: '',
+  }
+}
+
+function packagingDisplayGroup(groups: PurchaseGroup[]): PurchaseGroup {
+  packagingGroups.value = groups
+  const first = groups[0]!
+  if (groups.length === 1) return first
+  return {
+    ...first,
+    production_task_number_snapshot: groups.map(item => item.production_task_number_snapshot).join('、'),
+    combined_into_group_id: groups.find(item => item.combined_into_group_id)?.combined_into_group_id ?? null,
+    products: groups.flatMap(item => item.products ?? []),
+    progress: {
+      ...first.progress,
+      status: groups.some(item => item.progress.status === 'UNKNOWN') ? 'UNKNOWN' : first.progress.status,
+      lines: groups.flatMap(item => item.progress.lines),
+      external_supply_line_ids: groups.flatMap(item => item.progress.external_supply_line_ids ?? []),
+    },
+    batches: groups.flatMap(item => item.batches),
+    batch_page: {
+      current_batch_number: groups.find(item => item.batch_page?.current_batch_number)?.batch_page?.current_batch_number ?? null,
+      next_batch_number: first.batch_page!.next_batch_number,
+      submitted_line_ids: groups.flatMap(item => item.batch_page?.submitted_line_ids ?? []),
+      draft_orders: groups.flatMap(item => item.batch_page?.draft_orders ?? []),
+    },
   }
 }
 
@@ -819,39 +1399,77 @@ async function loadGroup(preserveInput = false): Promise<void> {
   const current = ++sourceRequestId
   sourceLoading.value = true
   try {
-    const result = await fetchVersionedPurchaseGroup(String(route.params.groupId))
+    const result = isPackaging.value
+      ? await fetchPackagingPurchasePage(packagingGroupIds.value, batchSessionId.value!)
+        .then(page => ({ etag: page.etag, data: packagingDisplayGroup(page.groups) }))
+      : await fetchVersionedPurchaseGroup(String(route.params.groupId), batchSessionId.value)
     if (current !== sourceRequestId) return
     group.value = result.data
     groupEtag.value = result.etag
+    currentBatchNumber.value = result.data.batch_page?.current_batch_number ?? null
+    const submitted = new Set(result.data.batch_page?.submitted_line_ids)
+    for (const line of result.data.progress.lines) {
+      if (submitted.has(line.id) && hasNoRemainingPurchase(line)) fulfilledSupplierLineIds.add(line.id)
+      else if (!hasNoRemainingPurchase(line)) fulfilledSupplierLineIds.delete(line.id)
+    }
     // 首次读取失败时没有可保留的草稿；重试成功必须初始化材料。
-    if (!preserveInput || !lines.value.length) {
-      lines.value = result.data.progress.lines.map(groupDraft)
+    if (!preserveInput || (!lines.value.length && !fulfilledSupplierLineIds.size)) {
+      lines.value = result.data.progress.lines.filter(line => !fulfilledSupplierLineIds.has(line.id)).map(groupDraft)
       batchRequestId.value = ''
       batchContentSignature = ''
       batchType.value = 'NORMAL'
+    } else {
+      const previous = new Map(lines.value.map(line => [line.purchase_group_line_id, line]))
+      const external = new Set(result.data.progress.external_supply_line_ids || [])
+      const changedSets = new Set(lines.value.filter(line => line.set_pricing && external.has(line.purchase_group_line_id!))
+        .map(line => line.set_pricing!.anchor_id))
+      lines.value = lines.value.filter(line => !external.has(line.purchase_group_line_id!) && !fulfilledSupplierLineIds.has(line.purchase_group_line_id!))
+      for (const source of result.data.progress.lines) {
+        const existingLine = previous.get(source.id)
+        if (fulfilledSupplierLineIds.has(source.id) && hasNoRemainingPurchase(source)) continue
+        fulfilledSupplierLineIds.delete(source.id)
+        if (!existingLine) lines.value.push(groupDraft(source))
+        else existingLine.batch_source = source
+      }
+      for (const anchorId of changedSets) {
+        const members = lines.value.filter(line => line.set_pricing?.anchor_id === anchorId)
+        if (!external.has(anchorId) && members.length >= 2) continue
+        for (const line of members) {
+          line.set_pricing = null
+          line.unit_price = ''
+        }
+        if (members.length) ElMessage.warning('采购需求已变化，原套餐剩余部件请重新按套或填写单价。')
+      }
     }
     batchConflict.value = ''
-    sourceError.value = result.data.progress.status === 'UNKNOWN' ? '总单来源待核对，暂不能创建批次。' : ''
+    sourceError.value = result.data.progress.status === 'UNKNOWN' ? '采购需求来源待核对，暂不能创建批次。' : ''
   } catch (error) {
-    if (current === sourceRequestId) batchConflict.value = apiErrorMessage(error, '采购总单读取失败。')
+    if (current === sourceRequestId) batchConflict.value = apiErrorMessage(error, '采购需求读取失败。')
   } finally { if (current === sourceRequestId) sourceLoading.value = false }
 }
 
-async function openExistingGroup(): Promise<void> {
-  const blocker = existingSourceBlocker.value
+async function openExistingGroup(blocker = existingSourceBlocker.value): Promise<void> {
   if (!blocker) return
   try {
     const id = blocker.existing_purchase_group_id || (blocker.existing_purchase_order_id ? (await fetchVersionedPurchaseOrder(blocker.existing_purchase_order_id)).data.purchase_group_id : null)
     if (id) await router.push({ name: 'purchase-group-detail', params: { id } })
-    else ElMessage.warning('该来源没有可读取的总单归属，请联系管理员核对。')
-  } catch (error) { ElMessage.error(apiErrorMessage(error, '总单归属读取失败。')) }
+    else ElMessage.warning('该来源没有可读取的采购需求归属，请联系管理员核对。')
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '采购需求归属读取失败。')) }
 }
 
 watch(() => route.fullPath, () => {
+  editingSetId.value = ''
+  supplierBatchReview.value = null
+  finalBatchReview.value = null
   sourceRequestId++
   resetSource()
+  pendingSupplierBatch.value = null
+  lastSupplierBatch.value = null
+  fulfilledSupplierLineIds.clear()
+  packagingGroups.value = []
   group.value = null
   groupEtag.value = ''
+  currentBatchNumber.value = null
   void initializePage()
 })
 
@@ -867,29 +1485,31 @@ onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown)
   void initializePage()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown))
+onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown', handleWindowKeydown) })
 </script>
 
 <template>
-  <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
+  <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep, 'is-batch-page': isBatchMode }" data-testid="purchase-order-form-page">
     <div v-if="!canAdd" class="state-page">
-      <h1>无权新建采购订单</h1>
-      <p>请联系管理员开通“采购订单新增”权限后重试。</p>
-      <ElButton @click="back">返回采购订单列表</ElButton>
+      <h1>无权新建采购需求</h1>
+      <p>请联系管理员开通“{{ isPackaging ? '办理包材采购' : '采购订单新增' }}”权限后重试。</p>
+      <ElButton @click="back">返回采购需求列表</ElButton>
     </div>
 
     <template v-else>
       <header class="page-heading">
         <div>
           
-          <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购订单' }}</h1>
-          <p>{{ isBatchMode ? `${group?.group_number || '采购总单'} · 默认带入剩余采购量，可修改；空白或 0 不计入，可超过建议量` : isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
+          <h1>{{ isPackaging ? (isBatchMode ? '填写包材采购' : '新建包材采购') : isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购需求' }}</h1>
+          <p v-if="!isBatchMode">{{ isPackaging ? '选择本次采购涉及的生产任务 BOM' : isDetailStep ? '填写供应商、采购交期、数量和单价' : '选择订单，勾选要一起采购的产品' }}</p>
+          <strong v-else-if="group?.production_task_number_snapshot" class="production-task-number">{{ group.production_task_number_snapshot }}</strong>
+          <span v-if="isBatchMode && displayedBatchNumber && !isMultiTask">第 {{ displayedBatchNumber }} 批</span>
         </div>
         <div class="page-action-panel">
           <div class="page-actions">
-            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回总单' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
-            <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">下一步：填写明细<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
-            <ElButton v-if="isDetailStep" type="primary" plain :loading="saving" :disabled="saving" @click="saveDraft">保存草稿</ElButton>
+            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回采购需求' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
+            <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">{{ selectedBom?.existing_purchase_group_id ? '进入已有采购需求' : '下一步：填写明细' }}<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
+            <ElButton v-if="isDetailStep && !isPackaging" type="primary" plain :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" @click="saveDraft">保存草稿</ElButton>
           </div>
         </div>
       </header>
@@ -897,16 +1517,35 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
       <ElAlert v-if="loadError" type="error" :title="loadError" :closable="false" show-icon>
         <ElButton link @click="initializePage">重新加载</ElButton>
       </ElAlert>
+      <ElAlert v-if="!isDetailStep && preselectionError" type="warning" :title="preselectionError" :closable="false" show-icon data-testid="purchase-tracking-source-error">
+        <ElButton link :disabled="sourceLoading || optionsLoading" @click="initializePage">重新读取来源</ElButton>
+      </ElAlert>
       <ElAlert v-if="isBatchMode && (batchConflict || sourceError)" type="warning" :title="batchConflict || sourceError" :closable="false" show-icon>
-        <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取总单版本（保留输入）</ElButton>
-        <ElButton link @click="back">查看总单已有批次</ElButton>
+        <ElButton v-if="pendingSupplierBatch" link type="primary" :disabled="saving" @click="submitPendingSupplierBatch">重试本次保存</ElButton>
+        <ElButton v-else link :disabled="sourceLoading" @click="loadGroup(true)">重新读取采购需求版本（保留输入）</ElButton>
+        <ElButton link @click="back">查看采购需求已有批次</ElButton>
+      </ElAlert>
+      <ElAlert v-if="isBatchMode && group?.combined_into_group_id" type="info" title="后续批次请在合并采购需求中填写。" :closable="false">
+        <ElButton link @click="router.push({ name: isPackaging ? 'packaging-purchase-detail' : 'purchase-group-detail', params: { id: group.combined_into_group_id } })">打开合并采购需求</ElButton>
       </ElAlert>
       <div v-if="isBatchMode" class="batch-type-field">
         <span>批次类型</span><ElRadioGroup v-model="batchType" :disabled="saving" aria-label="批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
-        <span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span>
+        <PurchaseGridCell><span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span></PurchaseGridCell>
       </div>
 
-      <section v-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
+      <section v-if="isPackaging && !isDetailStep" v-loading="optionsLoading" class="task-card">
+        <header><div><h2>采购来源</h2></div></header>
+        <div class="task-selector-row">
+          <ElSelect v-model="selectedBomIds" multiple filterable clearable class="task-source-filter"
+            data-testid="packaging-bom-select" aria-label="选择采购 BOM" placeholder="搜索生产任务单号、产品或 BOM"
+            no-data-text="没有可选的包材 BOM" :disabled="saving" :multiple-limit="100">
+            <ElOption v-for="item in packagingSources" :key="item.bom_id" :value="item.bom_id"
+              :label="`${item.task_number} · ${item.product_name} · ${item.bom_number}`" />
+          </ElSelect>
+          <ElButton :disabled="saving || optionsLoading" @click="loadOptions">刷新</ElButton>
+        </div>
+      </section>
+      <section v-else-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
         <header>
           <div><h2>采购来源</h2></div>
         </header>
@@ -941,7 +1580,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
               <div class="task-select-option" :data-task-id="task.id">
                 <strong>{{ task.task_number }}</strong>
                 <ElTag class="purchase-source-tag" :class="{ 'is-sample': task.source_type === 'SAMPLE' }" effect="dark">{{ task.source_type === 'SAMPLE' ? '打样单' : '生产订单' }}</ElTag>
-                <small>{{ task.source_type === 'SAMPLE' ? `${task.demand_count || 0} 项采购需求` : `${task.remaining_product_count ?? task.product_count} 项待采购产品` }} · 交期 {{ task.delivery_date || '—' }}</small>
+                <small>{{ sourceQuantityText(task) }} · 交期 {{ task.delivery_date || '—' }}</small>
                 <ElTag class="task-source-status" size="small" :type="task.can_create ? task.source_type === 'SAMPLE' ? 'warning' : 'success' : 'info'" effect="dark">{{ task.can_create ? task.source_type === 'SAMPLE' ? '待采购' : (task.source_status_display || '可采购') : (task.source_status_display || task.status_display) }}</ElTag>
               </div>
             </ElOption>
@@ -953,37 +1592,36 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <div><dt>订单来源</dt><dd><ElTag class="purchase-source-tag" :class="{ 'is-sample': isSampleSource }" effect="dark">{{ sourceTypeLabel }}</ElTag></dd></div>
             <div><dt>客户</dt><dd>{{ selectedTask.customer_name }}</dd></div>
             <div><dt>交期</dt><dd>{{ selectedTask.delivery_date || '—' }}</dd></div>
-            <div><dt>{{ isSampleSource ? '采购需求' : '待采购产品' }}</dt><dd>{{ isSampleSource ? selectedTask.demand_count : selectedProducts.length }} 项</dd></div>
+            <div><dt>{{ isSampleSource ? '采购需求' : '本单产品' }}</dt><dd>{{ isSampleSource ? selectedTask.demand_count : selectedProducts.length }} 项</dd></div>
           </dl>
           <section v-if="!isSampleSource" class="selected-product-section" data-testid="selected-production-product-list">
             <div v-if="selectedProducts.length" class="selected-product-list">
               <div class="selected-product-row selected-product-row--heading">
                 <span>选择</span><span>产品编码</span><span>货号</span><span>产品名称</span><span>规格</span><span>颜色</span><span>材质</span><span>订单数量</span><span>BOM状态</span>
               </div>
-              <div v-for="product in selectedProducts" :key="product.id"
+              <div v-for="{ product, option, available, checked } in productRows" :key="product.id"
                 class="selected-product-row selected-product-row--option"
-                :class="{ 'is-selected': selectedBom?.product_line_id === product.id, 'is-unavailable': !productBomOption(product.id)?.bom_id }"
-                :data-product-line-id="product.id" :data-selected="selectedBom?.product_line_id === product.id ? 'true' : 'false'"
-                role="button" :tabindex="productBomOption(product.id)?.bom_id ? 0 : -1"
+                :class="{ 'is-selected': checked, 'is-unavailable': !available }"
+                :data-product-line-id="product.id" :data-selected="checked"
+                role="checkbox" :tabindex="available ? 0 : -1"
                 :aria-label="`选择第${product.line_number}行：${product.product_name}，${productColorText(product)}`"
-                :aria-pressed="selectedBom?.product_line_id === product.id" :aria-disabled="!productBomOption(product.id)?.bom_id"
-                @click="handleProductSelection(product)" @keydown.enter.prevent="handleProductSelection(product)" @keydown.space.prevent="handleProductSelection(product)">
-                <span class="product-radio" aria-hidden="true" />
+                :aria-checked="checked" :aria-disabled="!available"
+                @click="handleProductSelection(option)" @keydown.enter.prevent="handleProductSelection(option)" @keydown.space.prevent="handleProductSelection(option)">
+                <span class="product-checkbox" aria-hidden="true" />
                 <span :title="product.product_code">{{ product.product_code || '—' }}</span>
                 <span :title="product.item_number">{{ product.item_number || '—' }}</span><span :title="product.product_name">{{ product.product_name || '—' }}</span>
                 <span :title="product.specification_display ?? product.specification">{{ (product.specification_display ?? product.specification) || '—' }}</span>
                 <span :title="productColorText(product)">{{ product.color_name || '—' }}</span>
                 <span :title="product.material">{{ product.material || '—' }}</span>
                 <span :title="`${product.order_quantity} ${product.unit_name || product.unit_code}`">{{ product.order_quantity }} {{ product.unit_name || product.unit_code }}</span>
-                <span :title="productBomOption(product.id)?.bom_status_display || '未建立'"><span class="bom-status" :class="{ 'is-ready': productBomOption(product.id)?.bom_status === 'VERIFIED' }">{{ productBomOption(product.id)?.bom_status_display || '未建立' }}</span></span>
+                <span :title="option?.blockers?.map(item => item.message).join(' ') || option?.bom_status_display || '未建立'"><span class="bom-status" :class="{ 'is-ready': available }">{{ option?.bom_status_display || '未建立' }}</span></span>
               </div>
             </div>
             <p v-else>暂无待采购产品明细。</p>
-            <p class="product-selection-caption" :class="{ 'is-blocked': sourceError || (selectedBom && !source?.can_create) }" role="status">
-              {{ sourceError || (selectedBom ? `当前选择：第 ${selectedBom.product_line_number} 行 · ${selectedBom.product_color || selectedBom.product_name}` : '请选择本次采购的产品 BOM') }}
-              <template v-if="selectedBom && !source?.can_create && !sourceError"> · {{ source?.blockers?.[0]?.message || '当前仅可预览，不能采购' }}</template>
+            <p class="product-selection-caption" :class="{ 'is-blocked': sourceError }" role="status">
+              {{ sourceError || (selectedBomIds.length ? `已选 ${selectedBomIds.length} 个产品` : '请勾选本次采购的产品') }}
             </p>
-            <ElButton v-if="existingSourceBlocker" link type="primary" @click="openExistingGroup">进入已有采购总单</ElButton>
+            <ElButton v-for="link in existingGroupLinks" :key="link.id" link type="primary" @click="openExistingGroup(link.blocker)">{{ link.label }}</ElButton>
           </section>
           <div v-else class="sample-source-summary">
             <strong>{{ source?.sample_request?.summary || '打样采购需求' }}</strong>
@@ -1047,91 +1685,216 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <ElButton plain data-testid="purchase-detail-fullscreen" @click="toggleDetailFullscreen"><img class="purchase-icon" :src="expandIcon" alt="" />{{ detailFullscreen ? '退出全屏' : '全屏' }}</ElButton>
           </div>
         </header>
-        <ElTable v-loading="sourceLoading" :data="lines" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
+        <ElTable v-loading="sourceLoading" :data="gridRows" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
+          <ElTableColumn v-if="isPackaging" label="生产任务单号" width="164" show-overflow-tooltip>
+            <template #default="{ row }"><strong>{{ packagingLineGroup.get(row.purchase_group_line_id)?.production_task_number_snapshot }}</strong></template>
+          </ElTableColumn>
+          <ElTableColumn v-if="isPackaging" label="产品 / BOM" width="230" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.product_name }} · {{ row.bom_number }}</template>
+          </ElTableColumn>
           <ElTableColumn prop="category" label="分类" width="106" show-overflow-tooltip />
           <ElTableColumn label="物料信息" width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
           </ElTableColumn>
+          <ElTableColumn v-if="isBatchMode" label="颜色" width="112" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.material_color || '—' }}</template>
+          </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="材质" width="118" show-overflow-tooltip>
             <template #default="{ row }">{{ row.material || row.raw_material || '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-if="isSampleSource" label="规格" width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ row.specification || '—' }}</span></ElTooltip></template>
+          <ElTableColumn label="规格" width="220">
+            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="颜色" width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.product_color || '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-if="!isSampleSource" label="规格" width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
-          </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="需求数量" width="104">
-            <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_demand_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
+             <template #default="{ row }"><span v-if="isWeightLine(row)">见打样需求</span><template v-else>{{ formatSuggestedQuantity(row.sample_demand_quantity) }} {{ row.sample_demand_unit || (isPipePurchaseLine(row) ? '米' : row.source_unit_text) }}</template></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="仓库可供" width="100">
-            <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
+              <template #default="{ row }"><span v-if="isWeightLine(row)">见打样需求</span><template v-else>{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ row.sample_demand_unit || (isPipePurchaseLine(row) ? '米' : row.source_unit_text) }}</template></template>
           </ElTableColumn>
           <ElTableColumn :label="isBatchMode ? '剩余采购量' : isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><template v-if="isBatchMode"><strong>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}</strong><small>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.detail }}</small></template><template v-else-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ compactDecimal(row.suggested_purchase_meters) }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
+            <template #default="{ row }"><div class="quantity-cell" :class="{ 'quantity-cell--batch': isBatchMode }">
+              <template v-if="isBatchMode">
+                <div>
+                  <PurchaseQuantitySources v-if="row.batch_source?.source_snapshot.source_contributions?.length"
+                    :contributions="row.batch_source.source_snapshot.source_contributions">
+                    {{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}
+                  </PurchaseQuantitySources>
+                  <strong v-else>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}</strong>
+                  <small v-if="batchRemainingQuantities.get(row.purchase_group_line_id)?.detail"> {{ batchRemainingQuantities.get(row.purchase_group_line_id)?.detail }}</small>
+                </div>
+              </template>
+              <template v-else-if="isWeightLine(row)"><strong>{{ weightSuggestedQuantity(row) ? `${formatSuggestedQuantity(weightSuggestedQuantity(row))} kg` : '待填写重量' }}</strong></template><template v-else-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ compactDecimal(row.suggested_purchase_meters) }} 米</strong></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
-              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier" @keydown.capture="handleGridNavigation($event, $index, 0)">
-                <ElSelect v-model="row.supplier_id" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
+              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier"
+                @copy.capture="copyGridTerm($event, row, 'supplier_id')" @paste.capture="pasteGridTerm($event, row, 'supplier_id')"
+                @keydown.capture="handleGridNavigation($event, $index, 0)">
+                <ElSelect v-model="row.supplier_id" :persistent="false" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'"
+                  :no-data-text="row.suggested_supplier_category ? noMatchingSupplierText : '暂无可用供应商'" popper-class="purchase-detail-popper" @change="onLineSupplierChange(row)">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
-                <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
+                  <ElOption v-for="supplier in lineSupplierOptions(row)" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
                 </ElSelect>
               </div>
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购交期" :width="isSampleSource ? 170 : 195">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
-          </ElTableColumn>
-          <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
             <template #default="{ row, $index }">
-              <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
-                <ElPopover v-if="isPipePurchaseLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
-                  <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!canWriteLines">{{ pipeQuantitySummary(row) }}</button></template>
-                  <div class="pipe-quantity-editor erp-table-editor" :data-pipe-editor="purchaseLineKey(row)">
-                    <label><span>采购根数</span><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="填写根数"><template #append>根</template></ElInput></label>
-                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!canWriteLines" placeholder="每根米数"><template #append>米/根</template></ElInput></label>
-                  </div>
-                </ElPopover>
-                <ElInput v-else-if="row.raw_bar_length_m" v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="整根数"><template #append>根</template></ElInput>
-                <ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" :placeholder="isBatchMode ? '本批采购数量' : defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
+              <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date"
+                @copy.capture="copyGridTerm($event, row, 'delivery_date')" @paste.capture="pasteGridTerm($event, row, 'delivery_date')"
+                @keydown.capture="handleGridNavigation($event, $index, 1)">
+                <ElDatePicker v-model="row.delivery_date" type="date" :automatic-dropdown="false" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="onLineDeliveryChange(row)" />
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="折算采购米数" width="180">
-            <template #default="{ row }"><ElTooltip :content="pipeMetersLabel(row)" placement="top" :show-after="200"><span v-if="row.raw_bar_length_m" class="pipe-meters">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></ElTooltip></template>
+          <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
+            <template #default="{ row, $index }">
+              <PurchaseGridCell>
+              <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': isWeightLine(row) || !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
+                <ElPopover v-if="isPipePurchaseLine(row) && !isWeightLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
+                  <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!canWriteLines">{{ pipeQuantitySummary(row) }}</button></template>
+                  <div class="pipe-quantity-editor erp-table-editor" :data-pipe-editor="purchaseLineKey(row)">
+                    <label><span>采购数量</span><ElInput :model-value="effectivePurchaseQuantity(row)" aria-label="实际采购数量（米）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines" placeholder="填写米数" @update:model-value="setPipePurchaseMeters(row, $event)"><template #append>米</template></ElInput></label>
+                    <label><span>每根长度</span><ElInput :model-value="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!canWriteLines" placeholder="每根米数" @update:model-value="setPipeLength(row, $event)"><template #append>米/根</template></ElInput></label>
+                  </div>
+                </ElPopover>
+                <ElInput v-else-if="row.raw_bar_length_m && !isWeightLine(row)" :model-value="effectivePurchaseQuantity(row)" aria-label="实际采购数量（米）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines" placeholder="填写米数" @update:model-value="setPipePurchaseMeters(row, $event)"><template #append>米</template></ElInput>
+                <ElInput v-else v-model="row.actual_purchase_quantity" :aria-label="isWeightLine(row) ? '实际采购重量（kg）' : '实际采购数量'" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" :placeholder="isBatchMode ? '本批采购数量' : defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ isWeightLine(row) ? 'kg' : row.source_unit_text || '单位未识别' }}</template></ElInput>
+                <ElPopover v-if="isPipePurchaseLine(row) && isWeightPipeLine(row)" trigger="click" placement="top" :width="380" :teleported="true" :disabled="!canWriteLines">
+                  <template #reference><ElButton link type="primary" :disabled="!canWriteLines" aria-label="填写管材单根参数">单根参数</ElButton></template>
+                  <div class="pipe-quantity-editor erp-table-editor">
+                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="17" :disabled="!canWriteLines"><template #append>米/根</template></ElInput></label>
+                    <label><span>每根标准重量</span><ElInput v-model="row.raw_bar_weight_kg" aria-label="采购每根标准重量（kg）" inputmode="decimal" maxlength="19" :disabled="!canWriteLines"><template #append>kg/根</template></ElInput></label>
+                  </div>
+                </ElPopover>
+              </div>
+              </PurchaseGridCell>
+            </template>
           </ElTableColumn>
-          <ElTableColumn label="采购单价（管材元/米）" width="164">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" placeholder="请输入" /></div></template>
+           <ElTableColumn label="采购单价" width="164">
+            <template #default="{ row, $index }"><PurchaseGridCell><div class="line-field line-field--price" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><PurchaseSetPriceCell :line="row" :unit="purchasePriceUnit(row)" :allow-set="isBatchMode && Boolean(row.purchase_group_line_id)" :disabled="!canWriteLines" @input="row.unit_price = $event" @edit-set="editingSetId = row.purchase_group_line_id" /></div></PurchaseGridCell></template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
-            <template #default="{ row }"><div class="amount-preview">{{ lineAmount(row) }}</div></template>
+            <template #default="{ row }"><PurchaseGridCell><div class="amount-preview">{{ lineAmount(row) }}</div></PurchaseGridCell></template>
           </ElTableColumn>
           <template #empty>
             <div class="detail-empty">
               <div>!</div>
-              <strong>{{ isSampleSource ? '暂无可采购的样品需求' : selectedTaskId ? selectedBomId ? '所选 BOM 暂无明细' : '请选择本次采购的产品 BOM' : '请先选择采购来源' }}</strong>
-              <p>{{ sourceError || '选择生产订单或打样单后加载对应采购需求' }}</p>
+              <strong v-if="isBatchMode && (lastSupplierBatch || savedSupplierOrders.length)">当前列表已买足</strong>
+              <template v-else>
+                <strong>{{ isSampleSource ? '暂无可采购的样品需求' : selectedTaskId ? selectedBomId ? '所选 BOM 暂无明细' : '请选择本次采购的产品 BOM' : '请先选择采购来源' }}</strong>
+                <p>{{ sourceError || '选择生产订单或打样单后加载对应采购需求' }}</p>
+              </template>
             </div>
           </template>
         </ElTable>
         <p v-if="isSampleSource && source?.notes" class="sample-warehouse-note">仓库备注：{{ source.notes }}</p>
-        <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>管材金额＝总米数 × 米单价；其他物料按采购数量计价</span></footer>
+         <PurchaseGridCell><footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>{{ pipePricingText }}</span></footer></PurchaseGridCell>
       </section>
 
       <section v-if="isDetailStep" class="summary-card">
-        <div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div>
+        <PurchaseGridCell><div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div></PurchaseGridCell>
         <div class="summary-actions">
-          <label class="mail-field"><span>是否邮寄</span><ElRadioGroup v-model="form.isMailed" :disabled="isBatchMode && saving" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></label>
-          <div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div>
-          <ElButton type="primary" :loading="saving" :disabled="saving" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
+          <PurchaseGridCell><div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div></PurchaseGridCell>
+          <ElDropdown v-if="canSubmitSupplierBatch" trigger="click" placement="top-end" @command="openSupplierBatchReview">
+            <ElButton plain type="primary" data-testid="purchase-submit-supplier" :loading="saving && !!pendingSupplierBatch" :disabled="!canWriteLines || sourceLoading || !supplierBatchOptions.length">
+              按供应商保存<ElIcon><ArrowDown /></ElIcon>
+            </ElButton>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem v-for="supplier in supplierBatchOptions" :key="supplier.id" :command="supplier.id">
+                  {{ supplier.name }} · {{ supplier.count }} 项
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
+          </ElDropdown>
+          <ElButton type="primary" :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" data-testid="purchase-next" @click="confirmPurchase">{{ packagingPageConfirmed ? '查看本批供应商采购表' : '下一步：确认采购' }}<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
       </section>
+      <ElAlert v-if="isBatchMode && lastSupplierBatch" class="supplier-submit-result" type="success" :closable="false" show-icon
+        :title="`${isMultiTask ? '本页' : `第 ${lastSupplierBatch.number} 批`}已保存 · ${lastSupplierBatch.supplierName} · ${lastSupplierBatch.lineCount} 项 · 待统一确认`" />
     </template>
+    <AppWindowDialog v-if="supplierBatchReview" :model-value="true" title="保存供应商采购" :width="1000"
+      :min-width="290" :minimizable="false" :close-on-click-modal="false"
+      @update:model-value="value => { if (!value) supplierBatchReview = null }">
+      <div class="supplier-review-heading">
+        <strong>{{ supplierBatchReview.supplierName }}</strong>
+        <span>单价留空或填 0 的物料会跳过</span>
+      </div>
+      <div class="supplier-review-scroll">
+        <table class="supplier-review-table">
+          <thead>
+            <tr><th v-if="isPackaging" scope="col">生产任务单号</th><th scope="col">品名</th><th scope="col">规格</th><th scope="col">采购数量</th><th scope="col">单价</th><th scope="col">采购交期</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in supplierBatchReview.lines" :key="row.purchase_group_line_id">
+              <td v-if="isPackaging">{{ packagingLineGroup.get(row.purchase_group_line_id!)?.production_task_number_snapshot }}</td>
+              <td class="supplier-review-name">{{ materialTitle(row) }}</td>
+              <td>{{ materialSpecificationValue(row) }}</td>
+              <td class="supplier-review-quantity">{{ effectivePurchaseQuantity(row) }} {{ isWeightLine(row) ? 'kg' : row.source_unit_text }}</td>
+              <td>
+                <span v-if="row.set_pricing">{{ setPriceText(row) }}</span>
+                <ElInput v-else v-model="row.unit_price" inputmode="decimal" maxlength="24" placeholder="填写单价"
+                  :aria-label="`第 ${index + 1} 行单价`" @input="supplierBatchReview.error = ''">
+                  <template #suffix>{{ purchasePriceUnit(row) }}</template>
+                </ElInput>
+              </td>
+              <td>
+                <ElDatePicker :model-value="row.delivery_date" type="date" :prefix-icon="CalendarIcon"
+                  format="YYYY-MM-DD" value-format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate"
+                  placeholder="选择交期" :aria-label="`第 ${index + 1} 行采购交期`"
+                  @update:model-value="updateSupplierReviewDate(row, $event)" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-if="supplierBatchReview.error" class="supplier-review-error" role="alert">{{ supplierBatchReview.error }}</p>
+      <template #footer>
+        <div class="supplier-review-footer">
+          <span>本次采购 {{ reviewedPurchaseLines.length }} 项 <strong>¥ {{ reviewedPurchaseTotal }}</strong></span>
+          <ElButton @click="supplierBatchReview = null">取消</ElButton>
+          <ElButton type="primary" @click="confirmSupplierBatch">保存待确认</ElButton>
+        </div>
+      </template>
+    </AppWindowDialog>
+    <AppWindowDialog v-if="finalBatchReview" :model-value="true" title="统一确认采购" :width="840"
+      :min-width="290" :minimizable="false" :show-close="!saving && !finalBatchReview.uncertain"
+      :close-on-click-modal="false" :close-on-press-escape="!saving && !finalBatchReview.uncertain"
+      @update:model-value="value => { if (!value && !saving && !finalBatchReview?.uncertain) finalBatchReview = null }">
+      <div class="supplier-review-heading"><strong>{{ isMultiTask ? '本页包材采购' : `第 ${displayedBatchNumber} 批` }}</strong><span>确认后生成各供应商的采购表草稿</span></div>
+      <div class="supplier-review-scroll">
+        <table class="supplier-review-table">
+          <thead><tr><th v-if="isPackaging" scope="col">生产任务单号</th><th scope="col">采购单</th><th scope="col">供应商</th><th scope="col">明细</th><th scope="col">金额</th></tr></thead>
+          <tbody>
+            <tr v-for="order in savedSupplierOrders" :key="order.id">
+              <td v-if="isPackaging">{{ packagingDraftGroup.get(order.id)?.production_task_number_snapshot }}</td>
+              <td>{{ order.order_number }}</td><td>{{ order.suppliers.join('、') || '—' }}</td>
+              <td class="supplier-review-quantity">{{ order.line_count }} 项</td><td>{{ formatMoney(order.total_amount) }}</td>
+            </tr>
+            <tr v-if="finalBatchReview.additionalSummary && finalBatchReview.payload.additional">
+              <td v-if="isPackaging">{{ [...new Set(finalBatchReview.payload.additional.lines.map(line => packagingLineGroup.get(line.purchase_group_line_id)?.production_task_number_snapshot))].join('、') }}</td>
+              <td>本页新增填写</td><td>{{ finalBatchReview.additionalSummary.suppliers || '—' }}</td>
+              <td class="supplier-review-quantity">{{ finalBatchReview.payload.additional.lines.length }} 项</td>
+              <td>{{ formatMoney(finalBatchReview.additionalSummary.amount) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-if="finalBatchReview.error" class="supplier-review-error" role="alert">{{ finalBatchReview.error }}</p>
+      <template #footer>
+        <div class="supplier-review-footer">
+          <ElButton :disabled="saving || finalBatchReview.uncertain" @click="finalBatchReview = null">返回修改</ElButton>
+          <ElButton type="primary" :loading="saving" @click="confirmSavedSupplierOrders">确认采购</ElButton>
+        </div>
+      </template>
+    </AppWindowDialog>
+    <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates"
+      :suppliers="options.suppliers" :default-quantity="orderSetQuantity(isPackaging ? packagingLineGroup.get(editingSetId) ?? null : group)" @apply="saveSet" @close="editingSetId = ''" />
   </section>
 </template>
 
@@ -1158,6 +1921,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .page-heading > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-width: 0; }
 .page-heading h1 { margin: 0; white-space: nowrap; font: 700 38px/50px crm.$crm-font-display; letter-spacing: -1px; }
 .page-heading p { margin: 8px 0 0; color: crm.$crm-text-secondary; font-size: 13px; white-space: nowrap; }
+.production-task-number { font-size: 20px; line-height: 28px; font-weight: 700; }
 .page-action-panel { display: flex; flex-direction: column; align-items: flex-end; position: relative; }
 .page-actions { display: flex; gap: 18px; }
 .page-actions :deep(.el-button) { width: 128px; height: 42px; margin: 0; }
@@ -1206,9 +1970,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .selected-product-row--option:hover { background: crm.$crm-color-row-hover; }
 .selected-product-row--option:focus-visible { outline: 2px solid crm.$crm-primary; outline-offset: -2px; }
 .selected-product-row--option.is-unavailable { cursor: not-allowed; color: crm.$crm-text-disabled; }
-.selected-product-row > .product-radio { position: relative; justify-self: center; width: 18px; height: 18px; padding: 0; border: 1px solid crm.$crm-text-muted; border-radius: 50%; background: crm.$crm-color-surface; }
-.selected-product-row.is-selected > .product-radio { border-color: crm.$crm-primary; }
-.selected-product-row.is-selected > .product-radio::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: crm.$crm-primary; }
+.selected-product-row > .product-checkbox { position: relative; justify-self: center; width: 16px; height: 16px; padding: 0; border: 1px solid crm.$crm-text-muted; border-radius: 3px; background: crm.$crm-color-surface; }
+.selected-product-row.is-selected > .product-checkbox { background: crm.$crm-primary; border-color: crm.$crm-primary; }
+.selected-product-row.is-selected > .product-checkbox::after { content: ''; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .bom-status { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 24px; padding: 0 8px; border-radius: 999px; background: crm.$crm-info; color: var(--erp-color-text-inverse); font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
 .bom-status.is-ready { color: var(--erp-color-text-inverse); background: crm.$crm-success; }
 .product-selection-caption { margin: 8px 0 0; color: crm.$crm-text-secondary; font-size: 13px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1216,6 +1980,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .task-selector-hint { display: grid; min-height: 150px; place-content: center; margin: 0; color: crm.$crm-text-muted; }
 .detail-card { flex: none; min-height: 220px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 14px; }
 .detail-card:not(.is-fullscreen) .purchase-lines { flex: none; }
+.is-batch-page .detail-card:not(.is-fullscreen) { flex: 1; min-height: 0; }
+.is-batch-page .detail-card:not(.is-fullscreen) .purchase-lines { flex: 1 1 0; }
+.is-batch-page .purchase-lines :deep(.el-scrollbar__wrap) { overscroll-behavior-y: contain; }
 .detail-card.is-fullscreen { position: fixed; z-index: 1900; inset: 0; height: 100dvh; width: 100%; border-radius: 0; }
 .detail-card > header { display: flex; flex: 0 0 auto; min-height: 52px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 8px 12px; gap: 10px; }
 .detail-card > header > div { display: flex; align-items: center; gap: 12px; }
@@ -1256,17 +2023,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .line-field :deep(.el-input__wrapper) { padding: 1px 13px; }
 .line-field :deep(.el-input__prefix) { margin-right: 4px; }
 .line-field--quantity :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; }
+.line-field--price :deep(.el-input__wrapper) { padding: 1px 8px; }
+.line-field--price :deep(.el-input-group__append) { padding: 0 6px; font-size: 12px; white-space: nowrap; }
 :global(.purchase-detail-popper) { z-index: 4000 !important; }
 .material-cell, .quantity-cell { display: flex; min-width: 0; }
 .material-cell { flex-direction: column; }
 .material-cell strong, .quantity-cell strong { font-weight: 500; font-size: 13px; }
-.material-cell small, .quantity-cell small { color: crm.$crm-text-secondary; font-size: 12px; line-height: 19px; }
+.quantity-cell small { color: crm.$crm-text-secondary; font-size: 12px; line-height: 19px; }
 .material-cell > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .material-detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: crm.$crm-text-secondary; font-size: 12px; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
 .material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .quantity-cell { flex-direction: row; align-items: center; justify-content: flex-end; gap: 4px; white-space: nowrap; }
+.quantity-cell--batch { flex-direction: column; align-items: flex-end; gap: 0; white-space: normal; }
 .amount-preview { font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .detail-card > footer { flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 18px; color: crm.$crm-text-secondary; font-size: 13px; border-top: 1px solid crm.$crm-border-subtle; }
 .detail-empty { min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; color: crm.$crm-text-secondary; }
@@ -1278,14 +2048,35 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .summary-counts { gap: 14px; font-size: 16px; font-weight: 500; white-space: nowrap; }
 .summary-counts strong { color: crm.$crm-primary; margin: 0 6px; font-weight: 500; }
 .summary-actions { flex-wrap: wrap; gap: 14px; }
-.mail-field { display: flex; align-items: center; gap: 26px; white-space: nowrap; }
-.mail-field :deep(.el-radio) { margin-right: 28px; }
-.mail-field :deep(.el-radio:last-child) { margin: 0; }
-.mail-field :deep(.el-radio__inner) { width: 18px; height: 18px; border-color: crm.$crm-text-muted; }
-.mail-field :deep(.el-radio__input.is-checked .el-radio__inner) { border-color: crm.$crm-primary; }
 .summary-total { display: flex; align-items: center; gap: 18px; padding-left: 40px; border-left: 1px solid crm.$crm-border-default; white-space: nowrap; }
 .summary-total strong { min-width: 170px; font-size: 28px; color: crm.$crm-primary; font-weight: 700; }
 .summary-actions > :deep(.el-button) { width: 220px; height: 42px; }
+.purchase-form-page > .supplier-submit-result { margin: 10px 0 0; }
+.supplier-review-heading,
+.supplier-review-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.supplier-review-heading { margin-bottom: 12px; justify-content: space-between; }
+.supplier-review-heading strong { font-size: 16px; font-weight: 600; color: crm.$crm-text-primary; }
+.supplier-review-heading span { font-size: 13px; color: crm.$crm-text-secondary; }
+.supplier-review-scroll { max-height: min(46vh, 460px); overflow: auto; border: 1px solid crm.$crm-border-subtle; border-radius: 6px; }
+.supplier-review-table { table-layout: fixed; width: 100%; min-width: 740px; border-spacing: 0; font-size: 14px; }
+.supplier-review-table th,
+.supplier-review-table td { padding: 8px 12px; text-align: left; }
+.supplier-review-table th { position: sticky; top: 0; z-index: 1; background: crm.$crm-color-subtle; color: crm.$crm-text-secondary; font-weight: 600; border-bottom: 1px solid crm.$crm-border-subtle; }
+.supplier-review-table th:nth-child(1) { width: 26%; }
+.supplier-review-table th:nth-child(2) { width: 20%; }
+.supplier-review-table th:nth-child(3) { width: 13%; text-align: right; }
+.supplier-review-table th:nth-child(4) { width: 20%; }
+.supplier-review-table td { overflow-wrap: anywhere; }
+.supplier-review-table tr:not(:last-child) td { border-bottom: 1px solid crm.$crm-border-subtle; }
+.supplier-review-table .supplier-review-name { font-weight: 600; }
+.supplier-review-table .supplier-review-quantity { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.supplier-review-table :deep(.el-date-editor.el-input) { width: 100%; }
+.supplier-review-table :deep(.el-input__suffix) { white-space: nowrap; }
+.supplier-review-error { margin: 10px 0 0; color: crm.$crm-danger; }
+.supplier-review-footer { width: 100%; justify-content: flex-end; gap: 8px 12px; }
+.supplier-review-footer > span { margin-right: auto; color: crm.$crm-text-secondary; }
+.supplier-review-footer strong { margin-left: 12px; font-size: 17px; color: crm.$crm-text-primary; font-variant-numeric: tabular-nums; }
+.supplier-review-footer :deep(.el-button + .el-button) { margin-left: 0; }
 .state-page { display: grid; min-height: 520px; place-content: center; text-align: center; }
 .state-page p { color: crm.$crm-text-secondary; }
 

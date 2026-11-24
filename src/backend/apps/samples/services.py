@@ -2,11 +2,10 @@ from apps.access_control import sales_policy
 from datetime import datetime, time, timedelta
 
 from django.db import transaction
-from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired, etag_for_instance, require_matching_etag
+from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
@@ -17,8 +16,8 @@ from apps.product_catalog.selection import is_product_entry_snapshot
 from apps.quotations.models import QuotationOutcomeStatus, QuotationVersion, QuotationVersionStatus
 from apps.quotations.services import create_requotation_draft
 from apps.workflow.models import ApprovalRequest, ApprovalStatus, SlaPolicy, SlaTracking, SlaTrackingStatus
-from apps.workflow.models import BusinessTask, TaskOriginType, TaskPriority, TaskStatus, TaskType
-from apps.workflow.services import create_task, transition_task
+from apps.workflow.models import BusinessTask, TaskStatus, TaskType
+from apps.workflow.services import transition_task
 
 from .models import (
     FeeVerificationStatus,
@@ -36,15 +35,8 @@ from .models import (
     SampleWorkflowRecord,
     SampleWorkflowStage,
     SampleType,
-    SampleShipment,
-    SampleShipmentEvent,
-    SampleShipmentItem,
-    ShipmentEventSource,
-    ShipmentEventType,
-    SampleShipmentStatus,
     SampleSlaLink,
     SampleApprovalLink,
-    SampleTaskLink,
 )
 
 
@@ -479,147 +471,9 @@ def create_sample_from_quotation_version(*, quotation_version_id, validated_data
     return sample_request, False
 
 
-def _require_batch_etag(sample_request, etags):
-    expected_etag = etags.get(str(sample_request.pk))
-    if not expected_etag:
-        raise PreconditionRequired("批量操作必须为每条样品记录提供 ETag。")
-    if expected_etag != etag_for_instance(sample_request):
-        raise PreconditionFailed("部分样品已被其他人修改，请刷新列表后重试。")
-
-
-@transaction.atomic
-def bulk_transfer_sample_requests(*, sample_ids, etags, owner_employee, note, actor_employee, request):
-    sample_requests = list(
-        SampleRequest.objects.select_for_update()
-        .filter(pk__in=sample_ids)
-        .select_related("customer_account", "owner_employee")
-        .order_by("id")
-    )
-    if len(sample_requests) != len(set(sample_ids)):
-        raise ValidationError({"sample_ids": "部分样品不存在、已归档或无权修改。"})
-
-    updated = []
-    for sample_request in sample_requests:
-        _require_batch_etag(sample_request, etags)
-        if sample_request.owner_employee_id == owner_employee.pk:
-            continue
-        before_data = model_snapshot(sample_request, SAMPLE_FIELDS)
-        sample_request.owner_employee = owner_employee
-        sample_request.save(update_fields=["owner_employee", "updated_at"])
-        _write_sample_records(
-            sample_request=sample_request,
-            action="OWNER_BATCH_TRANSFERRED",
-            actor_employee=actor_employee,
-            request=request,
-            before_data=before_data,
-            note=note,
-        )
-        updated.append(sample_request)
-    return updated
-
-
-@transaction.atomic
-def bulk_remind_sample_requests(*, sample_ids, etags, note, actor_employee, request):
-    sample_requests = list(
-        SampleRequest.objects.select_for_update()
-        .filter(pk__in=sample_ids)
-        .select_related("customer_account", "owner_employee")
-        .order_by("id")
-    )
-    if len(sample_requests) != len(set(sample_ids)):
-        raise ValidationError({"sample_ids": "部分样品不存在、已归档或无权访问。"})
-
-    task_ids = []
-    today = timezone.localdate().isoformat()
-    for sample_request in sample_requests:
-        _require_batch_etag(sample_request, etags)
-        automation_key = f"SAMPLE_REMIND:{sample_request.pk}:{today}"
-        existing_task = BusinessTask.objects.filter(automation_key=automation_key).only("id").first()
-        if existing_task:
-            task_ids.append(existing_task.pk)
-            continue
-        task = create_task(
-            validated_data={
-                "assignee_employee": sample_request.owner_employee,
-                "title": f"跟进样品 {sample_request.request_number}",
-                "description": note or "请跟进样品当前进度。",
-                "priority": TaskPriority.NORMAL,
-                "due_at": timezone.now(),
-                "automation_key": automation_key,
-                "source_type": "SAMPLE_REQUEST",
-                "source_id": str(sample_request.pk),
-            },
-            actor_employee=actor_employee,
-            request=request,
-            resolved_source=(sample_request, sample_request.customer_account, SampleTaskLink, "sample_request"),
-        )
-        _write_sample_records(
-            sample_request=sample_request,
-            action="REMINDER_CREATED",
-            actor_employee=actor_employee,
-            request=request,
-            note=note,
-        )
-        task_ids.append(task.pk)
-    return task_ids
-
-
-@transaction.atomic
-def update_sample_request(*, sample_request, validated_data, actor_employee, request):
-    sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
-    require_matching_etag(request, sample_request)
-    if sample_request.status != SampleRequestStatus.DRAFT:
-        raise Conflict("只有草稿样品申请可以修改。")
-    before_data = model_snapshot(sample_request, SAMPLE_FIELDS)
-    collaborators = validated_data.pop("collaborators", None)
-    for field_name, value in validated_data.items():
-        setattr(sample_request, field_name, value)
-    if validated_data:
-        sample_request.save(update_fields=[*validated_data.keys(), "updated_at"])
-    if collaborators is not None:
-        sample_request.collaborators.set(collaborators)
-        if not validated_data:
-            _touch(sample_request)
-    _write_sample_records(
-        sample_request=sample_request,
-        action="UPDATED",
-        actor_employee=actor_employee,
-        request=request,
-        before_data=before_data,
-    )
-    return sample_request
-
-
 def _ensure_draft(sample_request):
     if sample_request.status != SampleRequestStatus.DRAFT:
         raise Conflict("样品申请提交后明细只读。")
-
-
-@transaction.atomic
-def create_sample_item(*, sample_request, validated_data, actor_employee, request):
-    sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
-    require_matching_etag(request, sample_request)
-    _ensure_draft(sample_request)
-    if sample_request.items.count() >= 200:
-        raise ValidationError({"detail": "单张样品申请最多包含 200 条明细。"})
-    data = dict(validated_data)
-    if "line_number" not in data:
-        data["line_number"] = (sample_request.items.aggregate(value=Max("line_number"))["value"] or 0) + 1
-    from apps.access_control.module_policy import require_sample_reporting_changes
-    require_sample_reporting_changes(request, sample_request, [data])
-    item = SampleItem.objects.create(sample_request=sample_request, **data)
-    _touch(sample_request)
-    write_audit_log(
-        object_type="SAMPLE_ITEM",
-        object_id=item.pk,
-        context_type="CUSTOMER_ACCOUNT",
-        context_id=sample_request.customer_account_id,
-        action="CREATED",
-        actor_employee=actor_employee,
-        after_data=model_snapshot(item, ITEM_FIELDS),
-        request=request,
-    )
-    return item, sample_request
 
 
 @transaction.atomic
@@ -716,7 +570,6 @@ def transition_sample_request(*, sample_request, action, note, actor_employee, r
     require_matching_etag(request, sample_request)
     transitions = {
         "SUBMITTED": ({SampleRequestStatus.DRAFT}, SampleRequestStatus.PENDING),
-        "PREPARING_STARTED": ({SampleRequestStatus.PENDING}, SampleRequestStatus.PREPARING),
         "COMPLETED": (
             {SampleRequestStatus.DELIVERED, SampleRequestStatus.FEEDBACK_PENDING},
             SampleRequestStatus.CONFIRMED,
@@ -1207,316 +1060,6 @@ def decide_fee_waiver_approval(*, sample_request, approval_id, approved, note, a
         actor_employee=actor_employee,
     )
     return record, approval, sample_request
-
-
-@transaction.atomic
-def create_shipment(*, sample_request, items, actor_employee, request, notes=""):
-    sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
-    require_matching_etag(request, sample_request)
-    if sample_request.status not in {SampleRequestStatus.PREPARING, SampleRequestStatus.SHIPPED}:
-        raise Conflict("只有准备中或已有寄送在途的申请可以新增寄送记录。")
-    shipment = SampleShipment.objects.create(sample_request=sample_request, notes=notes)
-    SampleShipmentItem.objects.bulk_create(
-        [
-            SampleShipmentItem(
-                sample_shipment=shipment,
-                sample_item=item["sample_item"],
-                shipped_quantity=item["shipped_quantity"],
-            )
-            for item in items
-        ]
-    )
-    _touch(sample_request)
-    write_audit_log(
-        object_type="SAMPLE_SHIPMENT",
-        object_id=shipment.pk,
-        context_type="CUSTOMER_ACCOUNT",
-        context_id=sample_request.customer_account_id,
-        action="CREATED",
-        actor_employee=actor_employee,
-        after_data={
-            "sample_request_id": str(sample_request.pk),
-            "item_ids": [str(item["sample_item"].pk) for item in items],
-        },
-        request=request,
-    )
-    return shipment, sample_request
-
-
-def _contact_snapshot(contact):
-    return {
-        "id": str(contact.pk),
-        "display_name": contact.display_name,
-        "position_title": contact.position_title,
-        "methods": [
-            {"method_type": method.method_type, "value": method.raw_value}
-            for method in contact.methods.filter(archived_at__isnull=True).order_by("method_type", "id")
-        ],
-    }
-
-
-def _address_snapshot(address):
-    return {
-        "id": str(address.pk),
-        "address_code": address.address_code,
-        "country_code": address.country_code,
-        "state_province": address.state_province,
-        "city": address.city,
-        "postal_code": address.postal_code,
-        "address_line1": address.address_line1,
-        "address_line2": address.address_line2,
-        "recipient_name": address.recipient_name,
-        "recipient_phone": address.recipient_phone,
-    }
-
-
-def _record_manual_shipment_event(
-    *, shipment, event_type, actor_employee, note, occurred_at, material_status=""
-):
-    """记录人工物流事实，事件标识和版本为后续承运商同步保留幂等边界。"""
-
-    last_version = (
-        shipment.events.order_by("-source_object_version", "-id")
-        .values_list("source_object_version", flat=True)
-        .first()
-        or 0
-    )
-    event_version = last_version + 1
-    payload_snapshot = {
-        "shipment_status": shipment.status,
-        "carrier_code": shipment.carrier_code,
-        "tracking_number": shipment.tracking_number,
-        "note": note,
-    }
-    if material_status:
-        payload_snapshot["material_status"] = material_status
-    return SampleShipmentEvent.objects.create(
-        sample_shipment=shipment,
-        event_type=event_type,
-        source=ShipmentEventSource.MANUAL,
-        event_identifier=f"MANUAL:{shipment.pk}:{event_type}:{event_version}",
-        source_object_version=event_version,
-        occurred_at=occurred_at,
-        synchronized_at=occurred_at,
-        payload_snapshot=payload_snapshot,
-        recorded_by_employee=actor_employee,
-    )
-
-
-def _ensure_feedback_task(*, sample_request, shipment, actor_employee, request, occurred_at):
-    """一张寄送记录只生成一条签收反馈待办，重复事件不得重复建任务。"""
-
-    automation_key = f"SAMPLE_DELIVERED_FEEDBACK:{shipment.pk}"
-    task = BusinessTask.objects.filter(automation_key=automation_key).first()
-    if task is not None:
-        return task, False
-    task = create_task(
-        validated_data={
-            "assignee_employee": sample_request.owner_employee,
-            "contact": sample_request.customer_contact,
-            "title": f"跟进样品反馈 {sample_request.request_number}",
-            "description": "样品已人工签收，请在 24 小时内记录客户反馈与确认结果。",
-            "priority": TaskPriority.NORMAL,
-            "task_type": TaskType.SAMPLE_FEEDBACK,
-            "origin_type": TaskOriginType.BUSINESS_EVENT,
-            "origin_code": "SAMPLE_DELIVERED",
-            "due_at": occurred_at + timedelta(hours=24),
-            "automation_key": automation_key,
-            "source_type": "SAMPLE_REQUEST",
-            "source_id": str(sample_request.pk),
-        },
-        actor_employee=actor_employee,
-        request=request,
-        resolved_source=(sample_request, sample_request.customer_account, SampleTaskLink, "sample_request"),
-    )
-    return task, True
-
-
-@transaction.atomic
-def ship_sample(*, shipment, validated_data, actor_employee, request):
-    shipment = SampleShipment.objects.select_for_update().get(pk=shipment.pk)
-    require_matching_etag(request, shipment)
-    sample_request = SampleRequest.objects.select_for_update().get(pk=shipment.sample_request_id)
-    if shipment.status != SampleShipmentStatus.PREPARING:
-        raise Conflict("只有准备中的寄送记录可以寄出。")
-    if sample_request.status not in {SampleRequestStatus.PREPARING, SampleRequestStatus.SHIPPED}:
-        raise Conflict("当前样品申请状态不允许寄出。")
-    if not shipment.items.exists():
-        raise Conflict("寄送记录至少包含一条寄送明细。")
-    fee = sample_request.fee_records.filter(superseded_at__isnull=True).first()
-    if fee is None or fee.fee_decision == SampleFeeDecision.PENDING:
-        raise Conflict("寄出前必须完成样品收费决策。")
-    warning_required = (
-        fee.fee_decision == SampleFeeDecision.PAID
-        and fee.verification_status != FeeVerificationStatus.MANUALLY_CONFIRMED
-    )
-    acknowledged = validated_data["fee_warning_acknowledged"]
-    if warning_required and not acknowledged:
-        raise Conflict("收费尚未人工确认，寄出前必须显式确认风险并填写原因。")
-    now = timezone.now()
-    contact = validated_data["contact"]
-    address = validated_data["address"]
-    reason = validated_data.get("fee_warning_reason", "").strip()
-    action_notes = validated_data.get("notes", "").strip()
-    note_parts = [shipment.notes, action_notes]
-    if acknowledged:
-        note_parts.append(f"收费风险确认：{reason}")
-    shipment.status = SampleShipmentStatus.SHIPPED
-    shipment.carrier_code = validated_data["carrier_code"]
-    shipment.tracking_number = validated_data["tracking_number"]
-    shipment.recipient_snapshot = _contact_snapshot(contact)
-    shipment.address_snapshot = _address_snapshot(address)
-    shipment.shipped_by_employee = actor_employee
-    shipment.shipped_at = now
-    shipment.fee_warning_acknowledged = acknowledged
-    shipment.fee_warning_acknowledged_by_employee = actor_employee if acknowledged else None
-    shipment.fee_warning_acknowledged_at = now if acknowledged else None
-    shipment.notes = "\n".join(part for part in note_parts if part)
-    shipment.save(
-        update_fields=[
-            "status",
-            "carrier_code",
-            "tracking_number",
-            "recipient_snapshot",
-            "address_snapshot",
-            "shipped_by_employee",
-            "shipped_at",
-            "fee_warning_acknowledged",
-            "fee_warning_acknowledged_by_employee",
-            "fee_warning_acknowledged_at",
-            "notes",
-            "updated_at",
-        ]
-    )
-    if sample_request.status == SampleRequestStatus.PREPARING:
-        sample_request.status = SampleRequestStatus.SHIPPED
-        sample_request.save(update_fields=["status", "updated_at"])
-    else:
-        _touch(sample_request)
-    _record_manual_shipment_event(
-        shipment=shipment,
-        event_type=ShipmentEventType.SHIPPED,
-        actor_employee=actor_employee,
-        note=action_notes,
-        occurred_at=now,
-    )
-    _write_sample_records(
-        sample_request=sample_request,
-        action="SHIPPED",
-        actor_employee=actor_employee,
-        request=request,
-        note=f"{shipment.carrier_code} {shipment.tracking_number}",
-    )
-    return shipment, sample_request
-
-
-@transaction.atomic
-def deliver_sample(*, shipment, note, actor_employee, request):
-    shipment = SampleShipment.objects.select_for_update().get(pk=shipment.pk)
-    require_matching_etag(request, shipment)
-    sample_request = SampleRequest.objects.select_for_update().get(pk=shipment.sample_request_id)
-    if shipment.status != SampleShipmentStatus.SHIPPED:
-        raise Conflict("只有已寄出的记录可以标记送达。")
-    now = timezone.now()
-    shipment.status = SampleShipmentStatus.DELIVERED
-    shipment.delivered_at = now
-    if note:
-        shipment.notes = "\n".join(part for part in [shipment.notes, note] if part)
-    shipment.save(update_fields=["status", "delivered_at", "notes", "updated_at"])
-    has_open_shipments = sample_request.shipments.exclude(
-        status__in=[SampleShipmentStatus.DELIVERED, SampleShipmentStatus.CANCELLED]
-    ).exists()
-    if not has_open_shipments and sample_request.status == SampleRequestStatus.SHIPPED:
-        sample_request.status = SampleRequestStatus.FEEDBACK_PENDING
-        sample_request.save(update_fields=["status", "updated_at"])
-    else:
-        _touch(sample_request)
-    _record_manual_shipment_event(
-        shipment=shipment,
-        event_type=ShipmentEventType.DELIVERED,
-        actor_employee=actor_employee,
-        note=note or "人工标记签收。",
-        occurred_at=now,
-    )
-    feedback_task, feedback_task_created = _ensure_feedback_task(
-        sample_request=sample_request,
-        shipment=shipment,
-        actor_employee=actor_employee,
-        request=request,
-        occurred_at=now,
-    )
-    _write_sample_records(
-        sample_request=sample_request,
-        action="DELIVERED",
-        actor_employee=actor_employee,
-        request=request,
-        note=(note or "人工标记签收。") + (
-            f" 已创建反馈待办 {feedback_task.task_number}。" if feedback_task_created else ""
-        ),
-    )
-    return shipment, sample_request
-
-
-@transaction.atomic
-def mark_shipment_exception(*, shipment, note, actor_employee, request):
-    """只记录当前人工异常事实，不覆盖已签收等更高阶段的运输结果。"""
-
-    shipment = SampleShipment.objects.select_for_update().get(pk=shipment.pk)
-    require_matching_etag(request, shipment)
-    if shipment.status in {SampleShipmentStatus.DELIVERED, SampleShipmentStatus.CANCELLED}:
-        raise Conflict("已签收或已取消的寄送记录不能回退为物流异常。")
-    sample_request = SampleRequest.objects.select_for_update().get(pk=shipment.sample_request_id)
-    now = timezone.now()
-    shipment.status = SampleShipmentStatus.EXCEPTION
-    shipment.notes = "\n".join(part for part in [shipment.notes, f"物流异常：{note}"] if part)
-    shipment.save(update_fields=["status", "notes", "updated_at"])
-    _record_manual_shipment_event(
-        shipment=shipment,
-        event_type=ShipmentEventType.EXCEPTION,
-        actor_employee=actor_employee,
-        note=note,
-        occurred_at=now,
-    )
-    _touch(sample_request)
-    _write_sample_records(
-        sample_request=sample_request,
-        action="SHIPMENT_EXCEPTION",
-        actor_employee=actor_employee,
-        request=request,
-        note=note,
-    )
-    return shipment, sample_request
-
-
-@transaction.atomic
-def record_shipment_progress(*, shipment, validated_data, actor_employee, request):
-    """记录运输中的实际物料进度，不改变寄送或样品申请状态。"""
-
-    shipment = SampleShipment.objects.select_for_update().get(pk=shipment.pk)
-    require_matching_etag(request, shipment)
-    if shipment.status not in {SampleShipmentStatus.SHIPPED, SampleShipmentStatus.EXCEPTION}:
-        raise Conflict("只有运输中或异常中的寄送记录可以更新物料进度。")
-    sample_request = SampleRequest.objects.select_for_update().get(pk=shipment.sample_request_id)
-    material_status = validated_data["material_status"].strip()
-    occurred_at = validated_data["occurred_at"]
-    _touch(shipment)
-    _record_manual_shipment_event(
-        shipment=shipment,
-        event_type=ShipmentEventType.PROGRESS,
-        actor_employee=actor_employee,
-        note=material_status,
-        material_status=material_status,
-        occurred_at=occurred_at,
-    )
-    _touch(sample_request)
-    _write_sample_records(
-        sample_request=sample_request,
-        action="SHIPMENT_PROGRESS_UPDATED",
-        actor_employee=actor_employee,
-        request=request,
-        note=f"物料进度：{material_status}",
-    )
-    return shipment, sample_request
 
 
 @transaction.atomic

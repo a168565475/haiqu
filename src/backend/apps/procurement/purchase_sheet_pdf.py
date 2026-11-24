@@ -200,15 +200,16 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
             line, sample_source=order.get("source_type") == "SAMPLE",
         )
         attributes = display["attributes"]
-        if line.get('measurement_kind') == 'PIPE':
+        if line.get('measurement_kind') in {'PIPE', 'PIPE_WEIGHT'}:
             print_line = {**line, **{
-                key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "actual_purchase_meters")
+                key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "raw_bar_weight_kg", "actual_purchase_meters", "actual_purchase_weight_kg")
             }}
             attributes = "\n".join(value for value in (attributes, pipe_print_description(print_line)) if value)
-        price = _number(line.get("unit_price"))
+        included = line.get("set_pricing") and not line["is_set_anchor"]
+        price = "已含套价" if included else _number(line.get("unit_price"))
         values = [_text(line.get("part_name")), _text(display["specification"]), _text(attributes),
                   _text(display["color"]), f"{_number(line.get('quantity'))} {_text(line.get('unit'), '')}",
-                  price, "待结算" if actual_weight else _money(line.get("amount"))]
+                  price, "—" if included else ("待结算" if actual_weight else _money(line.get("amount")))]
         rows.append([Paragraph(value, body if col in (0, 1, 2) else center) for col, value in enumerate(values)])
     if not lines:
         rows.append([Paragraph("暂无采购明细", center)] + [""] * 6)

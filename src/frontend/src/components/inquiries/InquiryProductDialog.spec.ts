@@ -17,6 +17,18 @@ const button = (wrapper: ReturnType<typeof open>, label: string) => wrapper.find
 const catalogProduct = { id: 'p2', name_id: 'n1', name: '导演椅', category_id: 'c1', category_name: '成品', product_code: 'C2', item_number: 'I2', specification: '50X60', unit: '件', unit_id: 'u1', unit_code: 'PCS', scale: '', colors: [{ id: 'blue', value: '蓝色' }], materials: ['铝'], thicknesses: ['1.2'], catalog_version: 'v1', updated_at: 'v1' }
 beforeEach(() => { vi.clearAllMocks(); api.selection.mockResolvedValue({ categories: [{ id: 'c1', name: '成品' }], names: [{ id: 'n1', category_id: 'c1', name: '导演椅' }], products: [catalogProduct] }) })
 describe('询盘A组产品弹窗', () => {
+  it('仅显式允许保留未知价格时可保存空价，负价仍不通过', async () => {
+    const wrapper = open(item({ product_id: 'p1', product_category_id: 'c1', product_description: '导演椅', specification: '50X60', target_unit_price: '' }))
+    await wrapper.setProps({ scene: 'sales-order', allowUnknownPrice: true, quotationCurrency: '待补', closeOnConfirm: false })
+    await flushPromises()
+    await wrapper.get('input[aria-label="订单单价"]').setValue('-1')
+    await button(wrapper, '保存产品信息').trigger('click')
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+    await wrapper.get('input[aria-label="订单单价"]').setValue('')
+    await button(wrapper, '保存产品信息').trigger('click')
+    expect((wrapper.emitted('confirm')![0]![0] as { item: InquiryItem }).item.target_unit_price).toBe('')
+    wrapper.unmount()
+  })
   it('生产嵌入可隐藏销售标题并使用生产文案，普通销售弹窗仍保留标题', async () => {
     const wrapper = open()
     await wrapper.setProps({ scene: 'sales-order' })

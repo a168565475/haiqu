@@ -9,11 +9,46 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import transport
 
 
 class FrameTests(unittest.TestCase):
+    def test_transfer_budgets_are_limited_to_file_operations(self):
+        import json
+        for method, params, expected in (
+            ('artifact', {}, 30), ('start', {'action': 'nest'}, 30),
+            ('start', {'action': 'test'}, 5), ('status', {}, 5), ('result', {}, 5),
+        ):
+            payload = json.dumps({'method': method, 'params': params}).encode()
+            self.assertEqual(transport.request_timeout(struct.pack('!I', len(payload)) + payload), expected)
+        self.assertEqual(transport.request_timeout(b'xxxxinvalid json'), 5)
+
+    def test_large_body_uses_bounded_long_deadline_but_header_stays_short(self):
+        for size, expected in ((10, [5, 5, 5]), (256 * 1024 + 1, [5, 5, 30])):
+            calls = []
+            packet = struct.pack('!I', size) + b'x' * size
+            offset = 0
+            def exact(_stream, count, deadline):
+                nonlocal offset
+                calls.append(deadline)
+                value = packet[offset:offset + count]
+                offset += count
+                return value
+            with patch('transport.exact', side_effect=exact), patch('transport.time.monotonic', return_value=0):
+                self.assertEqual(transport.frame(None), packet)
+            self.assertEqual(calls, expected)
+
+    def test_large_write_uses_long_but_finite_budget(self):
+        for size, expected in ((100, 5), (256 * 1024 + 1, 30)):
+            stream = unittest.mock.Mock()
+            with patch('transport.time.monotonic', return_value=0), \
+                    patch('transport.select.select', return_value=([], [stream], [])) as select_mock, \
+                    patch('transport.os.write', side_effect=lambda _, data: len(data)):
+                transport.send(stream, b'x' * size)
+            self.assertEqual({call.args[3] for call in select_mock.call_args_list}, {expected})
+
     def test_fragmented_frame(self):
         payload = '中文'.encode()
         packet = struct.pack('!I', len(payload)) + payload

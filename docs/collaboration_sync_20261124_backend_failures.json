@@ -1,0 +1,704 @@
+{
+  "discovered": 5910,
+  "executed": 1530,
+  "failures": 76,
+  "errors": 57,
+  "stopped_before_full_completion": true,
+  "temporary_directory_environment_errors": 29,
+  "records": [
+    {
+      "kind": "ERROR",
+      "test": "test_write_fields_reject_people_outside_the_confirmed_department (apps.access_control.tests.test_employee_choice_scopes.EmployeeChoiceScopeTests.test_write_fields_reject_people_outside_the_confirmed_department) (serializer='ProductionTaskWriteSerializer', field='follower_ids')",
+      "exception": "rest_framework.exceptions.ValidationError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_write_fields_reject_people_outside_the_confirmed_department (apps.access_control.tests.test_employee_choice_scopes.EmployeeChoiceScopeTests.test_write_fields_reject_people_outside_the_confirmed_department) (serializer='ProductionTaskPmcDecisionSerializer', field='follower_ids')",
+      "exception": "rest_framework.exceptions.ValidationError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_compact_relations_preserve_complete_list_and_detail_payloads (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_compact_relations_preserve_complete_list_and_detail_payloads)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_filter_options_only_read_active_finished_categories (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_filter_options_only_read_active_finished_categories)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_missing_bom_permission_cannot_read (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_missing_bom_permission_cannot_read)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_read_api_rejects_invalid_parameters_and_hidden_detail (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_read_api_rejects_invalid_parameters_and_hidden_detail)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_stats_filters_empty_and_status_independence (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_stats_filters_empty_and_status_independence)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_stats_use_one_query_and_keep_scope_and_duplicate_values_in_sum (apps.boms.tests.test_loading_read_api.BomLoadingReadTests.test_stats_use_one_query_and_keep_scope_and_duplicate_values_in_sum)",
+      "exception": "django.db.utils.IntegrityError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_manual_zero_survives_save_quantity_sync_and_purchase_snapshot (apps.boms.tests.test_pipe_purchase_allowance.PipePurchaseAllowanceApiTests.test_manual_zero_survives_save_quantity_sync_and_purchase_snapshot)",
+      "exception": "rest_framework.exceptions.ValidationError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_maximum_fee_then_one_cent_rejected_without_partial_write (apps.finance.tests.test_deposit_fee_boundary.DepositFeeBoundaryTests.test_maximum_fee_then_one_cent_rejected_without_partial_write)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_direct_service_objects_rejected_before_binding (apps.finance.tests.test_receipt_file_boundaries.ReceiptFileBoundaryTests.test_direct_service_objects_rejected_before_binding)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_non_finance_image_identity_keeps_existing_flow (apps.finance.tests.test_receipt_file_boundaries.ReceiptFileBoundaryTests.test_non_finance_image_identity_keeps_existing_flow)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_policy_disabled_and_admin_cannot_reuse_finance_file (apps.finance.tests.test_receipt_file_boundaries.ReceiptFileBoundaryTests.test_policy_disabled_and_admin_cannot_reuse_finance_file)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_account_options_requires_both_permissions_and_read_does_not_grant_write (apps.finance.tests.test_receipts.ReceiptTests.test_account_options_requires_both_permissions_and_read_does_not_grant_write)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_active_deposit_freezes_statement_and_void_restores_edit (apps.finance.tests.test_receipts.ReceiptTests.test_active_deposit_freezes_statement_and_void_restores_edit)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_attachments_ownership_state_and_account_revalidation (apps.finance.tests.test_receipts.ReceiptTests.test_attachments_ownership_state_and_account_revalidation)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_database_rejects_invalid_receipt_semantics (apps.finance.tests.test_receipts.ReceiptTests.test_database_rejects_invalid_receipt_semantics)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_deposit_preserves_outstanding_and_snapshots_complete_account (apps.finance.tests.test_receipts.ReceiptTests.test_deposit_preserves_outstanding_and_snapshots_complete_account)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_failed_audit_rolls_back_number_receipt_binding_and_key (apps.finance.tests.test_receipts.ReceiptTests.test_failed_audit_rolls_back_number_receipt_binding_and_key)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_idempotency_current_void_state_and_changed_body (apps.finance.tests.test_receipts.ReceiptTests.test_idempotency_current_void_state_and_changed_body)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_overcollection_invalid_money_and_foreign_fields_roll_back (apps.finance.tests.test_receipts.ReceiptTests.test_overcollection_invalid_money_and_foreign_fields_roll_back)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_session_csrf_and_controlled_attachment (apps.finance.tests.test_receipts.ReceiptTests.test_session_csrf_and_controlled_attachment)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_statement_etag_missing_and_stale (apps.finance.tests.test_receipts.ReceiptTests.test_statement_etag_missing_and_stale)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_actual_root_and_meter_movements_preserve_saved_length (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_actual_root_and_meter_movements_preserve_saved_length)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_exhausted_current_balance_does_not_remove_proven_input (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_exhausted_current_balance_does_not_remove_proven_input)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_forged_out_snapshot_or_allocation_quantity_is_rejected (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_forged_out_snapshot_or_allocation_quantity_is_rejected)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_malformed_or_inconsistent_frozen_values_are_controlled_errors (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_malformed_or_inconsistent_frozen_values_are_controlled_errors)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_missing_actual_movement_is_rejected (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_missing_actual_movement_is_rejected)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_multiple_real_allocations_are_all_proven (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_multiple_real_allocations_are_all_proven)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_other_source_or_task_movement_is_rejected (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_other_source_or_task_movement_is_rejected)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_pool_metadata_and_later_catalog_or_bom_changes_do_not_rewrite_issue (apps.inventory.tests.test_catalog_processing_sources.CatalogProcessingSourceTests.test_pool_metadata_and_later_catalog_or_bom_changes_do_not_rewrite_issue)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_combined_filters_must_match_the_same_product_line (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_combined_filters_must_match_the_same_product_line)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_different_tasks_cannot_share_outbound_or_location_totals (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_different_tasks_cannot_share_outbound_or_location_totals)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_failed_stock_submission_cleans_uploaded_files (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_failed_stock_submission_cleans_uploaded_files)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_fields_material_snapshot_and_stale_submission_rollback (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_fields_material_snapshot_and_stale_submission_rollback)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_invalid_second_image_cleans_first_and_does_not_deduct (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_invalid_second_image_cleans_first_and_does_not_deduct)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_list_and_detail_distinguish_order_receipt_and_outbound_quantities (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_list_and_detail_distinguish_order_receipt_and_outbound_quantities)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_list_pagination_filter_and_invalid_identifier (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_list_pagination_filter_and_invalid_identifier)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_multipart_multiple_images_and_permission_boundary (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_multipart_multiple_images_and_permission_boundary)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_outbound_reader_can_use_filters_but_not_full_receipt_options (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_outbound_reader_can_use_filters_but_not_full_receipt_options)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_read_filter_validation_and_permissions (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_read_filter_validation_and_permissions)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_read_prefetch_does_not_query_per_product_line (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_read_prefetch_does_not_query_per_product_line)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_read_without_task_source_returns_null_order_quantity (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_read_without_task_source_returns_null_order_quantity)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_required_fields_invalid_employee_date_and_fees (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_required_fields_invalid_employee_date_and_fees)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_search_fields_and_warehouse_return_complete_documents (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_search_fields_and_warehouse_return_complete_documents)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_semi_outbound_records_are_actual_movements_filtered_by_product (apps.inventory.tests.test_finished_outbound.FinishedOutboundTests.test_semi_outbound_records_are_actual_movements_filtered_by_product)",
+      "exception": "OSError",
+      "environment_limitation": "Temporary directories under read-only test source mount"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_actual_sewing_sets_are_limited_by_order_demand_without_shared_meter_cap (apps.inventory.tests.test_internal_receipt_sewing.InternalSewingReceiptTests.test_actual_sewing_sets_are_limited_by_order_demand_without_shared_meter_cap)",
+      "exception": "IndexError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_internal_and_external_same_piece_share_balance_and_total_cap (apps.inventory.tests.test_internal_receipt_sewing.InternalSewingReceiptTests.test_internal_and_external_same_piece_share_balance_and_total_cap)",
+      "exception": "AttributeError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_receipt_date_filter_uses_entered_date (apps.inventory.tests.test_internal_receipt_sewing.InternalSewingReceiptTests.test_receipt_date_filter_uses_entered_date)",
+      "exception": "IndexError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_quality_confirmation_rejects_over_return_and_is_idempotent (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_quality_confirmation_rejects_over_return_and_is_idempotent)",
+      "exception": "KeyError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_apply_is_idempotent_and_keeps_legacy_balance_unchanged (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_apply_is_idempotent_and_keeps_legacy_balance_unchanged)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_changed_old_quantity_or_version_conflicts_instead_of_adding (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_changed_old_quantity_or_version_conflicts_instead_of_adding)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_frozen_semi_identity_survives_later_bom_change_and_merges_sources (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_frozen_semi_identity_survives_later_bom_change_and_merges_sources)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_mid_apply_failure_rolls_back_all_openings_and_audit (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_mid_apply_failure_rolls_back_all_openings_and_audit)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_non_pipe_material_is_explicitly_excluded_from_new_opening (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_non_pipe_material_is_explicitly_excluded_from_new_opening)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_ordinary_material_quantity_change_does_not_invalidate_opening_manifest (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_ordinary_material_quantity_change_does_not_invalidate_opening_manifest)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "ERROR",
+      "test": "test_zero_to_positive_change_is_detected_by_manifest (apps.inventory.tests.test_public_stock_preview.PublicStockPreviewTests.test_zero_to_positive_change_is_detected_by_manifest)",
+      "exception": "apps.inventory.public_stock_preview.PublicStockPreviewError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_other_superuser_and_admin_name_without_superuser_are_denied (apps.access_control.tests.test_access_api.AccessApiTests.test_other_superuser_and_admin_name_without_superuser_are_denied)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_management_grants_do_not_replace_superadministrator_requirement (apps.access_control.tests.test_employee_choice_scopes.EmployeeChoiceScopeTests.test_management_grants_do_not_replace_superadministrator_requirement)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_real_options_endpoints_use_the_correct_source (apps.access_control.tests.test_employee_choice_scopes.EmployeeChoiceScopeTests.test_real_options_endpoints_use_the_correct_source) (url='production-tasks', field='employees')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_outsourcing_stock_direct_sources_and_multi_role_union (apps.access_control.tests.test_production_permissions.ProductionPermissionTests.test_outsourcing_stock_direct_sources_and_multi_role_union)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_empty_source_scope_denies_list_detail_closure_and_linked_ids (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_empty_source_scope_denies_list_detail_closure_and_linked_ids)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_legacy_plus_empty_craft_does_not_remove_original_task_boundary (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_legacy_plus_empty_craft_does_not_remove_original_task_boundary)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_source_scope_does_not_lend_legacy_create_permission_to_other_destination (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_new_source_scope_does_not_lend_legacy_create_permission_to_other_destination)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_read_all_does_not_expand_write_or_idempotent_replay (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_read_all_does_not_expand_write_or_idempotent_replay)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_regular_source_options_and_nested_factory_crafts_are_filtered (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_regular_source_options_and_nested_factory_crafts_are_filtered)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_selected_craft_reads_regular_unified_and_p4_without_independent_production (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_selected_craft_reads_regular_unified_and_p4_without_independent_production)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_shared_source_cannot_combine_legacy_access_with_new_craft (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_shared_source_cannot_combine_legacy_access_with_new_craft)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_shared_source_selector_cannot_unlock_other_craft_on_same_schedule (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_shared_source_selector_cannot_unlock_other_craft_on_same_schedule)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_source_read_craft_cannot_expand_legacy_completion_or_closure (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_source_read_craft_cannot_expand_legacy_completion_or_closure)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_stock_source_cannot_read_or_dispatch_regular_metal_handoff (apps.access_control.tests.test_resource_scopes.CraftResourceApiTests.test_stock_source_cannot_read_or_dispatch_regular_metal_handoff)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_same_customer_quote_file_is_not_readable_via_upload_ownership (apps.access_control.tests.test_sales_policy.SalesPolicyTests.test_same_customer_quote_file_is_not_readable_via_upload_ownership)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_edit_then_verify_requires_etag_and_quantity_reason (apps.boms.tests.test_bom_api.BomApiTests.test_edit_then_verify_requires_etag_and_quantity_reason)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_packaging_and_cutting_sources_are_authoritative_and_round_trip (apps.boms.tests.test_bom_api.BomApiTests.test_packaging_and_cutting_sources_are_authoritative_and_round_trip)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_plastic_picker_and_editor_reference_options_are_bom_scoped (apps.boms.tests.test_bom_api.BomApiTests.test_plastic_picker_and_editor_reference_options_are_bom_scoped)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_verify_allows_any_production_task_status (apps.boms.tests.test_bom_api.BomApiTests.test_verify_allows_any_production_task_status) (task_status=ProductionTaskStatus.DRAFT)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_verify_allows_any_production_task_status (apps.boms.tests.test_bom_api.BomApiTests.test_verify_allows_any_production_task_status) (task_status=ProductionTaskStatus.PENDING_VALIDATION)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_verify_allows_any_production_task_status (apps.boms.tests.test_bom_api.BomApiTests.test_verify_allows_any_production_task_status) (task_status=ProductionTaskStatus.CANCELLED)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_verify_uses_quantity_difference_reason_saved_with_draft (apps.boms.tests.test_bom_api.BomApiTests.test_verify_uses_quantity_difference_reason_saved_with_draft)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_api_save_returns_bound_drafts_as_formal_images (apps.boms.tests.test_bom_line_images.BomLineImageApiTests.test_api_save_returns_bound_drafts_as_formal_images)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_existing_legacy_line_can_move_to_a_new_explicit_category_section (apps.boms.tests.test_bom_line_images.BomLineImageApiTests.test_existing_legacy_line_can_move_to_a_new_explicit_category_section)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_independent_verify_accepts_saved_valid_specification (apps.boms.tests.test_cutting_specification.CuttingSpecificationTests.test_independent_verify_accepts_saved_valid_specification)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_independent_verify_rejects_saved_legacy_placeholder_without_writes (apps.boms.tests.test_cutting_specification.CuttingSpecificationTests.test_independent_verify_rejects_saved_legacy_placeholder_without_writes) (specification='')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_independent_verify_rejects_saved_legacy_placeholder_without_writes (apps.boms.tests.test_cutting_specification.CuttingSpecificationTests.test_independent_verify_rejects_saved_legacy_placeholder_without_writes) (specification='/')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_independent_verify_rejects_saved_legacy_placeholder_without_writes (apps.boms.tests.test_cutting_specification.CuttingSpecificationTests.test_independent_verify_rejects_saved_legacy_placeholder_without_writes) (specification='N/A')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_pending_cutting_keeps_edited_line_specification_after_confirmed_save (apps.boms.tests.test_cutting_specification.CuttingSpecificationTests.test_pending_cutting_keeps_edited_line_specification_after_confirmed_save)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_fabric_snapshot_remains_authoritative_and_partial_pipe_edit_requires_completion (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_fabric_snapshot_remains_authoritative_and_partial_pipe_edit_requires_completion)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_legacy_save_confirm_and_copy_do_not_guess_or_change_old_cutting_quantities (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_legacy_save_confirm_and_copy_do_not_guess_or_change_old_cutting_quantities)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_save_and_verify_with_no_current_or_historical_meters (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_save_and_verify_with_no_current_or_historical_meters)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_stable_cutting_omitted_fields_keep_snapshot_and_cannot_clear_source (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_stable_cutting_omitted_fields_keep_snapshot_and_cannot_clear_source)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_stable_cutting_source_preserves_edited_attributes_ids_and_usage (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_stable_cutting_source_preserves_edited_attributes_ids_and_usage)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_verify_copy_and_order_sync_keep_historical_meters_without_recalculation (apps.boms.tests.test_cutting_usage.CuttingUsageBomTests.test_verify_copy_and_order_sync_keep_historical_meters_without_recalculation)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_cutting_links_in_same_save_and_material_inheritance_is_preserved (apps.boms.tests.test_fabric_material_sync.FabricMaterialSyncApiTests.test_new_cutting_links_in_same_save_and_material_inheritance_is_preserved)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_imported_fabric_alias_recalculates_on_sync_and_cannot_verify_without_source (apps.boms.tests.test_material_flow_bom.MaterialFlowBomTests.test_imported_fabric_alias_recalculates_on_sync_and_cannot_verify_without_source)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_product_requires_product_creation_permission (apps.boms.tests.test_product_writeback.BomProductWritebackTests.test_new_product_requires_product_creation_permission)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_product_review_audit_failure_rolls_back_product_and_bom (apps.boms.tests.test_product_writeback.BomProductWritebackTests.test_new_product_review_audit_failure_rolls_back_product_and_bom)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_product_review_creates_and_links_only_bom_and_filters_by_reviewed_category (apps.boms.tests.test_product_writeback.BomProductWritebackTests.test_new_product_review_creates_and_links_only_bom_and_filters_by_reviewed_category)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_new_product_stale_retry_does_not_create_duplicate_product (apps.boms.tests.test_product_writeback.BomProductWritebackTests.test_new_product_stale_retry_does_not_create_duplicate_product)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_action_permissions_separate_view_create_process_and_close (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_action_permissions_separate_view_create_process_and_close)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_clean_image_attachment_can_be_previewed_inline (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_clean_image_attachment_can_be_previewed_inline)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_create_generates_number_sla_audit_timeline_and_summary_count (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_create_generates_number_sla_audit_timeline_and_summary_count)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_options_are_dictionary_backed_and_list_respects_customer_scope (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_options_are_dictionary_backed_and_list_respects_customer_scope)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_progress_requires_etag_and_enforces_linear_status (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_progress_requires_etag_and_enforces_linear_status)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_unpublished_complaint_dictionary_item_is_rejected_but_current_history_is_preserved (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_unpublished_complaint_dictionary_item_is_rejected_but_current_history_is_preserved)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_video_attachment_is_rejected (apps.customers.tests.test_complaint_api.ComplaintApiTests.test_video_attachment_is_rejected)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_composite_create_list_masks_and_detail_reveals_with_permission (apps.customers.tests.test_contact_module_api.ContactModuleApiTests.test_composite_create_list_masks_and_detail_reveals_with_permission)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_collaborator_can_be_added_and_ended (apps.customers.tests.test_customer_api.CustomerApiTests.test_collaborator_can_be_added_and_ended)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_customer_options_and_duplicate_check (apps.customers.tests.test_customer_api.CustomerApiTests.test_customer_options_and_duplicate_check)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_transfer_approval_preserves_owner_history (apps.customers.tests.test_governance_api.CustomerGovernanceApiTests.test_transfer_approval_preserves_owner_history)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_inq01_create_auto_assigns_current_salesperson_and_transfer_uses_real_etag (apps.inquiries.tests.test_inquiry_api.InquiryApiTests.test_inq01_create_auto_assigns_current_salesperson_and_transfer_uses_real_etag)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_inq02_atomic_draft_save_replaces_items_and_is_idempotent (apps.inquiries.tests.test_inquiry_api.InquiryApiTests.test_inq02_atomic_draft_save_replaces_items_and_is_idempotent)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_task_created_from_detail_links_to_inquiry (apps.inquiries.tests.test_inquiry_downloads.InquiryDownloadTests.test_task_created_from_detail_links_to_inquiry)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_confirmed_database_state_overrides_pending_relation_cache (apps.inventory.tests.test_catalog_interface_regressions.CatalogInterfaceRegressionTests.test_confirmed_database_state_overrides_pending_relation_cache)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_pending_database_state_rejects_confirmed_relation_cache (apps.inventory.tests.test_catalog_interface_regressions.CatalogInterfaceRegressionTests.test_pending_database_state_rejects_confirmed_relation_cache)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_actual_length_required_not_inferred_from_attribute (apps.inventory.tests.test_catalog_pipe_bridge.CatalogPipeBridgeTests.test_actual_length_required_not_inferred_from_attribute) (length='3.051')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_actual_length_is_required_and_never_parsed_from_catalog_text (apps.inventory.tests.test_catalog_stock.CatalogStockTests.test_actual_length_is_required_and_never_parsed_from_catalog_text) (length='3.051')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_actual_length_is_required_and_never_parsed_from_catalog_text (apps.inventory.tests.test_catalog_stock.CatalogStockTests.test_actual_length_is_required_and_never_parsed_from_catalog_text) (no_attribute_length='3.051')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_rejects_cutting_and_missing_permission (apps.inventory.tests.test_internal_receipt_api.InternalReceiptApiTests.test_rejects_cutting_and_missing_permission)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_cutting_and_assembly_cannot_be_internal_semi_stages (apps.inventory.tests.test_internal_receipt_models.InternalReceiptModelTests.test_cutting_and_assembly_cannot_be_internal_semi_stages) (stage='CUTTING')",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_batch_allows_same_line_split_across_locations (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_batch_allows_same_line_split_across_locations)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_inbound_details_filters_date_and_displayed_material_snapshot (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_inbound_details_filters_date_and_displayed_material_snapshot)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_inventory_merges_identical_material_from_different_purchase_lines (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_inventory_merges_identical_material_from_different_purchase_lines)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_order_purchase_trace_resolves_fabric_material_mapping (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_order_purchase_trace_resolves_fabric_material_mapping)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_partial_receipt_remains_eligible_and_supports_pinyin_search (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_partial_receipt_remains_eligible_and_supports_pinyin_search)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_quality_return_is_deducted_before_inventory_and_frees_remaining_quantity (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_quality_return_is_deducted_before_inventory_and_frees_remaining_quantity)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_receipt_freezes_universal_inventory_material_identity (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_receipt_freezes_universal_inventory_material_identity)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_zero_quantity_legacy_balance_is_hidden_from_inventory_list (apps.inventory.tests.test_inventory_api.MaterialInventoryApiTests.test_zero_quantity_legacy_balance_is_hidden_from_inventory_list)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_other_material_can_submit_and_confirm_after_pipe_issue (apps.inventory.tests.test_pipe_stock_foundation.PipeStockFoundationTests.test_other_material_can_submit_and_confirm_after_pipe_issue)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_zero_quantity_public_raw_balance_is_hidden_from_inventory_list (apps.inventory.tests.test_public_inventory_flow.PublicInventoryFlowTests.test_zero_quantity_public_raw_balance_is_hidden_from_inventory_list)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_fully_returned_historical_handoff_does_not_require_bridge (apps.inventory.tests.test_public_stock_activation.PublicStockActivationTransitTests.test_fully_returned_historical_handoff_does_not_require_bridge)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_missing_transition_is_reported_as_blocker (apps.inventory.tests.test_public_stock_activation.PublicStockActivationTransitTests.test_missing_transition_is_reported_as_blocker)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_trusted_in_transit_handoff_does_not_need_fake_return_or_zeroing (apps.inventory.tests.test_public_stock_activation.PublicStockActivationTransitTests.test_trusted_in_transit_handoff_does_not_need_fake_return_or_zeroing)",
+      "exception": "AssertionError"
+    },
+    {
+      "kind": "FAIL",
+      "test": "test_future_scheme_with_new_unreported_operation_cannot_replace_direct_basis (apps.inventory.tests.test_sewing_processing_services.SewingProcessingTests.test_future_scheme_with_new_unreported_operation_cannot_replace_direct_basis)",
+      "exception": "AssertionError"
+    }
+  ]
+}

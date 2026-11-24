@@ -67,6 +67,16 @@ class MaterialSaveConfirmationTests(TestCase):
         self.assertEqual(response.data["error"]["code"], "MATERIAL_CREATION_CONFIRMATION_REQUIRED")
         self.assertEqual(self.snapshot(), before)
 
+    def test_external_supply_is_saved_and_round_trips_per_line(self):
+        body, etag = self.body({**self.payload(tube_thickness="0.8"), "purchase_required": False},
+                               self.payload(tube_thickness="0.8"))
+        preview = self.preview(body, etag)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        saved = self.commit({**body, "confirmation_token": preview.data["data"]["confirmation_token"]}, etag)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        pipes = next(s for s in self.get().data["data"]["sections"] if s["title"] == "管材类")
+        self.assertEqual([line["purchase_required"] for line in pipes["lines"]], [False, True])
+
     def test_confirmed_save_creates_once_and_links_both_rows(self):
         body, etag = self.body(self.payload(tube_thickness="0.8"), self.payload(tube_thickness="0.80"))
         before = RawMaterialInformation.objects.count()

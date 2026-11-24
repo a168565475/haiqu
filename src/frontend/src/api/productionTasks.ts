@@ -36,8 +36,8 @@ export async function fetchProductionTask(id: string): Promise<VersionedProducti
   return versioned(response)
 }
 
-export async function fetchProductionTaskOptions(): Promise<ProductionTaskOptions> {
-  const { data } = await apiClient.get<DataResponse<ProductionTaskOptions>>(`${basePath}options/`)
+export async function fetchProductionTaskOptions(requestOptions?: { timeout?: number }): Promise<ProductionTaskOptions> {
+  const { data } = await apiClient.get<DataResponse<ProductionTaskOptions>>(`${basePath}options/`, requestOptions)
   return data.data
 }
 
@@ -107,9 +107,8 @@ export async function createProductionTask(
   payload: ProductionTaskInput,
   productImages: Record<string, File[]>,
   detailImages: Record<string, File | null>,
-  etag?: string,
 ): Promise<VersionedProductionTask> {
-  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages), etag ? { headers: { 'If-Match': etag } } : undefined)
+  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages))
   return versioned(response)
 }
 

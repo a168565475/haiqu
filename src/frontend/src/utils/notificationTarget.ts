@@ -6,6 +6,7 @@ const routes: Record<string, [string, string?]> = {
   PRODUCTION_TASK_CONFIRMED: ['production-task-detail', 'taskId'],
   BOM_CONFIRMED: ['bom-preview', 'bomId'],
   PRODUCTION_TASK_BOMS_CONFIRMED: ['boms'],
+  PACKAGING_BOMS_CONFIRMED: ['packaging-purchase-create'],
   SUPPLIER_PURCHASE_SHEET_PUBLISHED: ['supplier-purchase-sheet-editor', 'id'],
   MATERIAL_RECEIPT_RECORDED: ['material-quality-confirmation'],
   MATERIAL_INSPECTION_CONFIRMED: ['purchase-order-detail', 'id'],
@@ -73,6 +74,27 @@ const rolePolicyRoutes: Record<string, Array<[string, string?]>> = {
 }
 
 export function notificationRoute(eventCode: string, target: NotificationTarget): { name: string; params: Record<string, string>; query?: Record<string, string> } {
+  // 采购跟踪只接受服务端登记的列表定位；其他事件仍禁止输入 query。
+  if (['PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'].includes(eventCode)) {
+    if (!target || target.target_key !== 'purchase-tracking' || target.route_name !== 'purchase-tracking'
+      || typeof target.object_id !== 'string' || !uuid.test(target.object_id)
+      || !target.params || typeof target.params !== 'object' || Array.isArray(target.params) || Object.keys(target.params).length
+      || !target.query || typeof target.query !== 'object' || Array.isArray(target.query)) {
+      throw new Error('通知跳转目标不受支持，请刷新消息。')
+    }
+    const query = target.query
+    const keys = Object.keys(query)
+    if (keys.length && (keys.some(key => !['tab', 'production_task_id', 'row_key', 'include_history', 'purchase_scope'].includes(key))
+      || (Object.hasOwn(query, 'tab') && !['arrival', 'coverage'].includes(query.tab || ''))
+      || (Object.hasOwn(query, 'production_task_id') && (typeof query.production_task_id !== 'string' || !uuid.test(query.production_task_id)))
+      || (Object.hasOwn(query, 'row_key') && (typeof query.row_key !== 'string' || !/^[a-zA-Z0-9:_-]{1,240}$/.test(query.row_key)))
+      || (Object.hasOwn(query, 'include_history') && query.include_history !== 'true')
+      || (Object.hasOwn(query, 'purchase_scope') && !['PACKAGING', 'STANDARD', 'ALL'].includes(query.purchase_scope || '')))) {
+      throw new Error('通知跳转参数无效。')
+    }
+    const { tab, ...pageQuery } = query
+    return { name: tab === 'coverage' ? 'purchase-alerts' : 'purchase-tracking', params: {}, query: pageQuery }
+  }
   const original = Object.hasOwn(routes, eventCode) ? routes[eventCode] : undefined
   const policy = target?.target_key === 'role-policy'
   const alternatives = policy && Object.hasOwn(rolePolicyRoutes, eventCode) ? rolePolicyRoutes[eventCode]! : []
@@ -88,6 +110,12 @@ export function notificationRoute(eventCode: string, target: NotificationTarget)
   const keys = Object.keys(target.params)
   if (!parameter) {
     if (keys.length) throw new Error('通知跳转参数无效。')
+    if (eventCode === 'PACKAGING_BOMS_CONFIRMED' || (eventCode === 'PRODUCTION_TASK_BOMS_CONFIRMED' && allowed[0] === 'purchase-order-create')) {
+      return { name: allowed[0], params: {}, query: { production_task_id: target.object_id } }
+    }
+    if (eventCode === 'MATERIAL_RECEIPT_RECORDED' && allowed[0] === 'material-quality-confirmation') {
+      return { name: allowed[0], params: {}, query: { receipt: target.object_id } }
+    }
     // 只由此已登记事件构造现有记录页签；后端/消息输入不支持任意query。
     if (['SEMI_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_CONFIRMED'].includes(eventCode)) return { name: allowed[0], params: {}, query: { tab: 'records' } }
     return { name: allowed[0], params: {} }

@@ -8,7 +8,7 @@ from apps.material_catalog.colors import uses_product_color_identity
 from apps.material_catalog.editing import _plan_values
 from apps.material_catalog.models import MaterialCatalog
 from apps.material_catalog.public_configuration import (
-    ACTIVE, context, ensure_public_draft, ensure_public_value, public_options, require_public_value,
+    ACTIVE, context, ensure_public_value, public_options, require_public_value,
 )
 from apps.material_catalog.selectors import catalog_detail
 from apps.material_catalog import services
@@ -53,19 +53,14 @@ class FabricColorScopeTests(SimpleTestCase):
                         self.assertEqual(ensure.call_args.kwargs["defaults"], {"color_card": "", "color_code": ""})
                     resolve.assert_not_called()
 
-    def test_full_draft_only_binds_fabric_color_and_other_categories_keep_text_values(self):
+    def test_new_color_by_name_stays_local_in_full_draft_for_all_categories(self):
         for category in ("FABRIC", "TUBE", "HARDWARE", "FABRIC_SEMI"):
             with self.subTest(category=category):
                 catalog = MaterialCatalog(category_key=category, template_key=category, name="测试品名")
                 row = {"id": uuid4(), "scope": "BASE", "field_key": "color", "value": "同名红", "parent_id": None}
-                with patch.object(type(catalog.attribute_values), "select_related", return_value=[]), \
-                     patch.object(type(catalog.allowed_units), "filter") as units, \
-                     patch("apps.material_catalog.public_configuration.ensure_public_value", return_value=self.colors[0]):
-                    units.return_value.select_related.return_value = []
-                    ensure_public_draft(catalog, {"values": [row], "units": []}, request=None)
-                option, _, color_id = _plan_values(catalog, [row], {})[0]
-                self.assertEqual(color_id, self.colors[0].pk if category == "FABRIC" else None)
-                self.assertEqual(option.product_color_id, color_id)
+                option, fields = _plan_values(catalog, [row], {})[0]
+                self.assertIsNone(option.product_color_id)
+                self.assertEqual(fields["value"], "同名红")
 
     def test_single_value_service_does_not_bind_nonfabric_public_color(self):
         for category in ("FABRIC", "TUBE"):
@@ -73,18 +68,19 @@ class FabricColorScopeTests(SimpleTestCase):
                 catalog = MaterialCatalog(category_key=category, template_key=category, name="测试品名")
                 with patch("apps.material_catalog.services._locked_catalog", return_value=catalog), \
                      patch("apps.material_catalog.services.catalog_detail", return_value={}), \
-                     patch("apps.material_catalog.services.ensure_public_value", return_value=self.colors[0]), \
+                     patch("apps.material_catalog.public_configuration.ensure_public_value", return_value=self.colors[0]) as publish, \
                      patch("apps.material_catalog.services.MaterialAttributeValue.objects.filter") as lookup, \
                      patch("apps.material_catalog.services.MaterialAttributeValue.objects.create") as create, \
                      patch("apps.material_catalog.services._finish_change"):
                     lookup.return_value.first.return_value = None
                     services.add_value.__wrapped__(catalog_id=catalog.pk, request=None,
                         data={"scope": "BASE", "field_key": "color", "value": "同名红"})
-                self.assertEqual(create.call_args.kwargs.get("product_color_id"), self.colors[0].pk if category == "FABRIC" else None)
+                self.assertIsNone(create.call_args.kwargs["product_color_id"])
+                publish.assert_not_called()
 
     def test_detail_only_fabric_emits_color_metadata(self):
         row = SimpleNamespace(pk=uuid4(), scope="BASE", field_key="color", value="同名红", parent_id=None,
-                              product_color_id=None)
+                              product_color_id=None, color_card="", color_code="")
         for category in ("FABRIC", "TUBE", "HARDWARE", "FABRIC_SEMI"):
             with self.subTest(category=category):
                 attributes, units = MagicMock(), MagicMock()

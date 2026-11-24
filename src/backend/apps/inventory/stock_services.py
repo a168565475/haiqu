@@ -12,6 +12,8 @@ from apps.procurement.material_receipt_identity import (
 )
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductionUnit
+from .hardware_receipts import is_hardware_weight, validate_hardware_inbound, KG_UNITS
+from .hardware_stock_weights import piece_weight_change
 
 from .models import (
     MaterialInboundLine,
@@ -34,9 +36,9 @@ class InventoryStockValidationError(ValidationError):
         super().__init__(detail)
 
 
-def _positive_quantity(value, field_name="quantity"):
+def _positive_quantity(value, field_name="quantity", *, allow_zero=False):
     quantity = Decimal(value)
-    if quantity <= 0:
+    if quantity < 0 or (quantity == 0 and not allow_zero):
         raise ValidationError({field_name: "数量必须大于 0。"})
     if quantity.as_tuple().exponent < -4:
         raise ValidationError({field_name: "数量最多保留 4 位小数。"})
@@ -82,7 +84,9 @@ def validate_inbound_stock_identity(line: MaterialInboundLine):
         )
     source_unit = (line.source_unit_text_snapshot or "").strip()
     valid_units = {material.unit.unit_name.strip(), material.unit.unit_code.strip()}
-    if source_unit not in valid_units:
+    if is_hardware_weight(line):
+        validate_hardware_inbound(line, material.unit.unit_name)
+    elif source_unit not in valid_units:
         raise InventoryStockValidationError(
             f"入库单位“{source_unit or '空'}”与原料库存单位“{material.unit.unit_name}”不一致。",
             code="UNIT_MISMATCH",
@@ -122,32 +126,48 @@ def _locked_balance(*, raw_material, unit, zone, quality=MaterialStockQuality.AV
 @transaction.atomic
 def credit_material_stock(
     *, raw_material, unit, zone, quantity, source_type, source_id, source_line_id,
-    actor_employee, production_task=None, snapshot=None,
+    actor_employee, production_task=None, snapshot=None, weight_quantity=None,
 ):
     from .public_stock_cutover import require_business_stock_write
     require_business_stock_write(source_type=source_type, direction="IN")
-    quantity = _positive_quantity(quantity)
+    if weight_quantity is not None:
+        from .pipe_weight_quantities import actual_pipe_weight
+        weight_quantity = actual_pipe_weight(weight_quantity)
+    weight_only_inbound = (source_type == "MATERIAL_INBOUND"
+        and (snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+        and weight_quantity is not None and weight_quantity > 0)
+    quantity = _positive_quantity(quantity, allow_zero=weight_only_inbound)
     existing = MaterialStockMovement.objects.filter(
         source_type=source_type,
         source_line_id=source_line_id,
         direction=MaterialStockDirection.IN,
     ).select_related("balance").first()
     if existing:
-        if existing.quantity != quantity or existing.balance.raw_material_id != raw_material.pk:
+        if weight_quantity is None and existing.weight_quantity is not None and unit.unit_name.upper() in KG_UNITS:
+            weight_quantity = quantity
+        if (existing.quantity != quantity or existing.balance.raw_material_id != raw_material.pk
+                or existing.balance.unit_id != unit.pk or existing.balance.zone_id != zone.pk
+                or existing.weight_quantity != weight_quantity):
             raise InventoryStockValidationError("相同入库来源已使用不同内容记账。", code="IDEMPOTENCY_CONFLICT")
         return existing
 
     balance = _locked_balance(raw_material=raw_material, unit=unit, zone=zone)
     before = balance.quantity
+    before_weight, movement_weight, after_weight = piece_weight_change(
+        before_quantity=before, before_weight=balance.weight_quantity, quantity=quantity,
+        direction="IN", weight_quantity=weight_quantity,
+        quantity_unit=unit.unit_name if weight_quantity is not None or balance.weight_quantity is not None else "")
     balance.quantity = before + quantity
+    balance.weight_quantity = after_weight
     balance.version += 1
-    balance.save(update_fields=["quantity", "version", "updated_at"])
+    balance.save(update_fields=["quantity", "weight_quantity", "version", "updated_at"])
     return MaterialStockMovement.objects.create(
         balance=balance,
         direction=MaterialStockDirection.IN,
         quantity=quantity,
         before_quantity=before,
         after_quantity=balance.quantity,
+        weight_quantity=movement_weight, before_weight_quantity=before_weight, after_weight_quantity=after_weight,
         source_type=source_type,
         source_id=source_id,
         source_line_id=source_line_id,
@@ -176,6 +196,7 @@ def credit_confirmed_inbound_line(*, line, actor_employee):
         unit=unit,
         zone=zone,
         quantity=line.accepted_quantity,
+        weight_quantity=line.accepted_weight_kg if is_hardware_weight(line) else None,
         source_type="MATERIAL_INBOUND",
         source_id=line.inbound_id,
         source_line_id=line.pk,
@@ -187,6 +208,8 @@ def credit_confirmed_inbound_line(*, line, actor_employee):
             "material_name": material.material_name,
             "unit": unit.unit_name,
             "zone": zone.zone_name,
+            **({"purchase_unit": line.source_unit_text_snapshot, "accepted_weight_kg": str(line.accepted_weight_kg),
+                "measurement_kind": "HARDWARE_WEIGHT"} if is_hardware_weight(line) else {}),
         },
     )
 
@@ -204,6 +227,26 @@ def available_stock(raw_material_id, unit_id):
         ),
         Decimal("0"),
     )
+
+
+def returned_material_weight(*, source, quantity):
+    """普通五金退料沿原发料的剩余实重回冲，不按最新BOM单重重算。"""
+    from .pipe_weight_quantities import returned_pipe_weight
+    original = MaterialStockMovement.objects.select_for_update().filter(
+        source_type="OUTSOURCING_DISPATCH", source_line_id=source.pk, direction="OUT",
+        balance__raw_material_id=source.raw_material_id, balance__unit_id=source.unit_id,
+        balance__zone_id=source.zone_id,
+    ).first()
+    if original is None:
+        # 历史单可能无重量流水；保持未知，不补造公斤数。
+        return None
+    history = list(MaterialStockMovement.objects.filter(source_type="OUTSOURCING_RAW_RETURN",
+        balance_id=original.balance_id, snapshot__dispatch_line_id=str(source.pk)).order_by("occurred_at", "id"))
+    if quantity > original.quantity - sum((row.quantity for row in history if row.direction == "IN"), Decimal(0)):
+        raise InventoryStockValidationError("退料超过原出库剩余数量。", code="RETURN_QUANTITY_EXCEEDED")
+    if source.unit.unit_name.upper() in KG_UNITS:
+        return quantity
+    return returned_pipe_weight(original=original, adjustments=history, returned_roots=quantity)
 
 
 def inbound_batch_available_quantities(inbound_lines, *, lock_balances=False):
@@ -375,9 +418,13 @@ def debit_material_stock(
         if allocated <= 0:
             continue
         before = balance.quantity
+        before_weight, movement_weight, after_weight = piece_weight_change(
+            before_quantity=before, before_weight=balance.weight_quantity, quantity=allocated, direction="OUT",
+            quantity_unit=unit.unit_name if balance.weight_quantity is not None else "")
         balance.quantity = before - allocated
+        balance.weight_quantity = after_weight
         balance.version += 1
-        balance.save(update_fields=["quantity", "version", "updated_at"])
+        balance.save(update_fields=["quantity", "weight_quantity", "version", "updated_at"])
         movement_snapshot = {
             **(snapshot or {}),
             "warehouse": balance.zone.warehouse.warehouse_name,
@@ -390,6 +437,7 @@ def debit_material_stock(
             quantity=allocated,
             before_quantity=before,
             after_quantity=balance.quantity,
+            weight_quantity=movement_weight, before_weight_quantity=before_weight, after_weight_quantity=after_weight,
             source_type=source_type,
             source_id=source_id,
             source_line_id=source_line_id,

@@ -27,6 +27,8 @@ from .models import (
 from .public_stock_identity import validate_public_identity
 from .catalog_stock_identity import CATALOG_STOCK_KINDS
 from .stock_services import InventoryStockValidationError
+from .pipe_weight_quantities import actual_pipe_weight, issued_pipe_weight
+from .hardware_stock_weights import catalog_piece_weight_identity, piece_weight_change
 
 
 MAX_QUANTITY = Decimal("99999999999999.9999")
@@ -38,14 +40,14 @@ def _invalid(message, code):
     raise InventoryStockValidationError(message, code=code)
 
 
-def _quantity(value):
+def _quantity(value, *, allow_zero=False):
     if isinstance(value, (bool, float)):
         _invalid("数量必须使用整数或精确十进制数。", "QUANTITY_INVALID")
     try:
         quantity = Decimal(value)
     except (InvalidOperation, ValueError, TypeError):
         _invalid("数量格式无效。", "QUANTITY_INVALID")
-    if not quantity.is_finite() or quantity <= 0:
+    if not quantity.is_finite() or quantity < 0 or (quantity == 0 and not allow_zero):
         _invalid("数量必须是大于 0 的有限数字。", "QUANTITY_INVALID")
     if quantity > MAX_QUANTITY or quantity.as_tuple().exponent < -4:
         _invalid("数量超出范围或超过 4 位小数。", "QUANTITY_INVALID")
@@ -148,7 +150,8 @@ def _existing_event(source, direction):
     ).first()
 
 
-def _check_replay(movement, *, source, quantity, balance_id=None, identity=None, zone_id=None, quality=None):
+def _check_replay(movement, *, source, quantity, balance_id=None, identity=None, zone_id=None, quality=None,
+                  check_weight=False, weight_quantity=None):
     same_source = all(
         getattr(movement, name) == source[name]
         for name in ("source_id", "production_task_id", "product_line_id", "bom_line_id", "snapshot")
@@ -163,7 +166,8 @@ def _check_replay(movement, *, source, quantity, balance_id=None, identity=None,
             movement.balance.zone_id == zone_id,
             movement.balance.quality == quality,
         ))
-    if movement.quantity != quantity or not same_source or not same_balance:
+    if (movement.quantity != quantity or not same_source or not same_balance
+            or (check_weight and movement.weight_quantity != weight_quantity)):
         _invalid("相同来源已使用不同数量、库存身份或来源单据记账。", "IDEMPOTENCY_CONFLICT")
     return movement
 
@@ -205,8 +209,8 @@ def _validate_location(*, zone_id, stock_kind, quality):
     return zone
 
 
-def _validate_unit_and_quantity(*, unit_id, stock_kind, quantity, expected_unit_name):
-    unit = ProductionUnit.objects.filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
+def _validate_unit_and_quantity(*, unit_id, catalog_id, stock_kind, quantity, expected_unit_name):
+    unit = ProductionUnit.for_catalog(catalog_id).filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
     if unit is None:
         _invalid("库存单位不存在或已停用。", "UNIT_UNAVAILABLE")
     name = unit.unit_name.strip()
@@ -226,7 +230,7 @@ def _balance_lookup(identity, zone_id, quality):
     }
 
 
-def _locked_balance(identity, zone_id, quality):
+def _locked_balance(identity, zone_id, quality, *, bar_weight_kg=None, weight_quantity=None):
     lookup = _balance_lookup(identity, zone_id, quality)
     balance = PublicStockBalance.objects.select_for_update(of=("self",)).filter(**lookup).order_by("id").first()
     if balance is None:
@@ -239,6 +243,8 @@ def _locked_balance(identity, zone_id, quality):
                                          if identity["stock_kind"] in CATALOG_STOCK_KINDS else None),
                     raw_material_id=identity["raw_material_id"], raw_bar_length_m=identity["raw_bar_length_m"],
                     quantity=0, meter_quantity=Decimal("0.00") if identity["raw_bar_length_m"] is not None else None,
+                    bar_weight_kg=bar_weight_kg,
+                    weight_quantity=Decimal("0.0000") if weight_quantity is not None else None,
                     version=1,
                 )
         except IntegrityError:
@@ -249,10 +255,24 @@ def _locked_balance(identity, zone_id, quality):
         balance.raw_bar_length_m != identity["raw_bar_length_m"],
     )):
         _invalid("公共库存身份与已保存的快照不一致。", "IDENTITY_CONFLICT")
+    if (weight_quantity is not None and balance.quantity == 0 and balance.meter_quantity == 0
+            and balance.weight_quantity in (None, Decimal("0"))):
+        # 空余额没有历史存货需要补重，只初始化本次新入库的重量账。
+        balance.weight_quantity = Decimal("0")
+        balance.bar_weight_kg = bar_weight_kg
+    if weight_quantity is not None and balance.weight_quantity is None and not catalog_piece_weight_identity(identity):
+        # 根数收货后的混合库存总重未知，后来的称重入库只应记录本次的实重。
+        if not PublicStockMovement.objects.filter(
+            balance=balance, snapshot__contains={"receipt_quantity_mode": "ROOTS"},
+        ).exists():
+            _invalid("公共库存实际重量缺失，请先核对现存库存。", "IDENTITY_CONFLICT")
+    if weight_quantity is not None and balance.quantity > 0 and balance.bar_weight_kg != bar_weight_kg:
+        # 标准单重属于来源单据；同实物池只累加已知实重，混合后不再声明统一单重。
+        balance.bar_weight_kg = None
     return balance
 
 
-def _record(*, balance, quantity, direction, source):
+def _record(*, balance, quantity, direction, source, weight_quantity=None):
     before = balance.quantity
     after = before + quantity if direction == MaterialStockDirection.IN else before - quantity
     if after < 0:
@@ -269,14 +289,41 @@ def _record(*, balance, quantity, direction, source):
         after_meters = after * balance.raw_bar_length_m
         if after_meters > MAX_METERS:
             _invalid("管材米数超出余额范围。", "QUANTITY_OVERFLOW")
+    before_weight = balance.weight_quantity
+    movement_weight = None
+    after_weight = None
+    if catalog_piece_weight_identity({"identity_snapshot": getattr(balance, "identity_snapshot", {})}):
+        before_weight, movement_weight, after_weight = piece_weight_change(
+            before_quantity=before, before_weight=before_weight, quantity=quantity,
+            direction=direction, weight_quantity=weight_quantity, quantity_unit=balance.identity_snapshot["unit_name"])
+    elif source["snapshot"].get("receipt_quantity_mode") == "ROOTS" and (
+        direction == MaterialStockDirection.IN or source["source_type"] == "MATERIAL_TRANSFER"
+    ):
+        # 只点根数后，剩余库存的实重未知；此前单据上的实重仍保留。
+        balance.bar_weight_kg = None
+    elif before_weight is None and weight_quantity is not None and direction == MaterialStockDirection.IN:
+        movement_weight = weight_quantity
+    elif balance.bar_weight_kg is not None or before_weight is not None or weight_quantity is not None:
+        if before_weight is None or not before_weight.is_finite() or before_weight < 0:
+            _invalid("管材重量余额无效。", "PIPE_BALANCE_INVALID")
+        if direction == MaterialStockDirection.OUT:
+            movement_weight = issued_pipe_weight(available_roots=before, available_weight_kg=before_weight,
+                issued_roots=quantity)
+        else:
+            # 采购、调拨或退料必须提供实际重量，不能用标准单重补造。
+            movement_weight = actual_pipe_weight(weight_quantity)
+        after_weight = before_weight + movement_weight if direction == MaterialStockDirection.IN else before_weight - movement_weight
+        actual_pipe_weight(after_weight)
     balance.quantity = after
     balance.meter_quantity = after_meters
+    balance.weight_quantity = after_weight
     balance.version += 1
-    balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
+    balance.save(update_fields=["quantity", "meter_quantity", "bar_weight_kg", "weight_quantity", "version", "updated_at"])
     return PublicStockMovement.objects.create(
         balance=balance, stock_kind_snapshot=balance.stock_kind, direction=direction, quantity=quantity,
         before_quantity=before, after_quantity=after,
         meter_quantity=movement_meters, before_meter_quantity=before_meters, after_meter_quantity=after_meters,
+        weight_quantity=movement_weight, before_weight_quantity=before_weight, after_weight_quantity=after_weight,
         **source,
     )
 
@@ -284,11 +331,19 @@ def _record(*, balance, quantity, direction, source):
 @transaction.atomic
 def credit_public_stock(*, identity, zone, quantity, source_type, source_id, source_line_id,
                         actor_employee, quality=MaterialStockQuality.AVAILABLE, production_task=None,
-                        product_line=None, bom_line=None, snapshot=None):
+                        product_line=None, bom_line=None, snapshot=None, bar_weight_kg=None,
+                        weight_quantity=None):
     from .public_stock_cutover import require_business_stock_write
     require_business_stock_write(source_type=source_type, direction="IN")
     identity = _database_identity(identity)
-    quantity = _quantity(quantity)
+    if weight_quantity is not None:
+        weight_quantity = actual_pipe_weight(weight_quantity)
+        if identity["raw_bar_length_m"] is None and not catalog_piece_weight_identity(identity):
+            _invalid("仅原管材或个片计量的五金库存可以保存实际重量。", "PIPE_BALANCE_INVALID")
+    weight_only_inbound = (source_type == "MATERIAL_INBOUND" and catalog_piece_weight_identity(identity)
+        and (snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+        and weight_quantity is not None and weight_quantity > 0)
+    quantity = _quantity(quantity, allow_zero=weight_only_inbound)
     zone_id = _uuid(zone, "库区")
     source = _source(source_type=source_type, source_id=source_id, source_line_id=source_line_id,
                      actor_employee=actor_employee, production_task=production_task,
@@ -297,17 +352,19 @@ def credit_public_stock(*, identity, zone, quantity, source_type, source_id, sou
     existing = _existing_event(source, MaterialStockDirection.IN)
     if existing:
         return _check_replay(existing, source=source, quantity=quantity, identity=identity,
-                             zone_id=zone_id, quality=quality)
+                             zone_id=zone_id, quality=quality, check_weight=True, weight_quantity=weight_quantity)
     _validate_source_context(source)
     from .internal_receipt_limits import validate_combined_output
     validate_combined_output(source=source, identity=identity, quantity=quantity, quality=quality)
     if identity["stock_kind"] == "RAW_PIPE":
         _validate_pipe_material(raw_material_id=identity["raw_material_id"], unit_id=identity["unit_id"])
     _validate_location(zone_id=zone_id, stock_kind=identity["stock_kind"], quality=quality)
-    _validate_unit_and_quantity(unit_id=identity["unit_id"], stock_kind=identity["stock_kind"], quantity=quantity,
+    catalog_id = identity["identity_snapshot"]["material_selection_snapshot"]["catalog_id"] if identity["stock_kind"] in CATALOG_STOCK_KINDS else None
+    _validate_unit_and_quantity(unit_id=identity["unit_id"], catalog_id=catalog_id, stock_kind=identity["stock_kind"], quantity=quantity,
                                 expected_unit_name=identity["identity_snapshot"]["unit_name"])
-    balance = _locked_balance(identity, zone_id, quality)
-    return _record(balance=balance, quantity=quantity, direction=MaterialStockDirection.IN, source=source)
+    balance = _locked_balance(identity, zone_id, quality, bar_weight_kg=bar_weight_kg, weight_quantity=weight_quantity)
+    return _record(balance=balance, quantity=quantity, direction=MaterialStockDirection.IN, source=source,
+                   weight_quantity=weight_quantity)
 
 
 @transaction.atomic
@@ -338,7 +395,7 @@ def debit_public_stock(*, balance_id, quantity, source_type, source_id, source_l
         _invalid("公共库存所在库区或实物身份已变化，请刷新后重试。", "STOCK_LOCATION_CHANGED")
     if balance.quality != MaterialStockQuality.AVAILABLE:
         _invalid("只有合格库存可以领用。", "QUALITY_UNAVAILABLE")
-    _validate_unit_and_quantity(unit_id=balance.unit_id, stock_kind=balance.stock_kind, quantity=quantity,
+    _validate_unit_and_quantity(unit_id=balance.unit_id, catalog_id=balance.material_catalog_id, stock_kind=balance.stock_kind, quantity=quantity,
                                 expected_unit_name=balance.identity_snapshot["unit_name"])
     from .tube_outsourcing_reservations import reserved_quantity_for_balance
     reserved = reserved_quantity_for_balance(balance)

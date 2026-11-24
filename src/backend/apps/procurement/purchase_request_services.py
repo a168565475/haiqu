@@ -20,7 +20,8 @@ from .models import (
     PurchaseRequestStatus,
     Supplier,
 )
-from .services import PurchaseQuantityParseStatus, _source_quantity
+from .services import PurchaseQuantityParseStatus, _is_purchasable_bom_section, _source_quantity
+from .purchase_scope import is_packaging_bom_line
 from .selectors import purchase_request_lines_with_allocated_quantity
 
 
@@ -94,13 +95,15 @@ def create_purchase_request(*, bom, actor_employee, request=None):
         .select_related("section")
         .order_by("section__line_number", "line_number", "id")
     )
+    source_lines = [line for line in source_lines if line.purchase_required
+                    and _is_purchasable_bom_section(line.section) and not is_packaging_bom_line(line)]
     if not source_lines:
-        raise ValidationError({"bom": "BOM 没有物料明细，不能创建采购申请。"})
+        raise ValidationError({"bom": "BOM 没有可采购的物料明细，不能创建采购申请。"})
     parsed_lines = []
     errors = []
     for source_line in source_lines:
         if source_line.section.section_type == 'PROFILE':
-            raise Conflict('管材须从采购汇总单的根米采购入口下单，旧采购申请分配入口不支持新管材。')
+            raise Conflict('管材须从采购需求的根米采购入口下单，旧采购申请分配入口不支持新管材。')
         quantity, _field, _text, unit, parse_status = _source_quantity(source_line, locked_bom)
         if parse_status != PurchaseQuantityParseStatus.READY or quantity is None or quantity <= 0:
             errors.append(f"{source_line.section.title} 第 {source_line.line_number} 行毛需求量未正确填写")
@@ -158,8 +161,10 @@ def update_purchase_request(*, purchase_request, line_values, actor_employee, re
         raise ValidationError({"lines": "采购申请包含不属于当前申请的明细。"})
     for values in line_values:
         line = existing[str(values["id"])]
+        if line.bom_line and is_packaging_bom_line(line.bom_line):
+            raise Conflict("包材请从包材采购入口办理。")
         if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
-            raise Conflict('旧管材采购申请不能继续按单数量编辑，请从采购汇总单重新建立根米采购。')
+            raise Conflict('旧管材采购申请不能继续按单数量编辑，请从采购需求重新建立根米采购。')
         actual = Decimal(values["actual_request_quantity"])
         reason = str(values.get("difference_reason", "")).strip()
         if actual != line.gross_requirement_quantity and not reason:
@@ -193,9 +198,13 @@ def submit_purchase_request(*, purchase_request, actor_employee, request=None):
         raise Conflict("只有草稿采购申请可以提交。")
     errors = []
     lines = list(purchase_request.lines.select_for_update().all())
+    if not lines:
+        raise ValidationError({"lines": "采购申请没有可采购的物料。"})
     for line in lines:
+        if line.bom_line and is_packaging_bom_line(line.bom_line):
+            raise Conflict("包材请从包材采购入口办理。")
         if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
-            raise Conflict('旧管材采购申请不能继续提交，请从采购汇总单重新建立根米采购。')
+            raise Conflict('旧管材采购申请不能继续提交，请从采购需求重新建立根米采购。')
         if line.actual_request_quantity is None or line.actual_request_quantity <= 0:
             errors.append(f"第 {line.line_number} 行缺少实际申请量")
         if line.required_date is None:
@@ -240,8 +249,10 @@ def allocate_purchase_request_line(*, line, validated_data, actor_employee, requ
     line = PurchaseRequestLine.objects.select_for_update().select_related("purchase_request").get(pk=line.pk)
     purchase_request = PurchaseRequest.objects.select_for_update().get(pk=line.purchase_request_id)
     require_matching_etag(request, purchase_request)
+    if line.bom_line and is_packaging_bom_line(line.bom_line):
+        raise Conflict("包材请从包材采购入口办理。")
     if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
-        raise Conflict('旧管材采购申请不能继续分配，请从采购汇总单重新建立根米采购。')
+        raise Conflict('旧管材采购申请不能继续分配，请从采购需求重新建立根米采购。')
     if purchase_request.status not in {
         PurchaseRequestStatus.SUBMITTED,
         PurchaseRequestStatus.ALLOCATING,

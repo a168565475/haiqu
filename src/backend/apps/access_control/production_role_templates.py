@@ -1,6 +1,6 @@
 """2026-11-02确认的角色目标；精确启用使用configure_confirmed_roles。"""
 from .catalog import PERMISSION_CODES, scopes_for
-from .role_policy import FOLLOWED_PERMISSIONS
+from .role_policy import FOLLOWED_TASK_PERMISSIONS
 from .superuser_services import SUPERUSER_ROLE_CODES
 
 PENDING = {
@@ -29,8 +29,11 @@ def module_rows(*codes):
 
 
 def full_permissions():
-    return [{'permission': code, 'scope': 'ALL' if 'ALL' in scopes_for(code) else
-             'MODULE' if 'MODULE' in scopes_for(code) else 'OWN'} for code in PERMISSION_CODES]
+    rows = []
+    for code in PERMISSION_CODES:
+        scopes = scopes_for(code)
+        rows.append({'permission': code, 'scope': 'ALL' if 'ALL' in scopes else scopes[0]})
+    return rows
 
 
 def scoped_rows(codes, scope, ids):
@@ -44,6 +47,7 @@ def templates(workshops, coating_craft_ids=()):
     finance = module_rows(*(f'finance.{action}_{resource}' for resource in ('financeaccount', 'accountingsubject')
                             for action in ('view', 'add', 'change', 'delete')))
     finance += module_rows(*(f'finance.{action}_receivablestatement' for action in ('view', 'add', 'change', 'void', 'delete')))
+    finance += module_rows(*(f'finance.{action}_purchasepayable' for action in ('view', 'add', 'change', 'confirm', 'void', 'delete')))
     finance += module_rows(*(f'finance.{action}_receipt' for action in ('view', 'add', 'void', 'delete')))
     finance += module_rows(*TASK_READ, 'production_tasks.manage_productiontaskexpense')
     result.update({code: list(finance) for code in ('FINANCE', 'CASHIER')})
@@ -110,7 +114,7 @@ def templates(workshops, coating_craft_ids=()):
         'production_tasks.start_productiontask', 'production_tasks.delete_productiontask',
         'access_control.cancel_productiontask', 'access_control.finish_productiontask',
         'boms.view_bom', 'procurement.view_purchaseorder', 'workshop_reporting.view_workreport')
-    result['MERCHANDISER'] = [{'permission': code, 'scope': 'FOLLOWED'} for code in FOLLOWED_PERMISSIONS]
+    result['MERCHANDISER'] = [{'permission': code, 'scope': 'FOLLOWED'} for code in FOLLOWED_TASK_PERMISSIONS]
     result['OUTSOURCING'] = module_rows('outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder',
         'outsourcing.cancel_outsourcingorder', 'outsourcing.reconcile_outsourcingorder',
         'outsourcing.complete_outsourcingorder', 'outsourcing.view_outsourcingfactory',
@@ -129,7 +133,12 @@ def templates(workshops, coating_craft_ids=()):
         'outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder', 'outsourcing.change_outsourcingorder',
         'outsourcing.cancel_outsourcingorder', 'material_issues.view_metalprocessingsource', 'procurement.view_purchaseorder',
         'procurement.view_supplierpurchasesheet', 'finance.view_financeaccount', 'finance.view_accountingsubject',
-        'finance.view_receivablestatement', 'finance.view_receipt'))
+        'finance.view_receivablestatement', 'finance.view_purchasepayable', 'finance.view_receipt'))
     result['FACTORY_MANAGER'] = module_rows(*sorted(factory_codes))
+    # 车间员工配置仅补给三主任，不纳入上面的厂长动作并集。
+    for role, workshop in DIRECTORS.items():
+        result[role] += scoped_rows((
+            'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee',
+        ), 'WORKSHOP', [workshops[workshop]])
     return {role: sorted({(row['permission'], row['scope']): row for row in rows}.values(),
                          key=lambda row: (row['permission'], row['scope'])) for role, rows in result.items()}

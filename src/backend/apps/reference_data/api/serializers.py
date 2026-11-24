@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.db.models import Q
 from rest_framework import serializers
-from rest_framework.validators import UniqueTogetherValidator
+from rest_framework.validators import UniqueTogetherValidator, UniqueValidator
 
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import (
@@ -331,6 +331,8 @@ class ProductCategorySerializer(serializers.ModelSerializer):
 
 
 class ProductionUnitSerializer(serializers.ModelSerializer):
+    unit_name = serializers.CharField(max_length=80, validators=[UniqueValidator(queryset=ProductionUnit.objects.all())])
+
     class Meta:
         model = ProductionUnit
         fields = [

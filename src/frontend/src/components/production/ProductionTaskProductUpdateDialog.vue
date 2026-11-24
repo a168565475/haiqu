@@ -105,8 +105,8 @@ function chooseDetailImage(detail: ProductionTaskDetailInput, uploadFile: Upload
 function validate() {
   if (!form.product_color_id || !form.color_code) return '请按顺序选择色卡、颜色和色号。'
   if (!/^[1-9]\d*$/.test(form.quantity)) return '订单数量必须是大于 0 的整数。'
-  if (form.unit_price === '' || Number(form.unit_price) < 0) return '请填写正确的售价。'
-  if (!/^\d+(\.\d{1,3})?$/.test(form.exchange_rate) || Number(form.exchange_rate) <= 0) return '汇率必须大于 0，且最多保留 3 位小数。'
+  if (form.unit_price == null || form.unit_price === '' || Number(form.unit_price) < 0) return '请填写正确的售价。'
+  if (!/^\d+(\.\d{1,3})?$/.test(form.exchange_rate ?? '') || Number(form.exchange_rate) <= 0) return '汇率必须大于 0，且最多保留 3 位小数。'
   if (isCny.value && Number(form.exchange_rate) !== 1) return 'CNY 汇率必须为 1.000。'
   if (!form.details.length || form.details.some((item) => !item.detail_type.trim())) return '请补齐生产任务单明细类型。'
   return ''

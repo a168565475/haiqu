@@ -1,5 +1,7 @@
 """Stage 5 operation overrides; old independently granted codes retain compatibility."""
 
+PACKAGING_PURCHASE = "procurement.manage_packagingpurchase"
+
 MODULE_OPERATIONS = (
     ('complete_purchaseorder', '完成采购订单', 'procurement', 'procurement.submit_purchaseorder'),
     ('generate_purchasesheets', '生成供应商采购单', 'procurement', 'procurement.add_purchaseorder'),
@@ -9,6 +11,8 @@ MODULE_OPERATIONS = (
     ('submit_samplerequest', '提交打样', 'samples', 'samples.change_samplerequest'),
     ('prepare_samplerequest', '开始准备样品', 'samples', 'samples.change_samplerequest'),
     ('financeconfirm_sample', '财务确认样品', 'samples', 'samples.decide_sample_fee'),
+    ('confirm_purchasepayable', '确认采购应付', 'finance', 'finance.confirm_purchasepayable'),
+    ('void_purchasepayable', '作废采购应付', 'finance', 'finance.void_purchasepayable'),
     ('pmcapprove_sample', 'PMC 确认样品', 'samples', 'samples.change_samplerequest'),
     ('metalwork_sample', '维护样品金工参数', 'samples', 'samples.change_samplerequest'),
     ('cutting_sample', '维护样品裁剪参数', 'samples', 'samples.change_samplerequest'),
@@ -41,6 +45,9 @@ LEGACY_ALIASES.update({
 })
 
 ACTION_OVERRIDES = {
+    'SupplierLedgerViewSet': dict.fromkeys(('list', 'entries', 'suppliers'), 'finance.view_supplierledger'),
+    'SupplierPaymentViewSet': {},
+    'SupplierPaymentApplicationViewSet': {},
     'SampleMaterialSourceViewSet': {
         action: 'samples.edit_sample_materials'
         for action in ('list', 'retrieve', 'options_list', 'public_options', 'crafts', 'metadata')
@@ -63,6 +70,11 @@ ACTION_OVERRIDES = {
         'create': 'finance.add_receivablestatement', 'partial_update': 'finance.change_receivablestatement',
         'void': 'finance.void_receivablestatement',
     },
+    'PurchasePayableViewSet': {
+        'list': 'finance.view_purchasepayable', 'retrieve': 'finance.view_purchasepayable',
+        'pricing': 'finance.change_purchasepayable',
+        'confirm': 'finance.confirm_purchasepayable', 'void': 'finance.void_purchasepayable',
+    },
     'FinanceSourceTaskViewSet': {
         action: ['finance.view_receivablestatement', 'finance.add_receivablestatement',
                  'finance.change_receivablestatement', 'finance.add_receipt'] for action in ('list', 'products')
@@ -84,23 +96,29 @@ ACTION_OVERRIDES = {
     'PurchaseGroupViewSet': {'list': 'procurement.view_purchaseorder', 'retrieve': 'procurement.view_purchaseorder',
         'filter_options': 'procurement.view_purchaseorder',
         'create': 'procurement.add_purchaseorder', 'batches': 'procurement.add_purchaseorder',
+        'destroy': 'procurement.delete_purchaseorder',
         'complete': 'access_control.complete_purchaseorder'},
+    'PackagingPurchaseGroupViewSet': {},
     'PurchaseReturnViewSet': {
-        'confirm': 'access_control.confirm_purchasereturn',
-        'complete': 'access_control.complete_purchasereturn',
+        'confirm': ('access_control.confirm_purchasereturn', PACKAGING_PURCHASE),
+        'complete': ('access_control.complete_purchasereturn', PACKAGING_PURCHASE),
     },
     'PurchaseContractTemplateViewSet': {'list': 'procurement.view_purchasecontracttemplate', 'retrieve': 'procurement.view_purchasecontracttemplate',
         'create': 'procurement.add_purchasecontracttemplate', 'update': 'procurement.change_purchasecontracttemplate', 'partial_update': 'procurement.change_purchasecontracttemplate'},
     'SupplierPurchaseSheetViewSet': {
-        **{action: 'procurement.view_supplierpurchasesheet' for action in ('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'preview.GET', 'line_image.GET', 'seal_image.GET')},
-        **{action: 'procurement.change_supplierpurchasesheet' for action in ('update', 'partial_update', 'preview.POST', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE')},
-        'new_version': 'procurement.add_supplierpurchasesheet', 'publish': 'procurement.publish_supplierpurchasesheet', 'batch_publish': 'procurement.publish_supplierpurchasesheet'},
+        **dict.fromkeys(('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'preview.GET', 'line_image.GET', 'seal_image.GET'),
+                        ('procurement.view_supplierpurchasesheet', PACKAGING_PURCHASE)),
+        **dict.fromkeys(('update', 'partial_update', 'preview.POST', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE'),
+                        ('procurement.change_supplierpurchasesheet', PACKAGING_PURCHASE)),
+        'new_version': ('procurement.add_supplierpurchasesheet', PACKAGING_PURCHASE),
+        'publish': ('procurement.publish_supplierpurchasesheet', PACKAGING_PURCHASE),
+        'batch_publish': ('procurement.publish_supplierpurchasesheet', PACKAGING_PURCHASE)},
     'ProductionTaskViewSet': {'cancel': 'access_control.cancel_productiontask', 'finish': 'access_control.finish_productiontask'},
     'BomViewSet': {'sync_order_quantity': 'access_control.sync_bomquantity'},
     'SampleRequestViewSet': {
         'parameter_image': ['access_control.metalwork_sample', 'access_control.cutting_sample'],
         'form': ['samples.change_samplerequest', 'samples.complete_sample_requirements', 'access_control.productionreport_sample'],
-        'submit': 'access_control.submit_samplerequest', 'start_preparing': 'access_control.prepare_samplerequest',
+        'submit': 'access_control.submit_samplerequest',
         'finance_confirm': 'access_control.financeconfirm_sample', 'pmc_approve': 'access_control.pmcapprove_sample',
         'metalwork_parameters': 'access_control.metalwork_sample', 'cutting_parameters': 'access_control.cutting_sample',
         'production_report': 'access_control.productionreport_sample', 'complete': 'access_control.complete_samplerequest',

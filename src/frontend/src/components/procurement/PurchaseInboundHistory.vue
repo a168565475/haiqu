@@ -6,9 +6,10 @@ import { fetchPurchaseOrderReadDetail } from '@/api/purchaseOrderReadDetail'
 import { useAuthStore } from '@/stores/auth'
 import type { PurchaseReadInbound, PurchaseReadInboundLine } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
-import { formatTime, purchaseQuantityText } from '@/views/procurement/purchaseOrderDetailDisplay'
+import { formatTime, purchaseQuantityText, quantityValue } from '@/views/procurement/purchaseOrderDetailDisplay'
+import { isHardwareWeightLine, isKilogramUnit } from '@/views/procurement/purchaseWeight'
 
-const props = defineProps<{ purchaseOrderId: string; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean }>()
+const props = defineProps<{ purchaseOrderId: string; materialSection?: string; hideMaterialSection?: boolean; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean; expandSingle?: boolean; showPipeRoots?: boolean }>()
 const accordionName = useId()
 const auth = useAuthStore()
 const records = ref<PurchaseReadInbound[]>([])
@@ -17,12 +18,40 @@ const loading = ref(false)
 const errorMessage = ref('')
 const hoveredRowId = ref('')
 const canRead = computed(() => auth.identityReady && (auth.user?.is_superuser === true
+  || (props.inbounds !== undefined && auth.hasPermission('inventory.view_material_receipt'))
   || ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'].some(permission => auth.hasPermission(permission))))
 let requestVersion = 0
 let disposed = false
 
 function quantity(line: PurchaseReadInboundLine, kind: 'received' | 'accepted' | 'return') {
-  return purchaseQuantityText(line[`${kind}_quantity`], line.source_unit_text_snapshot, line.raw_bar_length_m, line[`${kind}_bar_count`])
+  if (line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS') {
+    const roots = line[`${kind}_bar_count`]
+    return roots == null ? '根数未记录' : purchaseQuantityText(String(roots), '根', null, null)
+  }
+  const unit = String(line.source_unit_text_snapshot || '').trim().toUpperCase()
+  const hardwareWeight = isHardwareWeightLine({
+    section_type_snapshot: line.section_type_snapshot,
+    section_title_snapshot: line.section_title_snapshot,
+    source_unit_text: unit,
+    measurement_kind: line.measurement_kind,
+    calculation_snapshot: line.calculation_snapshot,
+  })
+  const weightLine = isKilogramUnit(unit) && (line.measurement_kind === 'PIPE' || Boolean(line.raw_bar_length_m) || hardwareWeight)
+  const value = weightLine ? line[`${kind}_weight_kg`] : line[`${kind}_quantity`]
+  const text = weightLine && quantityValue(value) === null ? '重量待核对'
+    : purchaseQuantityText(value, weightLine ? 'KG' : line.source_unit_text_snapshot, line.raw_bar_length_m, line[`${kind}_bar_count`])
+  if (hardwareWeight && props.showPipeRoots && !isKilogramUnit(line.piece_unit)) {
+    const pieces = line[`${kind}_piece_count`]
+    return `${text} / ${pieces == null ? '参考数量未记录' : `约 ${purchaseQuantityText(pieces, line.piece_unit || '个/片', null, null)}（参考）`}`
+  }
+  if (hardwareWeight) return text
+  if (props.showPipeRoots && !weightLine && line.raw_bar_length_m) {
+    const roots = line[`${kind}_bar_count`]
+    return roots == null ? '根数未记录' : purchaseQuantityText(String(roots), '根', null, null)
+  }
+  if (!weightLine || !props.showPipeRoots) return text
+  const roots = line[`${kind}_bar_count`]
+  return `${roots == null ? '根数未记录' : purchaseQuantityText(String(roots), '根', null, null)} / ${text}`
 }
 function attributes(line: PurchaseReadInboundLine) {
   const fields = materialAttributeFields(line)
@@ -42,7 +71,7 @@ async function load() {
   if (props.inbounds !== undefined) { records.value = sortRecords(props.inbounds); return }
   loading.value = true
   try {
-    const result = await fetchPurchaseOrderReadDetail(props.purchaseOrderId)
+    const result = await fetchPurchaseOrderReadDetail(props.purchaseOrderId, { receiving: true, materialSection: props.materialSection })
     if (disposed || version !== requestVersion) return
     records.value = sortRecords(result.inbounds)
     loadedColors.value = Object.fromEntries(result.lines.map(line => [line.id, line.color]))
@@ -56,7 +85,7 @@ async function load() {
     if (!disposed && version === requestVersion) loading.value = false
   }
 }
-watch([() => props.purchaseOrderId, () => props.refreshKey, () => props.inbounds, () => auth.user?.id,
+watch([() => props.purchaseOrderId, () => props.materialSection, () => props.refreshKey, () => props.inbounds, () => auth.user?.id,
   () => auth.identityGeneration, () => auth.identityRequestGeneration, canRead], () => { void load() }, { immediate: true })
 onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </script>
@@ -72,16 +101,17 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <div v-else-if="loading" class="history-state" role="status">正在加载入库记录…</div>
     <div v-else-if="!records.length" class="history-state">暂无入库记录，提交收货后将在这里按次显示。</div>
     <div v-else class="history-records">
-      <details v-for="(record, index) in records" :key="record.id" :name="accordionName" class="history-record" @toggle="hoveredRowId = ''">
+      <details v-for="(record, index) in records" :key="record.id" :name="accordionName" :open="expandSingle && records.length === 1" class="history-record" @toggle="hoveredRowId = ''">
         <summary :aria-label="`查看入库记录 ${record.inbound_number}`">
           <ElIcon class="expand-icon"><ArrowRight /></ElIcon>
           <span class="summary-main" tabindex="0" aria-label="批次信息，可横向滚动">
-          <strong class="batch-label">第 {{ records.length - index }} 批</strong>
+          <strong v-if="!expandSingle" class="batch-label">第 {{ records.length - index }} 批</strong>
           <strong>{{ record.inbound_number }}</strong>
+          <span v-if="!hideMaterialSection" class="summary-text" data-testid="inbound-material-section">材料分区 {{ record.material_section_display || '未登记' }}</span>
           <span class="summary-text">到货日期 {{ formatTime(record.inbound_date, true) }}</span>
           <span class="summary-text">{{ record.lines.length }} 项材料</span>
           <span class="summary-text">收货人 {{ record.received_by_name || '—' }}</span>
-          <ElTag :type="record.status === 'CONFIRMED' ? 'success' : 'warning'">{{ record.status_display }}</ElTag>
+          <ElTag :type="record.status_display === '全部退货' ? 'danger' : record.status === 'CONFIRMED' ? 'success' : 'warning'">{{ record.status_display }}</ElTag>
           <span class="record-metadata">
             <span><span>登记时间</span><time>{{ formatTime(record.created_at) }}</time></span>
             <span><span>品质确认人</span><span>{{ record.quality_confirmed_by_name || '—' }}</span></span>
@@ -91,9 +121,10 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <span class="expand-label"><span class="expand-text">展开明细</span><span class="collapse-text">收起明细</span></span>
         </summary>
         <div class="record-body">
+          <slot name="material-details" :record="record" :quantity="quantity">
           <div class="record-table-scroll" tabindex="0" :aria-label="`${record.inbound_number}材料明细`">
-            <table class="record-table">
-              <colgroup><col style="width: 220px" /><col style="width: 180px" /><col style="width: 180px" /><col v-for="kind in ['received', 'accepted', 'returned']" :key="kind" style="width: 120px" /><col style="width: 180px" /><col style="width: 200px" /></colgroup>
+            <table class="record-table" :style="showPipeRoots ? { minWidth: '1470px' } : undefined">
+              <colgroup><col style="width: 220px" /><col style="width: 180px" /><col style="width: 180px" /><col v-for="kind in ['received', 'accepted', 'returned']" :key="kind" :style="{ width: showPipeRoots ? '170px' : '120px' }" /><col style="width: 180px" /><col style="width: 200px" /></colgroup>
               <thead><tr><th>物料名称</th><th>规格</th><th>供应商</th><th class="numeric">到货数量</th><th class="numeric">合格入库</th><th class="numeric">退货数量</th><th>仓库位置</th><th>品质说明</th></tr></thead>
               <tbody>
                 <tr v-for="line in record.lines" :key="line.id" @mouseenter="hoveredRowId = line.id" @mouseleave="hoveredRowId = ''">
@@ -110,6 +141,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
               </tbody>
             </table>
           </div>
+          </slot>
           <p v-if="record.remark" class="record-remark"><span>本次备注</span>{{ record.remark }}</p>
         </div>
       </details>

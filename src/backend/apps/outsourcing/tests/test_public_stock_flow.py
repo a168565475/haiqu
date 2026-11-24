@@ -141,6 +141,29 @@ class PublicOutsourcingFixture(MaterialFlowFixture):
 
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True)
 class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
+    def test_actual_dispatch_weight_is_preserved_by_partial_return_and_revoke(self):
+        from apps.inventory.models import WarehouseZone
+
+        zone = WarehouseZone.objects.create(warehouse=self.pipe_batch.zone.warehouse, zone_name="重量守恒验证区")
+        self.pipe_batch.zone = zone
+        self.public_balance = credit_public_stock(identity=self.identity, zone=zone, quantity=3,
+            weight_quantity=Decimal("4.1"), source_type="WEIGHT_TEST_INBOUND", source_id=uuid.uuid4(),
+            source_line_id=uuid.uuid4(), actor_employee=self.f.employee).balance
+        order_id = self.create(amount="18")
+        _, source = self.dispatch(order_id, amount="18")
+        original = source.public_stock_movement
+        self.assertEqual((original.quantity, original.weight_quantity), (3, Decimal("4.1")))
+        self.raw_return(order_id, source, 1)
+        self.public_balance.refresh_from_db()
+        first_weight = self.public_balance.weight_quantity
+        self.assertEqual(first_weight, Decimal("1.3667"))
+        self.revoke(order_id)
+        self.public_balance.refresh_from_db()
+        self.assertEqual((self.public_balance.quantity, self.public_balance.weight_quantity), (3, Decimal("4.1")))
+        movements = PublicStockMovement.objects.filter(source_type="OUTSOURCING_RAW_RETURN", balance=self.public_balance)
+        self.assertEqual(movements.count(), 2)
+        self.assertEqual(sum(row.weight_quantity for row in movements), original.weight_quantity)
+
     def test_historical_public_order_dispatch_never_reads_inbound_batches(self):
         with patch("apps.outsourcing.dispatch_services.confirmed_batches", side_effect=AssertionError("不可读取采购批次")):
             with CaptureQueriesContext(connection) as queries:

@@ -2,13 +2,14 @@
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.auth import active_employee_for
+from .module_operations import PACKAGING_PURCHASE as PACKAGING_PERMISSION
 from .sales_policy import access_for
 
 
 PLAN_EDIT_PERMISSION = 'access_control.edit_productionplan'
 PLAN_UPDATE_FIELDS = ('planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids')
 
-# FOLLOWED只允许有生产任务归属的读取动作；写动作不能选择这个范围。
+# 包材采购写操作另校验材料范围，其余 FOLLOWED 权限仅用于读取。
 FOLLOWED_PERMISSIONS = frozenset({
     'production_tasks.view_productiontask', 'production_tasks.view_productiontaskcost',
     'boms.view_bom', 'production_scheduling.view_productionschedule',
@@ -19,6 +20,7 @@ FOLLOWED_PERMISSIONS = frozenset({
     'inventory.view_internalsemifinishedreceipt', 'inventory.view_finishedgoodsreceipt',
     'inventory.view_finishedgoodsoutbound',
 })
+FOLLOWED_TASK_PERMISSIONS = FOLLOWED_PERMISSIONS | {PACKAGING_PERMISSION}
 STATEMENT_OWN_PERMISSIONS = frozenset({'finance.view_receivablestatement', 'finance.view_receipt'})
 
 
@@ -46,7 +48,7 @@ def filter_task_scope(request, queryset, permission, task_lookup='production_tas
     if access['is_superuser'] or scopes & {'MODULE', 'ALL'}:
         return queryset
     employee = active_employee_for(request.user)
-    if permission in FOLLOWED_PERMISSIONS and 'FOLLOWED' in scopes and employee:
+    if permission in FOLLOWED_TASK_PERMISSIONS and 'FOLLOWED' in scopes and employee:
         prefix = f'{task_lookup}__' if task_lookup else ''
         return queryset.filter(**{f'{prefix}followers': employee}).distinct()
     return queryset.none()

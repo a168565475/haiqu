@@ -1,11 +1,22 @@
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Exists, F, OuterRef, Prefetch, Q, Sum
+from django.db.models import Case, DecimalField, Exists, F, OuterRef, Prefetch, Q, Sum, When
 
 from apps.boms.models import Bom
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 
 from .models import PurchaseAllocationStatus, PurchaseOrder, PurchaseOrderLine, Supplier
+
+
+def purchase_line_products(line):
+    """读取下单时的成品来源，一条共用原料可能属于多款成品。"""
+    sources = (line.calculation_snapshot or {}).get("group_source_contributions")
+    if sources:
+        for item in sources:
+            yield (item["product_line_id"], item["bom_id"], item["product_name"], item["product_specification"])
+    else:
+        yield (str(line.product_line_id_snapshot or ""), str(line.bom_id or ""), line.product_name_snapshot,
+               line.product_specification_snapshot)
 
 
 def active_suppliers():
@@ -66,6 +77,7 @@ def purchase_orders_with_product_ids(queryset=None):
 
 def purchase_return_amount(record):
     """按本次退货数量和原采购单价汇总，沿用采购金额四位小数规则。"""
+    from apps.inventory.pipe_receipt_basis import allocated_order_kg, is_root_receipt
     lines = list(record.lines.all())
     if not lines:
         return None
@@ -74,7 +86,8 @@ def purchase_return_amount(record):
         purchase_line = line.inbound_line.purchase_order_line
         if not purchase_line or purchase_line.unit_price is None:
             return None
-        total += (line.quantity * purchase_line.unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        quantity = allocated_order_kg(purchase_line, line.quantity) if is_root_receipt(line.inbound_line) else line.quantity
+        total += (quantity * purchase_line.unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
     return format(total, ".4f")
 
 
@@ -84,12 +97,17 @@ def filter_purchase_return_status(queryset, status):
 
     returned = MaterialInboundLine.objects.filter(
         purchase_order_line__purchase_order_id=OuterRef("pk"),
-        inbound__status=MaterialInboundStatus.CONFIRMED, return_quantity__gt=0,
-    )
+        inbound__status=MaterialInboundStatus.CONFIRMED,
+    ).filter(Q(return_quantity__gt=0) | Q(return_weight_kg__gt=0))
     records = PurchaseReturn.objects.filter(purchase_order_id=OuterRef("pk"))
+    return_quantity_mismatch = ~Q(purchase_return_line__quantity=Case(
+        When(calculation_snapshot__receipt_quantity_mode='ROOTS', then=F('return_bar_count')),
+        When(purchase_order_line__source_unit_text__in=["KG", "kg", "千克"], then=F('return_weight_kg')),
+        default=F('return_quantity'), output_field=DecimalField(),
+    ))
     queryset = queryset.alias(
         has_returns=Exists(returned),
-        missing_returns=Exists(returned.filter(Q(purchase_return_line__isnull=True) | ~Q(purchase_return_line__quantity=F("return_quantity")))),
+        missing_returns=Exists(returned.filter(Q(purchase_return_line__isnull=True) | return_quantity_mismatch)),
         quality_returns=Exists(records.filter(status=PurchaseReturnStatus.QUALITY_GENERATED)),
         confirmed_returns=Exists(records.filter(status=PurchaseReturnStatus.PROCUREMENT_CONFIRMED)),
     )
@@ -105,12 +123,14 @@ def filter_purchase_return_status(queryset, status):
     return queryset.filter(has_returns=True, quality_returns=False, confirmed_returns=False)
 
 
-def purchase_orders_with_context(queryset=None, *, read_optimized=False):
+def purchase_orders_with_context(queryset=None, *, read_optimized=False, receiving_sections=None):
     if queryset is None:
         queryset = PurchaseOrder.objects.all()
     # 读接口使用订单快照；写入服务仍保留原有关联对象。
     line_relations = ("sample_material_source",) if read_optimized else ("supplier", "bom", "bom_line", "sample_material_source")
-    lines = PurchaseOrderLine.objects.select_related(*line_relations).prefetch_related(
+    from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope
+    lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), receiving_sections)
+    lines = lines.select_related(*line_relations).prefetch_related(
         "material_inbound_lines__inbound",
         "material_inbound_lines__purchase_return_line__return_order",
     )
@@ -124,11 +144,11 @@ def purchase_orders_with_context(queryset=None, *, read_optimized=False):
         "material_snapshot",
     ).order_by("line_number", "id")
     relations = (
-        "production_task",
+        "production_task", "purchase_group",
         "sample_procurement_request__material_request__sample_request",
         "created_by_employee",
     ) if read_optimized else (
-        "production_task",
+        "production_task", "purchase_group",
         "production_task__sales_order",
         "sample_procurement_request__material_request__sample_request__customer_account",
         "currency",
@@ -161,6 +181,7 @@ def search_purchase_orders(queryset, search_text):
 
 
 def production_tasks_with_purchase_sources(queryset=None):
+    from .purchase_scope import packaging_order_filter
     if queryset is None:
         queryset = ProductionTask.objects.filter(archived_at__isnull=True)
     boms = (
@@ -175,5 +196,7 @@ def production_tasks_with_purchase_sources(queryset=None):
     )
     return queryset.select_related("customer_account").prefetch_related(
         Prefetch("products", queryset=products, to_attr="purchase_source_products"),
-        Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(), to_attr="purchase_source_orders"),
+        Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(
+            PurchaseOrder.objects.exclude(packaging_order_filter()),
+        ), to_attr="purchase_source_orders"),
     )

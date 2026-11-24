@@ -11,7 +11,7 @@ from apps.core.audit import write_audit_log
 from apps.reference_data.models import ProductionUnit
 
 from .models import ProductCatalog, ProductCatalogCategory, ProductCatalogColor, ProductCatalogName
-from .selection import is_product_entry_snapshot, resolve_product_selection
+from .selection import is_product_entry_snapshot, resolve_bom_product_selection, resolve_product_selection
 
 
 def _require(request, permission, message):
@@ -33,10 +33,7 @@ def finalize_product_entry(*, snapshot, catalog_id=None, request, actor_employee
     """精确复用或建立最终产品；任何失败都随外层 BOM 确认事务回滚。"""
     if not is_product_entry_snapshot(snapshot):
         return resolve_product_selection(catalog_id, None, existing_catalog_id=catalog_id, existing_snapshot=snapshot)
-    selection = {"draft": snapshot["entry_draft"]}
-    if snapshot.get("catalog_version"):
-        selection["catalog_version"] = snapshot["catalog_version"]
-    _, current = resolve_product_selection(catalog_id, selection,
+    _, current = resolve_bom_product_selection(catalog_id, None,
         existing_catalog_id=catalog_id, existing_snapshot=snapshot)
     for field, label in (("category_name", "类别"), ("name", "品名"), ("unit_name", "单位")):
         if not current.get(field, "").strip():
@@ -137,7 +134,7 @@ def finalize_product_entry(*, snapshot, catalog_id=None, request, actor_employee
             action="CREATED" if created_product else "UPDATED", before=None if created_product else before,
             after={"name_id": str(name.pk), "item_number": product.item_number, "specification": product.specification,
                    "product_code": product.product_code, "color": current["color_name"], "material": current["material"],
-                   "source": "BOM_CONFIRMATION"})
+                   "updated_at": product.updated_at.isoformat(), "source": "BOM_CONFIRMATION"})
     final = deepcopy(current)
     final.update(catalog_id=str(product.pk), catalog_version=product.updated_at.isoformat(),
         category_id=str(category.pk), name_id=str(name.pk), unit_id=str(unit.pk),

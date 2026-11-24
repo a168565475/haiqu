@@ -16,6 +16,8 @@ from apps.production_tasks.models import ProductionTask
 
 from .models import MaterialInbound, MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, WarehouseZone
 from .stock_services import inbound_line_material
+from .pipe_weight_quantities import issued_pipe_weight
+from .pipe_receipt_basis import ROOT_RECEIPT, is_root_receipt
 
 
 def _uuid(value):
@@ -58,16 +60,24 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
     if inbound.status != "CONFIRMED" or line.measurement_kind != "PIPE" or not line.raw_material_information_id:
         raise pipe_error("PIPE_INBOUND_NOT_READY", "仅已质检确认的新口径管材入库可以记账。")
     try:
-        length = decimal_quantity(line.raw_bar_length_m, "raw_bar_length_m", places=2)
+        length = decimal_quantity(line.raw_bar_length_m, "raw_bar_length_m", places=3, max_digits=19)
         bars = positive_integer(line.accepted_bar_count, "accepted_bar_count")
         received = positive_integer(line.received_bar_count, "received_bar_count")
         returned = positive_integer(line.return_bar_count, "return_bar_count", allow_zero=True)
     except MaterialFlowValueError as error:
         raise pipe_error(error.code, str(error)) from error
+    by_roots = is_root_receipt(line)
+    weight_mode = not by_roots and line.source_unit_text_snapshot in {"KG", "kg", "千克"}
     if (received != bars + returned or line.received_quantity != received * length
-            or line.return_quantity != returned * length or line.accepted_quantity != bars * length
-            or line.source_unit_text_snapshot != "米"):
+            or line.return_quantity != returned * length or line.accepted_quantity != bars * length):
         raise pipe_error("PIPE_LENGTH_MISMATCH", "入库的根数、单根长度和米数不一致。")
+    if weight_mode:
+        if (line.received_weight_kg is None or line.accepted_weight_kg is None or line.return_weight_kg is None
+                or line.received_weight_kg <= 0 or line.accepted_weight_kg < 0 or line.return_weight_kg < 0
+                or line.received_weight_kg != line.accepted_weight_kg + line.return_weight_kg):
+            raise pipe_error("PIPE_WEIGHT_MISMATCH", "入库的到货、合格和退货重量不一致。")
+    elif not by_roots and line.source_unit_text_snapshot != "米":
+        raise pipe_error("PIPE_UNIT_MISMATCH", "历史管材入库单位不是米或KG。")
     if public_mode:
         from .public_stock_services import lock_public_stock_locations
         zone = lock_public_stock_locations([line.zone_id])[line.zone_id]
@@ -94,15 +104,24 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
         return credit_public_stock(identity=identity, zone=zone, quantity=bars,
             source_type="MATERIAL_INBOUND", source_id=inbound.pk, source_line_id=line.pk,
             actor_employee=actor_employee, production_task=task,
+            bar_weight_kg=line.bar_weight_kg if weight_mode else None,
+            weight_quantity=line.accepted_weight_kg if weight_mode else None,
             snapshot={"schema_version": 2, "public_stock_identity": frozen,
                       "inbound_number": inbound.inbound_number, "inbound_line_id": str(line.pk),
                       "raw_material_id": str(material.pk), "raw_bar_length_m": str(length),
-                      "accepted_bar_count": bars, "accepted_meters": str(bars * length), "zone_id": str(zone.pk)})
+                       "accepted_bar_count": bars, "accepted_meters": str(bars * length),
+                       **(ROOT_RECEIPT if by_roots else {}),
+                       **({"bar_weight_kg": str(line.bar_weight_kg) if line.bar_weight_kg is not None else None,
+                           "accepted_weight_kg": str(line.accepted_weight_kg)} if weight_mode else {}),
+                       "zone_id": str(zone.pk)})
     balance = MaterialStockBalance.objects.select_for_update().filter(measurement_kind="PIPE", inbound_line=line, zone=zone, quality="AVAILABLE").first()
     source = {"source_type": "MATERIAL_INBOUND", "source_line_id": line.pk, "direction": "IN"}
     existing = MaterialStockMovement.objects.filter(**source).first()
     snapshot = {"schema_version": 2, "raw_bar_length_m": str(length), "accepted_bar_count": bars,
-                "raw_material_id": str(material.pk), "inbound_line_id": str(line.pk), "zone_id": str(zone.pk)}
+                "raw_material_id": str(material.pk), "inbound_line_id": str(line.pk), "zone_id": str(zone.pk),
+                **(ROOT_RECEIPT if by_roots else {}),
+                **({"bar_weight_kg": str(line.bar_weight_kg) if line.bar_weight_kg is not None else None,
+                    "accepted_weight_kg": str(line.accepted_weight_kg)} if weight_mode else {})}
     if existing:
         if not balance or existing.balance_id != balance.pk or existing.snapshot != snapshot:
             raise pipe_error("IDEMPOTENCY_CONFLICT", "同一入库来源已使用不同内容记账。")
@@ -110,17 +129,27 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
     require_document_stock_mode(inbound)
     if balance is None:
         balance = MaterialStockBalance.objects.create(measurement_kind="PIPE", inbound_line=line, raw_material=material,
-            zone=zone, unit=material.unit, quality="AVAILABLE", raw_bar_length_m=length, quantity=0, meter_quantity=0)
+            zone=zone, unit=material.unit, quality="AVAILABLE", raw_bar_length_m=length, quantity=0, meter_quantity=0,
+            bar_weight_kg=line.bar_weight_kg if weight_mode else None, weight_quantity=Decimal("0") if weight_mode else None)
     if balance.raw_bar_length_m != length or balance.raw_material_id != material.pk:
         raise pipe_error("PIPE_LENGTH_MISMATCH", "批次身份或原材料长度与已建账内容不一致。")
     before, before_meters = balance.quantity, balance.meter_quantity
+    before_weight = balance.weight_quantity
     balance.quantity += bars
     balance.meter_quantity += bars * length
+    if weight_mode:
+        if balance.bar_weight_kg != line.bar_weight_kg or balance.weight_quantity is None:
+            raise pipe_error("PIPE_WEIGHT_MISMATCH", "库存批次的每根重量与本次入库不一致。")
+        balance.weight_quantity += line.accepted_weight_kg
     balance.version += 1
-    balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
+    balance.save(update_fields=["quantity", "meter_quantity", "weight_quantity", "version", "updated_at"])
     return MaterialStockMovement.objects.create(balance=balance, quantity=bars, meter_quantity=bars * length,
         before_quantity=before, after_quantity=balance.quantity, before_meter_quantity=before_meters,
-        after_meter_quantity=balance.meter_quantity, source_id=inbound.pk, actor_employee=actor_employee, snapshot=snapshot, **source)
+        after_meter_quantity=balance.meter_quantity,
+        weight_quantity=line.accepted_weight_kg if weight_mode else None,
+        before_weight_quantity=before_weight if weight_mode else None,
+        after_weight_quantity=balance.weight_quantity if weight_mode else None,
+        source_id=inbound.pk, actor_employee=actor_employee, snapshot=snapshot, **source)
 
 
 @transaction.atomic
@@ -197,14 +226,21 @@ def issue_pipe_material(*, bom_line_id, allocations, source_type, source_id, sou
     for row, amount in zip(normalized, amounts):
         balance = balance_map[row["inbound_line_id"]]
         before, before_meters = balance.quantity, balance.meter_quantity
+        before_weight = balance.weight_quantity
         meters = Decimal(amount["meters"])
+        weight = None
+        if balance.bar_weight_kg is not None or balance.weight_quantity is not None:
+            weight = issued_pipe_weight(available_roots=before, available_weight_kg=before_weight,
+                issued_roots=amount["bar_count"])
+            balance.weight_quantity -= weight
         balance.quantity -= amount["bar_count"]
         balance.meter_quantity -= meters
         balance.version += 1
-        balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
+        balance.save(update_fields=["quantity", "meter_quantity", "weight_quantity", "version", "updated_at"])
         movements.append(MaterialStockMovement.objects.create(balance=balance, direction="OUT", quantity=amount["bar_count"],
             meter_quantity=meters, before_quantity=before, after_quantity=balance.quantity,
             before_meter_quantity=before_meters, after_meter_quantity=balance.meter_quantity,
+            weight_quantity=weight, before_weight_quantity=before_weight, after_weight_quantity=balance.weight_quantity,
             source_type=source_type, source_id=source_id, source_line_id=row["source_line_id"], production_task=requirement.production_task,
             actor_employee=actor_employee, snapshot={"schema_version": 2, "request_payload_hash": payload_hash,
                 "requirement_id": str(requirement.pk), "component_identity": str(requirement.component_identity),

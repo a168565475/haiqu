@@ -53,11 +53,12 @@ def sample_source(procurement):
         blockers.append({"code": "SAMPLE_NO_SHORTAGE", "message": "该打样单没有已确认的缺料采购需求。"})
     from apps.samples.pipe_materials import sample_pipe_snapshot
     from apps.samples.material_identity import sample_material_snapshot
+    from .pipe_purchase import sample_weight_source_snapshot
     pipe_snapshots = {}
     for row in procurement.lines:
         if row.get('category') == 'tube':
             try:
-                pipe_snapshots[row['key']] = sample_pipe_snapshot(procurement, row)
+                pipe_snapshots[row['key']] = sample_weight_source_snapshot(sample_pipe_snapshot(procurement, row), row['unitLabel'])
             except ValidationError as error:
                 blockers.append({'code': 'PIPE_PARAMETERS_REQUIRED', 'message': f'打样管材参数或原料关联不完整：{error.detail}'})
         else:
@@ -101,6 +102,7 @@ def sample_source(procurement):
             "section_type": section, "section_title": category, "category": category,
             "product_name": "样品采购需求", "product_number": "", "product_specification": "",
             "sample_demand_quantity": row["quantity"], "sample_supply_quantity": row["supplyQuantity"],
+            "sample_demand_unit": row["unitLabel"],
             "required_quantity": row["shortageQuantity"], "source_quantity_text": row["shortageQuantity"],
             "source_quantity_field": "shortageQuantity", "source_unit_text": row["unitLabel"],
             "quantity_parse_status": "READY", "suggested_supplier_category": supplier_category, "category_source": "SECTION",
@@ -110,15 +112,15 @@ def sample_source(procurement):
             if row.get('material_catalog_id'):
                 lines[-1].update(material_catalog_id=str(row['material_catalog_id']),
                     material_selection_snapshot=snapshot['material_selection_snapshot'], calculation_snapshot=snapshot)
-                continue
             if row['category'] != 'tube':
                 lines[-1]['calculation_snapshot'] = snapshot
                 continue
-            lines[-1].update(required_quantity=snapshot.get('suggested_purchase_meters') or snapshot.get('shortage_meters'), source_unit_text='米',
-                             source_quantity_text=snapshot.get('suggested_purchase_meters') or snapshot.get('shortage_meters'),
-                             source_quantity_field='suggested_purchase_meters' if snapshot.get('schema_version') != 3 else 'shortage_meters',
+            lines[-1].update(required_quantity=None, source_unit_text='KG',
+                             source_quantity_text='', source_quantity_field='suggested_purchase_weight_kg',
+                             quantity_parse_status='MISSING',
                              calculation_snapshot=snapshot,
-                             **{key: snapshot.get(key) for key in ('raw_bar_length_m', 'suggested_bar_count', 'suggested_purchase_meters')})
+                             **{key: snapshot.get(key) for key in ('raw_bar_length_m', 'raw_bar_weight_kg', 'suggested_bar_count',
+                                 'suggested_purchase_meters', 'suggested_purchase_weight_kg')})
     return {
         "source_type": "SAMPLE", "sample_request": payload, "can_create": not blockers,
         "source_revision": revision, "blockers": blockers, "lines": lines if not blockers else [],
@@ -170,7 +172,7 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
         customer_name_snapshot=(sample.customer_account.account_name if sample.customer_account_id else ''), source_revision=source["source_revision"],
         currency=currency, currency_code_snapshot=currency.code if currency else "",
         currency_name_snapshot=currency.chinese_name if currency else "", currency_symbol_snapshot=currency.symbol if currency else "",
-        is_mailed=validated_data.get("is_mailed"), created_by_employee=actor_employee,
+        created_by_employee=actor_employee,
     )
     amounts = []
     for row in source["lines"]:
@@ -180,9 +182,8 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
         pipe_values = {}
         if row.get('section_type') == 'PROFILE':
             from .pipe_purchase import purchase_pipe_values
-            # 新ID/属性快照不改变原样品采购：填根数和实际单根长，采购数量及计价仍为米。
             pipe_values = purchase_pipe_values(row['calculation_snapshot'], entry)
-            quantity = pipe_values['actual_purchase_meters']
+            quantity = pipe_values['actual_purchase_weight_kg']
         else:
             pipe_values = {'calculation_snapshot': row['calculation_snapshot']}
         from .catalog_materials import priced_quantity
@@ -190,16 +191,17 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
             physical_quantity=quantity, pipe_values=pipe_values)
         amount = _money(priced * price) if priced is not None and price is not None else None
         amounts.append(amount)
+        required = pipe_values.get('suggested_purchase_weight_kg') if row['section_type'] == 'PROFILE' else Decimal(row['required_quantity'])
         line = PurchaseOrderLine.objects.create(
             material_catalog_id=row.get('material_catalog_id'),
             material_selection_snapshot=row.get('material_selection_snapshot', {}),
             purchase_order=order, line_number=row["line_number"], product_name_snapshot="样品采购需求",
             section_type_snapshot=row["section_type"], section_title_snapshot=row["section_title"], category_snapshot=row["category"],
             part_name_snapshot=row["part_name"], specification_snapshot=row["specification"], raw_material_snapshot=row["raw_material"],
-            color_snapshot=row["product_color"], required_quantity=Decimal(row["required_quantity"]),
+            color_snapshot=row["product_color"], required_quantity=required,
             sample_demand_quantity=Decimal(row["sample_demand_quantity"]), sample_supply_quantity=Decimal(row["sample_supply_quantity"]),
-            source_quantity_field=row['source_quantity_field'], source_quantity_text=row["source_quantity_text"],
-            source_unit_text=row["source_unit_text"], quantity_parse_status="READY",
+            source_quantity_field=row['source_quantity_field'], source_quantity_text=str(required) if required is not None else '',
+            source_unit_text=row["source_unit_text"], quantity_parse_status="READY" if required is not None else "MISSING",
             supplier=supplier, supplier_number_snapshot=supplier.supplier_number if supplier else "",
             supplier_name_snapshot=supplier.supplier_name if supplier else "", supplier_type_snapshot=supplier.supplier_type if supplier else "",
             supplier_categories_snapshot=list(supplier.supplier_categories) if supplier else [],

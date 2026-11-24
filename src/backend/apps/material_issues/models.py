@@ -37,7 +37,7 @@ class OrderMaterialRequirement(TimeStampedModel):
     product_line = models.ForeignKey("production_tasks.ProductionTaskProduct", on_delete=models.PROTECT, null=True, blank=True, related_name="pipe_requirements")
     component_identity = models.UUIDField(null=True, blank=True)
     pieces_per_bar = models.PositiveBigIntegerField(null=True, blank=True)
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
     production_task = models.ForeignKey(
         "production_tasks.ProductionTask",
         on_delete=models.PROTECT,
@@ -384,7 +384,7 @@ class MaterialIssuePublicStockAllocation(TimeStampedModel):
                                     null=True, blank=True, related_name="material_issue_allocation")
     requested_quantity = models.DecimalField(max_digits=18, decimal_places=4)
     stock_quantity = models.DecimalField(max_digits=18, decimal_places=4)
-    meter_quantity = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
     snapshot = models.JSONField(default=dict)
 
     class Meta:
@@ -405,7 +405,7 @@ class MaterialIssueBatchAllocation(TimeStampedModel):
     inbound_line = models.ForeignKey("inventory.MaterialInboundLine", on_delete=models.PROTECT, related_name="issue_allocations")
     requested_pieces = models.PositiveBigIntegerField()
     bar_count = models.PositiveBigIntegerField()
-    meters = models.DecimalField(max_digits=22, decimal_places=2)
+    meters = models.DecimalField(max_digits=23, decimal_places=3)
     snapshot = models.JSONField(default=dict)
 
     class Meta:

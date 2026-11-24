@@ -38,6 +38,12 @@ export interface SampleOptions {
   fee_approvers: SampleOwnerOption[]
 }
 
+export interface SampleFilterOptions {
+  sample_types: SampleSelectOption[]
+  statuses: SampleSelectOption[]
+  owner_filters: Array<Pick<SampleOwnerOption, 'id' | 'display_name'>>
+}
+
 export interface SampleFormOptions {
   is_salesperson?: boolean
   current_maker: SampleOwnerOption
@@ -252,6 +258,22 @@ export interface SampleListProduct {
   seat_height_cm: string | null
 }
 
+export interface SampleListSummary extends Pick<SampleListItem,
+  'id' | 'request_number' | 'customer_name' | 'status' | 'status_display'
+  | 'sample_type_display' | 'submitted_on' | 'requested_at' | 'requested_due_at'
+  | 'sample_due_date' | 'item_summary' | 'material_summary'
+> {
+  owner: Pick<CustomerEmployeeSummary, 'id' | 'display_name'> | null
+  products?: Array<Pick<SampleListProduct,
+    'id' | 'line_number' | 'category_name' | 'product_name' | 'specification' | 'color' | 'total_sample_quantity'
+  >>
+  application_actions?: Pick<NonNullable<SampleListItem['application_actions']>,
+    'is_application' | 'can_director_review' | 'can_resubmit' | 'can_edit_products' | 'can_edit_materials'
+  >
+  allowed_permissions?: string[]
+  latest_shipment: Pick<SampleShipmentSummary, 'status' | 'status_display'> | null
+}
+
 export interface SampleItemDetail {
   id: string
   line_number: number
@@ -408,29 +430,6 @@ export interface SampleShipment {
   updated_at: string
 }
 
-export interface SampleShipmentCreateInput {
-  items: Array<{
-    sample_item_id: string
-    shipped_quantity: string
-  }>
-  notes?: string
-}
-
-export interface SampleShipmentProgressInput {
-  occurred_at: string
-  material_status: string
-}
-
-export interface SampleShipInput {
-  address_id: string
-  contact_id: string
-  carrier_code: string
-  tracking_number: string
-  fee_warning_acknowledged: boolean
-  fee_warning_reason?: string
-  notes?: string
-}
-
 export interface SampleFeedback {
   id: string
   customer_contact: string | null
@@ -555,20 +554,8 @@ export interface SampleFeeCreateInput {
   approver_employee_id?: string | null
 }
 
-export interface SampleDetailUpdateInput {
-  owner_employee_id?: string
-  sample_type?: string
-  purpose?: string
-  requested_at?: string
-  requested_due_at?: string | null
-  expected_shipped_at?: string | null
-  expected_received_at?: string | null
-  collaborator_employee_ids?: string[]
-  notes?: string
-}
-
 export interface SampleListResult {
-  data: SampleListItem[]
+  data: SampleListSummary[]
   meta: PageMeta
 }
 
@@ -686,15 +673,6 @@ export interface SampleSourceLineInput {
   requested_quantity: number
 }
 
-export interface SampleFromInquiryCreateInput {
-  inquiry_id: string
-  sample_type: string
-  purpose?: string
-  sample_due_date?: string | null
-  idempotency_key: string
-  items: Array<SampleSourceLineInput & { source_item_id: string }>
-}
-
 export interface SampleFromQuotationCreateInput {
   quotation_version_id: string
   sample_type: string
@@ -737,17 +715,6 @@ export interface SampleInventoryQuery {
 export interface SampleInventoryResult {
   data: SampleInventoryRow[]
   meta: PageMeta
-}
-
-export interface SampleInventorySummary {
-  month: string
-  current_available: number
-  borrowed: number
-  inbound_today: number
-  outbound_today: number
-  inbound_this_month: number
-  outbound_this_month: number
-  loaned_this_month: number
 }
 
 export interface SampleInventoryOptions {
@@ -937,13 +904,6 @@ export interface SampleOutboundResult {
   meta: PageMeta
 }
 
-export interface SampleOutboundSummary {
-  outbound_today: number
-  outbound_this_month: number
-  mailed: number
-  salesperson_carried: number
-}
-
 export interface SampleOutboundMethodOption {
   value: SampleOutboundMethod
   label: string
@@ -1047,13 +1007,6 @@ export interface SampleLoanQuery {
 export interface SampleLoanResult {
   data: SampleLoanRow[]
   meta: PageMeta
-}
-
-export interface SampleLoanSummary {
-  active_documents: number
-  cumulative_borrowed: number
-  customer_confirmation: number
-  showroom_or_photo: number
 }
 
 export interface SampleLoanOptions {

@@ -91,10 +91,12 @@ class ProductionTask(ArchivableModel):
     )
     currency = models.ForeignKey(
         "reference_data.Currency",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="production_tasks",
     )
-    includes_tax = models.BooleanField()
+    includes_tax = models.BooleanField(null=True, blank=True)
     tax_rate = models.PositiveSmallIntegerField(null=True, blank=True, choices=[(3, "3%"), (5, "5%"), (7, "7%")])
     order_tolerance_percent = models.DecimalField(
         max_digits=5,
@@ -109,12 +111,16 @@ class ProductionTask(ArchivableModel):
     freight_amount = models.DecimalField(
         max_digits=22,
         decimal_places=4,
+        null=True,
+        blank=True,
         default=Decimal("0"),
         validators=[MinValueValidator(Decimal("0"))],
     )
     other_fee_amount = models.DecimalField(
         max_digits=22,
         decimal_places=4,
+        null=True,
+        blank=True,
         default=Decimal("0"),
         validators=[MinValueValidator(Decimal("0"))],
     )
@@ -316,12 +322,14 @@ class ProductionTaskProduct(TimeStampedModel):
     )
     currency = models.ForeignKey(
         "reference_data.Currency",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="production_task_products",
     )
-    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
-    total_amount = models.DecimalField(max_digits=22, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
-    exchange_rate = models.DecimalField(max_digits=25, decimal_places=8, validators=[MinValueValidator(Decimal("0.00000001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(Decimal("0"))])
+    total_amount = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(Decimal("0"))])
+    exchange_rate = models.DecimalField(max_digits=25, decimal_places=8, null=True, blank=True, validators=[MinValueValidator(Decimal("0.00000001"))])
     exchange_rate_record = models.ForeignKey(
         "reference_data.ExchangeRate", null=True, blank=True, on_delete=models.PROTECT,
         related_name="production_task_products",
@@ -410,7 +418,7 @@ class ProductionTaskDetail(TimeStampedModel):
     template_key = models.CharField(max_length=64, blank=True)
     detail_type = models.CharField(max_length=100)
     category_label = models.CharField(max_length=100, blank=True)
-    is_selected = models.BooleanField(default=False)
+    is_selected = models.BooleanField(default=False, null=True, blank=True)
     description = models.TextField(blank=True)
     image_file = models.ForeignKey(
         "files.BusinessFile",

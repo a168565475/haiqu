@@ -4,15 +4,25 @@ import uuid
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
-from rest_framework.test import APIClient
+from django.test import override_settings
+from rest_framework.test import APIClient, APITestCase
 
-from apps.inventory.tests.test_inventory_api import MaterialInventoryApiTests
+from apps.inventory.tests import test_inventory_api as inventory_fixture
 from apps.inventory.models import MaterialInbound, MaterialInboundStatus
 from apps.organizations.models import Employee
 from apps.procurement.models import PurchaseReturn, PurchaseReturnLine, Supplier
 
 
-class PurchaseCompletionApiTests(MaterialInventoryApiTests):
+class PurchaseCompletionApiTests(APITestCase):
+    payload = inventory_fixture.MaterialInventoryApiTests.payload
+    confirm_quality = inventory_fixture.MaterialInventoryApiTests.confirm_quality
+    use_general_material = inventory_fixture.MaterialInventoryApiTests.use_general_material
+
+    def setUp(self):
+        inventory_fixture.MaterialInventoryApiTests.setUp(self)
+        # 完成/退货通用流程使用可计小数的配件；管材另由重量专用用例覆盖。
+        self.use_general_material()
+
     def test_return_list_stats_filters_ordering_and_view_only_scope(self):
         first_receipt = self.receive("4.0000")
         self.assertEqual(self.confirm_quality(first_receipt, return_quantity="1.0000").status_code, 200)
@@ -158,8 +168,8 @@ class PurchaseCompletionApiTests(MaterialInventoryApiTests):
         supplier.save()
         detail = self.client.get(f"/api/v1/purchase-returns/{records[1].pk}/").data["data"]
         self.assertEqual(detail["supplier_name"], "第二家供应商")
-        self.assertEqual(detail["lines"][0]["part_name"], "测试钢管")
-        self.assertEqual(detail["lines"][0]["unit"], "支")
+        self.assertEqual(detail["lines"][0]["part_name"], "测试连接件")
+        self.assertEqual(detail["lines"][0]["unit"], "PCS")
         self.assertEqual(detail["lines"][0]["quality_remark"], "检验合格")
         for index, record in enumerate(records):
             self.assertEqual(self.complete_order("已退货").status_code, 409)
@@ -344,3 +354,11 @@ class PurchaseCompletionApiTests(MaterialInventoryApiTests):
         self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         self.assertEqual(self.client.post(return_url, {}, format="json").status_code, 403)
         self.assertEqual(self.client.post(order_url, {}, format="json").status_code, 403)
+
+    @override_settings(MODULE_ACCESS_ENABLED=False)
+    def test_standard_return_action_keeps_legacy_submit_permission(self):
+        self.user.user_permissions.remove(Permission.objects.get(content_type__app_label="procurement", codename="manage_packagingpurchase"))
+        receipt = self.receive()
+        self.assertEqual(self.confirm_quality(receipt, return_quantity="1.0000").status_code, 200)
+        record = PurchaseReturn.objects.get()
+        self.assertEqual(self.advance_return(record, "confirm").status_code, 200)

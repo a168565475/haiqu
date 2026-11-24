@@ -234,6 +234,8 @@ class IdentitySwitchApiTests(IdentitySwitchFixtures, APITestCase):
         self.assertEqual(set(response.data), {"authenticated", "user"})
         self.assertEqual(set(self.client.get("/api/auth/me/").data), {"authenticated", "user"})
 
+    # 本用例验证未启用确认角色策略时，仅字面 admin 可切换的旧规则。
+    @override_settings(CONFIRMED_ROLE_POLICY_ENABLED=False)
     def test_only_exact_active_admin_superuser_can_initiate_or_list(self):
         impostor = get_user_model().objects.create_superuser("other.superuser", "", PASSWORD)
         ordinary_admin = self.make_employee("ORDINARY_ADMIN", "admin.employee")
@@ -639,6 +641,8 @@ class IdentitySwitchApiTests(IdentitySwitchFixtures, APITestCase):
                     self.assertIn(business.status_code, (401, 403), business.content)
                 self.assert_switch_state(self.return_admin(version=version), active=False, can_return=False, user=self.admin)
 
+    # 改名失效属于旧策略语义；确认角色策略的行为由独立测试覆盖。
+    @override_settings(CONFIRMED_ROLE_POLICY_ENABLED=False)
     def test_original_admin_invalidation_forbids_return(self):
         original_password = self.admin.password
         for case in ("inactive", "demoted", "renamed", "password", "root-deleted", "root-expired"):

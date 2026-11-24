@@ -21,8 +21,7 @@ const props = defineProps<{
   scope: MaterialScope
   parentId?: string
   options: AttributeOption[]
-  availableUnits: { id: string; unit_name: string }[]
-  publicOptions?: string[]
+  availableUnits?: { id: string; unit_name: string }[]
   parentOptions?: string[]
   readonly: boolean
   disabled: boolean
@@ -58,8 +57,11 @@ function setInput(key: number, element: Element | ComponentPublicInstance | null
   else inputs.delete(key)
 }
 function optionsForEditor(editor: EditorEntry) {
+  if (props.kind === 'unit' && props.availableUnits) {
+    return props.availableUnits.map(unit => ({ value: unit.unit_name, label: unit.unit_name }))
+  }
   const values = editor.optionId && !props.options.some(option => option.id === editor.optionId)
-    ? props.parentOptions : props.publicOptions
+    ? props.parentOptions : props.options.map(option => option.label)
   return (values ?? []).map(value => ({ value, label: value }))
 }
 async function focusEditor(key: number) {

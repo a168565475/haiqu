@@ -56,6 +56,41 @@ class PlanApiFixture(TubeApiFixture):
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class PlanOrdersApiTests(PlanApiFixture, APITestCase):
+    def test_demand_plan_loads_and_saves_without_selecting_stock_source(self):
+        from apps.inventory.models import RecordStatus, WarehouseZone
+        WarehouseZone.objects.update(status=RecordStatus.DISABLED)
+        WorkReportLine.objects.all().delete()
+        response = self.client.get(BASE + 'source-context/', {
+            'schedule_product_id': str(self.schedule_product.pk), 'is_plan': 'true', 'category': 'tube'},
+            HTTP_HOST='localhost')
+        self.assertEqual(response.status_code, 200, response.data)
+        context = response.data['data']
+        self.assertTrue(context['ready'], context['blockers'])
+        self.assertEqual(context['source_kind'], 'METAL')
+        self.assertIsNone(context['zone_id'])
+        payload = {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
+            'source_revision': context['source_revision'], 'schedule_product_id': str(self.schedule_product.pk),
+            'source_kind': context['source_kind'], 'zone_id': None,
+            'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
+            'lines': [{'component_identity': self.component, 'quantity': '8000',
+                'factory_id': str(self.factory.pk), 'unit_price': '1.25'}]}
+        movements = PublicStockMovement.objects.count()
+        first = self.post_order(payload).data['data']
+        replay = self.client.post(BASE, payload, format='json', HTTP_HOST='localhost')
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(first['id'], replay.data['data']['id'])
+        self.assertEqual(PublicStockMovement.objects.count(), movements)
+        self.assertEqual(tube_raw_reserved_quantities([(self.product_line.pk, self.component)]), {})
+        self.assertIsNone(TubeOutsourcingOrder.objects.get(pk=first['id']).zone_id)
+
+    def test_actual_source_query_still_requires_source_and_rejects_plan_category(self):
+        base = {'schedule_product_id': str(self.schedule_product.pk)}
+        for extra in ({}, {'category': 'tube'}, {'category': 'tube', 'is_plan': 'true',
+                'zone_id': str(self.raw_zone.pk)}):
+            with self.subTest(extra=extra):
+                response = self.client.get(BASE + 'source-context/', {**base, **extra}, HTTP_HOST='localhost')
+                self.assertEqual(response.status_code, 400, response.data)
+
     def test_plan_quantity_overrides_bom_without_reports_or_stock_reservation(self):
         WorkReportLine.objects.all().delete()
         movements = PublicStockMovement.objects.count()
@@ -99,11 +134,46 @@ class PlanOrdersApiTests(PlanApiFixture, APITestCase):
         order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='100'))
         self.assertEqual(order['plan_summary']['dispatched_quantity'], '300')
 
-    def test_receipt_cannot_exceed_actual_dispatch_or_use_foreign_component(self):
+    def test_receipt_above_dispatch_and_target_keeps_actual_stock_and_can_continue(self):
+        order = self.plan(quantity='1000')
+        order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='1000'))
+        payload = self.receipt_payload(order, '10001')
+        received = self.write_plan(order, 'receipt', payload)
+        replay = self.write_plan(order, 'receipt', payload)
+        self.assertEqual(received['version'], replay['version'])
+        self.assertEqual(received['plan_summary']['received_quantity'], '10001')
+        self.assertEqual(received['status'], 'COMPLETED')
+        self.assertEqual(TubePlanReceipt.objects.count(), 1)
+        movement = PublicStockMovement.objects.get(source_type='TUBE_OUTSOURCING_RETURN')
+        self.assertEqual(movement.quantity, 10001)
+        self.assertEqual(movement.after_quantity - movement.before_quantity, 10001)
+        preview = self.client.get(BASE + received['id'] + '/receipt-preview/', HTTP_HOST='localhost')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertTrue(preview.data['data']['can_receive'])
+        listing = self.client.get('/api/v1/unified-outsourcing-orders/', {'warehouse_stage': 'all'}, HTTP_HOST='localhost')
+        self.assertEqual(listing.status_code, 200, listing.data)
+        row = next(row for row in listing.data['data'] if row['id'] == order['id'])
+        self.assertIn('return', row['warehouse_actions'])
+        continued = self.write_plan(received, 'receipt', self.receipt_payload(received, '1'))
+        self.assertEqual(continued['plan_summary']['received_quantity'], '10002')
+        self.assertEqual(TubePlanReceipt.objects.count(), 2)
+
+    def test_receipt_without_dispatch_has_no_quantity_gate(self):
         order = self.plan()
-        self.write_plan(order, 'receipt', self.receipt_payload(order, '1'), expected=400)
+        listing = self.client.get('/api/v1/unified-outsourcing-orders/', {'warehouse_stage': 'all'}, HTTP_HOST='localhost')
+        self.assertEqual(listing.status_code, 200, listing.data)
+        row = next(row for row in listing.data['data'] if row['id'] == order['id'])
+        self.assertIn('return', row['warehouse_actions'])
+        preview = self.client.get(BASE + order['id'] + '/receipt-preview/', HTTP_HOST='localhost')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertTrue(preview.data['data']['can_receive'])
+        received = self.write_plan(order, 'receipt', self.receipt_payload(order, '1'))
+        self.assertEqual(received['plan_summary']['dispatched_quantity'], '0')
+        self.assertEqual(received['plan_summary']['received_quantity'], '1')
+
+    def test_receipt_and_dispatch_cannot_use_foreign_component(self):
+        order = self.plan()
         order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='100'))
-        self.write_plan(order, 'receipt', self.receipt_payload(order, '101'), expected=400)
         foreign = self.receipt_payload(order, '10')
         foreign['lines'][0]['order_line_id'] = str(uuid.uuid4())
         self.write_plan(order, 'receipt', foreign, expected=400)

@@ -1,4 +1,3 @@
-import csv
 import json
 import uuid
 from pathlib import Path
@@ -8,7 +7,6 @@ from django.db import IntegrityError
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
-from django.http import HttpResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -40,7 +38,6 @@ from ..models import (
     SampleItem,
     SampleRequest,
     SampleRequestStatus,
-    SampleShipment,
     SampleShippingMethod,
     SampleTolerance,
     SampleType,
@@ -48,32 +45,23 @@ from ..models import (
 from ..form_selectors import resolve_form_source
 from ..procurement_status import PROCUREMENT_IN_PROGRESS, ordered_sample_ids
 from ..form_services import create_sample_form, update_sample_form
-from ..selectors import accessible_sample_requests, sample_requests_with_context, shipments_with_context
+from ..selectors import accessible_sample_requests, sample_requests_with_context
 from ..services import (
-    bulk_remind_sample_requests,
-    bulk_transfer_sample_requests,
     confirm_sample_finance,
     create_fee_record,
     decide_fee_waiver_approval,
     create_feedback,
     create_requotation_from_feedback,
-    create_sample_item,
     create_sample_from_inquiry,
     create_sample_from_quotation_version,
     create_sample_request,
-    create_shipment,
     delete_sample_parameter_image,
     delete_sample_item,
-    deliver_sample,
     link_sample_file,
-    mark_shipment_exception,
-    record_shipment_progress,
-    ship_sample,
     approve_sample_pmc,
     transition_sample_request,
     upload_sample_parameters,
     update_sample_item,
-    update_sample_request,
 )
 from ..uploads import (
     cleanup_sample_files,
@@ -93,8 +81,6 @@ from .serializers import (
     SampleActionSerializer,
     SampleApprovalDecisionSerializer,
     SampleApprovalLinkSerializer,
-    SampleBulkReminderSerializer,
-    SampleBulkTransferSerializer,
     SampleFeeRecordCreateSerializer,
     SampleFeeRecordSerializer,
     SampleFeedbackCreateSerializer,
@@ -111,12 +97,7 @@ from .serializers import (
     SampleFromQuotationCreateSerializer,
     SampleRequestCreateSerializer,
     SampleRequestDetailSerializer,
-    SampleRequestListSerializer,
-    SampleRequestUpdateSerializer,
-    SampleShipmentCreateSerializer,
-    SampleShipmentProgressSerializer,
-    SampleShipmentSerializer,
-    SampleShipSerializer,
+    SampleRequestListSummarySerializer,
     SampleWorkflowActionSerializer,
 )
 
@@ -173,17 +154,12 @@ class SampleRequestViewSet(
         "destroy": "samples.delete_samplerequest",
         "create_from_inquiry": "samples.add_samplerequest",
         "create_from_quotation": "samples.add_samplerequest",
-        "partial_update": "samples.change_samplerequest",
         "items.GET": "samples.view_sampleitem",
-        "items.POST": "samples.add_sampleitem",
         "submit": "samples.change_samplerequest",
-        "start_preparing": "samples.change_samplerequest",
         "fee_records.GET": "samples.view_samplefeerecord",
         "fee_records.POST": "samples.decide_sample_fee",
         "fee_approval_approve": "samples.change_samplefeerecord",
         "fee_approval_reject": "samples.change_samplefeerecord",
-        "shipments.GET": "samples.view_sampleshipment",
-        "shipments.POST": "samples.add_sampleshipment",
         "feedback.GET": "samples.view_samplefeedback",
         "feedback.POST": "samples.add_samplefeedback",
         "requotation_options": "samples.view_samplefeedback",
@@ -207,9 +183,6 @@ class SampleRequestViewSet(
         "form_options": "samples.view_samplerequest",
         "form_context": "samples.add_samplerequest",
         "form": "samples.view_samplerequest",
-        "export": "samples.view_samplerequest",
-        "bulk_transfer": "samples.change_samplerequest",
-        "bulk_remind": "workflow.add_businesstask",
     }
 
     def get_queryset(self):
@@ -228,7 +201,7 @@ class SampleRequestViewSet(
         elif module_policy.enabled() and self.action == 'production_report':
             queryset = module_policy.reportable_samples(self.request)
         else:
-            permission = 'view_samplerequest' if module_policy.enabled() and self.action in {'tasks', 'bulk_remind'} else self.action_permission_codename('view_samplerequest')
+            permission = 'view_samplerequest' if module_policy.enabled() and self.action == 'tasks' else self.action_permission_codename('view_samplerequest')
             queryset = accessible_sample_requests(self.request, permission)
         if self.request.method not in SAFE_METHODS:
             queryset = queryset.filter(
@@ -238,7 +211,7 @@ class SampleRequestViewSet(
         elif self.request.query_params.get("archived", "false").lower() != "all":
             archived = self.request.query_params.get("archived", "false").lower()
             queryset = queryset.filter(archived_at__isnull=archived != "true")
-        return sample_requests_with_context(queryset)
+        return sample_requests_with_context(queryset, list_mode=self.action == "list")
 
     def destroy(self, request, *args, **kwargs):
         sample_request = self.get_object()
@@ -247,11 +220,9 @@ class SampleRequestViewSet(
 
     def get_serializer_class(self):
         if self.action == "list":
-            return SampleRequestListSerializer
+            return SampleRequestListSummarySerializer
         if self.action == "create":
             return SampleRequestCreateSerializer
-        if self.action == "partial_update":
-            return SampleRequestUpdateSerializer
         return SampleRequestDetailSerializer
 
     @staticmethod
@@ -497,28 +468,6 @@ class SampleRequestViewSet(
         sample_request = self.get_object()
         return self.response_with_etag({"data": self.get_serializer(sample_request).data}, sample_request)
 
-    def partial_update(self, request, *args, **kwargs):
-        sample_request = self.get_object()
-        require_matching_etag(request, sample_request)
-        serializer = self.get_serializer(sample_request, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        try:
-            sample_request = update_sample_request(
-                sample_request=sample_request,
-                validated_data=serializer.validated_data,
-                actor_employee=self.actor_employee(),
-                request=request,
-            )
-        except IntegrityError as exc:
-            self.raise_integrity_validation_error(exc)
-        sample_request = sample_requests_with_context(
-            SampleRequest.objects.filter(pk=sample_request.pk)
-        ).get()
-        return self.response_with_etag(
-            {"data": SampleRequestDetailSerializer(sample_request, context=self.get_serializer_context()).data},
-            sample_request,
-        )
-
     @action(detail=False, methods=["get"])
     def summary(self, request):
         queryset = self.filter_queryset(self.get_queryset())
@@ -550,8 +499,28 @@ class SampleRequestViewSet(
             }
         )
 
+    @extend_schema(parameters=[OpenApiParameter(
+        name="scope", type=OpenApiTypes.STR, enum=["full", "filters"],
+        description="full 返回完整操作选项；filters 仅返回列表类型、状态和业务员筛选。",
+    )])
     @action(detail=False, methods=["get"])
     def options(self, request):
+        scope = request.query_params.get("scope", "full")
+        if scope not in {"full", "filters"}:
+            raise ValidationError({"scope": "仅支持 full 或 filters。"})
+        if scope == "filters":
+            owners = employee_filter_choices(
+                active_department_employees("DEPT_BUSINESS"), self.get_queryset().values("owner_employee_id"),
+            )
+            return Response({"data": {
+                "sample_types": [{"value": value, "label": label} for value, label in SampleType.choices],
+                "statuses": [
+                    {"value": value, "label": '等待采购' if value == SampleRequestStatus.PROCUREMENT_PENDING else label}
+                    for value, label in SampleRequestStatus.choices
+                    if value not in {SampleRequestStatus.FEEDBACK_PENDING, SampleRequestStatus.COMPLETED}
+                ] + [{"value": PROCUREMENT_IN_PROGRESS, "label": "采购中"}],
+                "owner_filters": list(owners.values("id", "display_name")),
+            }})
         customers = accessible_customers(request, "add_samplerequest").filter(archived_at__isnull=True)
         return Response(
             {
@@ -689,82 +658,6 @@ class SampleRequestViewSet(
             {"data": resolve_form_source(request=request, source_type=source_type, source_id=source_uuid)}
         )
 
-    @action(detail=False, methods=["get"])
-    def export(self, request):
-        queryset = self.filter_queryset(self.get_queryset())
-        if queryset.count() > 5000:
-            raise ValidationError({"detail": "单次最多导出 5000 条，请缩小筛选范围后重试。"})
-        rows = SampleRequestListSerializer(queryset[:5000], many=True).data
-        response = HttpResponse(content_type="text/csv; charset=utf-8")
-        response.write("\ufeff")
-        writer = csv.writer(response)
-        writer.writerow(["样品编号", "客户", "类型", "样品明细", "费用", "物流", "业务员", "申请时间", "状态"])
-
-        def safe_csv(value):
-            text = "" if value is None else str(value)
-            return f"'{text}" if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
-
-        for row in rows:
-            fee = row.get("current_fee") or {}
-            shipment = row.get("latest_shipment") or {}
-            writer.writerow(
-                [
-                    safe_csv(value)
-                    for value in [
-                        row["request_number"], row["customer_name"], row["sample_type_display"],
-                        (row.get("item_summary") or {}).get("text", ""),
-                        f"{fee.get('currency_code', '')} {fee.get('amount', '')}".strip(),
-                        shipment.get("tracking_number") or shipment.get("status_display", ""),
-                        (row.get("owner") or {}).get("display_name", ""), row["requested_at"], row["status_display"],
-                    ]
-                ]
-            )
-        response["Content-Disposition"] = 'attachment; filename="samples.csv"'
-        return response
-
-    @action(detail=False, methods=["post"], url_path="bulk-transfer")
-    def bulk_transfer(self, request):
-        serializer = SampleBulkTransferSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        sample_ids = serializer.validated_data["sample_ids"]
-        samples = accessible_sample_requests(request, "change_samplerequest").filter(
-            pk__in=sample_ids,
-            archived_at__isnull=True,
-            customer_account__archived_at__isnull=True,
-        )
-        if samples.count() != len(set(sample_ids)):
-            raise ValidationError({"sample_ids": "部分样品不存在、已归档或无权修改。"})
-        updated = bulk_transfer_sample_requests(
-            sample_ids=sample_ids,
-            etags=serializer.validated_data["etags"],
-            owner_employee=serializer.validated_data["owner_employee"],
-            note=serializer.validated_data["note"],
-            actor_employee=self.actor_employee(),
-            request=request,
-        )
-        return Response({"data": {"updated_count": len(updated)}})
-
-    @action(detail=False, methods=["post"], url_path="bulk-remind")
-    def bulk_remind(self, request):
-        serializer = SampleBulkReminderSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        sample_ids = serializer.validated_data["sample_ids"]
-        samples = accessible_sample_requests(request, "change_samplerequest").filter(
-            pk__in=sample_ids,
-            archived_at__isnull=True,
-            customer_account__archived_at__isnull=True,
-        )
-        if samples.count() != len(set(sample_ids)):
-            raise ValidationError({"sample_ids": "部分样品不存在、已归档或无权访问。"})
-        task_ids = bulk_remind_sample_requests(
-            sample_ids=sample_ids,
-            etags=serializer.validated_data["etags"],
-            note=serializer.validated_data.get("note", ""),
-            actor_employee=self.actor_employee(),
-            request=request,
-        )
-        return Response({"data": {"task_count": len(task_ids), "task_ids": [str(task_id) for task_id in task_ids]}})
-
     def _transition(self, request, action_name, serializer_class=SampleActionSerializer):
         sample_request = self.get_object()
         require_matching_etag(request, sample_request)
@@ -789,11 +682,6 @@ class SampleRequestViewSet(
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
         return self._transition(request, "SUBMITTED")
-
-    @extend_schema(request=SampleActionSerializer, responses=SampleRequestDetailSerializer)
-    @action(detail=True, methods=["post"], url_path="start-preparing")
-    def start_preparing(self, request, pk=None):
-        return self._transition(request, "PREPARING_STARTED")
 
     @extend_schema(request=SampleActionSerializer, responses=SampleRequestDetailSerializer)
     @action(detail=True, methods=["post"])
@@ -931,32 +819,13 @@ class SampleRequestViewSet(
         )
         return self._form_response(sample_request)
 
-    @extend_schema(methods=["GET"], responses=SampleItemSerializer(many=True))
-    @extend_schema(methods=["POST"], request=SampleItemSerializer, responses=SampleItemSerializer)
-    @action(detail=True, methods=["get", "post"])
+    @extend_schema(responses=SampleItemSerializer(many=True))
+    @action(detail=True, methods=["get"])
     def items(self, request, pk=None):
         sample_request = self.get_object()
-        if request.method == "GET":
-            return self.response_with_etag(
-                {"data": SampleItemSerializer(sample_request.items.all(), many=True).data},
-                sample_request,
-            )
-        require_matching_etag(request, sample_request)
-        serializer = SampleItemSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            item, sample_request = create_sample_item(
-                sample_request=sample_request,
-                validated_data=serializer.validated_data,
-                actor_employee=self.actor_employee(),
-                request=request,
-            )
-        except IntegrityError as exc:
-            self.raise_integrity_validation_error(exc)
         return self.response_with_etag(
-            {"data": SampleItemSerializer(item).data},
+            {"data": SampleItemSerializer(sample_request.items.all(), many=True).data},
             sample_request,
-            status.HTTP_201_CREATED,
         )
 
     @extend_schema(methods=["GET"], responses=SampleFeeRecordSerializer(many=True))
@@ -1023,44 +892,6 @@ class SampleRequestViewSet(
     @action(detail=True, methods=["post"], url_path="fee-approval/reject")
     def fee_approval_reject(self, request, pk=None):
         return self._decide_fee_approval(request, pk, False)
-
-    @extend_schema(methods=["GET"], responses=SampleShipmentSerializer(many=True))
-    @extend_schema(
-        methods=["POST"],
-        request=SampleShipmentCreateSerializer,
-        responses=SampleShipmentSerializer,
-    )
-    @action(detail=True, methods=["get", "post"])
-    def shipments(self, request, pk=None):
-        sample_request = self.get_object()
-        if request.method == "GET":
-            return self.response_with_etag(
-                {"data": SampleShipmentSerializer(sample_request.shipments.all(), many=True).data},
-                sample_request,
-            )
-        require_matching_etag(request, sample_request)
-        serializer = SampleShipmentCreateSerializer(
-            data=request.data,
-            context={**self.get_serializer_context(), "sample_request": sample_request},
-        )
-        serializer.is_valid(raise_exception=True)
-        try:
-            shipment, sample_request = create_shipment(
-                sample_request=sample_request,
-                actor_employee=self.actor_employee(),
-                request=request,
-                **serializer.validated_data,
-            )
-        except IntegrityError as exc:
-            self.raise_integrity_validation_error(exc)
-        shipment = shipments_with_context(SampleShipment.objects.filter(pk=shipment.pk)).get()
-        response = self.response_with_etag(
-            {"data": SampleShipmentSerializer(shipment).data},
-            shipment,
-            status.HTTP_201_CREATED,
-        )
-        response["Sample-Request-ETag"] = etag_for_instance(sample_request)
-        return response
 
     @extend_schema(methods=["GET"], responses=SampleFeedbackSerializer(many=True))
     @extend_schema(
@@ -1379,110 +1210,4 @@ class SampleItemViewSet(
         )
         response = Response(status=status.HTTP_204_NO_CONTENT)
         response["ETag"] = etag_for_instance(sample_request)
-        return response
-
-
-class SampleShipmentViewSet(mixins.RetrieveModelMixin, CustomerApiViewSetBase):
-    http_method_names = ["get", "post", "options"]
-    serializer_class = SampleShipmentSerializer
-    action_permission_map = {
-        "retrieve": "samples.view_sampleshipment",
-        "ship": "samples.ship_sample",
-        "deliver": "samples.change_sampleshipment",
-        "exception": "samples.change_sampleshipment",
-        "progress": "samples.change_sampleshipment",
-    }
-
-    def get_queryset(self):
-        permission_name = {
-            "retrieve": "view_sampleshipment",
-            "ship": "ship_sample",
-        }.get(self.action, "change_sampleshipment")
-        permission = self.action_permission_codename(permission_name)
-        requests = accessible_sample_requests(self.request, permission).filter(
-            archived_at__isnull=True,
-            customer_account__archived_at__isnull=True,
-        )
-        return shipments_with_context(SampleShipment.objects.filter(sample_request__in=requests))
-
-    def retrieve(self, request, *args, **kwargs):
-        shipment = self.get_object()
-        return self.response_with_etag({"data": SampleShipmentSerializer(shipment).data}, shipment)
-
-    @extend_schema(request=SampleShipSerializer, responses=SampleShipmentSerializer)
-    @action(detail=True, methods=["post"])
-    def ship(self, request, pk=None):
-        shipment = self.get_object()
-        require_matching_etag(request, shipment)
-        serializer = SampleShipSerializer(
-            data=request.data,
-            context={**self.get_serializer_context(), "shipment": shipment},
-        )
-        serializer.is_valid(raise_exception=True)
-        try:
-            shipment, sample_request = ship_sample(
-                shipment=shipment,
-                validated_data=serializer.validated_data,
-                actor_employee=self.actor_employee(),
-                request=request,
-            )
-        except IntegrityError as exc:
-            self.raise_integrity_validation_error(exc)
-        shipment = shipments_with_context(SampleShipment.objects.filter(pk=shipment.pk)).get()
-        response = self.response_with_etag({"data": SampleShipmentSerializer(shipment).data}, shipment)
-        response["Sample-Request-ETag"] = etag_for_instance(sample_request)
-        return response
-
-    @extend_schema(request=SampleActionSerializer, responses=SampleShipmentSerializer)
-    @action(detail=True, methods=["post"])
-    def deliver(self, request, pk=None):
-        shipment = self.get_object()
-        require_matching_etag(request, shipment)
-        serializer = SampleActionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        shipment, sample_request = deliver_sample(
-            shipment=shipment,
-            note=serializer.validated_data.get("note", ""),
-            actor_employee=self.actor_employee(),
-            request=request,
-        )
-        shipment = shipments_with_context(SampleShipment.objects.filter(pk=shipment.pk)).get()
-        response = self.response_with_etag({"data": SampleShipmentSerializer(shipment).data}, shipment)
-        response["Sample-Request-ETag"] = etag_for_instance(sample_request)
-        return response
-
-    @extend_schema(request=SampleReasonSerializer, responses=SampleShipmentSerializer)
-    @action(detail=True, methods=["post"])
-    def exception(self, request, pk=None):
-        shipment = self.get_object()
-        require_matching_etag(request, shipment)
-        serializer = SampleReasonSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        shipment, sample_request = mark_shipment_exception(
-            shipment=shipment,
-            note=serializer.validated_data["reason"],
-            actor_employee=self.actor_employee(),
-            request=request,
-        )
-        shipment = shipments_with_context(SampleShipment.objects.filter(pk=shipment.pk)).get()
-        response = self.response_with_etag({"data": SampleShipmentSerializer(shipment).data}, shipment)
-        response["Sample-Request-ETag"] = etag_for_instance(sample_request)
-        return response
-
-    @extend_schema(request=SampleShipmentProgressSerializer, responses=SampleShipmentSerializer)
-    @action(detail=True, methods=["post"])
-    def progress(self, request, pk=None):
-        shipment = self.get_object()
-        require_matching_etag(request, shipment)
-        serializer = SampleShipmentProgressSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        shipment, sample_request = record_shipment_progress(
-            shipment=shipment,
-            validated_data=serializer.validated_data,
-            actor_employee=self.actor_employee(),
-            request=request,
-        )
-        shipment = shipments_with_context(SampleShipment.objects.filter(pk=shipment.pk)).get()
-        response = self.response_with_etag({"data": SampleShipmentSerializer(shipment).data}, shipment)
-        response["Sample-Request-ETag"] = etag_for_instance(sample_request)
         return response

@@ -77,6 +77,7 @@ def links_for_permission(queryset, request, permission):
             return queryset.none()
         queryset = queryset.filter(
             Q(plan_category=PlanCategory.METAL, schedule_product__in=semi_receipt_products(request, PlanCategory.METAL))
+            | Q(plan_category=PlanCategory.CUTTING, schedule_product__in=semi_receipt_products(request, PlanCategory.CUTTING))
             | Q(plan_category=PlanCategory.SEWING, schedule_product__in=semi_receipt_products(request, PlanCategory.SEWING))
         )
     if permission.startswith("workshop_reporting."):
@@ -218,8 +219,8 @@ def mobile_plan_data(request, keys, *, production_date=None, include_people=Fals
         elif task.status != 'IN_PRODUCTION':
             finished_receipt_reason = "只有生产中的订单产品可以办理成品入库。"
         semi_receipt_reason = ""
-        if category not in {PlanCategory.METAL, PlanCategory.SEWING}:
-            semi_receipt_reason = "只有金工、车缝计划可以办理半成品入库。"
+        if category not in {PlanCategory.METAL, PlanCategory.CUTTING, PlanCategory.SEWING}:
+            semi_receipt_reason = "只有金工、裁剪、车缝计划可以办理半成品入库。"
         elif not any(link.pk in permission_ids[SEMI_RECEIPT_ADD] for link in group):
             semi_receipt_reason = "当前账号没有该计划的半成品入库查看和提交权限。"
         elif task.status != 'IN_PRODUCTION':

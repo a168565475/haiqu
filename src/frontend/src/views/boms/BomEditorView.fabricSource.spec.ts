@@ -63,6 +63,24 @@ beforeEach(() => {
 })
 
 describe('BOM 面料保存时自动关联原料', () => {
+  it('裁片编辑草稿已有空属性对象时可继承来源属性，不修改来源快照', async () => {
+    const { wrapper, vm, fabric } = await open()
+    try {
+      const selection = { catalog_version: 'v1', scope: 'BASE' as const, processing_state: 'RAW' as const,
+        attributes: { material: '涤纶', width: '1.6', color: '蓝色', fabric_spec: '600D' } }
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'fabric-a', part_name: '网布', specification: '600D / 1.6', material_selection: selection })
+      const line = { ...vm.blankLine('套'), fabric_source_line_id: 'fabric-a',
+        material_selection: { catalog_version: 'v1', scope: 'BASE' as const, processing_state: 'PROCESSED' as const, attributes: {} } }
+
+      vm.syncCuttingSourceAttributes(line)
+
+      expect(line).toMatchObject({ material: '涤纶', fabric_width: '1.6', cutting_color: '蓝色', specification: '600D / 1.6' })
+      expect(line.material_selection).toMatchObject({ attributes: { material: '涤纶', width: '1.6', color: '蓝色', specification: '600D' } })
+      expect(selection.attributes).toEqual({ material: '涤纶', width: '1.6', color: '蓝色', fabric_spec: '600D' })
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+
   it('新目录裁片继承来源材质门幅颜色规格，切换或修改面料后同步，不保留独立加工属性', async () => {
     const { wrapper, vm, fabric } = await open()
     try {

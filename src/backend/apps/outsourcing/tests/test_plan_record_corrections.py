@@ -135,14 +135,16 @@ class PlanRecordCorrectionTests(CorrectionApiMixin, PlanApiFixture, APITestCase)
         self.assertEqual(response.status_code, 404)
         self.assertFalse(TubePlanRecordCorrection.objects.exists())
 
-    def test_dispatch_reduction_checks_component_receipt_but_not_batch_pairing(self):
+    def test_dispatch_reduction_and_void_do_not_limit_existing_receipts(self):
         order = self.dispatched()
         order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='100'))
         order = self.write_plan(order, 'receipt', self.receipt_payload(order, '150'))
-        self.correct(order, self.correction_payload(order, operation='DELETE'), expected=400)
-        changed = self.correct(order, self.correction_payload(order, quantity=50))
-        self.assertEqual(changed['plan_summary']['dispatched_quantity'], '150')
+        changed = self.correct(order, self.correction_payload(order, quantity=40))
+        self.assertEqual(changed['plan_summary']['dispatched_quantity'], '140')
         self.assertEqual(changed['plan_summary']['received_quantity'], '150')
+        deleted = self.correct(changed, self.correction_payload(changed, operation='DELETE'))
+        self.assertEqual(deleted['plan_summary']['dispatched_quantity'], '100')
+        self.assertEqual(deleted['plan_summary']['received_quantity'], '150')
 
     def test_raw_increase_decrease_delete_preserves_original_roots_meters_and_requirement(self):
         order = self.dispatched('RAW_PIPE', '20')
@@ -210,14 +212,21 @@ class PlanRecordCorrectionTests(CorrectionApiMixin, PlanApiFixture, APITestCase)
         self.assertTrue(PublicStockMovement.objects.filter(pk=original.pk).exists())
         self.assertEqual(PublicStockMovement.objects.filter(source_type=RECEIPT_SOURCE).count(), 2)
 
-    def test_receipt_increase_repeated_corrections_and_dispatch_limit(self):
+    def test_receipt_increase_above_dispatch_and_target_preserves_stock_and_replay(self):
         order = self.dispatched()
         order = self.write_plan(order, 'receipt', self.receipt_payload(order, '80'))
         changed = self.correct(order, self.correction_payload(order, 'RECEIPT', quantity=100))
         changed = self.correct(changed, self.correction_payload(changed, 'RECEIPT', quantity=90))
         self.assertEqual(changed['plan_summary']['received_quantity'], '90')
-        self.correct(changed, self.correction_payload(changed, 'RECEIPT', quantity=101), expected=400)
-        self.assertEqual(TubePlanRecordCorrection.objects.count(), 2)
+        payload = self.correction_payload(changed, 'RECEIPT', quantity=10001)
+        increased = self.correct(changed, payload)
+        replay = self.correct(changed, payload)
+        self.assertEqual(increased['record_correction'], replay['record_correction'])
+        self.assertEqual(increased['plan_summary']['received_quantity'], '10001')
+        original = PublicStockMovement.objects.get(source_type='TUBE_OUTSOURCING_RETURN')
+        original.balance.refresh_from_db()
+        self.assertEqual(original.balance.quantity, 10001)
+        self.assertEqual(TubePlanRecordCorrection.objects.count(), 3)
 
     def test_receipt_reduction_protects_pending_ordinary_public_issue(self):
         order = self.dispatched()

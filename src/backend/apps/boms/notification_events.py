@@ -9,10 +9,12 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
-from .models import Bom, BomStatus
+from .models import Bom, BomLine, BomStatus
 
 
 EVENT_CODE = "PRODUCTION_TASK_BOMS_CONFIRMED"
+PACKAGING_EVENT_CODE = "PACKAGING_BOMS_CONFIRMED"
+TASK_BOM_EVENTS = (EVENT_CODE, PACKAGING_EVENT_CODE)
 SNAPSHOT_FIELDS = {"product_line_id", "product_quantity", "bom_id", "version_number", "confirmed_at"}
 
 
@@ -54,6 +56,16 @@ def snapshot_version(snapshot):
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def task_bom_purchase_scopes(snapshot):
+    from apps.procurement.models import PurchaseScope
+    from apps.procurement.purchase_scope import is_packaging_bom_line
+    from apps.procurement.services import _is_purchasable_bom_section
+
+    lines = BomLine.objects.filter(section__bom_id__in=[row["bom_id"] for row in snapshot]).select_related("section")
+    return {PurchaseScope.PACKAGING if is_packaging_bom_line(line) else PurchaseScope.STANDARD
+            for line in lines if line.purchase_required and _is_purchasable_bom_section(line.section)}
+
+
 def current_task_bom_snapshot(task_id):
     if not ProductionTask.objects.filter(pk=task_id, archived_at__isnull=True).exists():
         return None
@@ -85,7 +97,7 @@ def expire_task_bom_events(task_id, *, force=False):
     from apps.wecom.models import NotificationEvent
 
     ProductionTask.objects.select_for_update().get(pk=task_id)
-    events = NotificationEvent.objects.filter(event_code=EVENT_CODE, object_id=str(task_id), status="CREATED")
+    events = NotificationEvent.objects.filter(event_code__in=TASK_BOM_EVENTS, object_id=str(task_id), status="CREATED")
     snapshot = current_task_bom_snapshot(task_id)
     if snapshot is not None and not force:
         events = events.exclude(object_version=snapshot_version(snapshot))
@@ -94,7 +106,9 @@ def expire_task_bom_events(task_id, *, force=False):
 
 @transaction.atomic
 def register_task_boms_confirmed(*, task_id, actor_employee, confirmed_at):
+    from apps.procurement.models import PurchaseScope
     from apps.wecom.models import NotificationEvent
+    from apps.wecom.notification_role_policy import enabled
     from apps.wecom.notification_services import register_business_event
 
     task = ProductionTask.objects.select_for_update().get(pk=task_id)
@@ -108,11 +122,13 @@ def register_task_boms_confirmed(*, task_id, actor_employee, confirmed_at):
     if existing is not None:
         return existing
     expire_task_bom_events(task_id)
-    return register_business_event(
-        event_code=EVENT_CODE, idempotency_key=key, object_type="production_tasks.ProductionTask",
-        actor_employee=actor_employee,
-        object_id=task.pk, object_version=version,
-        context={"document_no": task.task_number, "product_count": len(snapshot),
-                 "operator": actor_employee.display_name, "occurred_at": confirmed_at.isoformat(),
-                 "bom_versions": snapshot},
-    )
+    facts = {"actor_employee": actor_employee, "object_type": "production_tasks.ProductionTask",
+             "object_id": task.pk, "object_version": version,
+             "context": {"document_no": task.task_number, "product_count": len(snapshot),
+                         "operator": actor_employee.display_name, "occurred_at": confirmed_at.isoformat(),
+                         "bom_versions": snapshot}}
+    standard = register_business_event(event_code=EVENT_CODE, idempotency_key=key, **facts)
+    if enabled() and PurchaseScope.PACKAGING in task_bom_purchase_scopes(snapshot):
+        register_business_event(event_code=PACKAGING_EVENT_CODE,
+                                idempotency_key=f"{PACKAGING_EVENT_CODE}:{task.pk}:{version}", **facts)
+    return standard

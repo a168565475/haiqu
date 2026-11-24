@@ -18,13 +18,3 @@ def require_actor(request):
                                 (IMPORT_PERMISSION, 'production_tasks.add_productiontask')):
         raise PermissionDenied('需要有效员工身份、生产任务新增及导入权限。')
     return actor
-
-
-def worker_allowed(actor):
-    if not actor.user_id:
-        return False
-    try:
-        require_actor(SimpleNamespace(user=actor.user))
-    except PermissionDenied:
-        return False
-    return True

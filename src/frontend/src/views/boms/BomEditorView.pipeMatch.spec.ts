@@ -1,8 +1,9 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElSelect } from 'element-plus'
+import ElementPlus from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/boms'
-import PinyinFilterSelect from '@/components/production/PinyinFilterSelect.vue'
+import * as catalogApi from '@/api/materialCatalog'
+import MaterialSelectionPanel from '@/components/products/MaterialSelectionPanel.vue'
 import type { BomLineInput, BomSectionInput } from '@/types/bom'
 import type { MaterialSelectionInput } from '@/types/materialCatalog'
 import BomEditorView from './BomEditorView.vue'
@@ -11,6 +12,8 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { bomId: 'b1' } }), us
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true, moduleCan: () => true }) }))
 vi.mock('@/api/boms', async original => ({ ...await original<typeof import('@/api/boms')>(), fetchBomForEdit: vi.fn(), fetchBomPipeMaterialMatches: vi.fn(), previewBomTubeCalculation: vi.fn(), previewBomMaterialFlow: vi.fn(), previewBomMaterialSave: vi.fn(), saveBomDraft: vi.fn() }))
 vi.mock('@/api/productionData', async original => ({ ...await original<typeof import('@/api/productionData')>(), fetchAllProductionDataRecords: vi.fn().mockResolvedValue([]) }))
+vi.mock('@/api/materialCatalog', async original => ({ ...await original<typeof import('@/api/materialCatalog')>(),
+  fetchMaterialCatalogOptions: vi.fn(), fetchMaterialCatalogs: vi.fn(), fetchMaterialCatalog: vi.fn(), fetchPublicMaterialOptions: vi.fn() }))
 
 const versioned = { data: { id: 'b1', status: 'PENDING_CONFIRMATION', order_quantity: '1000', current_order_quantity: '1000', product_information_confirmed: true, sections: [], configured_field_labels: {} }, etag: 'v1' }
 interface Editor {
@@ -27,8 +30,9 @@ interface Editor {
   persistDraft: () => Promise<boolean>
   tubeCalculations: (line: BomLineInput) => Record<string, string>
 }
-async function open(values: Partial<BomLineInput> = {}) {
-  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' }, BomLineEditorForm: false } } })
+async function open(values: Partial<BomLineInput> = {}, realPicker = false) {
+  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' }, BomLineEditorForm: false,
+    ...(realPicker ? { MaterialSelectionPanel: false, ElPopover: { template: '<div><slot name="reference"/><slot/></div>' } } : {}) } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
   vm.sections.forEach(section => { section.lines = [] })
@@ -50,6 +54,23 @@ beforeEach(() => {
 })
 
 describe('BOM 管材保存时自动关联原料', () => {
+  it('管材属性保存后通过选料弹层更新同品名草稿版本，保留其他品名、较早版本和历史快照', async () => {
+    const { wrapper, vm, section } = await open()
+    const selection: MaterialSelectionInput = { catalog_version: 'v1', scope: 'BASE', processing_state: 'RAW', attributes: { shape: '圆管' } }
+    const draft = { ...vm.blankLine('根'), material_catalog_id: 'A', material_selection: selection }
+    const snapshot = { ...selection, schema_version: 1 as const, catalog_id: 'A', category_key: 'TUBE', template_key: 'TUBE',
+      name: '管材A', unit_id: 'root', unit_name: '根', processing_stage: 'RAW', display_name: '管材A' }
+    section.lines = [draft, { ...draft, material_selection: { ...selection, catalog_version: 'v0' } },
+      { ...draft, material_catalog_id: 'B', material_selection: { ...selection } },
+      { ...draft, material_selection: undefined, material_selection_snapshot: snapshot }]
+    const picker = wrapper.getComponent(MaterialSelectionPanel)
+    expect(picker.props('canEditCatalogAttributes')).toBe(true)
+    picker.vm.$emit('catalog-attribute-added', 'A', 'v1', 'v2')
+    expect(section.lines.map(line => line.material_selection?.catalog_version)).toEqual(['v2', 'v0', 'v1', undefined])
+    expect(section.lines[3]!.material_selection_snapshot?.catalog_version).toBe('v1')
+    wrapper.unmount()
+  })
+
   it.each(['selection', 'snapshot'] as const)('连续新增管材仅从%s独立继承五项材料属性并清空行身份和用量', async source => {
     const { wrapper, vm, section } = await open()
     try {
@@ -174,31 +195,40 @@ describe('BOM 管材保存时自动关联原料', () => {
       await vm.applyLineDrawer()
       expect(vm.lineDrawerVisible).toBe(false)
       expect(section.lines[0]!.length_value).toBe('720')
-      expect(api.previewBomMaterialFlow).toHaveBeenCalledWith({ kind: 'PIPE', order_quantity: '1000', cutting_length_mm: '720', pieces_per_product: '2', pieces_per_bar: '8' })
+      expect(api.previewBomMaterialFlow).toHaveBeenCalledWith(expect.objectContaining({ kind: 'PIPE', order_quantity: '1000', cutting_length_mm: '720', pieces_per_product: '2', pieces_per_bar: '8', purchase_allowance_mode: 'AUTO' }))
       expect(api.fetchBomPipeMaterialMatches).not.toHaveBeenCalled()
     } finally { wrapper.unmount() }
   })
 
-  it('已关联原料的管材仍能改形状材质规格厚度，旧规格快照不覆盖新输入', async () => {
-    const { wrapper, vm, section } = await open({ id: 'saved-line', source_inventory_material_id: 'saved-source', raw_material: 'OLD', specification: '25×15×1.5mm' })
+  it('旧行显示历史品名及属性，明确重选同名档案后才关联并按该品名选择形状材质规格厚度', async () => {
+    const fields = ['shape', 'material', 'section_size', 'thickness']
+    const row = { id: 'catalog1', name: '后座管', category_key: 'TUBE', template_key: 'TUBE', updated_at: 'v2', spray_enabled: false,
+      units: [{ scope: 'BASE', unit_id: 'root', unit_name: '根' }],
+      values: ['圆管', '不锈钢', '30', '1.8'].map((value, i) => ({ id: fields[i], scope: 'BASE', field_key: fields[i], value, parent_id: i === 2 ? 'shape' : null })) }
+    vi.mocked(catalogApi.fetchMaterialCatalogOptions).mockResolvedValue({ categories: [{ key: 'TUBE', templates: [{ key: 'TUBE', fields: fields.map(key => ({ key, label: key })) }] }] } as never)
+    vi.mocked(catalogApi.fetchMaterialCatalogs).mockResolvedValue({ data: [row], meta: { total_pages: 1 } } as never)
+    vi.mocked(catalogApi.fetchMaterialCatalog).mockResolvedValue({ data: row, etag: 'v2' } as never)
+    const { wrapper, vm, section } = await open({ id: 'saved-line', source_inventory_material_id: 'saved-source', raw_material: 'OLD', specification: '25×15×1.5mm', tube_coating_color: '旧喷塑' }, true)
     try {
-      const shape = wrapper.findAllComponents(PinyinFilterSelect).find(item => item.attributes('aria-label') === '形状')
-      const material = wrapper.findAllComponents(PinyinFilterSelect).find(item => item.attributes('aria-label') === '材质')
-      const diameter = wrapper.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '规格')
-      const thickness = wrapper.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '厚度')
-      expect(shape).toBeDefined()
-      expect(material).toBeDefined()
-      expect(diameter).toBeDefined()
-      expect(thickness).toBeDefined()
-      shape!.vm.$emit('update:modelValue', '圆管')
-      material!.vm.$emit('update:modelValue', '不锈钢')
-      diameter!.vm.$emit('update:modelValue', '30')
-      thickness!.vm.$emit('update:modelValue', '1.8')
+      const picker = wrapper.getComponent(MaterialSelectionPanel)
+      expect(picker.get('.material-name-trigger').text()).toBe('后座管')
+      expect(vm.editingLineDraft.material_catalog_id).toBeFalsy()
+      expect(api.fetchBomPipeMaterialMatches).not.toHaveBeenCalled()
+      expect(catalogApi.fetchMaterialCatalog).not.toHaveBeenCalled()
+      for (const saved of ['矩形', '铁-硬管', '25×15', '1.5', '旧喷塑']) {
+        expect(wrapper.findAll('.drawer-readonly-value').map(value => value.text())).toContain(saved)
+      }
+      await picker.get('.name-option').trigger('click')
+      await flushPromises()
+      for (const value of ['圆管', '不锈钢', '30', '1.8']) {
+        await picker.findAll('.attribute-value').find(item => item.text() === value)!.get('input').setValue(true)
+      }
+      expect(catalogApi.fetchPublicMaterialOptions).not.toHaveBeenCalled()
       await flushPromises()
       expect(vm.editingLineDraft.specification).toBe('')
       expect(section.lines[0]!.tube_thickness).toBe('1.5')
       await vm.applyLineDrawer()
-      expect(section.lines[0]).toMatchObject({ source_inventory_material_id: 'saved-source', tube_shape: '圆管', material: '不锈钢', tube_diameter: '30', tube_thickness: '1.8', specification: '', length_value: '710', tube_cut_piece_count: '8' })
+      expect(section.lines[0]).toMatchObject({ material_catalog_id: 'catalog1', source_inventory_material_id: null, tube_shape: '圆管', material: '不锈钢', tube_diameter: '30', tube_thickness: '1.8', specification: '', length_value: '710', tube_cut_piece_count: '8' })
       expect(api.fetchBomPipeMaterialMatches).not.toHaveBeenCalled()
     } finally { wrapper.unmount() }
   })

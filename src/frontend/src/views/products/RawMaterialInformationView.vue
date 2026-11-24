@@ -160,7 +160,7 @@ onMounted(() => { if (canViewPage.value) void reloadAll() })
         <ElInput v-model="filters.keyword" clearable :prefix-icon="Search" placeholder="搜索品号、品名、规格、颜色" @keyup.enter="applyFilters" />
         <ElSelect v-model="filters.itemType" clearable placeholder="类型：全部" @change="changeItemType"><ElOption v-for="item in options.item_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
         <ElSelect v-model="filters.category" clearable filterable placeholder="类别：全部" :loading="optionsLoading" @change="applyFilters"><ElOption v-for="item in filterCategories" :key="item.id" :label="item.category_name" :value="item.id" /></ElSelect>
-        <ElSelect v-model="filters.warehouseNumber" clearable filterable placeholder="仓库：全部" :loading="optionsLoading" @change="applyFilters"><ElOption v-for="item in options.warehouses" :key="`${item.warehouse_number}\u0000${item.warehouse_name}`" :label="`${item.warehouse_number} / ${item.warehouse_name}`" :value="item.warehouse_number" /></ElSelect>
+        <ElSelect v-model="filters.warehouseNumber" clearable filterable placeholder="仓库：全部" :loading="optionsLoading" @change="applyFilters"><ElOption v-for="item in options.warehouses" :key="`${item.warehouse_number}\u0000${item.warehouse_name}`" :label="item.warehouse_name" :value="item.warehouse_number" /></ElSelect>
         <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" :icon="Filter" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</ElButton></div>
       </section>
 
@@ -186,7 +186,7 @@ onMounted(() => { if (canViewPage.value) void reloadAll() })
           <ElTableColumn prop="specification" label="规格" width="238" sortable="custom" :sort-orders="['ascending', 'descending']" show-overflow-tooltip />
           <ElTableColumn prop="unit_name" label="单位" width="102" sortable="custom" :sort-orders="['ascending', 'descending']" show-overflow-tooltip />
           <ElTableColumn prop="color_name" label="颜色" width="124" sortable="custom" :sort-orders="['ascending', 'descending']" show-overflow-tooltip><template #default="{ row }">{{ formatColor(row) }}</template></ElTableColumn>
-          <ElTableColumn prop="warehouse" label="仓库" width="155" sortable="custom" :sort-orders="['ascending', 'descending']" show-overflow-tooltip><template #default="{ row }"><span class="warehouse-cell"><b>{{ row.warehouse_number || '—' }}</b><small>{{ row.warehouse_name || '—' }}</small></span></template></ElTableColumn>
+          <ElTableColumn prop="warehouse" label="仓库" width="155" sortable="custom" :sort-orders="['ascending', 'descending']" show-overflow-tooltip><template #default="{ row }"><span class="warehouse-cell">{{ row.warehouse_name || '—' }}</span></template></ElTableColumn>
           <ElTableColumn prop="is_packaging_auxiliary" label="包材辅料" width="136" sortable="custom" :sort-orders="['ascending', 'descending']"><template #default="{ row }">{{ packagingValue(row) }}</template></ElTableColumn>
           <ElTableColumn prop="box_shape" label="箱子形状" width="126" sortable="custom" :sort-orders="['ascending', 'descending']"><template #default="{ row }">{{ boxShapeValue(row) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="130" fixed="right"><template #default="{ row }"><ElButton v-if="canChange" link class="edit-button" @click="openEdit(row, $event)">编辑</ElButton><span v-else>—</span></template></ElTableColumn>

@@ -1,5 +1,6 @@
 """新目录根制管材的实际领料凭证；不读取当前目录或库存余额补算投入。"""
 
+from apps.boms.material_flow_calculations import pipe_meters_text
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -155,9 +156,9 @@ def _freeze_catalog_pipe_source(line):
         issued_meters += row.meter_quantity
         frozen_allocations.append({
             "allocation_id": str(row.pk), "balance_id": str(row.balance_id), "movement_id": str(movement.pk),
-            "pieces": int(row_pieces), "bar_count": int(row_bars), "raw_bar_length_m": format(length, ".2f"),
-            "meter_quantity": format(row.meter_quantity, ".2f"),
-            "meters": format(row.meter_quantity, ".2f"), "snapshot": deepcopy(row.snapshot),
+            "pieces": int(row_pieces), "bar_count": int(row_bars), "raw_bar_length_m": pipe_meters_text(length),
+            "meter_quantity": pipe_meters_text(row.meter_quantity),
+            "meters": pipe_meters_text(row.meter_quantity), "snapshot": deepcopy(row.snapshot),
         })
     if issued_meters != Decimal(actual["meters"]):
         raise ValueError("实际出库米数合计与根数、原长不一致")
@@ -168,7 +169,7 @@ def _freeze_catalog_pipe_source(line):
         "workshop_id": str(issue.workshop_id), "component_identity": snapshot["component_identity"],
         "material_catalog_id": str(line.material_catalog_id), "material_number": line.material_number_snapshot,
         "part_name": bom_line.part_name, "issued_pieces": int(pieces), "bar_count": int(bars),
-        "raw_bar_length_m": format(length, ".2f"), "meters": format(issued_meters, ".2f"),
+        "raw_bar_length_m": pipe_meters_text(length), "meters": pipe_meters_text(issued_meters),
         "conversion_snapshot": deepcopy(snapshot),
         "input_material_selection_snapshot": selected, "public_bom_snapshot": deepcopy(frozen_bom),
         "plan_source": deepcopy(plan_source), "batches": [],

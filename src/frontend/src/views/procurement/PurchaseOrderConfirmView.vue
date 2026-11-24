@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
 import { useAuthStore } from '@/stores/auth'
-import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
+import { pipeMeters, pipeRootsFromMeters, samplePipeSuggestedWeight } from '@/utils/pipeQuantities'
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
 import calendarIcon from '@/assets/procurement/create-calendar.svg'
@@ -9,6 +9,7 @@ import rightIcon from '@/assets/procurement/create-right.svg'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
+import { fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import {
   confirmVersionedPurchaseOrder,
   fetchPurchaseOrderSupplierOptions,
@@ -17,6 +18,11 @@ import {
 } from '@/api/purchaseOrders'
 import type { PurchaseOrderDetail, PurchaseOrderOptions } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
+import { isHardwareWeightLine } from './purchaseWeight'
+import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
+import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
+import { applySetPricing, orderSetQuantity, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
+import { formatScaled, scaledProduct } from './purchaseAmounts'
 
 const CalendarIcon = () => h('img', { src: calendarIcon, width: 16, height: 16, alt: '' })
 const auth = useAuthStore()
@@ -30,6 +36,33 @@ const confirming = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const order = ref<PurchaseOrderDetail | null>(null)
+const editingSetId = ref('')
+const defaultSetQuantity = ref<string | null>(null)
+const setCandidates = computed(() => editingSetId.value && order.value ? order.value.lines.map(line => {
+  const quantityText = line.raw_bar_length_m && !isWeightLine(line) ? pipePurchaseMeters(line) : line.actual_purchase_quantity || ''
+  return { ...line, quantityText, eligible: Number(quantityText) > 0 }
+}) : [])
+const setSource = computed(() => setCandidates.value.find(line => line.purchase_group_line_id === editingSetId.value))
+async function openSet(line: PurchaseOrderDetail['lines'][number]) {
+  const groupId = order.value?.purchase_group_id
+  if (!groupId || !line.purchase_group_line_id) return
+  if (!line.set_pricing && defaultSetQuantity.value === null) {
+    const requestId = orderRequestId
+    try {
+      const { data } = await fetchVersionedPurchaseGroup(groupId)
+      if (requestId !== orderRequestId) return
+      defaultSetQuantity.value = orderSetQuantity(data)
+    } catch (error) {
+      if (requestId !== orderRequestId) return
+      ElMessage.warning(apiErrorMessage(error, '订单数量读取失败，请手填采购套数。'))
+    }
+  }
+  editingSetId.value = line.purchase_group_line_id
+}
+function saveSet(change: SetPricingChange) {
+  if (order.value) applySetPricing(order.value.lines, change)
+  editingSetId.value = ''
+}
 const canReturnToGroup = computed(() => !!order.value?.purchase_group_id && auth.hasPermission('procurement.view_purchaseorder'))
 const options = ref<Pick<PurchaseOrderOptions, 'suppliers'> | null>(null)
 const optionsLoading = ref(false)
@@ -53,27 +86,78 @@ const supplierCount = computed(() => new Set(
   (order.value?.lines || []).map((line) => line.supplier_id).filter(Boolean),
 ).size)
 
-const localTotal = computed(() => (order.value?.lines || []).reduce((sum, line) => {
-  const quantity = Number(line.raw_bar_length_m ? pipeMeters(line.actual_bar_count, line.raw_bar_length_m) : line.actual_purchase_quantity)
-  const price = Number(line.unit_price)
-  return Number.isFinite(quantity) && Number.isFinite(price) ? sum + quantity * price : sum
-}, 0))
+function isWeightPipeLine(line: PurchaseOrderDetail['lines'][number]): boolean {
+  return line.section_type === 'PROFILE' && (
+    String(line.source_unit_text || '').toUpperCase() === 'KG'
+    || Boolean(line.suggested_purchase_weight_kg)
+    || Boolean(line.actual_purchase_weight_kg)
+  )
+}
+
+function isWeightLine(line: PurchaseOrderDetail['lines'][number]): boolean {
+  return isWeightPipeLine(line) || isHardwareWeightLine(line)
+}
+
+function pipeWeight(line: PurchaseOrderDetail['lines'][number]): string | null {
+  return line.actual_purchase_quantity
+}
+function pipePurchaseMeters(line: PurchaseOrderDetail['lines'][number]): string {
+  return line.actual_purchase_quantity ?? pipeMeters(line.actual_bar_count, line.raw_bar_length_m)
+}
+function setPipePurchaseMeters(line: PurchaseOrderDetail['lines'][number], value: string): void {
+  line.actual_purchase_quantity = value
+  line.actual_bar_count = pipeRootsFromMeters(value.trim(), line.raw_bar_length_m)
+}
+function pipeMeterError(line: PurchaseOrderDetail['lines'][number]): string {
+  const meters = pipePurchaseMeters(line).trim()
+  if (!/^\d{1,14}(?:\.\d{1,4})?$/.test(meters) || Number(meters) <= 0) return '实际采购米数应为大于 0、最多 4 位小数的数字。'
+  if (!pipeRootsFromMeters(meters, line.raw_bar_length_m)) return '实际采购米数必须为每根长度的整数倍，请核对数量。'
+  return ''
+}
+function purchasePriceUnit(line: PurchaseOrderDetail['lines'][number]): string {
+  return isWeightLine(line) ? '元/kg' : line.raw_bar_length_m ? '元/米' : line.source_unit_text ? `元/${line.source_unit_text}` : '元'
+}
+function suggestedWeight(line: PurchaseOrderDetail['lines'][number]): string {
+  if (order.value?.source_type === 'SAMPLE' && line.calculation_snapshot?.schema_version === 4) {
+    return samplePipeSuggestedWeight(line.calculation_snapshot.shortage_meters, line.raw_bar_length_m, line.raw_bar_weight_kg)
+  }
+  return line.suggested_purchase_weight_kg || line.required_quantity || ''
+}
+
+function amountScaled(line: PurchaseOrderDetail['lines'][number]) {
+  if (line.set_pricing) return line.set_pricing.anchor_id === line.purchase_group_line_id
+    ? scaledProduct(String(line.set_pricing.quantity), line.set_pricing.unit_price) : 0n
+  const quantity = isWeightLine(line)
+    ? pipeWeight(line)
+    : line.raw_bar_length_m
+      ? pipePurchaseMeters(line)
+      : line.actual_purchase_quantity
+  return scaledProduct(quantity || '0', line.unit_price || '0')
+}
+const totalScaled = computed(() => (order.value?.lines || []).reduce((sum, line) => sum + (amountScaled(line) ?? 0n), 0n))
 
 const confirmationErrors = computed(() => {
   const errors: string[] = []
   if (!order.value?.lines.length) errors.push('采购明细为空，请返回补充明细。')
   for (const line of order.value?.lines || []) {
     const missing: string[] = []
-    const rootError = line.raw_bar_length_m ? pipeRootError(line.actual_bar_count) : ''
+    const weightPipe = isWeightLine(line)
+    const rootError = line.raw_bar_length_m && !weightPipe ? pipeMeterError(line) : ''
     if (rootError) errors.push(`第 ${line.line_number} 行：${rootError}`)
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')
-    const actualQuantity = line.raw_bar_length_m
-      ? pipeMeters(line.actual_bar_count, line.raw_bar_length_m)
-      : line.actual_purchase_quantity
-    if (!rootError && (actualQuantity === null || actualQuantity === '' || !Number.isFinite(Number(actualQuantity)) || Number(actualQuantity) <= 0)) missing.push('实际采购数量')
-    if (line.unit_price === null || line.unit_price === '' || !Number.isFinite(Number(line.unit_price)) || Number(line.unit_price) < 0) missing.push('采购单价')
+    const actualQuantity = weightPipe
+      ? pipeWeight(line)
+      : line.raw_bar_length_m
+        ? pipePurchaseMeters(line)
+        : line.actual_purchase_quantity
+    if (!rootError && (actualQuantity === null || actualQuantity === '' || !Number.isFinite(Number(actualQuantity)) || Number(actualQuantity) <= 0)) missing.push(weightPipe ? '实际采购重量' : '实际采购数量')
+    if (!line.set_pricing && (line.unit_price === null || line.unit_price === '' || !Number.isFinite(Number(line.unit_price)) || Number(line.unit_price) < 0)) missing.push('采购单价')
     if (!line.source_unit_text) missing.push('单位')
+    if (order.value?.source_type === 'SAMPLE' && isWeightPipeLine(line)) {
+      if (!/^\d{1,14}(?:\.\d{1,2})?$/.test(line.raw_bar_length_m || '') || Number(line.raw_bar_length_m) <= 0) missing.push('有效每根长度')
+      if (!/^\d{1,14}(?:\.\d{1,4})?$/.test(line.raw_bar_weight_kg || '') || Number(line.raw_bar_weight_kg) <= 0) missing.push('有效每根标准重量')
+    }
     if (missing.length) errors.push(`第 ${line.line_number || '—'} 行缺少：${missing.join('、')}`)
   }
   if (order.value && order.value.currency_code !== 'CNY') {
@@ -89,33 +173,24 @@ function formatQuantity(value: string | number | null): string {
   return parsed.toLocaleString('zh-CN', { maximumFractionDigits: 4, useGrouping: false })
 }
 
-function formatQuantityInput(value: string | number | null): string | null {
-  if (value === null || value === '') return null
+function formatQuantityInput(value: string | number | null | undefined, precision = 2): string | null {
+  if (value == null || value === '') return null
   const raw = String(value).trim()
   const matched = raw.match(/^(\d+)(?:\.(\d*))?$/)
   if (!matched) return raw
 
-  const fraction = `${matched[2] || ''}000`
-  let cents = BigInt(matched[1] || '0') * 100n + BigInt(fraction.slice(0, 2))
-  if (Number(fraction[2]) >= 5) cents += 1n
-  const fractionText = String(cents % 100n).padStart(2, '0').replace(/0+$/, '')
-  return `${cents / 100n}${fractionText ? `.${fractionText}` : ''}`
-}
-
-function money(value: number | string | null): string {
-  const parsed = Number(value || 0)
-  return parsed.toLocaleString('zh-CN', { maximumFractionDigits: 4 })
+  const factor = 10n ** BigInt(precision)
+  const fraction = `${matched[2] || ''}${'0'.repeat(precision + 1)}`
+  let amount = BigInt(matched[1] || '0') * factor + BigInt(fraction.slice(0, precision))
+  if (Number(fraction[precision]) >= 5) amount += 1n
+  const fractionText = String(amount % factor).padStart(precision, '0').replace(/0+$/, '')
+  return `${amount / factor}${fractionText ? `.${fractionText}` : ''}`
 }
 
 function lineAmount(line: PurchaseOrderDetail['lines'][number]): string {
-  const quantity = Number(line.raw_bar_length_m ? pipeMeters(line.actual_bar_count, line.raw_bar_length_m) : line.actual_purchase_quantity)
-  const price = Number(line.unit_price)
-  if (!Number.isFinite(quantity) || !Number.isFinite(price)) return '—'
-  return money(quantity * price)
-}
-
-function pipeMetersLabel(line: PurchaseOrderDetail['lines'][number]): string {
-  return `${compactDecimal(pipeMeters(line.actual_bar_count, line.raw_bar_length_m))} 米 · ${compactDecimal(line.raw_bar_length_m)} 米/根`
+  if (line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id) return '—'
+  const amount = amountScaled(line)
+  return amount === null ? '—' : formatScaled(amount)
 }
 
 function disabledPastDate(date: Date): boolean {
@@ -141,7 +216,13 @@ function updateOrder(result: { data: PurchaseOrderDetail; etag: string }): void 
     ...result.data,
     lines: result.data.lines.map((line) => ({
       ...line,
-      actual_purchase_quantity: formatQuantityInput(line.actual_purchase_quantity),
+      ...(result.data.source_type === 'SAMPLE' && isWeightPipeLine(line) ? {
+        raw_bar_length_m: line.raw_bar_length_m ?? line.calculation_snapshot?.raw_bar_length_m ?? null,
+        raw_bar_weight_kg: line.raw_bar_weight_kg ?? line.calculation_snapshot?.raw_bar_weight_kg ?? null,
+      } : {}),
+      actual_purchase_quantity: isWeightLine(line)
+        ? formatQuantityInput(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity ?? (result.data.source_type === 'SAMPLE' ? line.calculation_snapshot?.actual_purchase_weight_kg : null), 4)
+        : formatQuantityInput(line.actual_purchase_quantity, line.set_pricing || line.raw_bar_length_m ? 4 : 2),
     })),
   }
   etag.value = result.etag
@@ -152,6 +233,8 @@ async function loadOrder(): Promise<void> {
   loading.value = true
   loadError.value = ''
   actionError.value = ''
+  editingSetId.value = ''
+  defaultSetQuantity.value = null
   order.value = null
   etag.value = ''
   try {
@@ -168,12 +251,6 @@ async function loadOrder(): Promise<void> {
 
 function materialTitle(line: PurchaseOrderDetail['lines'][number]): string {
   return line.part_name || line.material || line.raw_material || '未命名物料'
-}
-
-function materialDetail(line: PurchaseOrderDetail['lines'][number]): string {
-  const values = [line.material, line.raw_material, line.specification]
-  if (order.value?.source_type === 'SAMPLE') values.push(line.product_color)
-  return [...new Set(values.filter(Boolean))].join(' · ') || '规格未填写'
 }
 
 function handleLineMouseEnter(line: PurchaseOrderDetail['lines'][number]): void {
@@ -216,22 +293,36 @@ async function load(): Promise<void> {
 function updatePayload() {
   if (!order.value) return null
   return {
-    is_mailed: order.value.is_mailed,
     ...(order.value.purchase_group_id && order.value.status === 'DRAFT' && order.value.batch_type ? { batch_type: order.value.batch_type } : {}),
     lines: order.value.lines.map((line) => ({
       id: line.id,
       supplier_id: line.supplier_id || null,
       delivery_date: line.delivery_date || null,
-      actual_purchase_quantity: line.raw_bar_length_m ? null : line.actual_purchase_quantity || null,
-      ...(line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : {}),
-      ...(order.value?.source_type === 'SAMPLE' && line.raw_bar_length_m ? { raw_bar_length_m: line.raw_bar_length_m } : {}),
-      unit_price: line.unit_price === '' ? null : line.unit_price,
+      actual_purchase_quantity: isWeightLine(line)
+        ? pipeWeight(line) || null
+        : line.raw_bar_length_m
+          ? null
+          : line.actual_purchase_quantity || null,
+      ...(isWeightLine(line)
+        ? { ...(order.value?.source_type !== 'SAMPLE' ? { actual_purchase_weight_kg: pipeWeight(line) || null } : {}), ...(isWeightPipeLine(line) ? { raw_bar_weight_kg: line.raw_bar_weight_kg || null } : {}) }
+        : line.raw_bar_length_m
+          ? { actual_bar_count: line.actual_bar_count }
+          : {}),
+      ...(order.value?.source_type === 'SAMPLE' && (isWeightPipeLine(line) || line.raw_bar_length_m) ? { raw_bar_length_m: line.raw_bar_length_m || null } : {}),
+      unit_price: line.set_pricing || line.unit_price === '' ? null : line.unit_price,
+      ...(line.set_pricing !== undefined ? { set_pricing: line.set_pricing } : {}),
     })),
   }
 }
 
 async function saveChanges(showSuccess = true): Promise<boolean> {
   if (!canEdit.value || !order.value || saving.value || loading.value || !optionsReady.value) return false
+  const invalidPipe = order.value.lines.find(line => line.raw_bar_length_m && !isWeightLine(line) && pipeMeterError(line))
+  if (invalidPipe) {
+    actionError.value = `第 ${invalidPipe.line_number} 行：${pipeMeterError(invalidPipe)}`
+    ElMessage.error(actionError.value)
+    return false
+  }
   const payload = updatePayload()
   if (!payload) return false
   saving.value = true
@@ -272,7 +363,7 @@ async function confirmAndContinue(): Promise<void> {
   if (order.value.status === 'DRAFT') {
     try {
       await ElMessageBox.confirm(
-        `确认采购订单 ${order.value.order_number} 后，将进入供应商采购表模板选择。确认后仍可在生成采购表前修改。`,
+        `确认采购订单 ${order.value.order_number} 后，将按默认模板生成供应商采购表草稿并直接打开。采购表发布仍需单独确认。`,
         '确认采购订单',
         { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消', customClass: 'purchase-confirm-message-box' },
       )
@@ -291,7 +382,7 @@ async function confirmAndContinue(): Promise<void> {
     }
   }
   confirming.value = false
-  void router.push({ name: 'purchase-sheet-template-select', params: { id: order.value.id } })
+  void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id } })
 }
 
 watch(() => route.params.id, () => void load(), { immediate: true })
@@ -302,7 +393,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
   <section v-loading="loading" class="confirm-page erp-glass-form">
     <header class="page-heading">
       <div><h1>确认采购订单</h1><p>核对供应商、交期、数量及单价</p></div>
-      <div><ElButton class="back-button" @click="backToList"><img :src="backIcon" alt="" class="purchase-icon" />返回{{ canReturnToGroup ? '采购总单' : '列表' }}</ElButton></div>
+      <div><ElButton class="back-button" @click="backToList"><img :src="backIcon" alt="" class="purchase-icon" />返回{{ canReturnToGroup ? '采购需求' : '列表' }}</ElButton></div>
     </header>
     <section v-if="loadError" class="load-error" role="alert"><ElAlert type="error" :title="loadError" :closable="false" show-icon /><ElButton @click="load">重新加载</ElButton></section>
     <template v-else-if="order">
@@ -331,18 +422,15 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
           <ElTableColumn label="物料信息" min-width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
           </ElTableColumn>
-          <ElTableColumn v-if="order.source_type === 'SAMPLE'" label="材质规格" min-width="220">
-            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialDetail(row) }}</span></ElTooltip></template>
-          </ElTableColumn>
-          <ElTableColumn v-else label="规格" min-width="220">
+          <ElTableColumn label="规格" min-width="220">
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn label="建议采购量" min-width="180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><strong v-if="row.raw_bar_length_m">{{ row.suggested_bar_count }} 根</strong><strong v-else>{{ formatQuantity(row.required_quantity) }}</strong><small>{{ row.raw_bar_length_m ? compactDecimal(row.suggested_purchase_meters) + ' 米' : row.source_unit_text || '单位未识别' }}</small></div></template>
+            <template #default="{ row }"><div class="quantity-cell"><strong v-if="isWeightLine(row)">{{ suggestedWeight(row) ? `${formatQuantity(suggestedWeight(row))} kg` : '待填写重量' }}</strong><strong v-else-if="row.raw_bar_length_m">{{ compactDecimal(row.suggested_purchase_meters) }} 米</strong><strong v-else>{{ formatQuantity(row.required_quantity) }}</strong><small v-if="!isWeightLine(row) && !row.raw_bar_length_m">{{ row.source_unit_text || '单位未识别' }}</small></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" min-width="271">
             <template #default="{ row }">
-              <ElSelect v-model="row.supplier_id" filterable clearable :loading="optionsLoading" :disabled="!optionsReady" :placeholder="optionsLoading ? '正在加载供应商' : '请选择供应商'" teleported>
+              <ElSelect v-model="row.supplier_id" filterable clearable :loading="optionsLoading" :disabled="!optionsReady" :placeholder="optionsLoading ? '正在加载供应商' : '请选择供应商'" teleported @change="syncSetTerm(order!.lines, row, 'supplier_id')">
                 <ElOption
                   v-for="supplier in options?.suppliers || []"
                   :key="supplier.id"
@@ -363,29 +451,48 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                 format="YYYY-MM-DD"
                 placeholder="选择采购交期"
                 :disabled-date="disabledPastDate"
+                @change="syncSetTerm(order!.lines, row, 'delivery_date')"
                 teleported
               />
             </template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" min-width="163">
             <template #default="{ row }">
-              <ElInput v-if="row.raw_bar_length_m" v-model="row.actual_bar_count" inputmode="numeric" maxlength="14" aria-label="实际采购根数"><template #append>根</template></ElInput>
+              <ElInput v-if="row.raw_bar_length_m && !isWeightLine(row)" :model-value="pipePurchaseMeters(row)" inputmode="decimal" maxlength="19" aria-label="实际采购数量（米）" @update:model-value="setPipePurchaseMeters(row, $event)"><template #append>米</template></ElInput>
               <ElInput
-                v-if="!row.raw_bar_length_m"
+                v-if="isWeightLine(row)"
+                v-model="row.actual_purchase_quantity"
+                :aria-label="`第 ${row.line_number} 行实际采购重量（kg）`"
+                data-testid="confirm-quantity"
+                inputmode="decimal"
+                placeholder="请输入数量"
+                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, 4)"
+              ><template #append>kg</template></ElInput>
+              <ElPopover v-if="order.source_type === 'SAMPLE' && isWeightPipeLine(row)" trigger="click" placement="top" :width="380" :teleported="true">
+                <template #reference><ElButton link type="primary" aria-label="修改管材单根参数">单根参数</ElButton></template>
+                <div class="sample-pipe-parameters">
+                  <label>每根长度<ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="17"><template #append>米/根</template></ElInput></label>
+                  <label>每根标准重量<ElInput v-model="row.raw_bar_weight_kg" aria-label="采购每根标准重量（kg）" inputmode="decimal" maxlength="19"><template #append>kg/根</template></ElInput></label>
+                </div>
+              </ElPopover>
+              <ElInput
+                v-if="!row.raw_bar_length_m && !isWeightLine(row)"
                 v-model="row.actual_purchase_quantity"
                 :aria-label="`第 ${row.line_number} 行实际采购数量`"
                 data-testid="confirm-quantity"
                 inputmode="decimal"
                 placeholder="请输入数量"
-                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity)"
+                @blur="row.actual_purchase_quantity = formatQuantityInput(row.actual_purchase_quantity, row.set_pricing ? 4 : 2)"
               ><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="折算采购米数" min-width="180">
-            <template #default="{ row }"><span v-if="row.raw_bar_length_m" class="pipe-meters" :title="pipeMetersLabel(row)">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></template>
-          </ElTableColumn>
-          <ElTableColumn label="采购单价（管材元/米）" min-width="164">
-            <template #default="{ row }"><ElInput v-model="row.unit_price" :aria-label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price" inputmode="decimal" placeholder="请输入单价" /></template>
+          <ElTableColumn label="采购单价" min-width="164">
+            <template #default="{ row }">
+              <PurchaseSetPriceCell :line="row" :unit="purchasePriceUnit(row)" :label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price"
+                :allow-set="Boolean(order.purchase_group_id && row.purchase_group_line_id && order.status === 'DRAFT')"
+                :disabled="!canEdit || Boolean(row.set_pricing && order.status !== 'DRAFT')" @input="row.unit_price = $event" @edit-set="openSet(row)" />
+              <small v-if="row.calculation_snapshot?.set_pricing_review && !row.set_pricing && !Number(row.unit_price)">外供调整，请重选按套或填写单价</small>
+            </template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
             <template #default="{ row }"><strong>{{ lineAmount(row) }}</strong></template>
@@ -396,21 +503,25 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
       <footer class="action-bar">
         <div class="summary-counts">采购明细 <strong>{{ order.lines.length }}</strong> 项 <span>·</span> 已选供应商 <strong>{{ supplierCount }}</strong> 家</div>
         <div class="summary-actions">
-          <div class="mailing-panel"><span>是否邮寄</span><ElRadioGroup v-model="order.is_mailed" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></div>
-          <div class="total"><span>采购总金额</span><strong>¥ {{ money(localTotal) }}</strong></div>
+          <div class="total"><span>采购总金额</span><strong>¥ {{ formatScaled(totalScaled) }}</strong></div>
           <ElButton class="save-button" :loading="saving" :disabled="!canEdit || confirming || loading || !optionsReady" @click="saveChanges()">保存修改</ElButton>
           <ElButton class="confirm-button" data-testid="confirm-next" type="primary" :loading="confirming" :disabled="!canEdit || (order.status === 'DRAFT' && !canSubmit) || saving || loading || !optionsReady" @click="confirmAndContinue">
-            {{ order.status === 'DRAFT' ? '确认并选择模板' : '保存并继续' }}<img :src="rightIcon" alt="" class="purchase-icon" />
+            {{ order.status === 'DRAFT' ? '确认采购' : '保存并继续' }}<img :src="rightIcon" alt="" class="purchase-icon" />
           </ElButton>
         </div>
       </footer>
     </template>
+    <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates" :suppliers="options?.suppliers || []"
+      :default-quantity="defaultSetQuantity || ''" @close="editingSetId = ''" @apply="saveSet" />
   </section>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
 @use '@/styles/theme/detail' as detail;
+.sample-pipe-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.sample-pipe-parameters label { min-width: 0; font-size: 12px; }
+.sample-pipe-parameters :deep(.el-input) { margin-top: 6px; }
 .batch-context { display: flex; gap: 20px; align-items: center; margin-bottom: 14px; font-size: 13px; }
 .confirm-page { height: auto; min-height: 0; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font-family: crm.$crm-font-body; font-size: 14px;
   --el-color-primary: #{crm.$crm-primary}; --el-text-color-primary: #{crm.$crm-text-primary}; --el-text-color-regular: #{crm.$crm-text-regular}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-color: #{crm.$crm-border-default}; --el-border-color-light: #{crm.$crm-border-subtle}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-fill-color-light: #{crm.$crm-color-subtle}; --el-border-radius-base: 5px;
@@ -472,11 +583,6 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .summary-actions :deep(.el-button) { height: 42px; margin: 0; }
 .save-button { width: 134px; border-color: crm.$crm-primary; color: crm.$crm-primary; }
 .confirm-button { width: 200px; }
-.mailing-panel { display: flex; align-items: center; gap: 24px; width: 228px; white-space: nowrap; }
-.mailing-panel :deep(.el-radio) { margin-right: 24px; }
-.mailing-panel :deep(.el-radio:last-child) { margin: 0; }
-.mailing-panel :deep(.el-radio__inner) { width: 18px; height: 18px; border-color: crm.$crm-text-muted; }
-.mailing-panel :deep(.is-checked .el-radio__inner) { border-color: crm.$crm-primary; }
 .total { display: flex; align-items: center; gap: 12px; padding-left: 38px; margin-left: 16px; border-left: 1px solid crm.$crm-border-default; height: 44px; white-space: nowrap; }
 .total strong { font-size: 28px; color: crm.$crm-primary; font-weight: 500; }
 .load-error { display: flex; align-items: center; gap: 20px; padding: 30px; background: crm.$crm-color-surface; }
@@ -515,8 +621,6 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .pipe-meters { white-space: nowrap; }
 @media (max-width: 1300px) {
   .summary-actions { gap: 10px; }
-  .mailing-panel { width: 200px; gap: 12px; }
-  .mailing-panel :deep(.el-radio) { margin-right: 12px; }
   .total { padding-left: 20px; margin-left: 0; }
   .total strong { font-size: 24px; }
   .save-button { width: 118px; }

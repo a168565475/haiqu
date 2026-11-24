@@ -44,6 +44,32 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('车缝半成品入库', () => {
+  it('不同部位单位分开汇总，不计算成套', async () => {
+    const data = structuredClone(preview)
+    data.lines[0]!.unit = '个'; data.lines[1]!.unit = '件'
+    api.preview.mockResolvedValueOnce(data)
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue('2')
+    await wrapper.get('input[aria-label="靠背套本次入库"]').setValue('3')
+    expect(wrapper.get('.footer-bar').text()).toContain('2 个、3 件')
+    expect(wrapper.get('.footer-bar').text()).not.toContain('5 套')
+  })
+  it('裁剪来源按行单位汇总，整数数量原样按CUTTING提交', async () => {
+    route.query.plan_category = 'CUTTING'
+    const data = structuredClone(preview); data.plan_category = 'CUTTING'
+    data.lines.forEach((line, index) => { line.unit = ['件', '片', '个'][index]!; line.attributes.unit_name = line.unit })
+    api.preview.mockResolvedValueOnce(data)
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.text()).toContain('厂内裁剪')
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue('7')
+    await wrapper.get('input[aria-label="靠背套本次入库"]').setValue('3')
+    expect(wrapper.get('.footer-bar').text()).toContain('7 件、3 片')
+    expect(wrapper.get('.footer-bar').text()).not.toContain('10 片')
+    await (wrapper.vm as any).submit()
+    expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({ plan_category: 'CUTTING', lines: [{ bom_line_id: 'line-1', quantity: '7' }, { bom_line_id: 'line-2', quantity: '3' }] }), '"receipt-1"')
+  })
   it.each(['', '{broken', '{"payload":{"request_id":"historical-uuid","lines":[{"quantity":2}]},"etag":"old"}'])('无主历史pending隔离保留且不回查或新提交 %j', async raw => {
     const key = 'internal-receipt-pending:plan-1:SEWING'
     sessionStorage.setItem(key, raw)
@@ -172,9 +198,9 @@ describe('车缝半成品入库', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('按订单与 BOM 套数净需求，扣除累计入库、车缝直发及待发预留')
+    expect(wrapper.text()).toContain('按 BOM 中各项需求登记，已入库和车间直发数量不重复入库')
     expect(wrapper.text()).not.toContain('投入面料按米核算')
-    expect(wrapper.find('[title="应入库 100 套，厂内及外发累计已入库 25 套；剩余可入已扣车缝直发及待发预留"]').text()).toBe('75')
+    expect(wrapper.find('[title="应入库 100 套，累计已入库 25 套；剩余可入已扣车间直发及待发预留"]').text()).toBe('75')
     expect(wrapper.findAll('[title]').some(item => /null|NaN|已领投入/.test(item.attributes('title') || ''))).toBe(false)
     await wrapper.get('input[aria-label="椅套本次入库"]').setValue('75')
     await (wrapper.vm as any).submit()
@@ -252,7 +278,7 @@ describe('车缝半成品入库', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无可入库部位')
-    expect(wrapper.findAll('th').map(cell => cell.text())).toEqual(['部位', '材质', '规格', '颜色', '加工阶段', '单位', '单个用量', '应入库', '已入库', '剩余可入', '本次入库（套）'])
+    expect(wrapper.findAll('th').map(cell => cell.text())).toEqual(['部位', '材质', '规格', '颜色', '加工阶段', '单位', '单个用量', '应入库', '已入库', '剩余可入', '本次入库'])
     expect(wrapper.findAll('button').find(button => button.text() === '提交待入库')!.attributes('disabled')).toBeDefined()
   })
 

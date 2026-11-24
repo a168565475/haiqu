@@ -15,6 +15,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.access_control import module_policy, sales_policy
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
@@ -48,9 +49,9 @@ from ..material_flow_calculations import MaterialFlowValueError, decimal_quantit
 from ..material_save_plan import material_save_preview
 from ..selectors import accessible_boms, boms_with_context, pipe_material_matches, search_boms
 from ..services import (
-    archive_bom,
     confirm_bom_product,
     create_bom,
+    delete_bom,
     preview_imported_bom,
     sync_latest_boms_from_order,
     update_bom_lines,
@@ -65,6 +66,7 @@ from .serializers import (
     BomAccessoryMaterialOptionSerializer,
     BomAuxiliaryProductOptionSerializer,
     BomEditorReferenceOptionsResponseSerializer,
+    BomComponentUnitOptionSerializer,
     BomFabricMaterialOptionSerializer,
     BomFabricSpecificationOptionSerializer,
     BomFabricWidthOptionSerializer,
@@ -83,6 +85,8 @@ from .serializers import (
     BomVerifyInputSerializer,
     BomTubeCalculationPreviewInputSerializer,
     BomTubeCalculationPreviewResponseSerializer,
+    BomHardwareWeightInputSerializer,
+    BomHardwareWeightResponseSerializer,
 )
 
 
@@ -129,6 +133,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "pipe_material_matches": "boms.change_bom",
         "material_flow_preview": "boms.change_bom",
         "tube_calculation_preview": ("boms.add_bom", "boms.change_bom"),
+        "hardware_weight_preview": ("boms.add_bom", "boms.change_bom"),
         "fabric_materials": "boms.change_bom",
         "hardware_material_groups": "boms.change_bom",
         "plastic_materials": "boms.change_bom",
@@ -145,7 +150,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "sync_order_quantity": "boms.change_bom",
         "verify": "boms.verify_bom",
         "confirm_product": "boms.change_bom",
-        "archive": "boms.delete_bom",
+        "destroy": "boms.delete_bom",
     }
 
     def _filtered_queryset(self, *, include_status=True):
@@ -296,6 +301,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         except ProductionTaskProduct.DoesNotExist as exc:
             raise NotFound("未找到可访问的生产任务产品。") from exc
 
+    @extend_schema(request=BomCreateInputSerializer, responses=BomDetailSerializer)
     def create(self, request):
         serializer = BomCreateInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -308,13 +314,20 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 raise PermissionDenied("当前账号没有修改生产任务单的权限。")
             if str(product_update["client_key"]) != str(product_line.pk):
                 raise ValidationError({"production_task_product_update": "颜色明细编号与当前生产任务不一致。"})
-            if product_update["currency"].pk != product_line.production_task.currency_id:
+            if getattr(product_update.get("currency"), "pk", None) != product_line.production_task.currency_id:
                 raise ValidationError({"production_task_product_update": "币种必须与生产任务基础信息一致。"})
+        creation_method = serializer.validated_data["creation_method"]
         source_bom = None
-        source_bom_id = serializer.validated_data.get("source_bom_id")
-        if source_bom_id:
+        if creation_method == BomCreationMethod.COPY:
+            can_view = module_policy.has_permission if module_policy.enabled() else sales_policy.has_permission
+            if not can_view(request, "boms.view_bom"):
+                raise PermissionDenied("当前账号没有查看历史 BOM 的权限。")
             try:
-                source_bom = boms_with_context(accessible_boms(request), include_lines=True).get(pk=source_bom_id)
+                source_bom = boms_with_context(
+                    accessible_boms(request, permission="boms.view_bom"), include_lines=True,
+                ).get(
+                    pk=serializer.validated_data["source_bom_id"],
+                )
             except Bom.DoesNotExist as exc:
                 raise NotFound("未找到可复制的历史 BOM。") from exc
         with transaction.atomic():
@@ -337,18 +350,14 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                     actor_employee=getattr(request, "employee", None),
                     request=request,
                 )
-            if source_bom and (
-                source_bom.product_line.product_id != locked_line.product_id
-                or source_bom.product_catalog_id != locked_line.product_catalog_id
-            ):
-                raise ValidationError({"source_bom_id": "历史 BOM 必须与更换后的产品一致。"})
             bom = create_bom(
                 product_line=locked_line,
-                creation_method=serializer.validated_data["creation_method"],
+                creation_method=creation_method,
                 actor_employee=getattr(request, "employee", None),
                 uploaded_file=serializer.validated_data.get("workbook"),
                 source_bom=source_bom,
                 quantity_difference_reason=serializer.validated_data.get("quantity_difference_reason", ""),
+                defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False),
                 request=request,
             )
         return self._detail_response(
@@ -380,11 +389,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         )
         return self._detail_response(boms_with_context(include_lines=True).get(pk=confirmed.pk))
 
-    @extend_schema(request=None, responses=None)
-    @action(detail=True, methods=["post"])
-    def archive(self, request, pk=None):
-        bom = archive_bom(bom=self.get_object(), actor_employee=getattr(request, "employee", None), request=request)
-        return Response({"data": {"id": str(bom.pk), "archived": True}})
+    @extend_schema(responses={204: None}, description="永久删除 BOM 及其明细。已有业务引用时返回冲突。必须提供 If-Match。")
+    def destroy(self, request, *args, **kwargs):
+        delete_bom(bom=self.get_object(), actor_employee=getattr(request, "employee", None), request=request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(request=BomUpdateInputSerializer, responses=BomDetailSerializer)
     def partial_update(self, request, *args, **kwargs):
@@ -400,6 +408,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             intent=serializer.validated_data["intent"],
             confirmation_token=serializer.validated_data.get("confirmation_token", ""),
             quantity_confirmation_reason=serializer.validated_data.get("quantity_confirmation_reason", ""),
+            defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False),
         )
         return self._detail_response(updated)
 
@@ -411,7 +420,8 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         serializer = BomUpdateInputSerializer(data=request.data, context={"bom": bom})
         serializer.is_valid(raise_exception=True)
         return Response({"data": material_save_preview(bom=bom, sections=serializer.validated_data["sections"],
-            request=request, intent=serializer.validated_data["intent"])})
+            request=request, intent=serializer.validated_data["intent"],
+            defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False))})
 
     @extend_schema(request=None, responses=BomDetailSerializer)
     @action(detail=True, methods=["post"], url_path="sync-order-quantity")
@@ -474,7 +484,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 raise PermissionDenied("当前账号没有修改生产任务单的权限。")
             if str(product_update["client_key"]) != str(product_line.pk):
                 raise ValidationError({"production_task_product_update": "颜色明细编号与当前生产任务不一致。"})
-            if product_update["currency"].pk != product_line.production_task.currency_id:
+            if getattr(product_update.get("currency"), "pk", None) != product_line.production_task.currency_id:
                 raise ValidationError({"production_task_product_update": "币种必须与生产任务基础信息一致。"})
             if product_line.boms.exists():
                 raise Conflict("该颜色明细已经生成 BOM，不能更换产品。")
@@ -562,6 +572,15 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         ]
         return Response({"data": BomRawMaterialGroupSerializer(data, many=True).data})
 
+    @extend_schema(request=BomHardwareWeightInputSerializer, responses=BomHardwareWeightResponseSerializer)
+    @action(detail=False, methods=["post"], url_path="hardware-weight-preview")
+    def hardware_weight_preview(self, request):
+        from ..hardware_weight import calculate_hardware_weight
+
+        serializer = BomHardwareWeightInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response({"data": calculate_hardware_weight(serializer.validated_data)})
+
     @extend_schema(request=BomTubeCalculationPreviewInputSerializer, responses=BomTubeCalculationPreviewResponseSerializer)
     @action(detail=False, methods=["post"], url_path="tube-calculation-preview")
     def tube_calculation_preview(self, request):
@@ -579,7 +598,11 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         values = serializer.validated_data
         try:
             if values['kind'] == 'PIPE':
-                result = pipe_plan(**{key: values.get(key) for key in ('cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'order_quantity')})
+                result = pipe_plan(**{key: values.get(key) for key in (
+                    'cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'order_quantity',
+                    'purchase_allowance_mode', 'purchase_allowance_rule',
+                    'source_purchase_allowance_percent', 'source_raw_bar_length_m',
+                )})
             else:
                 quantity = positive_integer(values['order_quantity'], 'order_quantity')
                 consumption = decimal_quantity(values.get('unit_consumption'), 'unit_consumption')
@@ -699,6 +722,9 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             ),
         )
         data = {
+            "component_units": BomComponentUnitOptionSerializer(
+                ProductionUnit.objects.filter(**active_filter).order_by("sort_order", "unit_code", "id"), many=True
+            ).data,
             "auxiliary_products": BomAuxiliaryProductOptionSerializer(auxiliary_products, many=True).data,
             "accessory_materials": BomAccessoryMaterialOptionSerializer(
                 AccessoryMaterial.objects.filter(**active_filter), many=True
@@ -776,7 +802,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             batch_quantity = sum((Decimal(batch.quantity) for batch in batches), Decimal("0"))
             existing_counts = {
                 item["product_line_id"]: item["count"]
-                for item in Bom.objects.filter(product_line__production_task=task)
+                for item in Bom.objects.filter(product_line__production_task=task, archived_at__isnull=True)
                 .values("product_line_id")
                 .annotate(count=Count("id"))
             }
@@ -792,7 +818,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                         "order_number": task.order_number,
                         "customer_name": task.customer_account.account_name if task.customer_account_id else "",
                         "task_currency_id": task.currency_id,
-                        "task_currency_code": task.currency.code,
+                        "task_currency_code": task.currency.code if task.currency_id else None,
                         "task_status": task.status,
                         "task_status_display": task.get_status_display(),
                         "product_number": product.product_number_snapshot,
@@ -801,8 +827,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                         "product_selection_snapshot": product.product_selection_snapshot,
                         "product_code": product.product_code_snapshot,
                         "product_name": product.product_name_snapshot,
+                        "color_name": product.color_name_snapshot,
                         "specification": product.specification_snapshot,
                         "order_quantity": product.quantity,
+                        "unit_name": product.unit_name,
                         "source_delivery_batch_line_id": product.sales_order_delivery_batch_line_id,
                         "batch_quantity": batch_quantity if batches else None,
                         "delivery_date": task.delivery_date,

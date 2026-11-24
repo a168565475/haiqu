@@ -67,3 +67,6 @@ class FinanceMutationKey(UUIDPrimaryKeyModel):
 from .statement_models import ReceivableStatement, ReceivableStatementLine  # noqa: E402,F401
 from .receipt_models import FinanceReceiptUpload, Receipt, ReceiptAccountLine, ReceiptAttachment  # noqa: E402,F401
 from .allocation_models import DepositAllocation  # noqa: E402,F401
+from .purchase_payable_models import PurchasePayable, PurchasePayableLine, PurchasePayableStatus  # noqa: E402,F401
+from .supplier_settlement_models import SupplierAllocation, SupplierOffset, SupplierPayment  # noqa: E402,F401
+from .supplier_payment_application_models import SupplierPaymentApplication, SupplierPaymentApplicationLine  # noqa: E402,F401

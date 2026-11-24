@@ -6,7 +6,8 @@ from django.contrib.auth.models import Permission
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.material_catalog.models import MaterialCatalog
+from apps.material_catalog.models import MaterialAllowedUnit, MaterialAttributeValue, MaterialCatalog
+from apps.reference_data.models import ProductionUnit
 from ..models import MaterialInbound, PublicStockBalance, PublicStockMovement
 from .test_public_stock_services import PublicStockFixture
 
@@ -17,13 +18,44 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         self.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="material_catalog"))
         self.catalog = MaterialCatalog.objects.create(category_key="TUBE", template_key="TUBE", name="手工入库新管材")
         self.payload = {"client_request_id": str(uuid4()), "inbound_date": str(timezone.localdate()), "remark": "盘盈入库",
-            "items": [{"material_catalog_id": str(self.catalog.pk), "zone_id": str(self.zone.pk), "received_bar_count": 3, "raw_bar_length_m": "6.00",
+            "items": [{"material_catalog_id": str(self.catalog.pk), "zone_id": str(self.zone.pk), "received_bar_count": 3, "raw_bar_length_m": "6.00", "received_weight_kg": "7.1000",
                 "material_selection": {"catalog_version": self.catalog.updated_at.isoformat(), "scope": "BASE",
                     "processing_state": "RAW", "unit_id": str(self.root_unit.pk),
                     "attributes": {"material": "铁", "shape": "圆管", "section_size": "20", "thickness": "1", "length": "6000"}}}]}
 
     def post(self, payload=None):
         return self.client.post("/api/v1/material-inventory/manual-receipts/", payload or self.payload, format="json")
+
+    def test_private_unit_is_recognized_only_for_its_catalog_on_receipt_and_issue(self):
+        catalog = MaterialCatalog.objects.create(category_key="PLASTIC", template_key="PLASTIC", name="塑料包装件")
+        other = MaterialCatalog.objects.create(category_key="PLASTIC", template_key="PLASTIC", name="其他塑料件")
+        for item in (catalog, other):
+            MaterialAttributeValue.objects.create(catalog=item, scope="BASE", field_key="specification", value="T-01")
+        unit = ProductionUnit.all_objects.create(catalog_owner=catalog, unit_name="捆", unit_code="QA_PRIVATE_BUNDLE")
+        MaterialAllowedUnit.objects.create(catalog=catalog, unit=unit, scope="BASE")
+        selection = {"catalog_version": other.updated_at.isoformat(), "scope": "BASE", "processing_state": "RAW",
+                     "unit_id": str(unit.pk), "attributes": {"specification": "T-01"}}
+        self.payload["items"] = [{"material_catalog_id": str(other.pk), "material_selection": selection,
+                                  "zone_id": str(self.zone.pk), "received_quantity": "3"}]
+        self.assertEqual(self.post().status_code, 400)
+        self.assertFalse(PublicStockBalance.objects.exists())
+        self.payload["items"][0]["material_catalog_id"] = str(catalog.pk)
+        selection["catalog_version"] = catalog.updated_at.isoformat()
+        response = self.post()
+        self.assertEqual(response.status_code, 201, response.data)
+        balance = PublicStockBalance.objects.get(material_catalog=catalog, unit=unit)
+        self.assertEqual(balance.quantity, 3)
+        self.assertEqual(balance.identity_snapshot["unit_name"], "捆")
+        self.debit(balance.pk, 1)
+        balance.refresh_from_db()
+        self.assertEqual(balance.quantity, 2)
+
+        self.raw_material.unit = unit
+        self.raw_material.save(update_fields=["unit"])
+        self.payload["client_request_id"] = str(uuid4())
+        self.payload["items"] = [{"raw_material_id": str(self.raw_material.pk), "zone_id": str(self.zone.pk), "received_quantity": "1"}]
+        self.assertEqual(self.post().status_code, 400)
+        self.assertEqual(PublicStockBalance.objects.count(), 1)
 
     def test_options_added_and_original_version_retry_is_idempotent(self):
         version = self.catalog.updated_at
@@ -36,7 +68,8 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         line = MaterialInbound.objects.get().lines.get()
         self.assertEqual(line.material_catalog_id, self.catalog.pk)
         self.assertIsNone(line.raw_material_information_id)
-        self.assertEqual(line.source_unit_text_snapshot, "米")
+        self.assertEqual(line.source_unit_text_snapshot, "KG")
+        self.assertEqual(line.received_weight_kg, Decimal("7.1"))
         self.assertEqual(PublicStockBalance.objects.get().quantity, 3)
         listing = self.client.get("/api/v1/material-inventory/", {"q": "手工入库新管材"})
         self.assertEqual(listing.status_code, 200, listing.data)
@@ -103,6 +136,7 @@ class CatalogManualReceiptTests(PublicStockFixture, TestCase):
         item["material_selection"]["attributes"] = {"specification": "M8"}
         item.pop("received_bar_count")
         item.pop("raw_bar_length_m")
+        item.pop("received_weight_kg")
         item["received_quantity"] = "2.5000"
         item["material_selection"].pop("unit_id")
         item["material_selection"]["unit_name"] = "公斤"

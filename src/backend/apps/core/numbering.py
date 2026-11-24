@@ -24,6 +24,7 @@ NUMBER_CONFIG = {
     "FINISHED_GOODS_RECEIPT": ("haiqu_finished_goods_receipt_seq", "CPRK", True),
     "FINISHED_GOODS_OUTBOUND": ("haiqu_finished_goods_outbound_seq", "CPCK", True),
     "MATERIAL_INBOUND": ("haiqu_material_inbound_seq", "CLRK", True),
+    "MATERIAL_TRANSFER": ("haiqu_material_transfer_seq", "CLSH", True),
     "WAGE_SCHEME": ("haiqu_wage_scheme_seq", "GJ", True),
     "WORK_REPORT": ("haiqu_work_report_seq", "BG", True),
 }

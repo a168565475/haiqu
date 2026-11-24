@@ -1,6 +1,6 @@
-# Codex 账号与解析运行桥（单元二、三）
+# Codex 账号与 DXF 执行端
 
-管理 ERP 专属 Codex 账号，并通过固定 discover/extract 动作整理生产任务来源；没有任意提示词或任意工具入口。依赖 Python 3.13 标准库和已核验的 Codex CLI 0.165.0，不安装 Python 包。`protocol.py` 管理唯一 stdio 读泵，`service.py` 管理操作，`server.py` 提供私有 Unix socket。
+管理 ERP 专属 Codex 账号，并由 nest 动作在独占执行工作区调用受限 DXF 工具。旧生产任务/BOM 文件导入已移除。没有任意提示词或任意命令入口。依赖 Python 3.13、已核验的 Codex CLI 0.165.0；DXF 工具依赖固定 ezdxf 1.4.5、Shapely 2.2.0，见 dxf_tools/requirements.txt。`protocol.py` 管理唯一 stdio 读泵，`service.py` 管理操作，`server.py` 提供私有 Unix socket。
 
 ## 运行边界
 
@@ -15,15 +15,16 @@
 
 ## 冻结桥接协议
 
-一连接一请求。先发送4字节大端无符号长度，再发送UTF-8 JSON；单包最多16MiB。状态等非 result 响应在 ERP 客户端仍限制256KiB；提取输入最多12MiB、结果最多2MiB。响应相同帧格式：`{"ok":true,"data":...}`，或 `{"ok":false,"error":{"code":"固定错误码"}}`。读写均有超时，不支持 HTTP、任意 RPC、路径、环境或提示词透传。
+一连接一请求。先发送4字节大端无符号长度，再发送UTF-8 JSON；单包最多16MiB。状态响应在 ERP 客户端仍限制256KiB。artifact每次只读取一件最多8MiB的文件，以base64回传且整帧小于16MiB。响应相同帧格式：`{"ok":true,"data":...}`，或 `{"ok":false,"error":{"code":"固定错误码"}}`。读写均有超时，不支持 HTTP、任意 RPC、路径、环境或提示词透传。
 
-单元三新增：start 的 discover/extract 仅接收固定 payload `{sources, selected_candidate, images}`，schema 与提示词来自程序文件；图片仅允许受限 JPEG data URL。`result` 用 operation_id/generation 读取已完成的结构化结果，普通 status/operation 不包含业务正文。每次终态清除输入图片/来源缓存；成功结果保留至下一操作或服务退出以支持断线领取，失败不保留结果。ERP 落库后才领取下一操作。来源结构、ID 和人工核对仍由 Django 校验，runtime 完成不代表允许业务保存。
+ERP 客户端仅对 artifact 和 action=nest 的 start 使用30秒总传输截止时间，其余仍为5秒。桥和运行端在收到完整请求前保留5秒头部期限，仅超过256KiB的正文允许30秒；已识别的文件调用允许30秒响应等待/写出。帧大小、操作身份、目录权限和认证边界均不因此放宽。桥源码和运行端源码均须随版本匹配；仅修改本地文件不会自动更新正在运行的远端服务。
 
 | method | params | data |
 | --- | --- | --- |
 | status | `{}` | runtime snapshot，仅缓存，不调用上游 |
-| start | operation_id UUID、generation正整数、action、model字符串；解析动作另带固定payload | 立即返回snapshot；action仅login/switch/disconnect/refresh/test/discover/extract |
-| result | operation_id、generation | 仅解析成功后返回同boot_id、operation_id、generation的结构化结果 |
+| start | operation_id UUID、generation正整数、action、model字符串；排料动作另带固定payload | 立即返回snapshot；action仅login/switch/disconnect/refresh/test/nest |
+| result | operation_id、generation | 仅排料成功后返回同boot_id、operation_id、generation的结构化结果 |
+| artifact | operation_id、generation、boot_id、name | 仅nest成功后读取固定layout.svg或layout.dxf；返回同身份、name、size_bytes、sha256、data_base64 |
 | operation | operation_id、generation | boot_id、operation（未知ID为null）、snapshot |
 | cancel | operation_id、generation | 快速设置取消并返回snapshot；RUNNING保持至退出/对账屏障完成 |
 | challenge | operation_id、generation | operation_id、官方verification_url、user_code、expires_at，仅内存有效期内可读 |
@@ -37,6 +38,20 @@ snapshot 包含 `boot_id/cli_version/account/models/rate_limits/limits_updated_a
 login/switch从启动操作起保留原900秒启动、注销、读取和刷新预算，另加1020秒设备码等待预算，总上限1920秒；其他操作仍为900秒。失败/取消后的清理与真实账号对账另有90秒上限，必要退出重试最多20秒；调用方阶段超时必须覆盖主体及清理。取消/完成后立即停止提供验证码。取消区分官方 canceled/notFound，旧进程退出后另起只读会话核对实际账号，因此取消竞争中可能显示“操作已取消但账号实际已连接”。runtime不把此状态当作模型测试通过。
 
 依据固定Codex `rust-v0.165.0`（commit `360319d8dee62d87e2d59fc0c21805d79519cfed`）：[设备码轮询15分钟、间隔由接口返回](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/login/src/device_code_auth.rs#L99-L155)；[设备码完成/取消竞争](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/app-server/src/request_processors/account_processor.rs#L746-L810)。官方成功轮询后还需令牌交换、持久化和完成通知，不能把900秒当作整个登录流程的严格上限。a5的原始TIMEOUT回执保留；该配置缺陷不证明当轮具体网络/通知时序，也不能归因用户未授权。
+
+## DXF 任务执行端
+
+ERP 的职责是接收原始 DXF 和人工参数、检查权限与任务状态、传输文件、接收并展示完整结果，以及在用户确认后回填对应面料行。ERP 不解析裁片轮廓、不运行排料算法，也不自行计算或补造几何校验结论。提取和排料分别作为两个有真实工具调用记录的 Codex 任务执行。
+
+`nest` 沿用已有连接显式选定的模型和认证。payload schema_version固定2，phase为extract或nest；source精确包含data_base64、size_bytes、sha256、unit，源文件最多5MiB。nest另含人工parameters和analysis_digest，禁止附带旧optimize开关。原始文件只在受控runtime协议传输并落到独占工作区，不塞入App Server模型消息；App Server单行4MiB、累计8MiB的限制维持不变。
+
+仅该会话通过experimental dynamicTools开放inspect_source、search_layout、finalize_layout。每个请求核对RPC id、callId、threadId、turnId、工具名和参数；读泵不中断其他响应，工具子进程有独立时间预算。shell、MCP、账号或其它服务器请求继续拒绝，登录/test保持原无工具行为。模型必须真正调用工具，最终文字和自称完成不能生成结果；只有finalize工具实际输出才能成功。
+
+真实DXF解析、基准与优化搜索、精细轮廓重叠校验、单耗计算和完整SVG/DXF导出全部在dxf_tools执行端完成，ERP不承担这些计算。result只返回schema_version、phase、源/分析/参数摘要、analysis、result、artifact清单和宿主工具调用记录execution；runtime追加实际选定的model。文件按artifact逐件领取，ERP客户端核对身份、boot、长度、SHA256及清单一致性。失败/取消不发布文件；任务目录在退出时清理，成功文件仅保留runtime内存至下一任务或服务退出，不写服务器持久产物。
+
+新 snapshot 声明 `capabilities: ["nest_tools_v1"]`。旧字段缺失或仅旧nest能力均不足，ERP必须拒绝派发，不能以ERP本地几何回退冒充新执行端。此源码和镜像配方变更不代表远端服务已更新；本轮只做本地开发，真实模型工具调用及远端发布须独立验收。
+
+`Dockerfile.offline` 配合完整 Linux cp313 wheel 清单和 `--require-hashes` 构建，不在远端解析或下载依赖。既有 `server_runtime_install.py` 仅用于首次安装，不能用它覆盖正在运行的专属服务；原地升级使用独立 `server_runtime_upgrade.py`，步骤与保护边界见[专属 DXF 运行端升级](../../deploy/codex/DXF_RUNTIME_UPGRADE.md)。运行端原有 768 MiB 内存限制保持不变；真实模型和大样本共同运行的内存容量仍需验收。
 
 ## 定向测试与资源登记
 

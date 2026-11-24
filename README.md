@@ -134,11 +134,17 @@ docker compose ps
 
 业务通知通过独立的 `notification-worker` 服务每 5 秒检查待发送记录，复用后端镜像；ERP 站内消息在业务提交时生成。缺少企业微信应用配置时自动等待，配置完成后继续发送。有角色权限的接收人才能收到对应节点消息；没有接收人的旧事件不补发，失败或结果不明的消息不自动重发。查看状态和操作方法见 [本机通知自动发送](docs/deployment/notification_auto_delivery_20261022.md)。
 
+### 已退役的 Codex 生产任务导入
+
+2026-11-19 按用户要求移除旧服务器 Codex 导入和本机文件识别预览的专属代码、入口及自动启动服务。历史识别资料和数据库迁移保留；另一独立的 OpenAI API 生产助手不在本次删除范围。具体范围见 [退役记录](docs/implementation/production_task_codex_retirement_20261119.md)。
+
 ### 前端开发性能与热更新
 
 Windows 挂载目录的 Vite 文件监听保留轮询：源码每 1 秒检查一次，二进制资源每 2 秒检查一次；`.tmp`、`qa`、`outputs`、`logs`、`dist-*` 下的产物不参与热更新监听。这些目录不要存放运行中的应用源码。过密的全目录轮询会挤占 Node 文件检查与 DNS 解析共享的工作线程，使接口代理出现额外等待。
 
-受保护页面导航可复用最近 30 秒内验证过的前端登录状态；窗口聚焦或可见性改变会使其失效，下次导航重新检查。退出后的公开登录页保持原行为，业务接口仍逐次执行后端 Session、权限和 CSRF 校验。客户列表的业务数据每次进入都重新读取，筛选配置保持发布版本与兼容回退规则。
+Vite 的 `/api` 和 `/media` 代理按目标协议复用 HTTP/HTTPS 连接，开发服务器关闭时释放连接。仅在 Linux Docker 中使用默认 `backend` 目标时，对标准参数下的单地址解析采用异步 DNS 查询，避开文件轮询线程池；hosts 覆盖、多地址、特殊解析参数和显式 `VITE_PROXY_TARGET` 仍使用系统解析。不缓存容器 IP，新连接重新解析，因此后端重启后的新地址无需修改配置。代理不缓存业务响应或账号凭据，Session、权限和 CSRF 仍由后端逐请求校验。定向测试命令：在 `src/frontend` 执行 `npx vitest run devProxy.spec.ts`。
+
+受保护页面导航复用本次登录已验证的前端身份，不设置 30 秒刷新或聚焦刷新；账号切换、退出及身份失效仍按现有流程重新确认。业务接口逐次执行后端 Session、权限和 CSRF 校验。客户列表的业务数据每次进入都重新读取，筛选配置保持发布版本与兼容回退规则。
 
 客户列表加载优化的测量、回归与边界记录见 `qa/customer_list_loading_fix_20260915/report.md`。
 
@@ -162,12 +168,26 @@ Windows 挂载目录的 Vite 文件监听保留轮询：源码每 1 秒检查一
 
 ## 注意事项
 
+### 本地 BOM DXF 排料
+
+在 BOM 编辑的“面料”行编辑窗口点击“DXF 排料”。上传文本 DXF 后核对裁片名称、每套数量和方向，填写净门幅（mm）、片间距、混排套数及每套对应的成品数。支持贴边（间距 0），单次最多 160 片；自由方向按每 15° 搜索，不保证全局最优。未知原图单位必须手动选择，未闭合、自交、歧义或不支持的轮廓会报错，不会跳过后继续生成成功结果。
+
+完成后显示一张连续整幅图、净单耗、向上保留四位小数的采用值及几何校验。单耗为排料总长（米）÷（套数 × 每套成品数），不自动包含缝份、包边带或生产损耗。“采用单耗”只更新当前行编辑草稿，之后仍须“应用修改”和“保存草稿”。排版 DXF 为毫米 R12 闭合轮廓；博克导入时选择 1 单位 = 1 mm，实际博克版本兼容性需用目标软件验证。
+
+ERP 将原始 DXF、单位及用户确认的参数交给现有 Codex 连接选定的模型。Codex 执行端通过实际工具读取文件、搜索和优化排版、检验重叠、计算单耗并生成完整 SVG/DXF 文件；ERP 只提交任务、核对回传身份及文件摘要、展示结果。上传后先等待 Codex 识别裁片，再设置参数并生成排版。文件内文字按数据处理，不能改变任务要求。失败或执行端不支持时明确报错，不在 ERP 中自动生成替代排版，也不接受模型仅用文字声称已完成。
+
+按已授权的本地迁移流程执行 `python manage.py migrate boms 0018_codex_execution_artifacts`（包含 Codex 动作约束迁移），再启动或更新本地 `backend`、`bom-nesting-worker` 和现有 `codex-worker`。任务提交命令为 `python manage.py process_bom_nesting_jobs --watch --interval 2`；Codex 队列由 `python manage.py process_codex_operations --watch` 处理。源文件及回传产物存放在私有 `data/bom_nesting/`（容器 `/app/var/bom_nesting`），通过鉴权接口下载；不要映射到公开媒体目录。`BOM_NESTING_ROOT` 可指定私有目录，后台、提交 worker 和 Codex worker 必须访问同一目录，Codex worker 需要写入回传文件。ezdxf/Shapely 只属于 Codex 执行端依赖，ERP 不包含排版算法。
+
+现有本地 ERP 的 Codex 连接经本机 SSH 桥通向服务器专属运行端。新运行端需公布 `nest_tools_v1` 能力；旧运行端会明确返回不支持。仅修改本地源码不等于服务器运行端已更新；服务器变更需另行授权。当前执行端方案及本地验证见 `qa/bom_dxf_executor_20261105/`；此前 `qa/bom_dxf_nesting_20261105/` 和 `qa/bom_dxf_codex_20261105/` 的本地排料结果是旧方案证据，不能代表当前 Codex 流程已验收。真实模型效果、订阅额度消耗和博克导入需分别验证，不承诺全局最优。
+
 生产权限定向只读验收入口为 `python qa/run.py permissions --read-only`，需要通过进程环境提供 `UNIT03_QA_USERNAME` / `UNIT03_QA_PASSWORD` 或 `UNIT03_QA_IDENTITIES`；仅允许本机正常登录及业务读取，普通角色和真实写流程的未覆盖项会单列。角色配置使用 `python manage.py configure_production_roles` 预览，实际应用需要目标库名、最新差异摘要、有效管理操作者以及已确认启用的模块/资源开关，详见 `docs/plans/production_access_notifications_20261020/reports/unit03_result.md`。
 
 当前仍缺少完整且现行的公司销售 SOP、客户分级规则、信用政策、汇率与毛利核算口径。PRD 将用可配置规则和待确认项处理，不能将假设误写为既定制度。
 
 本地开发环境不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune -a --volumes`。数据库虽然绑定到宿主机目录，但宿主目录被误删仍会造成数据丢失，必须保留并验证备份。
 
-一键启动脚本只执行检查、启动和只读验证，不包含停止未知进程、删除容器卷、清理 Docker 或删除 `data` / `backups` 目录的命令。
+一键启动脚本执行检查、启动、数据库迁移和健康验证。新电脑运行前须确认 `.env` 指向该电脑独立的开发数据库；它不是只读检查命令。脚本不包含停止未知进程、删除容器卷、清理 Docker 或删除 `data` / `backups` 目录的命令。
+
+跨电脑代码和知识库同步边界见 [协作同步记录](docs/collaboration_sync_20261124.md)。
 
 本项目使用 Django 与 Vite 开发服务器。局域网访问仅适合可信办公/家庭网络，不要在公共 Wi-Fi 上继续开放，也不要在路由器配置公网端口映射。

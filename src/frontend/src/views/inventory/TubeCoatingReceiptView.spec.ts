@@ -25,12 +25,12 @@ const key = 'tube-coating-receipt:v1:7:order-1'
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-real', status: 'PROCESSING', version: 2, etag: '"order-1:v2"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: '原材料', schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', total_area_sqm: '2.5000', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
   task_order_number: 'DD-real', task_number: 'SC-real', schedule_number: 'PC-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '真实测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'raw-zone', zone_name: '原料区', warehouse_name: '原料仓', craft_name: '喷塑', remark: '', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: '2026-09-30', dispatched_at: '2026-09-30T09:00:00+08:00', dispatched_by_name: '发出员工', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: false, can_cancel: false },
-  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
+  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', price_unit: 'PIECE', unit_area_sqm: '0.1250', line_area_sqm: '2.5000', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
     material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [] }],
 }
 const base: TubeReceiptPreview = { order, etag: order.etag, can_receive: true, blockers: [], actor_name: '真实收货经办人', today: '2026-09-30',
@@ -41,10 +41,10 @@ function makeReceipt(payload: TubeReceiptInput): TubeReceipt {
   const sent = order.lines.reduce((sum, line) => sum + Number(line.quantity), 0), received = payload.lines.reduce((sum, line) => sum + Number(line.received_quantity), 0)
   return { id: 'receipt-1', receipt_number: 'PSRK-real', order_id: 'order-1', order_number: order.order_number, status: 'COMPLETED', source_kind: order.source_kind, source_label: order.source_label,
     client_request_id: payload.client_request_id, receipt_date: payload.receipt_date, warehouse_id: payload.warehouse_id, warehouse_name: payload.warehouse_id ? '半成品管材仓' : '', confirmed_at: '2026-09-30T10:00:00+08:00',
-    actor_name: '真实收货经办人', remark: payload.remark, total_dispatched_quantity: String(sent), total_received_quantity: String(received), total_shortage_quantity: String(sent - received), etag: '"order-1:v3"', created: true,
+    actor_name: '真实收货经办人', remark: payload.remark, total_dispatched_quantity: String(sent), total_received_quantity: String(received), total_shortage_quantity: String(payload.lines.reduce((sum, line) => sum + Math.max(Number((order.lines.find(item => item.id === line.order_line_id) || order.lines[0]!).quantity) - Number(line.received_quantity), 0), 0)), etag: '"order-1:v3"', created: true,
     lines: payload.lines.map(line => { const original = order.lines.find(item => item.id === line.order_line_id) || order.lines[0]!; return { ...original,
       id: `receipt-${line.order_line_id}`, order_line_id: line.order_line_id, dispatched_quantity: original.quantity, received_quantity: line.received_quantity,
-      shortage_quantity: String(Number(original.quantity) - Number(line.received_quantity)), shortage_reason: line.shortage_reason,
+      shortage_quantity: String(Math.max(Number(original.quantity) - Number(line.received_quantity), 0)), shortage_reason: line.shortage_reason,
       zone_id: line.zone_id, zone_name: line.zone_id ? 'A区' : '', stock_movement_id: Number(line.received_quantity) > 0 ? `movement-${line.order_line_id}` : null } }) }
 }
 function savedRequest(): TubeReceiptPending { return { order_id: 'order-1', etag: order.etag, payload: { client_request_id: 'existing-uuid', receipt_date: base.today, warehouse_id: null, remark: '', lines: [{ order_line_id: 'line-1', received_quantity: '0', shortage_reason: '未收到', zone_id: null }] } } }
@@ -88,6 +88,19 @@ it('旧车间表单上下文不能确认入库或重放旧请求', async () => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('D3整单喷塑回货', () => {
+  it.each([
+    ['PUBLIC_PIECE', '成品布面仓'],
+    ['PUBLIC_SEMI', '管材喷塑仓'],
+  ] as const)('旧外发单入库按 %s 默认选中 %s', async (sourceKind, warehouseName) => {
+    const preview = structuredClone(base)
+    preview.order.source_kind = sourceKind
+    preview.warehouses[1]!.name = warehouseName
+    vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValueOnce(preview)
+
+    const { vm } = await mountPage({ orderId: order.id, embedded: true })
+    expect(vm.warehouse).toBe('warehouse-2')
+    expect(vm.rows[0]!.zone).toBe('zone-2')
+  })
   it.each(['uid', 'generation', 'request', 'ready'] as const)('确认在%s边界后迟到成功不清记录、不提示', async boundary => {
     const { vm } = await mountPage(); receive(vm)
     let resolve!: (value: TubeReceipt) => void
@@ -232,9 +245,15 @@ describe('D3整单喷塑回货', () => {
     expect(vm.rows).toHaveLength(2); expect(vm.rows.every(row => row.received === '0')).toBe(true); expect(vm.isEnded).toBe(true)
     expect(ElMessage.success).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('未增加库存') }))
   })
-  it.each(['-1', '0.5', 'abc', '21', '9007199254740992'])('无效实收%s只气泡拦截并保留填写内容', async value => {
+  it.each(['-1', '0.5', 'abc', '100000000000000', '9007199254740992'])('无效实收%s只气泡拦截并保留填写内容', async value => {
     const { vm } = await mountPage(); receive(vm, value); await vm.finishReceipt()
     expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); expect(vm.rows[0]!.received).toBe(value); expect(ElMessage.warning).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('整数') }))
+  })
+  it('旧单次回货允许实发20实收10001，少回数量为0且不要求少回原因', async () => {
+    const { vm } = await mountPage(); receive(vm, '10001'); vm.rows[0]!.reason = ''
+    await vm.finishReceipt()
+    expect(api.confirmTubeReceipt).toHaveBeenCalledWith('order-1', expect.objectContaining({ lines: [{ order_line_id: 'line-1', received_quantity: '10001', shortage_reason: '', zone_id: 'zone-1' }] }), order.etag)
+    expect(vm.isEnded).toBe(true)
   })
   it('少回原因去空白保存，正数库区必须属于所选目标仓库', async () => {
     const { vm } = await mountPage(); receive(vm, '18'); vm.rows[0]!.zone = 'zone-2'
@@ -242,10 +261,15 @@ describe('D3整单喷塑回货', () => {
     vm.rows[0]!.zone = 'zone-1'; vm.rows[0]!.reason = '  实收18，另2未回  '; vm.remark = '  存A区  '; await vm.finishReceipt()
     expect(vi.mocked(api.confirmTubeReceipt).mock.calls[0]![1]).toEqual(expect.objectContaining({ remark: '存A区', lines: [{ order_line_id: 'line-1', received_quantity: '18', shortage_reason: '实收18，另2未回', zone_id: 'zone-1' }] }))
   })
-  it('换仓须确认，仅清库区，数量原因备注保留', async () => {
-    const { vm } = await mountPage(); receive(vm, '18'); vm.remark = '备注保留'; vm.requestWarehouseChange('warehouse-2')
+  it('换到多库区仓库须确认和手选库区，数量原因备注保留', async () => {
+    const preview = structuredClone(base)
+    preview.zones.push({ id: 'zone-3', warehouse_id: 'warehouse-2', warehouse: '半成品暂存仓', name: 'C区' })
+    vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValueOnce(preview)
+    const { wrapper, vm } = await mountPage(); receive(vm, '18'); vm.remark = '备注保留'; vm.requestWarehouseChange('warehouse-2')
     expect(vm.dialog).toBe('warehouse'); expect(vm.warehouse).toBe('warehouse-1'); vm.confirmWarehouseChange()
     expect(vm.warehouse).toBe('warehouse-2'); expect(vm.rows[0]).toEqual(expect.objectContaining({ received: '18', reason: '实物少回', zone: '' })); expect(vm.remark).toBe('备注保留')
+    await wrapper.get('input[aria-label="前腿管实收支数"]').setValue('17')
+    expect(vm.rows[0]!.zone).toBe('')
     await vm.finishReceipt(); expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); vm.rows[0]!.zone = 'zone-2'; await vm.finishReceipt(); expect(api.confirmTubeReceipt).toHaveBeenCalledTimes(1)
   })
   it.each([400, 403, 404, 409, 412, 428])('明确拒绝%s刷新依据并保留本次输入，不伪造成功', async status => {

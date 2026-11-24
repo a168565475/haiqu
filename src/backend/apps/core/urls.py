@@ -4,7 +4,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from .views import (
     account_return_admin, account_switch, account_switch_targets,
-    auth_login, auth_logout, current_user, development_auto_login, health,
+    auth_login, auth_logout, authorize_local_production_sync, current_user, development_auto_login, health,
 )
 
 
@@ -24,12 +24,12 @@ urlpatterns = [
     path("v1/wecom/", include("apps.wecom.urls")),
     path("v1/notifications/", include("apps.wecom.notification_urls")),
     path("v1/codex-connection/", include("apps.codex_connection.urls")),
-    path("v1/", include("apps.production_task_imports.urls")),
     path("v1/attendance/", include("apps.attendance.urls")),
     path("v1/workshop-reporting/", include("apps.workshop_reporting.api.urls")),
 ]
 
 if settings.DEBUG:
+    urlpatterns.append(path("auth/local-production-sync/", authorize_local_production_sync))
     urlpatterns.append(
         path(
             "docs/",

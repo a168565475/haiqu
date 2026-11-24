@@ -6,6 +6,7 @@ import stat
 import struct
 import sys
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 
 from codex_runtime.server import create_server, decode_request, encode_response, read_frame, MAX_FRAME
 from codex_runtime.protocol import RuntimeErrorCode
@@ -14,6 +15,40 @@ from test_service import Factory
 
 
 class FrameTests(unittest.IsolatedAsyncioTestCase):
+    async def test_only_file_operations_extend_response_drain(self):
+        for method, params, budget in (('artifact', {}, 30), ('start', {'action': 'nest'}, 30),
+                                       ('status', {}, 5), ('start', {'action': 'test'}, 5)):
+            path = Mock()
+            path.exists.return_value = path.is_symlink.return_value = False
+            runtime = Mock(dispatch=AsyncMock(return_value={}))
+            with patch('codex_runtime.server.asyncio.start_unix_server', new_callable=AsyncMock, create=True) as start:
+                await create_server(runtime, path)
+            handler = start.call_args.args[0]
+            reader = asyncio.StreamReader()
+            reader.feed_data(encode_response({'method': method, 'params': params}))
+            writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+            with patch('codex_runtime.server.asyncio.wait_for', wraps=asyncio.wait_for) as wait:
+                await handler(reader, writer)
+            self.assertEqual([call.args[1] for call in wait.call_args_list], [budget, 1])
+
+    async def test_only_large_frame_body_extends_receive_deadline(self):
+        for size, expected in ((10, []), (256 * 1024 + 1, [30])):
+            reader = asyncio.StreamReader()
+            reader.feed_data(struct.pack('!I', size) + b'x' * size)
+            entered = []
+            class Timeout:
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, *_):
+                    return False
+                def reschedule(self, deadline):
+                    entered.append(deadline)
+            with patch('codex_runtime.server.asyncio.timeout', return_value=Timeout()) as timeout, \
+                    patch.object(asyncio.get_running_loop(), 'time', return_value=0):
+                self.assertEqual(len(await read_frame(reader)), size)
+            timeout.assert_called_once_with(5)
+            self.assertEqual(entered, expected)
+
     async def test_split_frame_decodes_and_extra_keys_rejected(self):
         body = b'{"method":"status","params":{}}'
         reader = asyncio.StreamReader()

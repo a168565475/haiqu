@@ -379,7 +379,7 @@ class ProductionSchedulingApiTests(APITestCase):
             result = ScheduleItemReadSerializer(plans, many=True, context={"category": "METAL"}).data
         self.assertEqual(result[0]["production_task_status"], ProductionTaskStatus.IN_PRODUCTION)
 
-    def test_create_requires_all_boms_to_be_verified(self):
+    def test_create_requires_selected_product_bom_to_be_verified(self):
         self.bom.status = BomStatus.PENDING_CONFIRMATION
         self.bom.save(update_fields=["status", "updated_at"])
 
@@ -387,7 +387,7 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertFalse(source["scheduling_ready"])
         self.assertFalse(source["selectable"])
         self.assertIn("BOM 必须已确认", source["unselectable_reason"])
-        self.assertIn("生产任务单内所有产品的 BOM 必须已确认", source["scheduling_blockers"])
+        self.assertIn("至少一个产品的 BOM 必须已确认", source["scheduling_blockers"])
         response = self.client.post("/api/v1/production-schedules/", self.payload(), format="json")
 
         self.assertEqual(response.status_code, 409, response.data)

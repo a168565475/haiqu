@@ -17,11 +17,11 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), createTubeOrd
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn(), fetchTubeReceipt: vi.fn(), fetchTubeReceiptCandidates: vi.fn(), confirmTubeReceipt: vi.fn(), findTubeReceipt: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { closeAll: vi.fn(), warning: vi.fn(), success: vi.fn() } }))
 
-const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品', PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发' }
+const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品', PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发', CUTTING: '车间裁片直发', PUBLIC_PIECE: '裁片库存', PUBLIC_PART: '车缝部位库存' }
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-ended-real', status: 'COMPLETED', version: 3, etag: '"order-1:v3"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: labels.RAW_PIPE, schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '35', planned_amount: '8.75', total_stock_quantity: '4', total_meters: '23.74',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '35', total_area_sqm: '4.3750', planned_amount: '8.75', total_stock_quantity: '4', total_meters: '23.74',
   task_order_number: 'DD-ended-real', task_number: 'SC-ended-real', schedule_number: 'PC-ended-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'raw-zone', zone_name: '原料区', warehouse_name: '原料仓', craft_name: '喷塑', remark: '发出时原单备注', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: '2026-09-30', dispatched_at: '2026-09-30T09:00:00+08:00', dispatched_by_name: '发出员工', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
@@ -29,7 +29,7 @@ const order: TubeOrderDetail = {
   lines: [],
 }
 const firstLine: TubeDetailLine = {
-  id: 'line-1', component_identity: 'component-1', part_name: '同名腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
+  id: 'line-1', component_identity: 'component-1', part_name: '同名腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', price_unit: 'PIECE', unit_area_sqm: '0.1250', line_area_sqm: '2.5000', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
   material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [],
 }
 order.lines = [
@@ -51,12 +51,12 @@ function makePreview(source: TubeSourceKind = 'RAW_PIPE', quantities = ['18', '1
     id: 'receipt-1', receipt_number: 'PSRK-ended-real', order_id: original.id, order_number: original.order_number, status: 'COMPLETED', source_kind: source, source_label: labels[source],
     client_request_id: 'receipt-request', receipt_date: '2026-09-30', warehouse_id: totalReceived ? 'warehouse-1' : null, warehouse_name: totalReceived ? '半成品管材仓' : '',
     confirmed_at: '2026-09-30T10:00:00+08:00', actor_name: '入库员工', remark: '最终入库备注', total_dispatched_quantity: original.total_quantity, total_received_quantity: String(totalReceived),
-    total_shortage_quantity: String(Number(original.total_quantity) - totalReceived), etag: original.etag, created: false,
+    total_shortage_quantity: String(original.lines.reduce((sum, line, index) => sum + Math.max(Number(line.quantity) - Number(quantities[index]), 0), 0)), etag: original.etag, created: false,
     lines: original.lines.map((line, index) => {
       const received = quantities[index]!
       return { id: `receipt-${line.id}`, order_line_id: line.id, component_identity: line.component_identity, part_name: line.part_name,
         material: line.material, specification: line.specification, thickness: line.thickness, cutting_length_mm: line.cutting_length_mm, raw_color: line.raw_color, spray_color: line.spray_color,
-        factory_id: line.factory_id, factory_name: line.factory_name, dispatched_quantity: line.quantity, received_quantity: received, shortage_quantity: String(Number(line.quantity) - Number(received)),
+        factory_id: line.factory_id, factory_name: line.factory_name, dispatched_quantity: line.quantity, received_quantity: received, shortage_quantity: String(Math.max(Number(line.quantity) - Number(received), 0)),
         shortage_reason: Number(received) < Number(line.quantity) ? `${line.id}未交回` : '', zone_id: Number(received) ? `zone-${index + 1}` : null,
         zone_name: Number(received) ? `成品${index + 1}区` : '', stock_movement_id: Number(received) ? `movement-${line.id}` : null }
     }),
@@ -186,7 +186,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     current.order.lines[1]!.stock_quantity = null; current.order.lines[1]!.meters = null
     vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(current)
     const { wrapper } = await mountPage(); const displayed = records(wrapper)
-    expect(displayed[0]).toEqual(expect.objectContaining({ 发出扣根: '2', 发出扣米: '13.10' }))
+    expect(displayed[0]).toEqual(expect.objectContaining({ 发出扣根: '2', 发出扣米: '13.1' }))
     expect(displayed[1]).toEqual(expect.objectContaining({ 发出扣根: '—', 发出扣米: '—' }))
     expect(orderApi.fetchTubeOrder).not.toHaveBeenCalled(); expect(orderApi.fetchTubeSource).not.toHaveBeenCalled()
   })
@@ -227,6 +227,14 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(records(wrapper).every(row => row['差额（支）'] === '0')).toBe(true)
     expect(wrapper.get('.d4-ended-footer').text()).toContain('差额 0')
     expect(wrapper.findAll('input')).toHaveLength(0)
+    assertNoWriteRequests()
+  })
+  it('旧凭证超收显示真实入库量，不能误判凭证缺失或补造实发', async () => {
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(makePreview('PUBLIC_SEMI', ['10001', '10', '5']))
+    const { wrapper } = await mountPage()
+    expect(records(wrapper)[0]?.['实收（支）']).toBe('10,001')
+    expect(records(wrapper)[0]?.['实发（支）']).toBe('20')
+    expect(wrapper.get('.d4-ended-footer').text()).toContain('差额 0')
     assertNoWriteRequests()
   })
 
@@ -362,7 +370,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
   })
 
   it('非终态预览仍读取原有动态详情，保留加工中回货入口', async () => {
-    const processing = makePreview('METAL'); processing.order.status = 'PROCESSING'; processing.receipt = null
+    const processing = makePreview('METAL'); processing.order.status = 'PROCESSING'; processing.receipt = null; processing.can_receive = true
     vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(processing)
     vi.mocked(orderApi.fetchTubeOrder).mockResolvedValue(processing.order)
     const { wrapper } = await mountPage()

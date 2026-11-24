@@ -413,21 +413,38 @@ class ProductCategory(ProtectedReferenceModel):
         return f"{self.get_item_type_display()} - {self.category_name}"
 
 
+class PublicProductionUnitManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(catalog_owner__isnull=True)
+
+
 class ProductionUnit(ProtectedReferenceModel):
+    objects = PublicProductionUnitManager()
+    all_objects = models.Manager()
     unit_code = models.CharField(max_length=20, unique=True)
-    unit_name = models.CharField(max_length=80, unique=True)
+    unit_name = models.CharField(max_length=80)
+    catalog_owner = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True,
+                                      on_delete=models.PROTECT, related_name="private_units")
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = "reference_production_unit"
+        base_manager_name = "all_objects"
+        default_manager_name = "objects"
         ordering = ["sort_order", "unit_code"]
         constraints = [
+            models.UniqueConstraint(fields=["catalog_owner", "unit_name"], nulls_distinct=False,
+                                    name="ref_unit_owner_name_uniq"),
             models.CheckConstraint(condition=Q(status__in=ReferenceStatus.values), name="production_unit_status_valid"),
         ]
         indexes = [models.Index(fields=["status", "sort_order", "id"], name="production_unit_list_idx")]
 
     def __str__(self):
         return f"{self.unit_code} - {self.unit_name}"
+
+    @classmethod
+    def for_catalog(cls, catalog):
+        return cls.all_objects.filter(Q(catalog_owner__isnull=True) | Q(catalog_owner=catalog))
 
 
 class ProductColor(ProtectedReferenceModel):

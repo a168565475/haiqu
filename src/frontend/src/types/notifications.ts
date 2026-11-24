@@ -104,9 +104,10 @@ export interface NotificationPreviewAttempt {
 
 export interface NotificationTarget {
   target_key: string
-  object_id: string // 真实业务UUID；任务/BOM及两类委外分别保留自身对象身份，不能混传。
+  object_id: string // 持久化来源 UUID；采购跟踪使用问题或摘要身份，具体材料定位放在 query。
   route_name: string
   params: Record<string, string>
+  query?: Record<string, string>
 }
 
 export type NotificationChannelStatus = 'PENDING' | 'PROCESSING' | 'ACCEPTED' | 'FAILED' | 'UNCERTAIN' | 'SKIPPED'

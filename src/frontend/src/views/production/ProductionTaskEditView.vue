@@ -66,7 +66,7 @@ function syncProductExpansion(id: string, event: Event) {
     : expandedProductIds.value.filter(value => value !== id)
 }
 const form = reactive({
-  salesperson_id: '', order_date: '', includes_tax: false, tax_rate: null as 3 | 5 | 7 | null,
+  salesperson_id: '', order_date: '', includes_tax: false as boolean | null, tax_rate: null as 3 | 5 | 7 | null,
   order_tolerance_percent: '0', is_repeat_order: false, preproduction_sample_required: false,
   delivery_method: 'SINGLE' as 'SINGLE' | 'SPLIT',
   planned_start_date: '', planned_end_date: '', production_priority: 'NORMAL' as 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW', production_batch_number: '',
@@ -107,27 +107,31 @@ const editorItem = ref<InquiryItem>(emptyItem())
 const editorDetails = ref<ProductionTaskProductInput['details']>([])
 const editorDetailFiles = ref<Record<string, File | null>>({})
 const editingProduct = computed(() => products.value.find(row => row.id === editingId.value))
+const editingOriginal = computed(() => task.value?.products.find(row => row.id === editingId.value))
+const editorAllowsUnknownPrice = computed(() => editingOriginal.value?.unit_price === null)
 function emptyItem(): InquiryItem { return { product_id: null, product_category_id: null, product_unit_id: null, product_color_id: null, product_description: '', specification: '', color: '', material: '', quantity: '1', unit_code: '', target_unit_price: '', target_currency_code: 'CNY', expected_date: null, product_match_status: 'PENDING', notes: '' } }
 function productAmountCny(row: EditableProduct) {
-  if (row.quantity === row.originalQuantity && row.unitPriceCny === task.value?.products.find(item => item.id === row.id)?.local_unit_price) return row.lineAmountCny
+  if (row.payload.currency_id === null || row.payload.exchange_rate === null || !row.unitPriceCny.trim()) return null
+  if (row.quantity === row.originalQuantity && row.unitPriceCny === originalUnitPrice(row) && row.lineAmountCny) return row.lineAmountCny
   // 金额预览只使用已冻结的人民币单价，不重新获取汇率或改写原币快照。
-  return multiplyAmount4(row.unitPriceCny, row.quantity) ?? '—'
+  return multiplyAmount4(row.unitPriceCny, row.quantity)
 }
-const totalAmountCny = computed(() => sumAmounts4(products.value.map(row => { const amount = productAmountCny(row); return /^\d+\.\d{4}$/.test(amount) ? amount : null })) || '—')
+const totalAmountCny = computed(() => sumAmounts4(products.value.map(productAmountCny)))
 const quantitySummary = computed(() => {
   const totals = new Map<string, number>()
   products.value.forEach(row => totals.set(row.unitName, (totals.get(row.unitName) || 0) + Number(row.quantity || 0)))
   return [...totals].map(([unit, quantity]) => `${quantity.toLocaleString('zh-CN')} ${unit}`).join(' / ')
 })
 function hasDetailFiles(row: EditableProduct) { return row.payload.details.some(detail => Boolean(detailFiles.value[detail.client_key])) }
-function changedProduct(row: EditableProduct) { return hasDetailFiles(row) || row.quantity !== row.originalQuantity || JSON.stringify(row.payload) !== row.originalPayload || Boolean(productFiles.value[row.id]?.length) || row.unitPriceCny !== task.value?.products.find(item => item.id === row.id)?.local_unit_price }
+function originalUnitPrice(row: EditableProduct) { return task.value?.products.find(item => item.id === row.id)?.local_unit_price ?? '' }
+function changedProduct(row: EditableProduct) { return hasDetailFiles(row) || row.quantity !== row.originalQuantity || JSON.stringify(row.payload) !== row.originalPayload || Boolean(productFiles.value[row.id]?.length) || row.unitPriceCny !== originalUnitPrice(row) }
 function editProduct(row?: EditableProduct) {
   if (!canEditField('products') || sourceLocked.value) return
-  if (row && !row.isCny) { ElMessage.warning('历史外币产品保留冻结价格，仅支持在产品档案调整数量和要求。'); return }
+  if (row && !row.isCny && row.payload.currency_id !== null) { ElMessage.warning('历史外币产品保留冻结价格，仅支持在产品档案调整数量和要求。'); return }
   editingId.value = row?.id || ''
   editorDetails.value = row ? JSON.parse(JSON.stringify(row.payload.details)) : (options.value?.detail_template || []).map(detail => ({ client_key: crypto.randomUUID(), template_key: detail.key, detail_type: detail.type, category_label: detail.category, is_selected: false, description: '' }))
   editorDetailFiles.value = { ...detailFiles.value }
-  editorItem.value = row ? { ...emptyItem(), id: row.id, product_id: row.payload.product_id, product_catalog_id: row.payload.product_catalog_id || null, product_selection: row.payload.product_selection || null, product_selection_snapshot: task.value?.products.find(product => product.id === row.id)?.product_selection_snapshot || null, product_category_id: row.payload.product_category_id, product_unit_id: row.payload.unit_id, product_color_id: row.payload.product_color_id, product_image_id: row.payload.retained_image_ids[0] || null, product_description: row.productName, item_number_snapshot: row.productCode, specification: row.specification, color: row.payload.customer_color || '', material: row.payload.material || '', quantity: row.quantity, unit_code: row.payload.product_selection?.draft?.unit_name || task.value?.products.find(product => product.id === row.id)?.unit_code || options.value?.units.find(unit => unit.id === row.payload.unit_id)?.unit_code || row.unitName, target_unit_price: row.unitPriceCny, notes: row.payload.special_requirements } : emptyItem()
+  editorItem.value = row ? { ...emptyItem(), id: row.id, product_id: row.payload.product_id, product_catalog_id: row.payload.product_catalog_id || null, product_selection: row.payload.product_selection || null, product_selection_snapshot: task.value?.products.find(product => product.id === row.id)?.product_selection_snapshot || null, product_category_id: row.payload.product_category_id, product_unit_id: row.payload.unit_id, product_color_id: row.payload.product_color_id, product_image_id: row.payload.retained_image_ids[0] || null, product_description: row.productName, item_number_snapshot: row.productCode, specification: row.specification, color: row.payload.customer_color || '', material: row.payload.material || '', quantity: row.quantity, unit_code: row.payload.product_selection?.draft?.unit_name || task.value?.products.find(product => product.id === row.id)?.unit_code || options.value?.units.find(unit => unit.id === row.payload.unit_id)?.unit_code || row.unitName, target_unit_price: row.payload.unit_price ?? '', notes: row.payload.special_requirements } : emptyItem()
   if (row) editorItem.value.product_number_snapshot = options.value?.products.find(product => product.id === row.payload.product_id)?.product_number || task.value?.products.find(product => product.id === row.id)?.product_number || ''
   editorVisible.value = true
 }
@@ -136,17 +140,19 @@ function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; image
   const unit = options.value?.units.find(row => item.product_unit_id ? row.id === item.product_unit_id : row.unit_code === item.unit_code)
   const currency = options.value?.currencies.find(row => row.code === 'CNY')
   const draftUnit = item.product_selection?.draft?.unit_name.trim()
-  if ((!unit && !draftUnit) || !currency) { ElMessage.warning('请选择或填写单位，并检查人民币币种。'); return }
-  if (!/^[1-9]\d*$/.test(String(item.quantity))) { ElMessage.warning('生产数量必须是大于0的整数。'); return }
-  if (item.target_unit_price == null || String(item.target_unit_price).trim() === '' || !Number.isFinite(Number(item.target_unit_price)) || Number(item.target_unit_price) < 0) { ElMessage.warning('请填写正确的人民币单价。'); return }
   const old = editingProduct.value
+  if ((!unit && !draftUnit) || (!old && !currency)) { ElMessage.warning('请选择或填写单位，并检查人民币币种。'); return }
+  if (!/^[1-9]\d*$/.test(String(item.quantity))) { ElMessage.warning('生产数量必须是大于0的整数。'); return }
+  const priceText = String(item.target_unit_price ?? '').trim()
+  const price = !priceText && editorAllowsUnknownPrice.value ? null : priceText
+  if (price !== null && (!priceText || !Number.isFinite(Number(price)) || Number(price) < 0)) { ElMessage.warning('请填写正确的人民币单价。'); return }
   const id = old?.id || crypto.randomUUID()
   const retainedImages = old?.payload.retained_image_ids || []
   // 已有待上传主图时，只替换待上传文件，不能再次移除保留的附图。
   const retainedImageIds = value.imageChanged && !productFiles.value[id]?.length ? retainedImages.slice(1) : retainedImages
-  const payload: ProductionTaskProductInput = { ...(old?.payload || {}), ...(value.imageChanged ? { replace_primary_image: Boolean(old && value.imageFile) } : {}), client_key: id, product_id: item.product_id || null, product_catalog_id: item.product_catalog_id || null, product_selection: item.product_selection || null, product_category_id: item.product_category_id || null, product_color_id: item.product_color_id || null, color_code: options.value?.colors.find(row => row.id === item.product_color_id)?.color_code || '', customer_product_name: item.product_description, customer_specification: item.specification, customer_color: item.color, material: item.material, quantity: String(item.quantity), unit_id: item.product_selection?.draft ? item.product_selection.draft.unit_id : unit?.id || null, currency_id: currency.id, unit_price: String(item.target_unit_price), exchange_rate: '1.00000000', special_requirements: item.notes, packaging_method: old?.payload.packaging_method || '', retained_image_ids: [...retainedImageIds], details: JSON.parse(JSON.stringify(editorDetails.value)) }
+  const payload: ProductionTaskProductInput = { ...(old?.payload || {}), ...(value.imageChanged ? { replace_primary_image: Boolean(old && value.imageFile) } : {}), client_key: id, product_id: item.product_id || null, product_catalog_id: item.product_catalog_id || null, product_selection: item.product_selection || null, product_category_id: item.product_category_id || null, product_color_id: item.product_color_id || null, color_code: options.value?.colors.find(row => row.id === item.product_color_id)?.color_code || '', customer_product_name: item.product_description, customer_specification: item.specification, customer_color: item.color, material: item.material, quantity: String(item.quantity), unit_id: item.product_selection?.draft ? item.product_selection.draft.unit_id : unit?.id || null, currency_id: old ? old.payload.currency_id : currency!.id, unit_price: price, exchange_rate: old ? old.payload.exchange_rate : '1.00000000', special_requirements: item.notes, packaging_method: old?.payload.packaging_method || '', retained_image_ids: [...retainedImageIds], details: JSON.parse(JSON.stringify(editorDetails.value)) }
   const product = options.value?.products.find(row => row.id === item.product_id)
-  const row: EditableProduct = { id, productName: item.product_description, productCode: item.item_number_snapshot || product?.item_number || '', specification: item.specification, colorLabel: item.color, quantity: String(item.quantity), originalQuantity: old?.originalQuantity || '', unitName: draftUnit || unit?.unit_name || '', sourceLocked: false, unitPriceCny: String(item.target_unit_price), lineAmountCny: old?.lineAmountCny || '', isCny: true, payload, originalPayload: old?.originalPayload || '', deletionReason: old?.deletionReason || '' }
+  const row: EditableProduct = { id, productName: item.product_description, productCode: item.item_number_snapshot || product?.item_number || '', specification: item.specification, colorLabel: item.color, quantity: String(item.quantity), originalQuantity: old?.originalQuantity || '', unitName: draftUnit || unit?.unit_name || '', sourceLocked: false, unitPriceCny: payload.currency_id && payload.exchange_rate !== null ? price ?? '' : '', lineAmountCny: '', isCny: old ? old.isCny : true, payload, originalPayload: old?.originalPayload || '', deletionReason: old?.deletionReason || '' }
   if (old) products.value.splice(products.value.indexOf(old), 1, row)
   else products.value.push(row)
   if (!expandedProductIds.value.includes(id)) expandedProductIds.value.push(id)
@@ -243,7 +249,7 @@ const changes = computed(() => {
     const value = form[key as keyof typeof form]
     if (value !== originalForm.value[key]) result.push({ key, label, before: String(originalForm.value[key] ?? '—'), after: String(value ?? '—'), bomImpact: false })
   }
-  for (const row of products.value) if (hasDetailFiles(row) || JSON.stringify(row.payload) !== row.originalPayload || row.unitPriceCny !== task.value.products.find(item => item.id === row.id)?.local_unit_price || productFiles.value[row.id]?.length) result.push({ key: `product-${row.id}`, label: row.productName, before: row.originalPayload ? '原产品资料' : '无', after: '产品资料已修改', bomImpact: Boolean(task.value.current_boms?.some(bom => bom.product_line_id === row.id)) })
+  for (const row of products.value) if (hasDetailFiles(row) || JSON.stringify(row.payload) !== row.originalPayload || row.unitPriceCny !== originalUnitPrice(row) || productFiles.value[row.id]?.length) result.push({ key: `product-${row.id}`, label: row.productName, before: row.originalPayload ? '原产品资料' : '无', after: '产品资料已修改', bomImpact: Boolean(task.value.current_boms?.some(bom => bom.product_line_id === row.id)) })
   for (const row of task.value.products) if (!products.value.some(item => item.id === row.id)) result.push({ key: `removed-${row.id}`, label: row.product_name, before: '原产品', after: '已移除', bomImpact: Boolean(task.value.current_boms?.some(bom => bom.product_line_id === row.id)) })
   return result
 })
@@ -308,7 +314,7 @@ function buildPatch(): ProductionTaskPatchInput {
     const value = form[key as keyof typeof form]
     if (value !== originalForm.value[key]) Object.assign(patch, { [key]: ['planned_start_date', 'planned_end_date'].includes(key) ? value || null : value })
   }
-  if (products.value.some(changedProduct) || products.value.length !== task.value.products.length) patch.products = products.value.map(row => row.sourceLocked ? productPayload(task.value!.products.find(item => item.id === row.id)!, row.quantity) : { ...row.payload, quantity: row.quantity, unit_price: row.isCny ? row.unitPriceCny : row.payload.unit_price })
+  if (products.value.some(changedProduct) || products.value.length !== task.value.products.length) patch.products = products.value.map(row => row.sourceLocked ? productPayload(task.value!.products.find(item => item.id === row.id)!, row.quantity) : { ...row.payload, quantity: row.quantity, unit_price: row.isCny && row.unitPriceCny.trim() ? row.unitPriceCny : row.payload.unit_price })
   return Object.fromEntries(Object.entries(patch).filter(([field]) => canEditField(field))) as ProductionTaskPatchInput
 }
 
@@ -322,6 +328,7 @@ function validate() {
     return ''
   }
   if (!form.salesperson_id || !form.order_date) return '请选择业务员和下单日期。'
+  if (form.includes_tax === null && task.value?.includes_tax !== null) return '请选择是否含税。'
   if (form.includes_tax && ![3, 5, 7].includes(Number(form.tax_rate))) return '含税时请选择税率。'
   if (!form.order_tolerance_percent.trim() || !Number.isFinite(Number(form.order_tolerance_percent)) || Number(form.order_tolerance_percent) < 0 || Number(form.order_tolerance_percent) > 100) return '订单误差必须是0到100的百分比。'
   if (Boolean(form.planned_start_date) !== Boolean(form.planned_end_date)) return '请同时填写计划开工和计划完工。'
@@ -333,7 +340,8 @@ function validate() {
   for (const row of products.value) {
     if (!/^[1-9]\d*$/.test(row.quantity)) return `${row.productName} / ${row.colorLabel} 的数量必须是大于 0 的整数。`
     if (row.sourceLocked && row.maxQuantity != null && Number(row.quantity) > row.maxQuantity) return `${row.productName} 的本次生产量不能超过 ${row.maxQuantity}。`
-    if (!row.sourceLocked && (!row.unitPriceCny.trim() || !Number.isFinite(Number(row.unitPriceCny)) || Number(row.unitPriceCny) < 0)) return '请填写正确的人民币单价。'
+    const preservesUnknown = !row.unitPriceCny.trim() && task.value?.products.find(item => item.id === row.id)?.local_unit_price === null
+    if (!row.sourceLocked && !preservesUnknown && (!row.unitPriceCny.trim() || !Number.isFinite(Number(row.unitPriceCny)) || Number(row.unitPriceCny) < 0)) return '请填写正确的人民币单价。'
   }
   if (!sourceLocked.value && products.value.some((row) => row.quantity !== row.originalQuantity) && task.value?.products.some((row) => !row.product_catalog_id && !row.product_selection_snapshot?.entry_draft && !row.product_color_id && !(row.customer_product_name?.trim() && row.customer_specification?.trim() && row.unit_id && row.details.length && row.details.every((detail) => detail.detail_type.trim())))) {
     return '存在缺少有效颜色的历史产品行，暂不能批量修改数量。'
@@ -396,13 +404,13 @@ async function load() {
     ])
     // Serializer 方法字段可能返回 JSON 数字，进入编辑状态前统一为四位人民币字符串。
     result.data.products = result.data.products.map(row => {
-      const unitPrice = multiplyAmount4(row.local_unit_price, 1)
-      const lineAmount = multiplyAmount4(row.local_total_amount, 1)
-      if (unitPrice === null || lineAmount === null) throw new Error('产品人民币金额无效，请重新加载或联系管理员。')
+      const unitPrice = row.local_unit_price === null ? null : multiplyAmount4(row.local_unit_price, 1)
+      const lineAmount = row.local_total_amount === null ? null : multiplyAmount4(row.local_total_amount, 1)
+      if (unitPrice === null && row.local_unit_price !== null || lineAmount === null && row.local_total_amount !== null) throw new Error('产品人民币金额无效，请重新加载或联系管理员。')
       return { ...row, local_unit_price: unitPrice, local_total_amount: lineAmount }
     })
     task.value = result.data
-    Object.assign(form, { salesperson_id: result.data.salesperson?.id || '', order_date: result.data.order_date, includes_tax: result.data.includes_tax ?? false, tax_rate: result.data.tax_rate ?? null, order_tolerance_percent: result.data.order_tolerance_percent || '0', is_repeat_order: result.data.is_repeat_order ?? false, preproduction_sample_required: result.data.preproduction_sample_required ?? false, delivery_method: result.data.delivery_method, planned_start_date: result.data.planned_start_date || '', planned_end_date: result.data.planned_end_date || '', production_priority: result.data.production_priority || 'NORMAL', production_batch_number: result.data.production_batch_number || '' })
+    Object.assign(form, { salesperson_id: result.data.salesperson?.id || '', order_date: result.data.order_date, includes_tax: result.data.includes_tax === null ? null : result.data.includes_tax ?? false, tax_rate: result.data.tax_rate ?? null, order_tolerance_percent: result.data.order_tolerance_percent || '0', is_repeat_order: result.data.is_repeat_order ?? false, preproduction_sample_required: result.data.preproduction_sample_required ?? false, delivery_method: result.data.delivery_method, planned_start_date: result.data.planned_start_date || '', planned_end_date: result.data.planned_end_date || '', production_priority: result.data.production_priority || 'NORMAL', production_batch_number: result.data.production_batch_number || '' })
     etag.value = result.etag
     options.value = optionData
     form.delivery_date = result.data.delivery_date
@@ -420,8 +428,8 @@ async function load() {
       originalQuantity: String(row.quantity),
       unitName: row.product_selection_snapshot?.unit_name || row.unit_name || row.unit_code,
       sourceLocked: Boolean(row.source_delivery_batch_line_id || result.data.sales_order_id),
-      unitPriceCny: row.local_unit_price,
-      lineAmountCny: row.local_total_amount,
+      unitPriceCny: row.local_unit_price ?? '',
+      lineAmountCny: row.local_total_amount ?? '',
       isCny: row.currency_code === 'CNY',
       payload: productPayload(row, String(row.quantity)), originalPayload: JSON.stringify(productPayload(row, String(row.quantity))), maxQuantity: row.max_production_quantity, deletionReason: row.deletion_blocked_reason || '',
     }))
@@ -460,7 +468,7 @@ onMounted(() => { void load() })
       <ElAlert v-if="returnsToDraft" type="warning" show-icon :closable="false" class="review-alert" title="修改待校验或已接单任务后将回到草稿，需重新提交 PMC 确认。" />
       <ElAlert v-if="isTerminal" type="info" show-icon :closable="false" class="review-alert" title="已完成或已取消的任务不能编辑。" />
       <section class="edit-summary summary-bar" aria-label="任务汇总">
-        <div><span>人民币金额合计</span><strong class="summary-money">￥{{ compactDecimal(totalAmountCny) }}</strong></div>
+        <div><span>人民币金额合计</span><strong class="summary-money">{{ totalAmountCny === null ? '待补' : '￥' + compactDecimal(totalAmountCny) }}</strong></div>
         <div><span>生产数量（按单位）</span><strong>{{ quantitySummary || '—' }}</strong></div>
         <div><span>交期日期</span><strong>{{ form.delivery_date || '待填写' }}</strong></div>
       </section>
@@ -475,7 +483,7 @@ onMounted(() => { void load() })
               <label><span>跟单员 <i>*</i></span><ElSelect v-model="form.follower_ids" aria-label="跟单员" multiple filterable collapse-tags collapse-tags-tooltip :disabled="(isTerminal) || !canEditField('follower_ids')"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
               <label><span>下单日期 <i>*</i></span><ElDatePicker v-model="form.order_date" aria-label="下单日期" type="date" value-format="YYYY-MM-DD" :disabled="(sourceLocked || isTerminal) || !canEditField('order_date')" /></label>
               <label><span>预计交期 <i>*</i></span><ElDatePicker v-model="form.delivery_date" aria-label="预计交期" type="date" value-format="YYYY-MM-DD" :disabled="(isTerminal) || !canEditField('delivery_date')" /></label>
-              <label><span>含税</span><ElSelect v-model="form.includes_tax" aria-label="含税" :disabled="(isTerminal) || !canEditField('includes_tax')"><ElOption label="含税" :value="true"/><ElOption label="不含税" :value="false"/></ElSelect></label>
+              <label><span>含税</span><ElSelect v-model="form.includes_tax" placeholder="待补" aria-label="含税" :disabled="(isTerminal) || !canEditField('includes_tax')"><ElOption label="含税" :value="true"/><ElOption label="不含税" :value="false"/></ElSelect></label>
               <label v-if="form.includes_tax"><span>税率 <i>*</i></span><ElSelect v-model="form.tax_rate" aria-label="税率" :disabled="(isTerminal) || !canEditField('tax_rate')" placeholder="请选择税率"><ElOption v-for="rate in [3,5,7]" :key="rate" :value="rate" :label="rate + '%'"/></ElSelect></label>
               <label><span>订单误差 <i>*</i></span><ElInput v-model="form.order_tolerance_percent" aria-label="订单误差" :disabled="(isTerminal) || !canEditField('order_tolerance_percent')"><template #append>%</template></ElInput></label>
               <label><span>返单</span><ElSelect v-model="form.is_repeat_order" aria-label="返单" :disabled="(isTerminal) || !canEditField('is_repeat_order')"><ElOption label="是" :value="true"/><ElOption label="否" :value="false"/></ElSelect></label>
@@ -519,16 +527,16 @@ onMounted(() => { void load() })
                     </dl>
                     <div class="price-fields">
                       <label><span>本次生产量 <i>*</i></span><ElInput v-model="row.quantity" inputmode="numeric" :aria-label="row.productName + '本次生产量'" :disabled="(isTerminal) || !canEditField('products')"><template #append>{{ row.unitName }}</template></ElInput><small v-if="row.sourceLocked && row.maxQuantity != null">上限 {{ row.maxQuantity }} {{ row.unitName }}</small></label>
-                      <label><span>人民币单价 <i v-if="!row.sourceLocked && row.isCny">*</i></span><ElInput v-if="!row.sourceLocked && row.isCny" v-model="row.unitPriceCny" inputmode="decimal" aria-label="人民币单价" :disabled="(isTerminal) || !canEditField('products')"/><span v-else class="readonly-value">￥{{ row.unitPriceCny }}</span></label>
-                      <div class="amount-field"><span>人民币金额</span><strong>￥{{ compactDecimal(productAmountCny(row)) }}</strong></div>
+                      <label><span>人民币单价 <i v-if="!row.sourceLocked && row.isCny">*</i></span><ElInput v-if="!row.sourceLocked && row.isCny" v-model="row.unitPriceCny" placeholder="待补" inputmode="decimal" aria-label="人民币单价" :disabled="(isTerminal) || !canEditField('products')"/><span v-else class="readonly-value">{{ row.unitPriceCny ? '￥' + row.unitPriceCny : '待补' }}</span></label>
+                      <div class="amount-field"><span>人民币金额</span><strong>{{ productAmountCny(row) === null ? '待补' : '￥' + compactDecimal(productAmountCny(row)) }}</strong></div>
                     </div>
                     <div class="pack-fields">
                       <label><span>包装要求</span><ElInput v-model="row.payload.packaging_method" type="textarea" :rows="3" :disabled="(sourceLocked || isTerminal) || !canEditField('products')" maxlength="3000" aria-label="包装要求"/></label>
                       <label><span>生产要求</span><ElInput v-model="row.payload.special_requirements" type="textarea" :rows="3" :disabled="(sourceLocked || isTerminal) || !canEditField('products')" maxlength="3000" aria-label="产品生产要求"/></label>
                     </div>
                     <div class="product-actions">
-                      <template v-if="!sourceLocked"><ElButton link type="primary" :disabled="!canEditField('products') || !row.isCny" @click="editProduct(row)">编辑产品</ElButton><ElButton link type="danger" :disabled="!canEditField('products') || !!row.deletionReason" @click="removeProduct(row)">删除</ElButton></template>
-                      <span v-else>来源锁定</span><small v-if="row.deletionReason" class="action-reason">{{ row.deletionReason }}</small><small v-if="!row.sourceLocked && !row.isCny" class="action-reason">历史外币产品保留冻结价格，单价不可修改。</small>
+                      <template v-if="!sourceLocked"><ElButton link type="primary" :disabled="!canEditField('products') || (!row.isCny && row.payload.currency_id !== null)" @click="editProduct(row)">编辑产品</ElButton><ElButton link type="danger" :disabled="!canEditField('products') || !!row.deletionReason" @click="removeProduct(row)">删除</ElButton></template>
+                      <span v-else>来源锁定</span><small v-if="row.deletionReason" class="action-reason">{{ row.deletionReason }}</small><small v-if="!row.sourceLocked && !row.isCny && row.payload.currency_id !== null" class="action-reason">历史外币产品保留冻结价格，单价不可修改。</small>
                     </div>
                   </div>
                 </div>
@@ -553,11 +561,11 @@ onMounted(() => { void load() })
       </div>
       <footer class="edit-footer save-bar"><span aria-live="polite">{{ dirty ? '有未保存修改' : '尚未修改' }}</span><div><ElButton @click="back">取消</ElButton><ElButton type="primary" :loading="saving" :disabled="!canSave || !dirty" @click="save">保存修改</ElButton></div></footer>
       <AppWindowDialog v-model="editorVisible" class="production-product-editor" :title="editingId ? '编辑生产产品' : '添加生产产品'" :width="1180" :height="780" :min-width="320" :close-on-click-modal="false" destroy-on-close>
-        <InquiryProductDialog ref="productEditor" v-model="editorVisible" embedded hide-embedded-footer hide-summary business-title="本次生产内容" scene="sales-order" :item="editorItem" :categories="options?.categories || []" :units="options?.units || []" :colors="options?.colors || []" :currencies="[{code:'CNY'}]" quotation-currency="CNY" :can-upload="true" :close-on-confirm="false" :image-url="editingProduct ? imageUrl(editingProduct) : ''" :pending-image="editingId ? productFiles[editingId]?.[0] : null" @confirm="confirmProduct">
+        <InquiryProductDialog ref="productEditor" v-model="editorVisible" embedded hide-embedded-footer hide-summary business-title="本次生产内容" scene="sales-order" :item="editorItem" :categories="options?.categories || []" :units="options?.units || []" :colors="options?.colors || []" :currencies="[{code:'CNY'}]" :quotation-currency="editingOriginal?.currency_id === null ? '待补' : 'CNY'" :allow-unknown-price="editorAllowsUnknownPrice" :can-upload="true" :close-on-confirm="false" :image-url="editingProduct ? imageUrl(editingProduct) : ''" :pending-image="editingId ? productFiles[editingId]?.[0] : null" @confirm="confirmProduct">
           <template #before-actions>
             <section class="product-detail-editor">
               <h3>生产明细</h3>
-              <div class="product-table-wrap"><table><colgroup><col style="width:130px"><col style="width:140px"><col style="width:72px"><col style="width:280px"><col style="width:270px"></colgroup><thead><tr><th>类型</th><th>类别项</th><th>是否</th><th>描述</th><th>明细图片</th></tr></thead><tbody><tr v-for="detail in editorDetails" :key="detail.client_key"><td>{{ detail.detail_type }}</td><td>{{ detail.category_label }}</td><td><ElCheckbox v-model="detail.is_selected" :aria-label="detail.category_label + '是否需要'"/></td><td><ElInput v-model="detail.description" maxlength="2000" :aria-label="detail.category_label + '描述'"/></td><td><input type="file" accept="image/jpeg,image/png,image/webp" :aria-label="detail.category_label + '明细图片'" @change="chooseDetailImage(detail.client_key, $event)"/><small v-if="editorDetailFiles[detail.client_key]">{{ editorDetailFiles[detail.client_key]?.name }}</small><small v-else-if="task.products.find(product => product.id === editingId)?.details.find(item => item.id === detail.client_key)?.image_name">已有图片保留；选择新图后替换</small></td></tr><tr v-if="!editorDetails.length"><td colspan="5" class="empty-products">暂无生产明细</td></tr></tbody></table></div>
+              <div class="product-table-wrap"><table><colgroup><col style="width:130px"><col style="width:140px"><col style="width:72px"><col style="width:280px"><col style="width:270px"></colgroup><thead><tr><th>类型</th><th>类别项</th><th>是否</th><th>描述</th><th>明细图片</th></tr></thead><tbody><tr v-for="detail in editorDetails" :key="detail.client_key"><td>{{ detail.detail_type }}</td><td>{{ detail.category_label }}</td><td><ElCheckbox :model-value="detail.is_selected ?? false" :indeterminate="detail.is_selected === null" @change="detail.is_selected = Boolean($event)" :aria-label="detail.category_label + '是否需要'"/><small v-if="detail.is_selected === null">待补</small></td><td><ElInput v-model="detail.description" maxlength="2000" :aria-label="detail.category_label + '描述'"/></td><td><input type="file" accept="image/jpeg,image/png,image/webp" :aria-label="detail.category_label + '明细图片'" @change="chooseDetailImage(detail.client_key, $event)"/><small v-if="editorDetailFiles[detail.client_key]">{{ editorDetailFiles[detail.client_key]?.name }}</small><small v-else-if="task.products.find(product => product.id === editingId)?.details.find(item => item.id === detail.client_key)?.image_name">已有图片保留；选择新图后替换</small></td></tr><tr v-if="!editorDetails.length"><td colspan="5" class="empty-products">暂无生产明细</td></tr></tbody></table></div>
             </section>
           </template>
         </InquiryProductDialog>

@@ -44,7 +44,11 @@ const selectedPlanCategory = computed(() => isMetalWorkshop.value ? 'METAL' : (s
 const usesBomName = computed(() => ['METAL', 'CUTTING', 'SEWING'].includes(selectedPlanCategory.value || ''))
 const isSewingCraft = computed(() => selectedPlanCategory.value === 'SEWING')
 const bomItemsForCraft = computed(() => (context.value?.bom_items || []).filter(item => (
-  selectedPlanCategory.value === 'METAL' ? item.source_type === 'METAL' : item.source_type === 'CUTTING'
+  selectedPlanCategory.value === 'METAL'
+    ? item.source_type === 'METAL'
+    : selectedPlanCategory.value === 'CUTTING'
+      ? item.component_kind === 'CUT_PIECE'
+      : selectedPlanCategory.value === 'SEWING' && item.component_kind === 'SEWN_PART'
 )))
 const operationProductNameOptions = computed(() => [...new Set((context.value?.operations || []).filter(item => form.craftIds.includes(item.craft_id)).map(item => item.product_name))].sort())
 const operationOptions = (craftId: string) => {
@@ -61,7 +65,7 @@ const moneyTotal = computed(() => sumWageAmounts(
 const errorText = (error: unknown) => (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || '操作失败。'
 function defaultCountingMode(): WorkCountingMode {
   if (selectedPlanCategory.value === 'METAL') return 'PIECE'
-  if (selectedPlanCategory.value === 'CUTTING') return 'SET'
+  if (selectedPlanCategory.value === 'CUTTING') return 'PIECE'
   if (selectedPlanCategory.value === 'SEWING') return 'SET'
   return 'ORDER'
 }
@@ -93,9 +97,11 @@ function requiredQuantity(line: WageSchemeLineInput) {
   const option = bomItemsForCraft.value.find(item => item.id === line.bom_line_id)
   if (!option) return null
   if (selectedPlanCategory.value === 'METAL') return option.pieces_per_product ? orderQuantity * option.pieces_per_product : null
-  if (!option.cutting_sets_per_product || !option.cutting_pieces_per_set) return null
-  const setQuantity = orderQuantity * option.cutting_sets_per_product
-  return line.counting_mode === 'PIECE' ? setQuantity * option.cutting_pieces_per_set : setQuantity
+  if (selectedPlanCategory.value === 'CUTTING') {
+    if (!option.parts_per_product || !option.pieces_per_part) return null
+    return orderQuantity * option.parts_per_product * option.pieces_per_part
+  }
+  return option.parts_per_product ? orderQuantity * option.parts_per_product : null
 }
 function quantityText(value: number | null) { return value === null ? '待完善 BOM' : value.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }
 async function openHistory() {
@@ -238,7 +244,8 @@ async function submitForApproval() {
   if (!form.lines.length) return ElMessage.warning('至少添加一条工价明细。')
   if (form.lines.some(item => !item.craft_id || !item.operation_id || !item.display_name.trim() || item.declared_price === '')) return ElMessage.warning('请补齐工价明细。')
   if (usesBomName.value && form.lines.some(item => !item.bom_line_id)) return ElMessage.warning('名称 / 部位必须从当前产品 BOM 中选择。')
-  if (isSewingCraft.value && form.lines.some(item => !['SET', 'PIECE'].includes(item.counting_mode))) return ElMessage.warning('请选择车缝计数方式。')
+  if (selectedPlanCategory.value === 'CUTTING' && form.lines.some(item => item.counting_mode !== 'PIECE')) return ElMessage.warning('裁剪工价必须按片计数。')
+  if (isSewingCraft.value && form.lines.some(item => item.counting_mode !== 'SET')) return ElMessage.warning('车缝工价必须按套计数。')
   if (form.lines.some(item => requiredQuantity(item) === null)) return ElMessage.warning('BOM 缺少计算需完成次数的数据，请先完善 BOM。')
   const hasInvalidMoney = form.lines.some(item => {
     const values = [item.declared_price, item.previous_price, item.revised_price]
@@ -319,7 +326,7 @@ onMounted(load)
       <ElTable class="erp-table-editor wr-wage-line-table scroll-actions-table" :data="form.lines" border>
         <ElTableColumn label="名称 / 部位" min-width="190" align="left"><template #default="{ row }"><ElSelect v-if="usesBomName" v-model="row.bom_line_id" :data-testid="isMetalWorkshop ? 'metal-bom-display-select' : 'bom-display-select'" filterable :placeholder="!row.bom_line_id && row.display_name ? `未匹配：${row.display_name}，请选择` : (isMetalWorkshop ? '选择部件、材质和规格' : '选择 BOM 名称和规格')" @change="bomChanged(row)"><ElOption v-for="item in bomItemsForCraft" :key="item.id" :label="item.label" :value="item.id" /></ElSelect><ElInput v-else v-model="row.display_name" maxlength="200" /></template></ElTableColumn>
         <ElTableColumn label="申报工序" min-width="140" align="left"><template #default="{ row }"><ElSelect v-model="row.operation_id" data-testid="wage-operation-select" filterable @change="operationChanged(row)"><ElOption v-for="item in operationOptions(row.craft_id)" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></template></ElTableColumn>
-        <ElTableColumn v-if="isSewingCraft" label="计数方式" width="106" align="left"><template #default="{ row }"><ElSelect v-model="row.counting_mode"><ElOption label="按套" value="SET" /><ElOption label="按片" value="PIECE" /></ElSelect></template></ElTableColumn>
+        <ElTableColumn v-if="isSewingCraft" label="计数方式" width="106" align="left"><template #default><span class="wr-fixed-counting-mode">按套</span></template></ElTableColumn>
         <ElTableColumn label="需完成次数" width="108" align="right"><template #default="{ row }">{{ quantityText(requiredQuantity(row)) }}</template></ElTableColumn>
         <ElTableColumn label="制作工序描述" min-width="150" align="left"><template #default="{ row }"><ElInput v-model="row.production_description" data-testid="wage-production-description-input" maxlength="500" /></template></ElTableColumn>
         <ElTableColumn label="申报工价" width="106" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.declared_price" inputmode="decimal" /></template></ElTableColumn>

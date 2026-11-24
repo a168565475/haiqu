@@ -102,9 +102,9 @@ class MaterialFlowBomTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         line = BomLine.objects.get(section__bom=self.bom)
         self.assertEqual((line.cutting_length_mm, line.suggested_bar_count, line.raw_bar_length_m, line.suggested_purchase_meters),
-                         (500, 334, Decimal("3.05"), Decimal("1018.70")))
-        self.assertEqual((line.branch_count, line.original_material_length, line.unit), ("334", "3.05", "根"))
-        self.assertEqual(line.raw_values["pipe_plan_version"], 3)
+                         (500, 339, Decimal("3.05"), Decimal("1033.95")))
+        self.assertEqual((line.branch_count, line.original_material_length, line.unit), ("339", "3.05", "根"))
+        self.assertEqual(line.raw_values["pipe_plan_version"], 4)
 
     def test_readonly_quantity_preview_formula_errors_permissions_and_no_writes(self):
         endpoint = '/api/v1/boms/material-flow-preview/'
@@ -130,7 +130,7 @@ class MaterialFlowBomTests(TestCase):
         for field in ["length_value", "tube_cut_piece_count", "unit_consumption"]:
             response = self.save([{"section_type": "PROFILE", "title": "管材类", "lines": [self.pipe_payload(**{field: "1.5"})]}])
             self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(BomLine.objects.get(section__bom=self.bom).suggested_bar_count, 334)
+        self.assertEqual(BomLine.objects.get(section__bom=self.bom).suggested_bar_count, 339)
 
     def test_missing_cut_count_can_save_but_cannot_verify(self):
         response = self.save([{"section_type": "PROFILE", "title": "管材类", "lines": [self.pipe_payload(tube_cut_piece_count="")]}])
@@ -144,7 +144,7 @@ class MaterialFlowBomTests(TestCase):
         self.assertFalse(OrderMaterialRequirement.objects.filter(measurement_kind="PIPE", production_task=self.task).exists())
         from apps.material_issues.pipe_requirements import sync_pipe_requirement
         requirement = sync_pipe_requirement(BomLine.objects.get(section__bom=self.bom).pk)
-        self.assertEqual(requirement.required_quantity, 2004)
+        self.assertEqual(requirement.required_quantity, 2034)
 
     def legacy_pipe(self):
         from ..material_flow_calculations import pipe_plan
@@ -153,6 +153,8 @@ class MaterialFlowBomTests(TestCase):
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,
                          order_quantity=1000, calculation_version=2)
         line.raw_values.pop("pipe_plan_version")
+        for field in ("purchase_allowance_mode", "purchase_allowance_rule", "base_purchase_bar_count", "purchase_allowance_bar_count"):
+            line.raw_values.pop(field, None)
         line.suggested_bar_count = plan["suggested_bar_count"]
         line.suggested_purchase_meters = Decimal(plan["suggested_purchase_meters"])
         line.branch_count = str(plan["suggested_bar_count"])
@@ -242,7 +244,7 @@ class MaterialFlowBomTests(TestCase):
         with transaction.atomic():
             _sync_profile_lines_to_order_quantity(self.bom, previous_order_quantity=1000)
         line = BomLine.objects.get(section__bom=self.bom)
-        self.assertEqual((line.branch_count, line.total_purchase_quantity), ("334", "1018.70"))
+        self.assertEqual((line.branch_count, line.total_purchase_quantity), ("339", "1033.95"))
 
     def add_fabric_and_cutting(self):
         fabric_section = BomSection.objects.filter(bom=self.bom, title="面料类").first()
@@ -337,7 +339,9 @@ class MaterialFlowBomTests(TestCase):
         self.product_line.save()
         copied = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=self.bom, actor_employee=self.employee)
         line = BomLine.objects.get(section__bom=copied)
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
+        self.assertEqual((line.raw_values["base_purchase_bar_count"], line.raw_values["purchase_allowance_bar_count"],
+                          line.suggested_bar_count), (667, 8, 675))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1218.5100"))
 
     def imported_plan(self, *, with_cutting_header=False):
         from io import BytesIO

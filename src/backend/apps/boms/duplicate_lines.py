@@ -6,6 +6,7 @@ from .fabric_material_sync import _specification, _width
 from .material_attributes import SECTION_FIELDS, bom_attribute_fields, spray_color_value
 from .pipe_material_sync import pipe_parameter_values
 from .selectors import pipe_dimension_numbers
+from .component_parts import is_cut_piece, is_sewn_part
 
 
 def _text(value):
@@ -20,10 +21,16 @@ def _material_key(line):
     title = line.section.title.strip()
     raw = line.raw_values or {}
     common = (_text(line.category), _text(line.unit))
+    if is_sewn_part(line):
+        return ("SEWN_PART", _text(line.part_name), _text(line.specification), _text(line.unit))
+    if is_cut_piece(line):
+        # 同一实物可以属于不同部位，不能沿采购用料的整分区判重把组成关系合并。
+        return ("CUT_PIECE", str(line.parent_part_id), _text(line.part_name), _text(line.specification),
+                str(line.fabric_source_line_id), _text(line.unit))
     if line.material_catalog_id:
         snapshot = line.material_selection_snapshot
         state = {key: snapshot.get(key) for key in ("attributes", "processing_state", "processing_stage", "completed_craft", "semi_kind")}
-        if snapshot.get("product_color_id"):
+        if any(snapshot.get(key) for key in ("product_color_id", "color_card", "color_code")):
             state.update({key: snapshot.get(key, "") for key in ("product_color_id", "color_card", "color_code", "color_name")})
         key = (str(line.material_catalog_id), json.dumps(state, ensure_ascii=False, sort_keys=True), line.unit)
         return (*key, line.length_value, spray_color_value(raw)) if line.section.section_type == "PROFILE" else key
@@ -53,7 +60,7 @@ def validate_duplicate_material_lines(lines):
     for line in lines:
         material_key = _material_key(line)
         if material_key is not None:
-            groups.setdefault((line.section.pk, material_key), []).append(line)
+            groups.setdefault((line.section.pk, material_key, line.purchase_required), []).append(line)
     errors = []
     for duplicates in groups.values():
         if len(duplicates) < 2:

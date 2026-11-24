@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 
+from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connections, transaction
 from django.test import TransactionTestCase
 from rest_framework.exceptions import APIException
@@ -19,7 +20,8 @@ class WorkshopEmployeeIdentityConcurrencyTests(TransactionTestCase):
 
     def setUp(self):
         self.workshop, _ = Workshop.objects.get_or_create(name="装配车间")
-        self.actor = Employee.objects.create(employee_code="MASTER_LOCK_ACTOR", display_name="操作人")
+        self.user = get_user_model().objects.create_superuser(username="workshop-lock-admin")
+        self.actor = Employee.objects.create(user=self.user, employee_code="MASTER_LOCK_ACTOR", display_name="操作人")
         self.worker = production_employee(workshop=self.workshop, position="原岗位", name="并发员工")
 
     def test_same_version_concurrent_updates_only_one_succeeds(self):
@@ -29,7 +31,7 @@ class WorkshopEmployeeIdentityConcurrencyTests(TransactionTestCase):
             close_old_connections()
             try:
                 barrier.wait(timeout=10)
-                request = SimpleNamespace(headers={"If-Match": tag}, META={})
+                request = SimpleNamespace(user=get_user_model().objects.get(pk=self.user.pk), headers={"If-Match": tag}, META={})
                 try:
                     update_employee_workshop(instance_id=self.worker.pk, validated_data={"workshop_position": position}, actor_employee=self.actor, request=request)
                     return 200

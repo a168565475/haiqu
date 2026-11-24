@@ -8,6 +8,8 @@ from apps.material_catalog.snapshots import material_identity_key
 from .catalog_stock_identity import build_catalog_stock_identity
 from .models import PublicStockBalance
 from .public_stock_services import _database_identity, _uuid
+from .pipe_weight_quantities import issued_pipe_weight
+from .hardware_stock_weights import catalog_piece_weight_identity, piece_weight_change
 
 
 def available_catalog_balances(*, material_catalog_id, material_selection_snapshot, zone_id=None, raw_bar_length_m=None):
@@ -44,26 +46,42 @@ def available_catalog_balances(*, material_catalog_id, material_selection_snapsh
             "warehouse_id": str(balance.zone.warehouse_id), "warehouse_name": balance.zone.warehouse.warehouse_name,
             "zone_id": str(balance.zone_id), "zone_name": balance.zone.zone_name, "quality": balance.quality,
             "raw_bar_length_m": balance.raw_bar_length_m, "meter_quantity": balance.meter_quantity,
+            "bar_weight_kg": balance.bar_weight_kg, "weight_quantity": balance.weight_quantity,
             "quantity": balance.quantity, "reserved_quantity": reserved,
             "available_quantity": max(balance.quantity - reserved, Decimal(0)), "version": balance.version})
     return rows
 
 
 def catalog_stock_summary(balance):
-    from django.db.models import Sum, Q
+    from django.db.models import Count, Sum, Q
     from .models import PublicStockMovement
 
     selected = balance.identity_snapshot["material_selection_snapshot"]
+    hardware_weight = catalog_piece_weight_identity({"identity_snapshot": balance.identity_snapshot})
     balances = PublicStockBalance.objects.filter(stock_kind=balance.stock_kind, identity_key=balance.identity_key,
         unit_id=balance.unit_id).select_related("zone__warehouse").order_by("zone_id", "id")
-    totals = balances.aggregate(available=Sum("quantity", filter=Q(quality="AVAILABLE")), defective=Sum("quantity", filter=Q(quality="DEFECTIVE")))
+    totals = balances.aggregate(available=Sum("quantity", filter=Q(quality="AVAILABLE")),
+        defective=Sum("quantity", filter=Q(quality="DEFECTIVE")),
+        weights=Sum("weight_quantity", filter=Q(quality="AVAILABLE")),
+        missing_weights=Count("pk", filter=Q(quality="AVAILABLE", quantity__gt=0, weight_quantity__isnull=True)))
     movement = PublicStockMovement.objects.filter(balance__in=balances).aggregate(
         inbound=Sum("quantity", filter=Q(direction="IN")), issued=Sum("quantity", filter=Q(direction="OUT")))
     free = available_catalog_balances(material_catalog_id=balance.material_catalog_id, material_selection_snapshot=selected,
         raw_bar_length_m=balance.raw_bar_length_m)
+    available_weight = Decimal("0") if balance.raw_bar_length_m or hardware_weight else None
+    if balance.raw_bar_length_m or hardware_weight:
+        for row in free:
+            if row["available_quantity"] <= 0:
+                continue
+            if row["weight_quantity"] is None:
+                available_weight = None
+                break
+            available_weight += (piece_weight_change(before_quantity=row["quantity"], before_weight=row["weight_quantity"],
+                quantity=row["available_quantity"], direction="OUT", quantity_unit=selected["unit_name"])[1] if hardware_weight else
+                issued_pipe_weight(available_roots=row["quantity"], available_weight_kg=row["weight_quantity"], issued_roots=row["available_quantity"]))
     return {"stock_item_id": str(balance.material_catalog_id), "material_catalog_id": str(balance.material_catalog_id),
         "identity_key": balance.identity_key, "material_selection_snapshot": selected, "stock_kind": "RAW" if balance.stock_kind == "CATALOG_RAW" else "SEMI",
-        "measurement_kind": "PIPE" if balance.raw_bar_length_m else "CATALOG", "material_number": "", "material_name": selected["name"],
+        "measurement_kind": "PIPE" if balance.raw_bar_length_m else "HARDWARE_WEIGHT" if hardware_weight else "CATALOG", "material_number": "", "material_name": selected["name"],
         "category": dict(CATEGORY_CHOICES)[selected["category_key"]],
         "specification": " / ".join(selected["attributes"].values()), "color": selected["attributes"].get("color", ""),
         "unit": selected["unit_name"], "current_quantity": str(totals["available"] or 0),
@@ -71,7 +89,11 @@ def catalog_stock_summary(balance):
         "defective_quantity": str(totals["defective"] or 0), "cumulative_inbound_quantity": str(movement["inbound"] or 0),
         "cumulative_issued_quantity": str(movement["issued"] or 0),
         "meter_quantity": str((totals["available"] or 0) * balance.raw_bar_length_m) if balance.raw_bar_length_m else None,
+        "weight_quantity": str(totals["weights"] or 0) if (balance.raw_bar_length_m or hardware_weight) and not totals["missing_weights"] else None,
+        "available_weight_quantity": str(available_weight) if available_weight is not None else None,
         "zones": [{"zone_id": str(row.zone_id), "balance_id": str(row.pk), "warehouse_number": row.zone.warehouse.warehouse_number,
             "warehouse_name": row.zone.warehouse.warehouse_name, "zone_name": row.zone.zone_name, "quality": row.quality,
             "quantity": str(row.quantity), "inbound_line_id": None, "raw_bar_length_m": str(row.raw_bar_length_m) if row.raw_bar_length_m else None,
-            "meter_quantity": str(row.meter_quantity) if row.meter_quantity is not None else None} for row in balances]}
+            "meter_quantity": str(row.meter_quantity) if row.meter_quantity is not None else None,
+            "bar_weight_kg": str(row.bar_weight_kg) if row.bar_weight_kg is not None else None,
+            "weight_quantity": str(row.weight_quantity) if row.weight_quantity is not None else None} for row in balances]}

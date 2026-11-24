@@ -1,7 +1,5 @@
 """消费人工确认的原料规范数据，不读取或推断源表业务含义。"""
 
-from collections.abc import Mapping
-
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
@@ -12,7 +10,7 @@ from apps.reference_data.models import ProductionUnit
 from .api.serializers import (
     AttributeValueCreateSerializer,
     CatalogCreateSerializer,
-    CatalogPatchSerializer,
+    SprayEnabledField,
     StrictSerializer,
 )
 from .definitions import SPRAY_FIELDS, TEMPLATES
@@ -49,15 +47,9 @@ class ImportUnitSerializer(StrictSerializer):
 
 
 class ImportCatalogSerializer(CatalogCreateSerializer):
-    spray_enabled = serializers.BooleanField()
+    spray_enabled = SprayEnabledField()
     values = ImportValueSerializer(many=True)
     units = ImportUnitSerializer(many=True)
-
-    def to_internal_value(self, data):
-        if isinstance(data, Mapping) and "spray_enabled" in data:
-            switch = CatalogPatchSerializer(data={"spray_enabled": data["spray_enabled"]})
-            switch.is_valid(raise_exception=True)
-        return super().to_internal_value(data)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -108,10 +100,11 @@ def _prepare_catalog(row, catalog, units):
     enabled = row["spray_enabled"] or bool(catalog and catalog.spray_enabled)
     existing_values = {
         (value.scope, value.field_key, value.value, value.parent.value if value.parent else None): value
-        for value in catalog.attribute_values.select_related("parent").all()
+        for value in catalog.attribute_values.select_related("parent").filter(product_color_id=None, color_card="", color_code="")
     } if catalog else {}
     existing_units = {
-        (unit.scope, unit.unit_id): unit for unit in catalog.allowed_units.all()
+        (option.scope, option.unit.unit_name): option for option in
+        catalog.allowed_units.select_related("unit").order_by("archived_at", "pk")
     } if catalog else {}
     desired_values = dict(row["values"])
     fields = {field["key"]: field for field in TEMPLATES[row["template_key"]]["fields"]}
@@ -156,10 +149,10 @@ def _prepare_catalog(row, catalog, units):
     for value in row["units"].values():
         if value["scope"] == MaterialScope.SPRAY and not enabled:
             _fail(row, "units", "未启用喷塑，不能导入喷塑单位。")
-        unit = units.get(value["unit_name"])
+        existing = existing_units.get((value["scope"], value["unit_name"]))
+        unit = existing.unit if existing is not None else units.get(value["unit_name"])
         if unit is None or unit.status != "ACTIVE" or unit.archived_at is not None:
             _fail(row, "units", f"单位 {value['unit_name']} 不存在、已停用或已归档。")
-        existing = existing_units.get((value["scope"], unit.pk))
         if existing is not None and existing.archived_at is not None:
             _fail(row, "units", f"{value['scope']} 的单位 {unit.unit_name} 已归档，导入不会恢复。")
         if existing is None:

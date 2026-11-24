@@ -15,7 +15,7 @@ from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -33,13 +33,18 @@ from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import Currency, ReferenceStatus
 from apps.sales_orders.presentation import specification_display
 
-from ..source_access import purchase_order_access
+from ..source_access import current_operations, packaging_purchase_tasks, purchase_order_access
+from ..purchase_scope import PACKAGING_PERMISSION, packaging_order_filter
 from ..sample_purchase_services import sample_procurement_sources, sample_source
 from ..models import (
+    PurchaseGroup,
+    PurchaseGroupBomSource,
     PurchaseContractTemplate,
     PurchaseContractTemplateStatus,
     PurchaseOrder,
+    PurchaseOrderLine,
     PurchaseOrderStatus,
+    PurchaseScope,
     PurchaseReturnStatus,
     Supplier,
     SupplierCategory,
@@ -75,11 +80,13 @@ from ..purchase_sheet_xlsx import build_supplier_purchase_sheet_xlsx
 from ..purchase_sheet_preview import build_purchase_sheet_preview
 from ..fabric_purchase_sheet_template import FabricPurchaseSheetTemplateError
 from ..purchase_sheet_services import (
+    active_purchase_sheet_template_versions,
     create_purchase_contract_template,
     create_supplier_purchase_sheet_version,
     generate_supplier_purchase_sheets,
     publish_supplier_purchase_sheets,
     publish_supplier_purchase_sheet,
+    recommended_purchase_sheet_template,
     remove_supplier_purchase_sheet_line_image,
     remove_supplier_purchase_sheet_seal_image,
     replace_supplier_purchase_sheet_line_image,
@@ -107,6 +114,18 @@ from .serializers import (
 
 SUPPLIER_NUMBER_PATTERN = re.compile(r"^GYS([0-9]{5})$")
 SUPPLIER_NUMBER_START = 266
+
+
+def purchase_form_options():
+    currencies = Currency.objects.filter(archived_at__isnull=True, status=ReferenceStatus.ACTIVE).order_by("sort_order", "code")
+    suppliers = active_suppliers().filter(is_disabled=False).order_by("supplier_number", "id").values(
+        "id", "supplier_number", "supplier_name", "supplier_type", "supplier_categories",
+    )
+    return {
+        "suppliers": [{**row, "id": str(row["id"])} for row in suppliers],
+        "currencies": [{"id": str(row.pk), "code": row.code, "name": row.chinese_name, "symbol": row.symbol} for row in currencies],
+        "default_currency_id": next((str(row.pk) for row in currencies if row.code == "CNY"), None),
+    }
 
 
 def next_supplier_number_preview():
@@ -279,9 +298,9 @@ class PurchaseOrderViewSet(
     permission_classes = [IsAuthenticated, HasActiveEmployee, BusinessActionPermission]
     action_permission_map = {
         "list": "procurement.view_purchaseorder",
-        "retrieve": "procurement.view_purchaseorder",
+        "retrieve": ("procurement.view_purchaseorder", PACKAGING_PERMISSION),
         "stats": "procurement.view_purchaseorder",
-        "details": ("procurement.view_purchaseorder", "inventory.receive_material", "inventory.quality_confirm_material"),
+        "details": ("procurement.view_purchaseorder", "inventory.receive_material", "inventory.quality_confirm_material", PACKAGING_PERMISSION),
         "filter_options": "procurement.view_purchaseorder",
         "options": "procurement.add_purchaseorder",
         "source": "procurement.add_purchaseorder",
@@ -309,9 +328,17 @@ class PurchaseOrderViewSet(
         return PurchaseOrderListSerializer
 
     def get_queryset(self):
-        queryset = active_purchase_orders().filter(
-            purchase_order_access(self._accessible_task_ids(), self.request)
-        )
+        operations = current_operations(self.request, "procurement.view_purchaseorder")
+        standard = set(operations) - {PACKAGING_PERMISSION}
+        access = Q(pk__in=[])
+        if standard:
+            access |= purchase_order_access(self._accessible_task_ids(), self.request) & ~packaging_order_filter()
+        if self.action in {"retrieve", "details"}:
+            from ..tracking_permissions import accessible_packaging_tracking_task_ids
+            access |= packaging_order_filter() & Q(production_task_id__in=accessible_packaging_tracking_task_ids(self.request))
+        if self.action == "details" and standard & {"inventory.receive_material", "inventory.quality_confirm_material"}:
+            access |= packaging_order_filter() & purchase_order_access(self._accessible_task_ids(), self.request)
+        queryset = active_purchase_orders().filter(access)
         return_status = self.request.query_params.get("return_status", "").strip()
         if return_status:
             if return_status not in ["NONE", "MISSING", *PurchaseReturnStatus.values]:
@@ -350,17 +377,6 @@ class PurchaseOrderViewSet(
                 raise ValidationError({"created_after": "创建日期不是有效日期。"})
             queryset = queryset.filter(created_at__date__gte=parsed_date)
 
-        mailed_value = self.request.query_params.get("is_mailed", "").strip().lower()
-        if mailed_value:
-            if mailed_value in {"1", "true"}:
-                queryset = queryset.filter(is_mailed=True)
-            elif mailed_value in {"0", "false"}:
-                queryset = queryset.filter(is_mailed=False)
-            elif mailed_value in {"null", "pending"}:
-                queryset = queryset.filter(is_mailed__isnull=True)
-            else:
-                raise ValidationError({"is_mailed": "是否邮寄参数必须为 true、false 或 null。"})
-
         queryset = search_purchase_orders(queryset, self.request.query_params.get("q", "").strip())
         ordering = self.request.query_params.get("ordering", "-created_at").strip()
         allowed_ordering = {
@@ -375,30 +391,55 @@ class PurchaseOrderViewSet(
         }
         if ordering not in allowed_ordering:
             raise ValidationError({"ordering": "排序参数不正确。"})
-        queryset = purchase_orders_with_context(
-            queryset.distinct().order_by(ordering, "-id"),
-            read_optimized=self.action in {"list", "retrieve", "details"},
-        )
+        receiving_sections = None
         if self.action == "details":
             from .read_details import with_read_detail_records
             from apps.access_control import module_policy, sales_policy
+            from apps.inventory.purchase_receiving_sections import (
+                assigned_receiving_sections, open_receiving_orders, receiving_categories, receiving_lines_in_scope,
+            )
+            from apps.inventory.api.serializers import ReceivingSectionQuerySerializer
             if module_policy.enabled():
                 can_read_purchase = module_policy.has_permission(self.request, "procurement.view_purchaseorder")
             elif sales_policy.enabled():
                 can_read_purchase = sales_policy.has_permission(self.request, "procurement.view_purchaseorder")
             else:
                 can_read_purchase = self.request.user.has_perm("procurement.view_purchaseorder")
+            order_id = self._uuid_value(self.kwargs["pk"], "id")
+            packaging_read = PACKAGING_PERMISSION in operations and packaging_purchase_tasks(self.request).filter(
+                packaging_order_filter("purchase_orders__"), purchase_orders__pk=order_id,
+            ).exists()
             # 仓库入口沿用原有范围，不因新增详情暴露尚未进入采购执行的草稿。
-            if not can_read_purchase:
-                queryset = queryset.filter(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED])
+            receiving_view = self.request.query_params.get("receiving") == "1"
+            assigned_sections = assigned_receiving_sections(self.request)
+            warehouse_orders = open_receiving_orders() | Q(status=PurchaseOrderStatus.COMPLETED)
+            if not can_read_purchase and not packaging_read:
+                queryset = queryset.filter(warehouse_orders)
             elif module_policy.enabled():
                 read_tasks = accessible_production_tasks(self.request, permission='procurement.view_purchaseorder').values('id')
                 read_orders = active_purchase_orders().filter(purchase_order_access(
                     read_tasks, self.request, permission='procurement.view_purchaseorder')).values('id')
                 # 当前单据没有采购读取范围时，兼任仓库只能读取已进入执行的采购。
-                queryset = queryset.filter(Q(pk__in=read_orders) | Q(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED]))
-            queryset = with_read_detail_records(queryset)
-        return queryset
+                if not packaging_read:
+                    queryset = queryset.filter(Q(pk__in=read_orders) | warehouse_orders)
+                if assigned_sections is not None and not receiving_view:
+                    order_id = self._uuid_value(self.kwargs['pk'], 'id')
+                    can_read_purchase = read_orders.filter(pk=order_id).exists()
+            if not (can_read_purchase or packaging_read) or receiving_view or assigned_sections is not None and not module_policy.enabled():
+                receiving_sections = assigned_sections
+                section_query = ReceivingSectionQuerySerializer(data=self.request.query_params)
+                section_query.is_valid(raise_exception=True)
+                section = section_query.validated_data.get("material_section")
+                receiving_sections = receiving_categories(receiving_sections, section)
+                if receiving_sections is not None:
+                    visible_lines = receiving_lines_in_scope(PurchaseOrderLine.objects.all(), receiving_sections)
+                    queryset = queryset.filter(pk__in=visible_lines.values("purchase_order_id"))
+            queryset = with_read_detail_records(queryset, receiving_sections=receiving_sections)
+        return purchase_orders_with_context(
+            queryset.distinct().order_by(ordering, "-id"),
+            read_optimized=self.action in {"list", "retrieve", "details"},
+            receiving_sections=receiving_sections,
+        )
 
     def _accessible_tasks(self):
         return accessible_production_tasks(self.request).filter(archived_at__isnull=True)
@@ -493,6 +534,12 @@ class PurchaseOrderViewSet(
         response["ETag"] = etag_for_instance(order)
         return response
 
+    def _ordinary_order_id(self, value):
+        order_id = self._uuid_value(value, "id")
+        if PurchaseOrder.objects.filter(packaging_order_filter(), pk=order_id).exists():
+            raise NotFound("采购订单不存在或不在当前账号的数据范围内。")
+        return order_id
+
     def _update(self, request, *, partial):
         current = self.get_object()
         serializer = PurchaseOrderUpdateSerializer(data=request.data, partial=partial)
@@ -516,7 +563,7 @@ class PurchaseOrderViewSet(
 
     def destroy(self, request, *args, **kwargs):
         delete_purchase_order(
-            order_id=self._uuid_value(kwargs.get("pk"), "id"),
+            order_id=self._ordinary_order_id(kwargs.get("pk")),
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
@@ -525,7 +572,7 @@ class PurchaseOrderViewSet(
 
     def _confirm(self, request, pk):
         order = confirm_purchase_order(
-            order_id=self._uuid_value(pk, "id"),
+            order_id=self._ordinary_order_id(pk),
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
@@ -548,7 +595,7 @@ class PurchaseOrderViewSet(
         serializer = PurchaseOrderCompletionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         order = complete_purchase_order(
-            order_id=self._uuid_value(pk, "id"), remark=serializer.validated_data["remark"],
+            order_id=self._ordinary_order_id(pk), remark=serializer.validated_data["remark"],
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=request.employee, request=request,
         )
@@ -566,23 +613,10 @@ class PurchaseOrderViewSet(
             if line.supplier_id is None:
                 continue
             grouped.setdefault(line.supplier_id, []).append(line)
-        templates = list(
-            PurchaseContractTemplate.objects.filter(
-                archived_at__isnull=True,
-                status=PurchaseContractTemplateStatus.ACTIVE,
-            )
-            .prefetch_related("versions")
-            .order_by("template_code", "id")
-        )
+        versions = active_purchase_sheet_template_versions()
         template_rows = []
-        for template in templates:
-            versions = list(template.versions.all())
-            current = next(
-                (item for item in versions if item.version_number == template.current_version_number),
-                versions[0] if versions else None,
-            )
-            if current is None:
-                continue
+        for current in versions:
+            template = current.template
             template_rows.append(
                 {
                     "id": str(template.pk),
@@ -596,14 +630,7 @@ class PurchaseOrderViewSet(
             )
         for supplier_id, supplier_lines in sorted(grouped.items(), key=lambda item: item[1][0].supplier_number_snapshot):
             categories = list(supplier_lines[0].supplier_categories_snapshot)
-            recommended = next(
-                (
-                    item["version_id"]
-                    for item in template_rows
-                    if set(item["supplier_categories"]) & set(categories)
-                ),
-                None,
-            )
+            recommended = recommended_purchase_sheet_template(versions, categories)
             suppliers.append(
                 {
                     "supplier_id": str(supplier_id),
@@ -612,7 +639,7 @@ class PurchaseOrderViewSet(
                     "supplier_categories": categories,
                     "line_count": len(supplier_lines),
                     "total_amount": format(sum((line.amount or 0 for line in supplier_lines)), "f"),
-                    "recommended_template_version_id": recommended,
+                    "recommended_template_version_id": str(recommended.pk) if recommended else None,
                 }
             )
         existing_sheets = SupplierPurchaseSheet.objects.filter(
@@ -636,14 +663,14 @@ class PurchaseOrderViewSet(
         serializer = PurchaseSheetGenerateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         sheets = generate_supplier_purchase_sheets(
-            order_id=self._uuid_value(pk, "id"),
+            order_id=self._ordinary_order_id(pk),
             assignments=serializer.validated_data["assignments"],
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
         )
         queryset = SupplierPurchaseSheet.objects.filter(pk__in=[item.pk for item in sheets]).select_related(
-            "purchase_order",
+            "purchase_order", "purchase_order__purchase_group",
             "purchase_order__production_task__sales_order",
             "supplier",
             "template_version__template",
@@ -657,7 +684,7 @@ class PurchaseOrderViewSet(
 
     @action(detail=False, methods=["get"], url_path="filter-options")
     def filter_options(self, request):
-        orders = active_purchase_orders().filter(purchase_order_access(self._accessible_task_ids(), request))
+        orders = active_purchase_orders().filter(purchase_order_access(self._accessible_task_ids(), request)).exclude(packaging_order_filter())
         suppliers = Supplier.objects.filter(purchase_order_lines__purchase_order__in=orders).distinct().order_by("supplier_number")
         return Response({"data": {
             "suppliers": list(suppliers.values("id", "supplier_number", "supplier_name")),
@@ -673,16 +700,13 @@ class PurchaseOrderViewSet(
     def stats(self, request):
         queryset = active_purchase_orders().filter(
             purchase_order_access(self._accessible_task_ids(), self.request)
-        )
+        ).exclude(packaging_order_filter())
         counts = queryset.aggregate(
             total=Count("id"),
             draft=Count("id", filter=Q(status=PurchaseOrderStatus.DRAFT)),
             submitted=Count("id", filter=Q(status=PurchaseOrderStatus.SUBMITTED)),
             purchasing=Count("id", filter=Q(status=PurchaseOrderStatus.PURCHASING)),
             completed=Count("id", filter=Q(status=PurchaseOrderStatus.COMPLETED)),
-            mailed=Count("id", filter=Q(is_mailed=True)),
-            unmailed=Count("id", filter=Q(is_mailed=False)),
-            mailing_pending=Count("id", filter=Q(is_mailed__isnull=True)),
             incomplete_amount=Count("id", filter=Q(total_amount__isnull=True)),
         )
         amounts = []
@@ -720,7 +744,19 @@ class PurchaseOrderViewSet(
             ).only(
                 "id", "product_line_id", "version_number", "status", "order_quantity", "line_count",
             ).order_by("-version_number", "-id")
-            product_options = ProductionTaskProduct.objects.only(
+            existing_demands = PurchaseGroup.objects.filter(
+                production_task_id=OuterRef("production_task_id"), product_line_id_snapshot=OuterRef("pk"),
+                archived_at__isnull=True, source_bom_id_snapshot__isnull=False, purchase_scope=PurchaseScope.STANDARD,
+                manual_completed_at__isnull=True, compatibility_issues=[], combined_into_sources__isnull=True,
+            )
+            combined = PurchaseGroupBomSource.objects.filter(
+                product_line_id_snapshot=OuterRef("pk"), purchase_group__production_task_id=OuterRef("production_task_id"),
+                purchase_group__archived_at__isnull=True, purchase_group__product_line_id_snapshot__isnull=True,
+                purchase_group__purchase_scope=PurchaseScope.STANDARD,
+            )
+            product_options = ProductionTaskProduct.objects.annotate(
+                has_combinable_demand=Exists(existing_demands), already_combined=Exists(combined),
+            ).only(
                 "id", "production_task_id", "quantity",
             ).prefetch_related(
                 Prefetch("boms", queryset=bom_options, to_attr="purchase_source_boms"),
@@ -731,7 +767,9 @@ class PurchaseOrderViewSet(
                 purchase_product_count=Count("products", distinct=True),
             ).prefetch_related(
                 Prefetch("products", queryset=product_options, to_attr="purchase_source_products"),
-                Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(), to_attr="purchase_source_orders"),
+                Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(
+                    PurchaseOrder.objects.exclude(packaging_order_filter()),
+                ), to_attr="purchase_source_orders"),
             ).order_by("-updated_at", "-id")
             task_rows = []
             for task in tasks:
@@ -759,11 +797,15 @@ class PurchaseOrderViewSet(
                 stale_bom_count = 0
                 empty_bom_count = 0
                 purchased_product_count = 0
+                combinable_product_count = 0
                 for product in products:
-                    if product.pk in existing_by_product:
+                    latest_bom = (getattr(product, "purchase_source_boms", []) or [None])[0]
+                    if (product.has_combinable_demand and not product.already_combined and latest_bom
+                            and latest_bom.status == BomStatus.VERIFIED):
+                        combinable_product_count += 1
+                    if product.pk in existing_by_product or product.already_combined:
                         purchased_product_count += 1
                         continue
-                    latest_bom = (getattr(product, "purchase_source_boms", []) or [None])[0]
                     if latest_bom is None:
                         missing_bom_count += 1
                     elif latest_bom.status != BomStatus.VERIFIED:
@@ -774,7 +816,7 @@ class PurchaseOrderViewSet(
                         empty_bom_count += 1
                     else:
                         verified_bom_count += 1
-                if task.purchase_product_count and verified_bom_count == 0:
+                if task.purchase_product_count and verified_bom_count == 0 and combinable_product_count < 2:
                     if purchased_product_count == task.purchase_product_count:
                         blockers.append({
                             "code": "PURCHASE_ORDER_EXISTS",
@@ -800,7 +842,9 @@ class PurchaseOrderViewSet(
                             "code": "BOM_MISSING",
                             "message": "该订单没有已确认的有效 BOM。",
                         })
-                if task.purchase_product_count and purchased_product_count == task.purchase_product_count:
+                if combinable_product_count >= 2 and not blockers:
+                    source_status_display = "可合并采购"
+                elif task.purchase_product_count and purchased_product_count == task.purchase_product_count:
                     source_status_display = "已建采购单"
                 elif task.status not in {"READY", "IN_PRODUCTION"}:
                     source_status_display = task.get_status_display()
@@ -816,6 +860,7 @@ class PurchaseOrderViewSet(
                     **self._task_payload(task),
                     "product_count": task.purchase_product_count,
                     "remaining_product_count": task.purchase_product_count - purchased_product_count,
+                    "combinable_product_count": combinable_product_count,
                     "can_create": not blockers,
                     "blockers": blockers,
                     "source_status_display": source_status_display,
@@ -864,6 +909,8 @@ class PurchaseOrderViewSet(
                 })
             return Response({"data": {"production_tasks": task_rows, "sample_requests": sample_rows}})
 
+        if scope == "detail":
+            return Response({"data": purchase_form_options()})
         suppliers = list(Supplier.objects.filter(
             archived_at__isnull=True, is_disabled=False,
         ).order_by("supplier_number", "id").values(
@@ -873,27 +920,6 @@ class PurchaseOrderViewSet(
             supplier["id"] = str(supplier["id"])
         if scope == "suppliers":
             return Response({"data": {"suppliers": suppliers}})
-        if scope == "detail":
-            currencies = Currency.objects.filter(
-                archived_at__isnull=True,
-                status=ReferenceStatus.ACTIVE,
-            ).order_by("sort_order", "code")
-            default_currency = self._default_currency()
-            return Response({
-                "data": {
-                    "suppliers": suppliers,
-                    "currencies": [
-                        {
-                            "id": str(item.pk),
-                            "code": item.code,
-                            "name": item.chinese_name,
-                            "symbol": item.symbol,
-                        }
-                        for item in currencies
-                    ],
-                    "default_currency_id": str(default_currency.pk) if default_currency else None,
-                }
-            })
         task_rows = []
         tasks = production_tasks_with_purchase_sources(
             self._accessible_tasks().order_by("-updated_at", "-id")
@@ -1069,6 +1095,7 @@ class PurchaseContractTemplateViewSet(
         return self._update(request, partial=True)
 
 
+@extend_schema_view(list=extend_schema(parameters=[OpenApiParameter("purchase_group_id", UUID)]))
 class SupplierPurchaseSheetViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -1077,24 +1104,15 @@ class SupplierPurchaseSheetViewSet(
 ):
     permission_classes = [HasActiveEmployee, BusinessActionPermission]
     action_permission_map = {
-        "list": "procurement.view_purchaseorder",
-        "options": "procurement.view_purchaseorder",
-        "retrieve": "procurement.view_purchaseorder",
-        "partial_update": "procurement.add_purchaseorder",
-        "update": "procurement.add_purchaseorder",
-        "publish": "procurement.submit_purchaseorder",
-        "download_xlsx": "procurement.view_purchaseorder",
-        "preview.GET": "procurement.view_purchaseorder",
-        "preview.POST": "procurement.add_purchaseorder",
-        "new_version": "procurement.add_purchaseorder",
-        "batch_download": "procurement.view_purchaseorder",
-        "batch_publish": "procurement.submit_purchaseorder",
-        "line_image.GET": "procurement.view_purchaseorder",
-        "line_image.POST": "procurement.add_purchaseorder",
-        "line_image.DELETE": "procurement.add_purchaseorder",
-        "seal_image.GET": "procurement.view_purchaseorder",
-        "seal_image.POST": "procurement.add_purchaseorder",
-        "seal_image.DELETE": "procurement.add_purchaseorder",
+        **dict.fromkeys(
+            ("list", "options", "retrieve", "download_xlsx", "preview.GET", "batch_download", "line_image.GET", "seal_image.GET"),
+            ("procurement.view_purchaseorder", PACKAGING_PERMISSION),
+        ),
+        **dict.fromkeys(
+            ("partial_update", "update", "preview.POST", "new_version", "line_image.POST", "line_image.DELETE", "seal_image.POST", "seal_image.DELETE"),
+            ("procurement.add_purchaseorder", PACKAGING_PERMISSION),
+        ),
+        **dict.fromkeys(("publish", "batch_publish"), ("procurement.submit_purchaseorder", PACKAGING_PERMISSION)),
     }
 
     def _accessible_task_ids(self):
@@ -1104,11 +1122,20 @@ class SupplierPurchaseSheetViewSet(
 
     def get_queryset(self):
         task_ids = self._accessible_task_ids()
-        queryset = SupplierPurchaseSheet.objects.filter(
-            purchase_order_access(task_ids, self.request, "purchase_order__")
-            | Q(purchase_request__production_task_id__in=task_ids),
-            archived_at__isnull=True,
-        ).select_related(
+        operations = current_operations(self.request, "procurement.view_purchaseorder")
+        packaging = packaging_order_filter("purchase_order__")
+        access = Q(pk__in=[])
+        scope = self.request.query_params.get("purchase_scope")
+        if scope not in {None, *PurchaseScope.values}:
+            raise ValidationError({"purchase_scope": "采购范围参数不正确。"})
+        if scope != PurchaseScope.PACKAGING and set(operations) - {PACKAGING_PERMISSION}:
+            access |= (purchase_order_access(task_ids, self.request, "purchase_order__") & ~packaging
+                       | Q(purchase_request__production_task_id__in=task_ids))
+        if PACKAGING_PERMISSION in operations and scope != PurchaseScope.STANDARD and (
+            scope == PurchaseScope.PACKAGING or self.action not in {"list", "options"}
+        ):
+            access |= packaging & Q(purchase_order__production_task_id__in=packaging_purchase_tasks(self.request).values("pk"))
+        queryset = SupplierPurchaseSheet.objects.filter(access, archived_at__isnull=True).select_related(
             "purchase_order",
             "purchase_order__production_task__sales_order",
             "purchase_request__production_task__sales_order",
@@ -1129,6 +1156,17 @@ class SupplierPurchaseSheetViewSet(
         purchase_order_id = self.request.query_params.get("purchase_order_id", "").strip()
         if purchase_order_id:
             queryset = queryset.filter(purchase_order_id=PurchaseOrderViewSet._uuid_value(purchase_order_id, "purchase_order_id"))
+        purchase_group_id = self.request.query_params.get("purchase_group_id", "").strip()
+        if purchase_group_id:
+            queryset = queryset.filter(
+                purchase_order__purchase_group_id=PurchaseOrderViewSet._uuid_value(purchase_group_id, "purchase_group_id"),
+                purchase_order__purchase_group__archived_at__isnull=True,
+            )
+        batch_session_id = self.request.query_params.get("batch_session_id")
+        if batch_session_id:
+            queryset = queryset.filter(purchase_order__batch_session_id=PurchaseOrderViewSet._uuid_value(
+                batch_session_id, "batch_session_id",
+            ))
         purchase_request_id = self.request.query_params.get("purchase_request_id", "").strip()
         if purchase_request_id:
             queryset = queryset.filter(
@@ -1227,8 +1265,9 @@ class SupplierPurchaseSheetViewSet(
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
+        current = self.get_object()
         sheet = publish_supplier_purchase_sheet(
-            sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+            sheet_id=current.pk,
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
@@ -1277,9 +1316,9 @@ class SupplierPurchaseSheetViewSet(
     )
     def line_image(self, request, pk=None, line_id=None):
         source_line_id = PurchaseOrderViewSet._uuid_value(line_id, "line_id")
+        current = self.get_object()
         if request.method == "GET":
-            sheet = self.get_object()
-            image = sheet.line_images.select_related("image_file").filter(
+            image = current.line_images.select_related("image_file").filter(
                 source_purchase_order_line_id=source_line_id,
             ).first()
             if image is None:
@@ -1300,7 +1339,7 @@ class SupplierPurchaseSheetViewSet(
             if uploaded_file is None:
                 raise ValidationError({"file": "请选择需要上传的采购表图片。"})
             sheet = replace_supplier_purchase_sheet_line_image(
-                sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+                sheet_id=current.pk,
                 source_line_id=source_line_id,
                 uploaded_file=uploaded_file,
                 allowed_task_ids=self._accessible_task_ids(),
@@ -1309,7 +1348,7 @@ class SupplierPurchaseSheetViewSet(
             )
             return self._response(self.get_queryset().get(pk=sheet.pk))
         sheet = remove_supplier_purchase_sheet_line_image(
-            sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+            sheet_id=current.pk,
             source_line_id=source_line_id,
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
@@ -1324,9 +1363,9 @@ class SupplierPurchaseSheetViewSet(
         parser_classes=[MultiPartParser, FormParser],
     )
     def seal_image(self, request, pk=None):
+        current = self.get_object()
         if request.method == "GET":
-            sheet = self.get_object()
-            seal = getattr(sheet, "seal_image", None)
+            seal = getattr(current, "seal_image", None)
             if seal is None:
                 raise NotFound("当前采购表没有盖章图片。")
             if seal.image_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
@@ -1345,7 +1384,7 @@ class SupplierPurchaseSheetViewSet(
             if uploaded_file is None:
                 raise ValidationError({"file": "请选择需要上传的盖章图片。"})
             sheet = replace_supplier_purchase_sheet_seal_image(
-                sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+                sheet_id=current.pk,
                 uploaded_file=uploaded_file,
                 allowed_task_ids=self._accessible_task_ids(),
                 actor_employee=getattr(request, "employee", None),
@@ -1353,7 +1392,7 @@ class SupplierPurchaseSheetViewSet(
             )
             return self._response(self.get_queryset().get(pk=sheet.pk))
         sheet = remove_supplier_purchase_sheet_seal_image(
-            sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+            sheet_id=current.pk,
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
@@ -1362,8 +1401,9 @@ class SupplierPurchaseSheetViewSet(
 
     @action(detail=True, methods=["post"], url_path="new-version")
     def new_version(self, request, pk=None):
+        current = self.get_object()
         sheet = create_supplier_purchase_sheet_version(
-            sheet_id=PurchaseOrderViewSet._uuid_value(pk, "id"),
+            sheet_id=current.pk,
             allowed_task_ids=self._accessible_task_ids(),
             actor_employee=getattr(request, "employee", None),
             request=request,
@@ -1404,6 +1444,8 @@ class SupplierPurchaseSheetViewSet(
         ids = [PurchaseOrderViewSet._uuid_value(value, "ids") for value in raw_ids]
         if len(ids) != len(set(ids)):
             raise ValidationError({"ids": "采购表不能重复选择。"})
+        if self.get_queryset().filter(pk__in=ids).count() != len(ids):
+            raise NotFound("选择中包含不存在或无权限的采购表。")
         sheets = publish_supplier_purchase_sheets(
             sheet_ids=ids,
             allowed_task_ids=self._accessible_task_ids(),

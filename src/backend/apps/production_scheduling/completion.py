@@ -12,8 +12,8 @@ from apps.core.api.permissions import BusinessActionPermission
 from apps.core.audit import write_audit_log
 from apps.inventory.assembly_receipts import assembly_progress_for_plans
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
-from apps.production_tasks.selectors import accessible_production_tasks
-from apps.production_tasks.services import close_production_task
+from apps.production_tasks.selectors import accessible_production_tasks, unscheduled_task_products
+from apps.production_tasks.services import close_production_task, require_all_task_products_scheduled
 from apps.sales_orders.models import SalesOrder, SalesOrderStatus
 from apps.sales_orders.selectors import accessible_sales_orders, sales_order_completion_progress
 from apps.sales_orders.services import complete_sales_order
@@ -114,6 +114,7 @@ def schedule_completion_preview(*, schedule_id, request):
         "task": {"id": str(task.pk), "task_number": task.task_number, "status": task.status,
                  "status_display": task.get_status_display(), "etag": etag_for_instance(task)},
         "progress": rows[0]["progress"] if rows else {}, "products": products, "sales_order": sales,
+        "unscheduled_product_count": unscheduled_task_products(task).count(),
     }
 
 
@@ -157,6 +158,7 @@ def complete_schedule(*, schedule_id, validated_data, request):
         raise Conflict("只有有效排产计划可以完成订单。")
     if task.status != ProductionTaskStatus.IN_PRODUCTION or task.archived_at is not None:
         raise Conflict("只有未归档且生产中的生产任务单可以完成。")
+    require_all_task_products_scheduled(task)
     # 工价审批以任务产品行作并发锁；同锁避免核验后有效工价被同时切换。
     list(ProductionTaskProduct.objects.select_for_update(of=("self",)).filter(
         schedule_products__schedule=schedule, schedule_products__removed_at__isnull=True,

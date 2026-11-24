@@ -308,7 +308,7 @@ class SampleCatalogMaterialsTests(APITestCase):
         source = self.client.get('/api/v1/purchase-orders/source/', {'sample_procurement_request_id': str(procurement.pk)})
         self.assertEqual(source.status_code, 200, source.data)
         result = self.client.post('/api/v1/purchase-orders/', {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(procurement.pk),
-            'source_revision': source.data['data']['source_revision'], 'is_mailed': False,
+            'source_revision': source.data['data']['source_revision'],
             'lines': [{'sample_line_key': row['key'], 'actual_purchase_quantity': row['quantity'], 'unit_price': '2', **purchase_values}]}, format='json')
         self.assertEqual(result.status_code, 201, result.data)
         order = PurchaseOrder.objects.get(pk=result.data['data']['id'])
@@ -396,7 +396,7 @@ class SampleCatalogMaterialsTests(APITestCase):
         procurement = SampleMaterialProcurementRequest.objects.get(material_request__sample_request_id=self.root.split('/')[-2])
         source = self.client.get('/api/v1/purchase-orders/source/', {'sample_procurement_request_id': str(procurement.pk)})
         purchased = self.client.post('/api/v1/purchase-orders/', {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(procurement.pk),
-            'source_revision': source.data['data']['source_revision'], 'is_mailed': False,
+            'source_revision': source.data['data']['source_revision'],
             'lines': [{'sample_line_key': row['key'], 'actual_purchase_quantity': '3', 'actual_bar_count': 1,
                 'raw_bar_length_m': '3.00', 'unit_price': '2'}]}, format='json')
         self.assertEqual(purchased.status_code, 201, purchased.data)
@@ -487,7 +487,7 @@ class SampleCatalogMaterialsTests(APITestCase):
         source = self.client.get('/api/v1/purchase-orders/source/', {'sample_procurement_request_id': str(procurement.pk)})
         self.assertEqual(source.status_code, 200, source.data)
         result = self.client.post('/api/v1/purchase-orders/', {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(procurement.pk),
-            'source_revision': source.data['data']['source_revision'], 'is_mailed': False,
+            'source_revision': source.data['data']['source_revision'],
             'lines': [{'sample_line_key': row['key'], 'actual_purchase_quantity': '10', 'unit_price': '2'}]}, format='json')
         self.assertEqual(result.status_code, 201, result.data)
         order = PurchaseOrder.objects.get(pk=result.data['data']['id'])

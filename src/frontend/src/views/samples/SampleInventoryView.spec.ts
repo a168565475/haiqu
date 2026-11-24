@@ -7,7 +7,7 @@ import SampleInventoryView from './SampleInventoryView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const routerPush = vi.hoisted(() => vi.fn())
-const apiMocks = vi.hoisted(() => ({ fetchInventory: vi.fn(), deleteReceipt: vi.fn(), summary: vi.fn(), options: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ fetchInventory: vi.fn(), deleteReceipt: vi.fn(), options: vi.fn() }))
 enableAutoUnmount(afterEach)
 afterEach(() => vi.restoreAllMocks())
 
@@ -42,9 +42,6 @@ vi.mock('@/api/samples', () => ({
     data: [fixture.row],
     meta: { page: 1, page_size: 50, total: 1, total_pages: 1 },
   }),
-  fetchSampleInventorySummary: apiMocks.summary.mockResolvedValue({
-    month: '2026-10', current_available: 6, borrowed: 0, inbound_today: 6, outbound_today: 0, inbound_this_month: 6, outbound_this_month: 0, loaned_this_month: 0,
-  }),
   fetchSampleInventoryOptions: apiMocks.options.mockResolvedValue({
     product_categories: ['户外桌椅'],
     locations: ['样品库'],
@@ -60,7 +57,6 @@ vi.mock('@/api/samples', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.fetchInventory.mockResolvedValue({ data: [fixture.row], meta: { page: 1, page_size: 50, total: 1, total_pages: 1 } })
-  apiMocks.summary.mockResolvedValue({ month: '2026-10', current_available: 6, borrowed: 0, inbound_today: 6, outbound_today: 0, inbound_this_month: 6, outbound_this_month: 0, loaned_this_month: 0, })
   apiMocks.options.mockResolvedValue({ product_categories: ['户外桌椅'], locations: ['样品库'] })
   apiMocks.deleteReceipt.mockResolvedValue(undefined)
 })
@@ -77,7 +73,6 @@ describe('SampleInventoryView', () => {
   it('筛选区不展示或加载统计，保留筛选条件', async () => {
     const wrapper = await render()
     expect(wrapper.find('.sample-monthly-stat').exists()).toBe(false)
-    expect(apiMocks.summary).not.toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('统一管理样品库存、出库与借出记录')
     expect(wrapper.find('.inventory-tabs').exists()).toBe(false)
     expect(wrapper.find('.stats-grid').exists()).toBe(false)

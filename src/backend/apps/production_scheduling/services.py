@@ -150,12 +150,12 @@ def _validated_source(production_task_id, items, expected_revision="", allowed_s
     for bom in active_boms:
         latest_bom_by_line.setdefault(bom.product_line_id, bom)
     unverified_lines = [
-        line for line in all_lines
-        if latest_bom_by_line.get(line.pk) is None
-        or latest_bom_by_line[line.pk].status != BomStatus.VERIFIED
+        line_id for line_id in line_ids
+        if latest_bom_by_line.get(line_id) is None
+        or latest_bom_by_line[line_id].status != BomStatus.VERIFIED
     ]
     if unverified_lines:
-        raise Conflict("生产任务单内所有产品的 BOM 必须已确认后才能排产。")
+        raise Conflict("所选产品的 BOM 必须已确认后才能排产。")
     current_revision = source_revision(task, all_lines)
     accepted_revisions = {current_revision}
     if task.status == ProductionTaskStatus.IN_PRODUCTION:

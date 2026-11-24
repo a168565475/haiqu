@@ -22,6 +22,13 @@ DEBUG = env_bool("DJANGO_DEBUG", True)
 PUBLIC_STOCK_ISSUES_ENABLED = env_bool("PUBLIC_STOCK_ISSUES_ENABLED", False)
 PUBLIC_STOCK_FLOW_ENABLED = env_bool("PUBLIC_STOCK_FLOW_ENABLED", False)
 TUBE_OUTSOURCING_ENABLED = env_bool("TUBE_OUTSOURCING_ENABLED", False)
+# 采购风险记录和主动提醒先迁移、预览收件范围，再明确启用；只读列表不依赖此开关。
+PURCHASE_TRACKING_ENABLED = env_bool("PURCHASE_TRACKING_ENABLED", False)
+PURCHASE_TRACKING_PACKAGING_AUTO_ENABLED = env_bool("PURCHASE_TRACKING_PACKAGING_AUTO_ENABLED", False)
+# 时间规则独立迁移后启用；关闭时保留原采购提醒判定。
+PURCHASE_TRACKING_POLICY_ENABLED = env_bool("PURCHASE_TRACKING_POLICY_ENABLED", False)
+# 采购企微外发须另行明确启用；关闭仍保留页面和站内提醒。
+PURCHASE_TRACKING_WECOM_ENABLED = env_bool("PURCHASE_TRACKING_WECOM_ENABLED", False)
 PUBLIC_STOCK_CUTOVER_ALLOWED_TARGETS = json.loads(os.getenv("PUBLIC_STOCK_CUTOVER_ALLOWED_TARGETS", "[]"))
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,backend")
 
@@ -69,6 +76,8 @@ INSTALLED_APPS = [
     "apps.attendance",
     "apps.finance",
     "apps.codex_connection",
+    "apps.ai_openai_config",
+    "apps.ai_production_import",
 ]
 
 # 只连接专属运行服务，不向 ERP 环境导入 Codex 认证文件或代理配置。
@@ -104,12 +113,16 @@ LOGGING = {
         },
     },
     "handlers": {
+        "ai.production_import": {"class": "logging.StreamHandler", "level": "INFO"},
         "django.server": {
             "class": "logging.StreamHandler", "level": "INFO", "formatter": "django.server",
             "filters": ["wecom_access", "finance_access"],
         },
     },
-    "loggers": {"django.server": {"handlers": ["django.server"], "level": "INFO", "propagate": False}},
+    "loggers": {
+        "django.server": {"handlers": ["django.server"], "level": "INFO", "propagate": False},
+        "apps.ai_production_import": {"handlers": ["ai.production_import"], "level": "INFO", "propagate": False},
+    },
 }
 
 ROOT_URLCONF = "config.urls"
@@ -171,7 +184,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_ROOT = BASE_DIR / "media"
-PRODUCTION_IMPORT_ROOT = Path(os.environ.get("PRODUCTION_IMPORT_ROOT", str(BASE_DIR / "private" / "production-task-imports")))
 MEDIA_URL = "/media/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -270,9 +282,14 @@ FILE_VIRUS_SCAN_ENABLED = env_bool("FILE_VIRUS_SCAN_ENABLED", True)
 CONTACT_IMPORT_MAX_BYTES = int(os.getenv("CONTACT_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
 CONTACT_IMPORT_MAX_ROWS = int(os.getenv("CONTACT_IMPORT_MAX_ROWS", "500"))
 BOM_IMPORT_MAX_BYTES = int(os.getenv("BOM_IMPORT_MAX_BYTES", str(100 * 1024 * 1024)))
+# DXF 源文件只经鉴权接口访问，不放入公开 MEDIA_ROOT。
+BOM_NESTING_ROOT = Path(os.getenv("BOM_NESTING_ROOT", str(BASE_DIR / "var" / "bom_nesting")))
 
 # 账户级邮件 SMTP 授权码加密密钥。第一个用于写入，后续密钥用于轮换期解密。
 EMAIL_ACCOUNT_FERNET_KEYS = env_list("EMAIL_ACCOUNT_FERNET_KEYS")
+
+# AI 导入的 OpenAI Key 只以密文保存；首个密钥用于写入，其余用于轮换期解密。
+OPENAI_FERNET_KEYS = env_list("OPENAI_FERNET_KEYS")
 
 # 企业微信应用及消息回调凭据；与邮件账户密钥独立，首个写入、其余轮换解密。
 WECOM_FERNET_KEYS = env_list("WECOM_FERNET_KEYS")

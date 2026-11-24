@@ -456,23 +456,21 @@ V1 继续使用 SessionAuthentication，不改成 JWT，原因如下：
 | GET/POST | /api/v1/sample-requests/{id}/items/ | 样品明细 |
 | PATCH/DELETE | /api/v1/sample-items/{id}/ | 草稿明细修改 |
 | POST | /api/v1/sample-requests/{id}/submit/ | 历史草稿兼容提交；新表单创建时已直接提交 |
-| POST | /api/v1/sample-requests/{id}/start-preparing/ | 开始准备 |
 | POST | /api/v1/sample-requests/{id}/finance-confirm/ | 财务确认；`multipart/form-data`，凭证 `file` 与人工 `note` 至少一项，携带 `If-Match` |
 | POST | /api/v1/sample-requests/{id}/pmc-approve/ | PMC 审核通过，携带 `If-Match` |
 | POST | /api/v1/sample-requests/{id}/metalwork-parameters/ | 上传金工参数，`file` 必填、`note` 选填，携带 `If-Match` |
 | POST | /api/v1/sample-requests/{id}/cutting-parameters/ | 上传裁剪参数并结束主流程，`file` 必填、`note` 选填，携带 `If-Match` |
 | GET | /api/v1/sample-requests/{id}/business-files/{file_id}/ | 在样品数据权限内安全预览或下载任务单、财务凭证及参数文件 |
 | GET/POST | /api/v1/sample-requests/{id}/fee-records/ | 收费决策履历 |
-| GET/POST | /api/v1/sample-requests/{id}/shipments/ | 寄送记录 |
-| POST | /api/v1/sample-shipments/{id}/ship/ | 寄出并锁定收件和地址快照 |
-| POST | /api/v1/sample-shipments/{id}/deliver/ | 标记送达 |
 | GET/POST | /api/v1/sample-requests/{id}/feedback/ | 反馈记录 |
 | GET/POST | /api/v1/sample-requests/{id}/files/ | 样品附件 |
 | GET | /api/v1/sample-requests/{id}/tasks/ | 关联任务 |
 | POST | /api/v1/sample-requests/{id}/complete/ | 完成 |
 | POST | /api/v1/sample-requests/{id}/cancel/ | 取消 |
 
-新建表单按 `products[].details[]` 保存颜色样品明细，并按 `products[].sampling_details[]` 保存每个产品独立的打样信息明细。打样信息明细保存配置键、可编辑类型、类别项、是/否选择、描述及可选单图；详情同时返回嵌套 `products` 与旧扁平 `items`。费用、物流和反馈接口继续通过原样品明细 UUID 工作。所有数量按 `PCS` 整数保存，产品总数量由明细自动汇总。颜色必须提交有效颜色 UUID，服务端同时保存色卡、颜色名称和色号快照。
+旧寄送流程已下线：`start-preparing`、`sample-requests/{id}/shipments/` 及 `sample-shipments/{id}/` 下的寄出、送达、异常和进度接口均已删除。历史寄送记录只通过样品详情的 `shipments`、`latest_shipment` 字段只读返回。
+
+新建表单按 `products[].details[]` 保存颜色样品明细，并按 `products[].sampling_details[]` 保存每个产品独立的打样信息明细。打样信息明细保存配置键、可编辑类型、类别项、是/否选择、描述及可选单图；详情同时返回嵌套 `products` 与旧扁平 `items`。费用和反馈接口继续通过原样品明细 UUID 工作。所有数量按 `PCS` 整数保存，产品总数量由明细自动汇总。颜色必须提交有效颜色 UUID，服务端同时保存色卡、颜色名称和色号快照。
 
 样品列表响应增加手写打样单号、寄送方式及显示名、下单日期、样品交期、交货批次及显示名、翻单、制单人、提交日期，并返回轻量 `products[]` 摘要。产品摘要包含类别、名称、规格、任务单文件、总打样数量及长/扶手宽/坐宽/背高/坐高；多产品按 `line_number` 顺序返回，列表页不得只展示第一条产品。
 

@@ -91,6 +91,7 @@ IDENTITY_LIFECYCLE_ENDPOINTS = {
 IDENTITY_TRANSITION_ENDPOINTS = {"/api/auth/switch/", "/api/auth/return-admin/"}
 IDENTITY_TRANSACTION_ENDPOINTS = IDENTITY_LIFECYCLE_ENDPOINTS | IDENTITY_TRANSITION_ENDPOINTS
 IDENTITY_VERSION_EXEMPT = IDENTITY_READ_ENDPOINTS | IDENTITY_LIFECYCLE_ENDPOINTS | {"/api/health/"}
+IDENTITY_SHARED_READ_ENDPOINTS = {"/api/v1/sample-requests/", "/api/v1/sample-requests/options/"}
 
 
 def identity_error(request, exc):
@@ -110,7 +111,7 @@ class IdentitySwitchExceptionReporterFilter(SafeExceptionReporterFilter):
 
 
 class IdentitySwitchSessionMiddleware:
-    """Outside SessionMiddleware: serialize load, execution AND response save."""
+    """锁覆盖会话加载、执行及响应保存；已审计的只读接口可并行。"""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -128,7 +129,17 @@ class IdentitySwitchSessionMiddleware:
                 request.exception_reporter_filter = IdentitySwitchExceptionReporterFilter()
         first = identity.locate_context(incoming, capability)
         root = first.root if first else identity.initial_admin_root(incoming)
-        lock = identity.chain_lock(root) if root else nullcontext()
+        # 这些接口不保存会话；认证失效时仍可删除旧键，
+        # 但并行读取不能重新保存或轮换为新键。
+        shared_read = (
+            request.method in {"GET", "HEAD"}
+            and request.path in IDENTITY_SHARED_READ_ENDPOINTS
+            and settings.SESSION_ENGINE == "django.contrib.sessions.backends.db"
+            and not settings.SESSION_SAVE_EVERY_REQUEST
+            and not settings.SECRET_KEY_FALLBACKS
+            and not settings.CSRF_USE_SESSIONS
+        )
+        lock = identity.chain_lock(root, shared=shared_read) if root else nullcontext()
         try:
             with lock:
                 # No cached session or user is reused after waiting for the lock.

@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from apps.core.api.fields import CalendarMonthField
 from apps.sales_orders.presentation import specification_display
 
+from ..selectors import purchase_line_products
 from ..models import (
     PurchaseContractTemplate,
     PurchaseContractTemplateStatus,
@@ -15,6 +17,7 @@ from ..models import (
     Supplier,
     SupplierCategory,
     SupplierPaymentCycle,
+    SupplierPaymentTermMonths,
     SupplierPurchaseSheet,
     SupplierType,
 )
@@ -78,11 +81,29 @@ class DuplicateSupplierSerializer(serializers.Serializer):
     status_display = serializers.CharField()
 
 
+class SupplierPaymentTermInputSerializer(serializers.Serializer):
+    months = serializers.ChoiceField(choices=SupplierPaymentTermMonths.choices)
+    effective_month = CalendarMonthField()
+    basis = serializers.CharField(max_length=255)
+
+
+class SupplierPaymentTermSerializer(SupplierPaymentTermInputSerializer):
+    id = serializers.UUIDField()
+    recorded_by_name = serializers.CharField(source="recorded_by_employee.display_name")
+    recorded_at = serializers.DateTimeField(source="created_at")
+
+
 class SupplierDetailSerializer(SupplierListSerializer):
     duplicate_suppliers = serializers.SerializerMethodField()
+    payment_term_versions = serializers.SerializerMethodField()
 
     class Meta(SupplierListSerializer.Meta):
-        fields = SupplierListSerializer.Meta.fields + ["duplicate_suppliers"]
+        fields = SupplierListSerializer.Meta.fields + ["duplicate_suppliers", "payment_term_versions"]
+
+    @extend_schema_field(SupplierPaymentTermSerializer(many=True))
+    def get_payment_term_versions(self, instance):
+        versions = instance.payment_term_versions.select_related("recorded_by_employee")
+        return SupplierPaymentTermSerializer(versions, many=True).data
 
     @extend_schema_field(DuplicateSupplierSerializer(many=True))
     def get_duplicate_suppliers(self, instance):
@@ -102,6 +123,7 @@ class SupplierDetailSerializer(SupplierListSerializer):
 
 
 class SupplierInputSerializer(serializers.ModelSerializer):
+    payment_term = SupplierPaymentTermInputSerializer(required=False)
     supplier_categories = serializers.ListField(
         child=serializers.ChoiceField(choices=SupplierCategory.choices),
         allow_empty=False,
@@ -115,10 +137,22 @@ class SupplierInputSerializer(serializers.ModelSerializer):
             "supplier_categories",
             "supplier_name",
             "payment_cycle",
+            "payment_term",
             "remark",
             "phone",
             "is_disabled",
         ]
+
+    def validate(self, data):
+        if "payment_term" in data:
+            term = data["payment_term"]
+            required = {"months", "effective_month", "basis"}
+            if required - term.keys():
+                raise serializers.ValidationError({"payment_term": "请填写账期月数、生效收货月份和条款依据。"})
+            supplier_type = data.get("supplier_type", getattr(self.instance, "supplier_type", None))
+            if supplier_type != SupplierType.MATERIAL:
+                raise serializers.ValidationError({"payment_term": "只有材料供应商可以维护账期。"})
+        return data
 
     def validate_supplier_name(self, value):
         normalized = value.strip()
@@ -158,13 +192,22 @@ class SupplierInputSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderLineInputSerializer(serializers.Serializer):
     actual_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False, allow_null=True, default=None)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True, default=None)
     quantity_difference_reason = serializers.CharField(max_length=2000, required=False, allow_blank=True, default='')
     bom_line_id = serializers.UUIDField(required=False)
     sample_line_key = serializers.UUIDField(required=False)
     supplier_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     delivery_date = serializers.DateField(required=False, allow_null=True, default=None)
     actual_purchase_quantity = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    actual_purchase_weight_kg = serializers.DecimalField(
         max_digits=18,
         decimal_places=4,
         min_value=Decimal("0.0001"),
@@ -189,7 +232,6 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
     sample_procurement_request_id = serializers.UUIDField(required=False)
     source_revision = serializers.RegexField(regex=r"^[0-9a-f]{64}$", max_length=64)
     currency_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    is_mailed = serializers.BooleanField(required=False, allow_null=True, default=None)
     lines = PurchaseOrderLineInputSerializer(many=True, allow_empty=False, max_length=5000)
 
     def validate(self, value):
@@ -207,9 +249,17 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
         return value
 
 
+class PurchaseSetPricingSerializer(serializers.Serializer):
+    anchor_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1, max_value=99999999999999)
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+
+
 class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
+    set_pricing = PurchaseSetPricingSerializer(required=False, allow_null=True)
     actual_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False, allow_null=True, default=None)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False, allow_null=True, default=None)
+    raw_bar_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True)
     quantity_difference_reason = serializers.CharField(max_length=2000, required=False, allow_blank=True)
     id = serializers.UUIDField()
     supplier_id = serializers.UUIDField(required=False, allow_null=True, default=None)
@@ -221,6 +271,13 @@ class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         default=None,
+    )
+    actual_purchase_weight_kg = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        required=False,
+        allow_null=True,
     )
     unit_price = serializers.DecimalField(
         max_digits=18,
@@ -234,7 +291,6 @@ class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
 
 class PurchaseOrderUpdateSerializer(serializers.Serializer):
     batch_type = serializers.ChoiceField(choices=["NORMAL", "SUPPLEMENT"], required=False)
-    is_mailed = serializers.BooleanField(required=False, allow_null=True)
     lines = PurchaseOrderUpdateLineSerializer(many=True, allow_empty=False, max_length=5000)
 
     def validate_lines(self, value):
@@ -245,7 +301,9 @@ class PurchaseOrderUpdateSerializer(serializers.Serializer):
 
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
+    set_pricing = PurchaseSetPricingSerializer(source="calculation_snapshot.set_pricing", read_only=True, default=None)
     sample_line_key = serializers.UUIDField(source="sample_material_source.line_key", read_only=True, allow_null=True, default=None)
+    sample_demand_unit = serializers.SerializerMethodField()
     color = serializers.CharField(source="color_snapshot", read_only=True)
     bom_id = serializers.UUIDField(read_only=True, allow_null=True)
     bom_line_id = serializers.UUIDField(read_only=True, allow_null=True)
@@ -269,11 +327,18 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     supplier_type = serializers.CharField(source="supplier_type_snapshot", read_only=True)
     supplier_categories = serializers.ListField(source="supplier_categories_snapshot", read_only=True)
 
+    def get_sample_demand_unit(self, obj) -> str:
+        snapshot = obj.calculation_snapshot or {}
+        if snapshot.get('source') == 'SAMPLE' and snapshot.get('measurement_kind') == 'PIPE':
+            return snapshot.get('sample_demand_unit') or ('米' if snapshot.get('schema_version') == 3 else '支')
+        return obj.source_unit_text
+
     class Meta:
         model = PurchaseOrderLine
         fields = [
-            "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "color",
+            "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "sample_demand_unit", "color",
             "purchase_group_line_id",
+            "set_pricing",
             "id",
             "line_number",
             "bom_id",
@@ -305,8 +370,9 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "supplier_type",
             "supplier_categories",
             "delivery_date",
-            "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters",
-            "actual_bar_count", "actual_purchase_meters", "quantity_difference_reason", "calculation_snapshot",
+            "raw_bar_length_m", "raw_bar_weight_kg", "suggested_bar_count", "suggested_purchase_meters",
+            "suggested_purchase_weight_kg", "actual_bar_count", "actual_purchase_meters", "actual_purchase_weight_kg",
+            "quantity_difference_reason", "calculation_snapshot",
             "actual_purchase_quantity",
             "unit_price",
             "amount",
@@ -316,6 +382,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
     source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
+    purchase_scope = serializers.CharField(source="purchase_group.purchase_scope", read_only=True, default="STANDARD")
     source_number = serializers.SerializerMethodField()
     completion = serializers.SerializerMethodField()
     production_task_id = serializers.UUIDField(read_only=True)
@@ -341,7 +408,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
         model = PurchaseOrder
         fields = [
             "source_type", "source_type_display", "source_number", "sample_procurement_request_id", "sample_number_snapshot",
-            "purchase_group_id", "batch_number", "batch_type",
+            "purchase_group_id", "purchase_scope", "batch_number", "batch_type",
             "completion", "completed_at", "completion_remark",
             "id",
             "order_number",
@@ -359,7 +426,6 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             "currency_code",
             "currency_name",
             "currency_symbol",
-            "is_mailed",
             "total_amount",
             "line_count",
             "supplier_count",
@@ -431,11 +497,12 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
                 return []
             return sample_purchase_products(instance.sample_procurement_request.material_request.sample_request)
         products = getattr(instance.production_task, "purchase_order_products", [])
-        products_by_id = {product.pk: product for product in products}
+        products_by_id = {str(product.pk): product for product in products}
         result = []
         seen = set()
-        for line in self._lines(instance):
-            product_line_id = line.product_line_id_snapshot
+        for product_line_id, _, name, specification in (
+            source for line in self._lines(instance) for source in purchase_line_products(line)
+        ):
             if product_line_id in seen:
                 continue
             seen.add(product_line_id)
@@ -443,9 +510,9 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             result.append(
                 {
                     "product_line_id": str(product_line_id),
-                    "product_name": line.product_name_snapshot,
+                    "product_name": name,
                     "specification": specification_display(SimpleNamespace(
-                        specification_snapshot=line.product_specification_snapshot,
+                        specification_snapshot=specification,
                         color_snapshot=product.color_name_snapshot if product else "",
                         material_snapshot=product.material_snapshot if product else "",
                     )),
@@ -581,6 +648,8 @@ class PurchaseContractTemplateSerializer(serializers.ModelSerializer):
 
 class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
     purchase_order_number = serializers.SerializerMethodField()
+    purchase_scope = serializers.CharField(source="purchase_order.purchase_group.purchase_scope", read_only=True, default="STANDARD")
+    purchase_batch_number = serializers.IntegerField(source="purchase_order.batch_number", read_only=True, allow_null=True)
     purchase_request_number = serializers.CharField(source="purchase_request.request_number", read_only=True, allow_null=True)
     production_task_number = serializers.SerializerMethodField()
     sales_order_number = serializers.SerializerMethodField()
@@ -602,7 +671,9 @@ class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
             "id",
             "series_id",
             "purchase_order_id",
+            "purchase_scope",
             "purchase_order_number",
+            "purchase_batch_number",
             "purchase_request_id",
             "purchase_request_number",
             "production_task_number",

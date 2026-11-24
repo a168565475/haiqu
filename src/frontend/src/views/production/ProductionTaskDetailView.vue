@@ -59,7 +59,7 @@ const pmcForm = reactive({
   reason: '',
   follower_ids: [] as string[],
   delivery_date: '',
-  includes_tax: false,
+  includes_tax: false as boolean | null,
   tax_rate: null as 3 | 5 | 7 | null,
   order_tolerance_percent: '0',
   is_repeat_order: false,
@@ -223,7 +223,7 @@ function openPmcDialog(mode: 'CONFIRM' | 'RETURN') {
   pmcForm.reason = ''
   pmcForm.follower_ids = task.value.followers.map((employee) => employee.id)
   pmcForm.delivery_date = task.value.delivery_date
-  pmcForm.includes_tax = task.value.includes_tax ?? false
+  pmcForm.includes_tax = task.value.includes_tax === null ? null : task.value.includes_tax ?? false
   pmcForm.tax_rate = task.value.tax_rate ?? null
   pmcForm.order_tolerance_percent = task.value.order_tolerance_percent || '0'
   pmcForm.is_repeat_order = task.value.is_repeat_order ?? false
@@ -240,6 +240,7 @@ async function decideByPmc() {
     return
   }
   if (pmcMode.value === 'CONFIRM') {
+    if (pmcForm.includes_tax === null && task.value.includes_tax !== null) { ElMessage.warning('请选择是否含税。'); return }
     if (!pmcForm.follower_ids.length) { ElMessage.warning('请选择生产跟单员。'); return }
     if (canEditField('delivery_date') && (!pmcForm.delivery_date || pmcForm.delivery_date < task.value.order_date)) { ElMessage.warning('请选择不早于下单日期的交期。'); return }
     if (canEditField('tax_rate') && pmcForm.includes_tax && ![3, 5, 7].includes(Number(pmcForm.tax_rate))) { ElMessage.warning('含税时请选择税率。'); return }
@@ -419,7 +420,7 @@ onMounted(async () => {
               <label><span>下单日期</span><strong>{{ task.order_date }}</strong></label>
               <label><span>交期日期</span><strong>{{ task.delivery_date }}</strong></label>
               <label><span>交货方式</span><strong>{{ task.delivery_method === 'SPLIT' ? '分批交货' : '一次交货' }}</strong></label>
-              <label><span>是否含税</span><strong>{{ task.includes_tax ? '含税' : '不含税' }}</strong></label>
+              <label><span>是否含税</span><strong>{{ task.includes_tax === null ? '待补' : task.includes_tax ? '含税' : '不含税' }}</strong></label>
               <label><span>税率</span><strong>{{ task.tax_rate ? `${task.tax_rate}%` : '—' }}</strong></label>
               <label><span>订单误差</span><strong>{{ compactDecimal(task.order_tolerance_percent || '0') }}%</strong></label>
               <label><span>是否返单</span><strong>{{ task.is_repeat_order ? '是' : '否' }}</strong></label>
@@ -489,7 +490,7 @@ onMounted(async () => {
         <label><span>生产任务单号</span><ElInput :model-value="task?.task_number" readonly /></label>
         <label><span>跟单员 *</span><ElSelect v-model="pmcForm.follower_ids" multiple filterable :loading="optionsLoading" :disabled="(optionsLoading || !!optionsError) || !canEditField('follower_ids')" placeholder="请选择生产跟单员"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
         <label><span>交期日期 *</span><ElDatePicker v-model="pmcForm.delivery_date" type="date" value-format="YYYY-MM-DD" :disabled="!canEditField('delivery_date')" /></label>
-        <label><span>是否含税 *</span><ElSelect v-model="pmcForm.includes_tax" :disabled="!canEditField('includes_tax')"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></label>
+        <label><span>是否含税 *</span><ElSelect v-model="pmcForm.includes_tax" placeholder="待补" :disabled="!canEditField('includes_tax')"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></label>
         <label v-if="pmcForm.includes_tax"><span>税率 *</span><ElSelect v-model="pmcForm.tax_rate" placeholder="请选择税率" :disabled="!canEditField('tax_rate')"><ElOption v-for="rate in [3, 5, 7]" :key="rate" :label="`${rate}%`" :value="rate" /></ElSelect></label>
         <label><span>订单误差 *</span><ElInput v-model="pmcForm.order_tolerance_percent" :disabled="!canEditField('order_tolerance_percent')"><template #append>%</template></ElInput></label>
         <label><span>是否返单 *</span><ElSelect v-model="pmcForm.is_repeat_order" :disabled="!canEditField('is_repeat_order')"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></label>

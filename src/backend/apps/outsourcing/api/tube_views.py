@@ -106,6 +106,12 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         permission = DISPATCH_PERMISSION if data.get('plan_id') else VIEW_PERMISSION
         product, craft = source_product(request, data['schedule_product_id'], permission,
             source_kind=data['source_kind'], craft_id=data.get('craft_id'))
+        if data.get('category') == 'cutting' and craft.outsourcing_code == 'SEWING':
+            # 沿用已有单据的加工分类；实际发料来源仍由后续发货单独选择。
+            from apps.boms.models import BomLine
+            if BomLine.objects.filter(section__bom__product_line_id=product.product_line_id,
+                    section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists():
+                data['source_kind'] = 'CUTTING'
         if data.get('plan_id'):
             plan = get_object_or_404(TubeOutsourcingOrder, pk=data['plan_id'], is_plan=True,
                 schedule_product=product, craft=craft)
@@ -117,6 +123,11 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             from ..plan_services import plan_source_context
             context = plan_source_context(schedule_product=product, source_kind=data['source_kind'],
                 zone=zone, craft=craft, for_plan=bool(data.get('is_plan')))
+            if data.get('plan_id') and data['source_kind'] == 'CUTTING' and context.get('sewing_inputs'):
+                from ..part_flow_sources import add_cut_piece_stock_zones
+                from ..source_access import allowed_source_kinds
+                if 'PUBLIC_PIECE' in allowed_source_kinds(request, permission):
+                    add_cut_piece_stock_zones(product, plan, context['inputs'])
         elif data['source_kind'] in CUTTING_SOURCES:
             from ..cutting_sources import cutting_source_context
             context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)
@@ -134,6 +145,11 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         # 库存身份和冻结凭证仅供保存服务使用，页面按可显示字段读取。
         context['rows'] = [{key: value for key, value in row.items() if key not in {'input_identity', 'snapshot'}}
                            for row in context.get('rows', [])]
+        context['inputs'] = [{key: value for key, value in row.items() if key not in {'input_identity', 'snapshot'}}
+                             for row in context.get('inputs', [])]
+        if context.get('part_flow'):
+            units = {row['unit'] for row in context['rows']}
+            context['output_unit'] = next(iter(units)) if len(units) == 1 else ''
         if data.get('is_plan'):
             from ..plan_purchase_reference import add_plan_purchase_reference
             add_plan_purchase_reference(context, product)

@@ -1,5 +1,6 @@
 """首次公共库存启用：只读核验事实，明确授权后才在独占事务中切换。"""
 
+from apps.boms.material_flow_calculations import pipe_meters_text
 import hashlib
 import json
 from collections import Counter, defaultdict
@@ -441,7 +442,7 @@ def _quotas(blockers, pipe_limits, active_products):
                         and basis.get("component_identity") == str(row.component_identity)
                         and basis.get("raw_material_id") == str(row.raw_material_id)
                         and basis.get("pieces_per_bar") == row.pieces_per_bar
-                        and str(basis.get("raw_bar_length_m")) == format(row.raw_bar_length_m, ".2f"))
+                        and str(basis.get("raw_bar_length_m")) == pipe_meters_text(row.raw_bar_length_m))
                 if not valid:
                     _block(blockers, "QUOTA_SOURCE_EVIDENCE_CHANGED", "已耗管材的完整计算凭证、原料/部位引用或摘要不一致。", requirement_id=row.pk)
             if str(row.product_line_id) in active_products:

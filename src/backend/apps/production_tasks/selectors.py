@@ -8,6 +8,16 @@ from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from .models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 
 
+def unscheduled_task_products(task):
+    from apps.production_scheduling.models import ProductionScheduleProduct, ScheduleStatus
+
+    scheduled_ids = ProductionScheduleProduct.objects.filter(
+        schedule__production_task=task, schedule__record_status=ScheduleStatus.ACTIVE,
+        removed_at__isnull=True,
+    ).values("product_line_id")
+    return ProductionTaskProduct.objects.filter(production_task=task).exclude(pk__in=scheduled_ids)
+
+
 def production_task_source_image_ids(task, *, product_ids=None):
     products = ProductionTaskProduct.objects.filter(
         production_task=task,
@@ -169,6 +179,20 @@ def accessible_production_tasks(request, permission=None):
             if module_policy.has_permission(request, code):
                 selected = selected | accessible_production_tasks(request, permission=code).distinct()
         return selected.distinct()
+    view_name = type(view).__name__
+    receiving_action = (
+        view_name == 'MaterialInventoryViewSet' and view.action in {
+            'eligible_purchase_orders', 'eligible_lines', 'procurement_inbound_orders', 'receivings',
+            'purchase_receipt_records', 'purchase_receipt_record',
+            'receipts', 'batch_receipts',
+        }
+        or view_name == 'PurchaseOrderViewSet' and view.action == 'details'
+        or view_name == 'PurchaseReturnViewSet' and view.action in {'list', 'retrieve', 'stats', 'filter_options'}
+    )
+    if (receiving_action and module_policy.enabled() and permission == 'inventory.receive_material'
+            and 'MATERIAL' in role_scopes(request, permission)):
+        # The receiving API applies the assigned material sections to the purchase lines.
+        return queryset
     modules = ('production_tasks',) if direct else (
         'production_tasks', 'production_scheduling', 'boms', 'procurement', 'inventory',
         'material_issues', 'outsourcing', 'workshop_reporting')

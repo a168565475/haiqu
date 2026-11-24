@@ -96,13 +96,13 @@ def confirm_tube_final_receipt(*, order_id, data, request):
     for line in lines:
         entered = entered_by_id[line.pk]
         quantity = entered['received_quantity']
-        if quantity < 0 or quantity > line.quantity:
-            _fail(f'“{line.snapshot.get("part_name", "部位")}”实收须为0至实发{line.quantity}{output_unit(order.source_kind)}的整数。')
+        if type(quantity) is not int or quantity < 0 or quantity > 99999999999999:
+            _fail('实收须为有效的非负整数。')
         reason = entered.get('shortage_reason', '').strip()
         if quantity < line.quantity and not reason:
             _fail(f'“{line.snapshot.get("part_name", "部位")}”少回{line.quantity - quantity}{output_unit(order.source_kind)}，必须填写差额原因。')
         row = TubeOutsourcingReceiptLine(order_line=line, dispatched_quantity=line.quantity,
-            received_quantity=quantity, shortage_quantity=line.quantity - quantity,
+            received_quantity=quantity, shortage_quantity=max(line.quantity - quantity, 0),
             shortage_reason=reason, snapshot=_json({**line.snapshot,
                 'unit_price': str(line.unit_price) if line.unit_price is not None else None}))
         require_saved_processing_materials(line)

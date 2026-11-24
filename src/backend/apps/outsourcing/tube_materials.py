@@ -35,6 +35,16 @@ def _quantity_text(value):
     return format(Decimal(value).normalize(), 'f')
 
 
+def _catalog_material_specification(selection):
+    attributes = selection.get('attributes') if isinstance(selection, dict) else {}
+    values = []
+    for key in ('specification', 'size', 'section_size', 'fabric_spec', 'model', 'width', 'diameter', 'length', 'thickness', 'thread'):
+        value = str((attributes or {}).get(key) or '').strip()
+        if value and value not in values:
+            values.append(value)
+    return ' / '.join(values)
+
+
 def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan):
     """复用已确认 BOM 的新目录需求和公共库存，不创建旧原料映射。"""
     if not sources:
@@ -67,7 +77,8 @@ def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan)
         issue_line = MaterialIssueLine(issue=issue, requested_quantity=1, **catalog_issue_line_values(requirement))
         attrs = selected['attributes']
         row.update(name=selected['name'], material_number='', material=attrs.get('material', ''),
-            specification=issue_line.specification_snapshot, color=attrs.get('color', ''), unit=selected['unit_name'],
+            specification=_catalog_material_specification(selected) or str(line.specification or '').strip(),
+            color=attrs.get('color', ''), unit=selected['unit_name'],
             material_catalog_id=selected['catalog_id'], material_selection_snapshot=selected)
         facts[str(line.pk)] = dict(bom_line=line, raw=None, row=row, unit=spec['unit'],
             issue_line=issue_line, requirement=requirement, identity=identity)
@@ -78,6 +89,7 @@ def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan)
         pool = _pool(issue_line)
         values = public_line_quantities(issue_line, context=stock)
         row.update(required_quantity=_quantity_text(values['required_quantity']),
+            outsourcing_issued_quantity=_quantity_text(values['outsourcing_issued_quantity']),
             order_remaining=_quantity_text(values['order_remaining']),
             available_stock=_quantity_text(max(stock['stock'][pool] - stock['pending_stock'][pool], ZERO)),
             max_quantity=_quantity_text(values['max_issue_quantity']))
@@ -103,6 +115,11 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
         '-version_number', '-updated_at', '-pk').first()
     bom_lines = [line for line in BomLine.objects.filter(section__bom=bom).select_related(
         'section__bom').order_by('pk') if line.section.title.strip() == section_title] if bom else []
+    if cutting and bom:
+        # 被裁片引用的面料/棉原料只进入裁剪，不再作为车缝随单辅料发出。
+        cutting_sources = set(BomLine.objects.filter(section__bom=bom, component_kind='CUT_PIECE',
+            fabric_source_line__isnull=False).values_list('fabric_source_line_id', flat=True))
+        bom_lines = [line for line in bom_lines if line.pk not in cutting_sources]
     rows, items, raws, sources, catalog_sources = [], [], {}, {}, []
     allocation = SimpleNamespace(processing_item=SimpleNamespace(order_product=SimpleNamespace(schedule_product=product)))
     for line in bom_lines:
@@ -111,7 +128,7 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
             'name': line.part_name or line.material or line.raw_material,
             'specification': line.specification, 'material': fields.get('material') or line.material,
             'color': fields.get('accessory_color' if cutting else 'hardware_color') or '', 'unit': line.unit,
-            'required_quantity': '0', 'order_remaining': '0', 'available_stock': '0', 'max_quantity': '0',
+            'required_quantity': '0', 'outsourcing_issued_quantity': '0', 'order_remaining': '0', 'available_stock': '0', 'max_quantity': '0',
             'blockers': [], 'zones': []}
         rows.append(row)
         if line.material_catalog_id:
@@ -156,6 +173,7 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
             values = public_line_quantities(issue_line, context=context)
             pool = ('OTHER', str(raw.pk), str(raw.unit_id))
             row.update(required_quantity=_quantity_text(values['required_quantity']),
+                outsourcing_issued_quantity=_quantity_text(values['outsourcing_issued_quantity']),
                 order_remaining=_quantity_text(values['order_remaining']),
                 available_stock=_quantity_text(max(context['stock'][pool] - context['pending_stock'][pool], ZERO)),
                 max_quantity=_quantity_text(values['max_issue_quantity']))

@@ -10,6 +10,19 @@ export type SupplierCategory =
   | 'AUXILIARY'
   | 'FINISHED_GOODS'
 export type SupplierPaymentCycle = 'MONTHLY'
+export type SupplierPaymentTermMonths = 1 | 3
+
+export interface SupplierPaymentTermInput {
+  months: SupplierPaymentTermMonths
+  effective_month: string
+  basis: string
+}
+
+export interface SupplierPaymentTermVersion extends SupplierPaymentTermInput {
+  id: string
+  recorded_by_name: string
+  recorded_at: string
+}
 
 export interface Supplier {
   id: string
@@ -40,11 +53,16 @@ export interface DuplicateSupplier {
   status_display: string
 }
 
+export interface SupplierDetail extends Supplier {
+  payment_term_versions: SupplierPaymentTermVersion[]
+}
+
 export interface SupplierInput {
   supplier_type: SupplierType
   supplier_categories: SupplierCategory[]
   supplier_name: string
   payment_cycle: SupplierPaymentCycle | ''
+  payment_term?: SupplierPaymentTermInput
   remark: string
   phone: string
   is_disabled: boolean
@@ -86,6 +104,6 @@ export interface PaginatedSuppliers {
 }
 
 export interface VersionedSupplier {
-  data: Supplier
+  data: SupplierDetail
   etag: string
 }

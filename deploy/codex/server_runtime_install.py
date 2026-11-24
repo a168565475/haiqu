@@ -32,10 +32,13 @@ LOCK = ROOT / 'state/login.lock'
 SOCKET = WORK / 'socket/runtime.sock'
 FILES = {'src/codex_runtime/' + name for name in (
     '__init__.py', '__main__.py', 'config.toml', 'Dockerfile', 'protocol.py', 'README.md',
-    'server.py', 'service.py', 'parsing.py', 'schemas/discovery.json', 'schemas/extraction.json',
-    'tests/test_protocol.py', 'tests/test_server.py', 'tests/test_service.py', 'tests/test_parsing.py',
-)} | {'src/backend/apps/production_task_imports/' + name for name in (
-    'validation.py', 'schemas/discovery.json', 'schemas/extraction.json',
+    'server.py', 'service.py', 'nesting.py',
+    'tests/test_protocol.py', 'tests/test_server.py', 'tests/test_service.py', 'tests/test_nesting.py',
+    'tests/test_dxf_tools.py', 'tests/test_dxf_geometry.py', 'tests/test_dxf_nesting.py',
+    'tests/test_dxf_codex_optimization.py', 'tests/test_dxf_outputs.py',
+    'dxf_tools/__init__.py', 'dxf_tools/session.py', 'dxf_tools/runner.py',
+    'dxf_tools/dxf_geometry.py', 'dxf_tools/dxf_nesting.py', 'dxf_tools/dxf_rendering.py',
+    'dxf_tools/dxf_codex_optimization.py', 'dxf_tools/requirements.txt',
 )}
 
 
@@ -172,8 +175,6 @@ def extract(bundle_hash):
             and set(manifest.get('files', {})) == FILES, 'MANIFEST_BOUNDARY')
     for name in FILES:
         require(manifest['files'][name] == {'size': len(content[name]), 'sha256': digest(content[name])}, 'SOURCE_HASH')
-    for schema in ('discovery.json', 'extraction.json'):
-        require(content['src/codex_runtime/schemas/' + schema] == content['src/backend/apps/production_task_imports/schemas/' + schema], 'SCHEMA_DRIFT')
     source = WORK / 'source'
     source.mkdir(mode=0o700)
     for name, data in content.items():

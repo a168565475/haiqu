@@ -20,6 +20,7 @@ from apps.products.material_identity import lock_bom_line_material_identities
 from apps.production_scheduling.models import ProductionScheduleProduct
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
+from apps.outsourcing.tube_prices import parse_unit_area
 from .models import WarehouseZone
 from .public_stock_identity import build_pipe_stock_identity, build_semi_finished_identity, profile_spray_color
 from .public_bom_snapshot import build_output_identity
@@ -130,10 +131,12 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
     for line in lines:
         key = str(line.component_identity)
         values = line.raw_values or {}
+        unit_area = parse_unit_area(values.get('coating_unit_area_sqm'))
         spec = specs_by_line.get(str(line.pk))
         row_errors = []
         row = dict(component_identity=key, bom_line_id=str(line.pk), part_name=line.part_name,
             material=line.material, specification=line.specification,
+            unit_area_sqm=format(unit_area, '.4f') if unit_area is not None else None,
             thickness=values.get('tube_thickness') or values.get('G') or '',
             cutting_length_mm=str(line.cutting_length_mm or ''), raw_color='',
             spray_color=profile_spray_color(values), order_required='0',

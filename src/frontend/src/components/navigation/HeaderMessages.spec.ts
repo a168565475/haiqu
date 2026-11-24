@@ -40,6 +40,19 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; document.body.innerHTML = ''; vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('页头消息组件（隔离替身）', () => {
+  it.each(['/workbench/production-overview', '/workbench/workshop'])('岗位首页 %s 能打开原卡片通知，仍只读加载正文', async path => {
+    route.path = path; route.query = { notification: id }
+    render(); await flushPromises()
+    expect(api.detail.mock.calls[0]?.[0]).toBe(id)
+    expect(document.querySelector('[data-linked-notification]')?.textContent).toContain(item.body)
+    expect(api.read).not.toHaveBeenCalled()
+  })
+  it('普通业务页附带 notification 不自动打开消息', async () => {
+    route.path = '/purchase-tracking'; route.query = { notification: id }
+    render(); await flushPromises()
+    expect(api.detail).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-linked-notification]')).toBeNull()
+  })
   it('冷启动页面容器自动聚焦后，卡片链接仍保持消息面板打开', async () => {
     route.query = { notification: id }
     wrapper = mount({ components: { HeaderMessages, PageContainer },

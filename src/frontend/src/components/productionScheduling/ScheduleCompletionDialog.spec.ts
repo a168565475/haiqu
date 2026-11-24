@@ -6,7 +6,7 @@ import type { CompleteScheduleResult, ScheduleCompletionPreview } from '@/types/
 
 function preview(): ScheduleCompletionPreview {
   return {
-    schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"',
+    schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"', unscheduled_product_count: 0,
     task: { id: 'task-1', task_number: 'HT-001', status: 'IN_PRODUCTION', status_display: '生产中', etag: '"task-v1"' },
     progress: {
       MATERIAL: { status: 'READY', percentage: 100, display: '100%' }, METAL: { status: 'READY', percentage: 100, display: '100%' },
@@ -39,6 +39,15 @@ async function createView(overrides: Partial<InstanceType<typeof ScheduleComplet
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('排产完成确认弹窗', () => {
+  it('仍有未排产品时明确提示数量，即使进度均为100%也禁止点击或表单提交完成', async () => {
+    const wrapper = await createView({ preview: { ...preview(), unscheduled_product_count: 2 } })
+    expect(wrapper.text()).toContain('还有 2 个产品未排产')
+    expect(wrapper.get('[data-testid="completion-submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="completion-reason"]').setValue('已排产品完成')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
   it('展示任务、销售、四项进度及每产品单行的独立字段和单位，不生成混合合计', async () => {
     const wrapper = await createView()
     expect(wrapper.text()).toContain('HT-001')

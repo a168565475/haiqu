@@ -1,24 +1,37 @@
 import type { ProcessingMaterialPair } from './processingMaterial'
+import type { MaterialSelectionSnapshot } from './materialCatalog'
 
 export interface ReceiptAttributes {
   part_name: string; category: string; material: string; color: string; unit_name: string
   specification?: string; tube_diameter?: string; tube_thickness?: string; cutting_length_mm?: number; thickness?: string
+  tube_shape?: string; hardness?: string
+  component_attributes?: Record<string, string>
+  material_selection_snapshot?: MaterialSelectionSnapshot | Record<string, never> | null
 }
 export interface ReceiptPreviewLine extends ProcessingMaterialPair {
+  unit?: string
   processing_not_enabled_reason?: string
   bom_line_id: string; component_key: string; usage: string; attributes: ReceiptAttributes; stage: string
   required: string; received: string; can_receive: string; input_remaining: string | null; input_supported: string | null
 }
 export interface ReceiptPreview {
-  schedule_product_id: string; plan_category: 'METAL' | 'SEWING'; etag: string; production_order: string
+  schedule_product_id: string; plan_category: 'METAL' | 'CUTTING' | 'SEWING'; etag: string; production_order: string
   product: string; order_quantity: string; actor: string; receipt_date: string; lines: ReceiptPreviewLine[]
   excluded: string[]; zones: { id: string; warehouse: string; name: string }[]
 }
 export interface ReceiptPayload {
-  request_id: string; schedule_product_id: string; plan_category: 'METAL' | 'SEWING'; zone_id: string
+  request_id: string; schedule_product_id: string; plan_category: 'METAL' | 'CUTTING' | 'SEWING'; zone_id: string
   receipt_date: string; remark: string; lines: { bom_line_id: string; quantity: string }[]
 }
+export interface SemiReceiptLine extends ProcessingMaterialPair {
+  id: string; bom_line_id?: string; quantity: string; unit: string; attributes: ReceiptAttributes; stage: string
+  progress?: { required: string; received_before: string; received_after: string; input_quantity: string | null; input_unit: string }
+  return_detail?: { raw_color?: string | null; spray_color?: string | null; dispatched_quantity?: string | null; shortage_quantity?: string | null; shortage_reason?: string | null }
+}
+
 export interface SemiReceiptRecord extends ProcessingMaterialPair {
+  quantity_totals?: { unit: string; quantity: string }[]
+  lines?: SemiReceiptLine[]
   id: string; receipt_number: string; source: 'INTERNAL' | 'EXTERNAL'; source_display: string
   production_order: string; product: string; attributes: ReceiptAttributes; stage: string
   quantity: string; unit: string; receipt_date: string; status: string; warehouse: string; zone: string; actor: string; remark: string

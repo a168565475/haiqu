@@ -1,6 +1,401 @@
 {
   "version": 1,
   "modules": {
+    "material-transfers": [
+      {
+        "id": "material-transfers-api-isolated-20261112",
+        "path": "qa/material_transfer_audit_20261112/api_acceptance.cjs",
+        "runtime": "node",
+        "args": ["--run-authorized"],
+        "category": "api_helper",
+        "risk": "isolated-write",
+        "database_target": "qa_material_transfer_audit_20261112",
+        "browser_mode": "none",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["MATERIAL_TRANSFER_AUDIT_QA_READY"],
+        "timeout_seconds": 1200,
+        "enabled": true,
+        "order": 10,
+        "artifacts": ["qa/material_transfer_audit_20261112/evidence/api_assertions.json"],
+        "preconditions": [
+          "按qa/material_transfer_audit_20261112/resources.md核实独占数据库、容器、端口和临时目录；后端18212、前端18213仅连接真实业务快照副本qa_material_transfer_audit_20261112，禁止主库或线上写入。",
+          "prepare_browser.py仅在副本准备现有普通员工的临时密码，保持实际身份和权限；tmp/browser_auth.json不得输出或作为交付证据。MATERIAL_TRANSFER_AUDIT_QA_READY=1表示本轮专属环境已核实就绪。",
+          "使用真实Session/CSRF/API验证材料收发、权限、库存和记录；顺序执行，不与其他材料收发验收同时写该副本。不启动消息发送或其他外发worker。",
+          "退出码仅表示脚本执行结果；同时核对api_assertions.json中的UNKNOWN、未覆盖模板和检查明细，不将真实数据缺口计为通过。结束按登记精确归属销库、停服务、清理临时凭据并复查，保留脱敏报告。"
+        ]
+      },
+      {
+        "id": "material-transfers-browser-isolated-20261112",
+        "path": "qa/material_transfer_audit_20261112/browser_acceptance.cjs",
+        "runtime": "node",
+        "args": ["--with-flow"],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "qa_material_transfer_audit_20261112",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["MATERIAL_TRANSFER_AUDIT_QA_READY"],
+        "timeout_seconds": 1200,
+        "enabled": true,
+        "order": 20,
+        "artifacts": ["qa/material_transfer_audit_20261112/evidence/browser-report.json", "qa/material_transfer_audit_20261112/evidence/*.png"],
+        "preconditions": [
+          "沿用同任务已登记并核实的真实业务快照副本、普通员工及18212/18213服务；先完成材料收发API验收并生成本轮tmp/ui_cases.json。不得复用其他任务凭据、库或浏览器目录。",
+          "使用现有playwright-core及Chrome，headless；--with-flow执行真实下拉选料、行内填写和收发保存，1920及1440视口测量DOM/计算样式并截图，不使用route Mock或假业务响应。",
+          "浏览器只允许本任务同源服务，使用真实Session/CSRF；不与API验收并发写副本。MATERIAL_TRANSFER_AUDIT_QA_READY=1只用于本轮已核实环境，不纳入默认all或read-only。",
+          "脚本finally关闭独占浏览器并按完整路径清理profile；任务结束清理其余登记临时资源并复查。退出码与browser-report.json检查明细一起判定，保留脱敏JSON和必要截图，不保留账号密码或Cookie。"
+        ]
+      }
+    ],
+    "procurement-tracking": [
+      {
+        "id": "procurement-tracking-isolated-20261105",
+        "path": "qa/procurement_tracking_20261105/frontend_browser_check.cjs",
+        "runtime": "node",
+        "args": ["--notifications", "--notification-only"],
+        "category": "visual",
+        "risk": "isolated-write",
+        "database_target": "qa_procurement_tracking_20261105",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["PURCHASE_TRACKING_QA_READY"],
+        "timeout_seconds": 1800,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/procurement_tracking_20261105/frontend-browser-checks.json", "qa/procurement_tracking_20261105/frontend-*.png"],
+        "preconditions": [
+          "按resources.md登记并核实专属数据库、容器、端口和临时目录；后端18121、前端18181只连接真实数据独立副本，不允许主库/线上接口。",
+          "prepare_browser.py及prepare_workflow.py仅在副本准备现有普通账号临时密码和跟踪规则，不改变账号真实岗位权限；临时凭据不输出。",
+          "使用真实Session/CSRF/API，登录与通知点击只写副本认证/已读；不发企业微信。PURCHASE_TRACKING_QA_READY=1表示本次专属环境已按任务授权准备。",
+          "缺少当前真实风险、未建总单等来源时逐项报告缺口；页面Fixture不能替代真实验收。脚本finally清理独占profile，任务结束按精确归属清理副本库和容器。"
+        ]
+      }
+    ],
+    "bom-dxf-nesting": [
+      {
+        "id": "bom-dxf-nesting-local-20261105",
+        "path": "qa/bom_dxf_nesting_20261105/browser.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "qa_bom_dxf_nesting_20261105",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["BOM_DXF_QA_READY"],
+        "timeout_seconds": 600,
+        "enabled": false,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/bom_dxf_nesting_20261105/browser-report.json", "qa/bom_dxf_nesting_20261105/nesting-result.png"],
+        "preconditions": [
+          "2026-11-14：用户要求移除 BOM 页面 DXF 排料，前端入口及专用代码已退役，本历史用例停止调度。",
+          "先按resources.json核实独占数据库、容器、端口和临时目录，准备真实本地数据库快照；禁止连接主库写BOM。",
+          "独立后端18001、前端18080和排料worker已启动，prepare_browser.py仅在快照库生成普通账号临时凭据；BOM_DXF_QA_READY=1表示前置环境已按任务授权准备。",
+          "使用用户原始裁片.dxf、真实Session/CSRF/API；只在独立库采用并保存面料行。浏览器finally清理独占profile，任务结束按资源清单销库/停容器/清理tmp并复查。"
+        ]
+      }
+    ],
+    "workshop-mobile": [
+      {
+        "id": "workshop-mobile-anonymous-20261031",
+        "path": "qa/mobile_workshop_anonymous_20261031.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "local-haiqu_erp-anonymous-read-only",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/mobile_workshop_20261031/anonymous-browser.json"],
+        "preconditions": [
+          "本机手机服务 localhost:8082 和真实后端已启动；沿用既有 playwright-core 与 Chrome/Edge，headless。",
+          "仅匿名 GET 和登录页本地必填验证；阻止浏览器写请求，不登录、不执行真实业务写入。",
+          "先登记独占临时目录，finally 关闭浏览器并精确删除、复查；缺普通账号、真实写入和真机覆盖必须报告 PASS_WITH_GAPS。"
+        ]
+      }
+    ],
+    "admin-account-switch": [
+      {
+        "id": "admin-account-switch-u06-real-resources",
+        "path": "qa/admin_account_switch_u06.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "real-write",
+        "database_target": "local-haiqu_erp-auth-session-audit-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["ADMIN_SWITCH_QA_USERNAME", "ADMIN_SWITCH_QA_PASSWORD"],
+        "required_env": ["ADMIN_SWITCH_QA_EMPLOYEE_A", "ADMIN_SWITCH_QA_EMPLOYEE_B", "ADMIN_SWITCH_QA_EMPLOYEE_A_QUERY", "ADMIN_SWITCH_QA_EMPLOYEE_B_QUERY"],
+        "timeout_seconds": 900,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/plans/admin_account_switch/evidence/unit06-20261030/report.json", "docs/plans/admin_account_switch/evidence/ui-adjustments-20261030/report.json"],
+        "preconditions": [
+          "仅本机现有环境；用户确认进入第六单元，并指定厂长/技术角色；不创建或修改账号、角色、权限、业务单据。",
+          "仅允许登录、三次员工切换、显式返回、退出所需认证写入；禁止其他写请求和外部站点。Session/登录审计属于真实写入，all/read-only不自动包含。",
+          "凭据只从进程环境读取，不写日志、源码、Cookie文件或报告；独占浏览器临时根目录先核实不存在，finally精确清理并复查。",
+          "ADMIN_SWITCH_QA_PICKER_ONLY=1时仅检查选择弹窗且不执行员工切换，使用ui-sort独立目录；ADMIN_SWITCH_QA_UI_ONLY=1时只检查1101x884账号菜单、部门角色筛选、三列表格及A到B返回链；使用本轮独占临时目录和UI证据目录，不重复资源回归。",
+          "PDF/Office预览仍为已确认缺口；未覆盖的真实数据类型/入口如实报告PASS_WITH_GAPS，禁止用Fixture填补。"
+        ]
+      }
+    ],
+    "order-cost": [
+      {
+        "id": "order-cost-browser-20261026",
+        "path": "qa/order_cost_browser_20261026.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_order_cost_20261026_397c",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 900,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/order_cost_overview_20261026/browser-report.json"],
+        "preconditions": [
+          "先按docs/plans/order_cost_overview_20261026.md登记并核实独占库、18861/18862端口及临时目录无他人占用。",
+          "ORDER_COST_BROWSER=1仅启用apps.production_tasks.tests.test_cost_browser；临时容器haiqu-cost-qa-397c运行真实隔离LiveServer，禁止连接主库。",
+          "脚本只读取本次合成身份，普通Session/CSRF登录；finally关闭浏览器与Vite并清理临时目录，Django测试结束销库。"
+        ]
+      }
+    ],
+    "finance-integration": [
+      {
+        "id": "finance-integration-u06-20261023",
+        "path": "qa/finance_u06/integration.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u06_01a166b7",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1200,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U06_browser/report.json"],
+        "preconditions": [
+          "按U06_resources.md登记并核实独占库test_finance_u06_01a166b7、容器、U06媒体/浏览器目录及18755/18756无他人占用。",
+          "仅FINANCE_U06_BROWSER=1和POSTGRES_TEST_DB=test_finance_u06_01a166b7启用apps.finance.tests.test_u06_browser.U06BrowserTests；18755 LiveServer及U06 browser-ready.json必须就绪。",
+          "18756 Vite只代理18755，合成四角色正常Session/CSRF登录；仅隔离财务写入，无主库身份、数据写入或企微调用。",
+          "脚本finally关闭浏览器/Vite及精确删除U06浏览器目录；外层Django结束销库、清理合成媒体/控制文件，须独立复查。不纳入默认all或read-only。"
+        ]
+      }
+    ],
+    "finance-supplier-ledger": [
+      {
+        "id": "finance-supplier-ledger-u04-20261119",
+        "path": "qa/finance_supplier_ledger_u02.cjs",
+        "runtime": "node",
+        "args": ["--unit-4"],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_supplier_ledger_u04_20261119",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["SUPPLIER_LEDGER_ACCEPTANCE_BROWSER"],
+        "timeout_seconds": 900,
+        "enabled": true,
+        "order": 10,
+        "artifacts": ["docs/designs/supplier_ledger_20261119/evidence/unit-4/layout.json"],
+        "preconditions": [
+          "按 unit-4.md 登记并核对独占数据库、容器、目录和 18763/18764 端口。",
+          "SUPPLIER_LEDGER_ACCEPTANCE_BROWSER=1，且隔离 Django LiveServer 夹具已生成 ready.json。",
+          "由 Django 销毁测试库，由脚本关闭 headless 浏览器、Vite 并移除浏览器缓存。"
+        ]
+      }
+    ],
+    "finance-supplier-payments": [
+      {
+        "id": "finance-supplier-payments-u02-20261119",
+        "path": "qa/finance_supplier_payments_u02.cjs",
+        "runtime": "node",
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_supplier_payment_u02_browser_20261119",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": ["SUPPLIER_PAYMENT_BROWSER"],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 10,
+        "artifacts": ["docs/designs/supplier_payment_20261119/evidence/unit-2/layout.json"],
+        "preconditions": [
+          "按供应商付款 unit-2.md 核对独占库、容器、目录及 18773/18774 端口。",
+          "SUPPLIER_PAYMENT_BROWSER=1 时启动隔离 LiveServer 夹具，等待其生成 ready.json。"
+        ]
+      }
+    ],
+    "finance-supplier-due": [
+      {
+        "id": "finance-supplier-due-20261119",
+        "path": "src/frontend/qa/supplier_due_payables.cjs",
+        "runtime": "node",
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_due_browser_01a1f204",
+        "browser_mode": "headless",
+        "account_required": false,
+        "required_env": ["SUPPLIER_DUE_BROWSER", "SUPPLIER_DUE_QA_RUNTIME"],
+        "timeout_seconds": 260,
+        "enabled": true,
+        "order": 10,
+        "artifacts": ["docs/designs/supplier_due_20261119/evidence/layout.json"],
+        "preconditions": ["使用已登记的隔离 Django LiveServer，先等待该实例写入 ready.json。"]
+      }
+    ],
+    "finance-goods": [
+      {
+        "id": "finance-goods-u05-20261023",
+        "path": "qa/finance_goods_u05.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u05_01a16836",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1800,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U05_browser/report.json"],
+        "preconditions": [
+          "按U05_resources.md登记并核实独占库、容器、媒体目录、浏览器目录及18753/18754端口归属。",
+          "FINANCE_U05_BROWSER=1和POSTGRES_TEST_DB=test_finance_u05_01a16836启用精确apps.finance.tests.test_goods_browser夹具，等待18753 LiveServer及本单元browser-ready.json。",
+          "18754 Vite只代理该隔离服务，合成普通身份正常Session/CSRF登录；仅隔离库财务写入，不读取主库Session。",
+          "headless执行并在finally关闭浏览器/Vite、删除独占浏览器目录；外层Django结束销库及媒体/控制文件清理须另外复查。不纳入默认all只读。"
+        ]
+      }
+    ],
+    "finance-receipts": [
+      {
+        "id": "finance-receipts-u04-20261023",
+        "path": "qa/finance_receipts_u04.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u04_20261023",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1800,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U04_browser/checks.json"],
+        "preconditions": [
+          "按docs/qa/finance_module_20261023/U04_execution_manifest.md登记并核实独占库、容器、目录、端口归属。",
+          "FINANCE_U04_BROWSER=1和POSTGRES_TEST_DB=test_finance_u04_20261023运行精确apps.finance.tests.test_receipt_browser夹具，等待18751 LiveServer及browser-ready.json。",
+          "18752 Vite只代理该隔离服务；合成普通身份密码登录，仅本隔离库财务写入，不读取主库Session。",
+          "headless执行，finally逐步关闭本任务浏览器/Vite并删除独占目录；外层测试结束销库并另行复查，不纳入只读默认all。"
+        ]
+      }
+    ],
+    "finance-statements": [
+      {
+        "id": "finance-statements-u03-20261023",
+        "path": "qa/finance_statements_u03.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u03_01a16836",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1500,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U03_browser/checks.json"],
+        "preconditions": [
+          "先按U03资源清单核实并登记独占test_finance_u03_01a16836数据库及临时目录。",
+          "FINANCE_U03_BROWSER=1启用精确apps.finance.tests.test_statement_browser夹具，等待18749 LiveServer及browser-ready.json就绪。",
+          "18750 Vite仅代理该隔离服务；合成普通身份正常密码登录，不读取主库Session。",
+          "finally关闭本任务浏览器/Vite并清理独占目录，外层测试结束销毁数据库；不纳入只读默认all。"
+        ]
+      }
+    ],
+    "finance-subjects": [
+      {
+        "id": "finance-subjects-u02-20261023",
+        "path": "qa/finance_subjects_u02.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u02_01a1681e",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1500,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U02_browser/checks.json"],
+        "preconditions": [
+          "先按U02_resources登记并启动独占Django测试库及18747 LiveServer。",
+          "18748 Vite只代理该隔离服务；合成身份正常密码登录，不读取主库Session。",
+          "finally关闭浏览器/Vite并清理独占目录，外层测试结束销毁数据库。"
+        ]
+      }
+    ],
+    "finance-accounts": [
+      {
+        "id": "finance-accounts-u01-20261023",
+        "path": "qa/finance_accounts_u01.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_finance_u01_01a167cb",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 1200,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finance_module_20261023/U01_browser/checks.json"],
+        "preconditions": [
+          "必须先按U01_resources.md启动独占Django测试及LiveServer，18745只连接登记测试库。",
+          "浏览器脚本创建18746同源Vite，使用本任务随机合成账号，不读取主库身份或修改主库。",
+          "本任务控制文件必须存在且标记isolated；finally关闭浏览器/Vite并清理本任务目录，外层测试销毁数据库。"
+        ]
+      }
+    ],
     "employee-menu": [
       {
         "id": "employee-menu-unit6-20261021",
@@ -479,11 +874,11 @@
         "preconditions": [
           "只使用 BOM_PIPE_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，禁止自动登录及输出凭据、Cookie、完整响应正文",
           "BOM_PIPE_QA_BASE_URL 默认 http://localhost:8080，目标 dbe06399-b6f0-40b1-bdba-9e0d9b2861da 真实可读可编辑且产品已核对",
-          "逐行读取当前真实管材来源档案，检查参数原样展示、已关联字段仍可编辑；首条已关联行选择真实下拉中的不同厚度，取消后重开确认原厚度，并复读API确认来源未变；缺少其他真实厚度记录notCovered，不伪造",
-          "管材弹窗无对应原料提示、选择与重试控件；浏览器不请求 pipe-material-matches 接口，不造数据、不 Mock",
-          "使用当前真实行的品名和切割参数，留空材质、截面、厚度、形状，只应用到浏览器本地草稿并重开检查；不填虚构业务资料，不点击保存、确认或上传",
-          "拦截全部非 GET/HEAD 请求，仅精确放行同源 POST /api/v1/boms/material-flow-preview/ 纯计算接口；views.material_flow_preview 与 test_readonly_quantity_preview_formula_errors_permissions_and_no_writes 已确认无业务写入",
-          "保存时自动关联和缺少则建档由后端业务/API测试覆盖；本只读页面脚本不声称真实自动建档通过，结束前复读BOM和来源确认未修改",
+          "目标至少有一条管材行，账号可读原料管理中的管材品名，可读取已关联的旧原料来源。逐行核对首次打开时的历史品名、属性与切割参数",
+          "从真实品名重新选择，按档案明细核对基础属性、所选形状的规格及已启用的喷塑颜色。账号所在页面不应请求管材公共候选或 pipe-material-matches",
+          "优先使用旧来源行和同名档案；缺少旧行、已维护形状或其他厚度时记录覆盖缺口。仅在草稿中点选既有值，取消并重新打开，核对原厚度及来源",
+          "拦截所有非 GET/HEAD，只精确放行同源 POST /api/v1/boms/material-flow-preview/ 与 /api/v1/boms/tube-calculation-preview/ 两个只读计算接口。不得填写新增规格、按回车建规格或提交 BOM",
+          "浏览器结束前复读 BOM、关联旧原料和所选品名的完整档案，核对数据摘要。本脚本不覆盖正式保存和新增规格写入",
           "沿用项目 playwright-core 和本机 Chrome/Edge；BOM_PIPE_QA_BROWSER_PATH 可指定既有浏览器，不新增依赖",
           "独占 profile 已登记为 .tmp/pipe_auto_sync_20261016/profile，Session为同目录session.json并由主任务清理；profile仅不存在时创建，finally关闭浏览器后校验精确路径、清理并复查；报告和截图保留于output/playwright/pipe-auto-sync-20261016",
           "后端业务/API测试和脚本审阅通过后，由主任务通过 qa.run.run_entry 按本ID单独执行；1920x1080、1102x884截图及DOM几何证据保留"
@@ -952,8 +1347,8 @@
           "先完成原料管理后端业务及 API 测试；目标环境已授权部署新模块。不得由本脚本执行 migrate、导入或创建演示记录",
           "明确设置 MATERIAL_CATALOG_QA_BASE_URL；认证二选一：MATERIAL_CATALOG_QA_STORAGE_STATE，或 MATERIAL_CATALOG_QA_USERNAME 与 MATERIAL_CATALOG_QA_PASSWORD。脚本自行检查组合，不输出凭据或 Cookie",
           "真实账号至少具有 material_catalog.view_materialcatalog；修改权限仅用于打开未保存输入、检查悬停删除，绝不点击保存、删除或喷塑开关",
-          "只允许脚本自身 POST /api/auth/login/ 取得普通 Session；拦截所有页面非 GET/HEAD 请求并判失败，无 Mock、开发自动登录或伪造数据",
-          "沿用现有 playwright-core 与 Chrome/Edge；可设置 MATERIAL_CATALOG_QA_BROWSER_PATH，不新增依赖。1673x941 对照用户截图，另验收 1920x1080、1440x900；可设置 MATERIAL_CATALOG_QA_VISUAL_BASELINE 指向本轮只读采集的字体/外导航基线，未提供时明确记录该项未覆盖",
+          "只允许脚本自身同源 POST /api/auth/login/ 取得普通 Session；页面域外请求和非 GET/HEAD 请求均拦截并判失败，无 Mock、开发自动登录或伪造数据",
+          "沿用现有 playwright-core 与 Chrome/Edge，headless；检查1673x941、1920x1080、1440x900下当前68x28/12px属性框、28px私有单位输入和两类仓库局部保存入口，不提交；下拉选项仍32px/13px，候选仅来自当前品名与属性组。可设置 MATERIAL_CATALOG_QA_VISUAL_BASELINE 核对明确提供的字体/导航基线；未提供不宣称旧V2还原",
           "脚本在报告登记本次 .tmp/material-catalog/readonly-browser-时间戳-PID 完整路径后创建；finally 关闭、核对边界、删除并复查。Session 来源文件只读，不由脚本清理",
           "通过 python qa/run.py material_catalog --read-only 显式运行；all 仍只包含 production、quotation、inquiry，不增加本模块。显式 json-summary-v1 协议将 BLOCKED、PASS_WITH_GAPS 及缺口传入统一报告，缺口不计 PASS"
         ]

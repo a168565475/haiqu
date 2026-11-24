@@ -8,12 +8,20 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.access_control.management_permissions import can_manage
-from .models import ACTIVE_STATES, RUNNING_STATES, CodexConnection, CodexOperation
+from .models import RUNNING_STATES, CodexConnection, CodexOperation
 from .runtime_client import RuntimeClient, RuntimeFailure, clean_snapshot
 from .services import PERMISSION, audit_operation
 
 
 LEASE_SECONDS = 30
+FILE_TRANSFER_LEASE_SECONDS = 90
+NEST_TASK_ERRORS = frozenset({
+    'UNSUPPORTED_CAPABILITY', 'CODEX_INVALID_PROPOSAL', 'DXF_INVALID', 'DXF_BINARY', 'DXF_TOO_LARGE',
+    'DXF_UNIT_UNKNOWN', 'DXF_UNSUPPORTED', 'DXF_COMPLEXITY', 'DXF_OPEN_CONTOUR', 'DXF_INVALID_CONTOUR',
+    'DXF_AMBIGUOUS_CONTOUR', 'DXF_NO_PIECES', 'NEST_PARAMETERS', 'NEST_TOO_MANY_PIECES', 'NEST_TOO_WIDE',
+    'NEST_TIMEOUT', 'NEST_VALIDATION', 'SOURCE_CHANGED', 'SOURCE_MISSING', 'RESULT_LIMIT', 'TOOL_SEQUENCE', 'TOOL_LIMIT',
+    'PERMISSION_REVOKED', 'STORAGE_UNAVAILABLE',
+})
 
 
 def _matches(connection, operation, attempt_no, lease_id):
@@ -48,6 +56,12 @@ def _finish(connection, operation, state, code=''):
     elif state == 'INTERRUPTED':
         connection.status = 'UNKNOWN'
         connection.paused = True
+    elif (state == 'FAILED' and operation.action == 'nest'
+            and code in NEST_TASK_ERRORS
+            and connection.status == 'READY' and connection.account):
+        # 源文件、几何或工具顺序错误只失败本任务，不阻断其他排料任务。
+        connection.error_code = ''
+        connection.paused = False
     elif state == 'FAILED':
         connection.status = 'ERROR'
         connection.paused = True
@@ -55,7 +69,7 @@ def _finish(connection, operation, state, code=''):
         connection.status = 'READY'
         connection.last_test_at = timezone.now()
         connection.paused = False
-    elif state in ('SUCCEEDED', 'CANCELED') and operation.action in ('discover', 'extract') and connection.account:
+    elif state in ('SUCCEEDED', 'CANCELED') and operation.action == 'nest' and connection.account:
         connection.status = 'READY'
         connection.paused = False
     elif state == 'SUCCEEDED' and operation.action == 'refresh' and connection.status == 'READY' and connection.account:
@@ -72,7 +86,8 @@ def claim_tick(owner_id):
     connection = CodexConnection.objects.select_for_update().first()
     if connection is None:
         return None
-    operation = connection.operations.filter(state__in=RUNNING_STATES).first()
+    operations = connection.operations.exclude(action__in=('discover', 'extract'))
+    operation = operations.filter(state__in=RUNNING_STATES).first()
     now = timezone.now()
     if operation:
         if operation.lease_id != owner_id and operation.lease_expires_at and operation.lease_expires_at > now:
@@ -83,20 +98,20 @@ def claim_tick(owner_id):
         operation.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
         operation.save(update_fields=['attempt_no', 'lease_id', 'lease_expires_at', 'updated_at'])
         return operation, False
-    operation = connection.operations.filter(state='QUEUED').select_related('actor__user').first()
+    operation = operations.filter(state='QUEUED').select_related('actor__user').first()
     if operation is None:
         return None
     # 入队后撤权不能继续开始外部操作。
-    if operation.action in ('discover', 'extract'):
-        from apps.production_task_imports.access import worker_allowed
-        allowed = worker_allowed(operation.actor)
+    if operation.action == 'nest':
+        from apps.boms.nesting_codex import operation_allowed
+        allowed = operation_allowed(operation)
     else:
         allowed = (settings.ACCESS_MANAGEMENT_ENABLED and operation.actor.user_id
                    and can_manage(operation.actor.user, PERMISSION))
     if not allowed:
-        if operation.action in ('discover', 'extract'):
-            from apps.production_task_imports.worker import finish_import
-            finish_import(operation, None, 'PERMISSION_REVOKED')
+        if operation.action == 'nest':
+            from apps.boms.nesting_codex import finish_codex_operation
+            finish_codex_operation(operation, None, 'PERMISSION_REVOKED')
         _finish(connection, operation, 'FAILED', 'PERMISSION_REVOKED')
         return None
     if operation.action in ('login', 'switch', 'disconnect'):
@@ -122,7 +137,22 @@ def bind_boot(operation_id, attempt_no, lease_id, boot_id):
     if not _matches(connection, operation, attempt_no, lease_id):
         return False
     operation.runtime_boot_id = UUID(boot_id)
-    operation.save(update_fields=['runtime_boot_id', 'updated_at'])
+    fields = ['runtime_boot_id', 'updated_at']
+    if operation.action == 'nest':
+        operation.lease_expires_at = timezone.now() + timedelta(seconds=FILE_TRANSFER_LEASE_SECONDS)
+        fields.append('lease_expires_at')
+    operation.save(update_fields=fields)
+    return True
+
+
+@transaction.atomic
+def reserve_artifact_transfer(operation):
+    connection = CodexConnection.objects.select_for_update().get(singleton=1)
+    current = connection.operations.get(pk=operation.pk)
+    if not _matches(connection, current, operation.attempt_no, operation.lease_id):
+        return False
+    current.lease_expires_at = timezone.now() + timedelta(seconds=FILE_TRANSFER_LEASE_SECONDS)
+    current.save(update_fields=['lease_expires_at', 'updated_at'])
     return True
 
 
@@ -155,10 +185,10 @@ def apply_result(operation_id, attempt_no, lease_id, snapshot, parsing_result=No
         if before != after:
             connection.save()
     else:
-        if operation.action in ('discover', 'extract'):
-            from apps.production_task_imports.worker import finish_import
-            code = finish_import(operation, parsing_result if result['state'] == 'SUCCEEDED' else None,
-                                 result['error_code'] or ('' if result['state'] == 'SUCCEEDED' else 'INTERRUPTED'))
+        if operation.action == 'nest':
+            from apps.boms.nesting_codex import finish_codex_operation
+            code = finish_codex_operation(operation, parsing_result if result['state'] == 'SUCCEEDED' else None,
+                result['error_code'] or ('' if result['state'] == 'SUCCEEDED' else 'INTERRUPTED'))
             if code:
                 _finish(connection, operation, 'FAILED', code)
                 return True
@@ -177,9 +207,9 @@ def finish_without_result(operation_id, attempt_no, lease_id, state, code=''):
     operation = connection.operations.get(id=operation_id)
     if not _matches(connection, operation, attempt_no, lease_id):
         return False
-    if operation.action in ('discover', 'extract'):
-        from apps.production_task_imports.worker import finish_import
-        finish_import(operation, None, code or 'INTERRUPTED')
+    if operation.action == 'nest':
+        from apps.boms.nesting_codex import finish_codex_operation
+        finish_codex_operation(operation, None, code or 'INTERRUPTED')
     _finish(connection, operation, state, code)
     return True
 
@@ -207,6 +237,7 @@ def mark_cancel_sent(operation_id, attempt_no, lease_id):
 
 
 def process_tick(runtime=None, *, owner_id=None):
+    from apps.boms.nesting_storage import NestingFailure
     if transaction.get_connection().in_atomic_block:
         raise RuntimeError('Codex worker cannot call runtime inside a database transaction')
     runtime = runtime or RuntimeClient()
@@ -223,18 +254,21 @@ def process_tick(runtime=None, *, owner_id=None):
         return True
     if is_new:
         payload = {}
-        if operation.action in ('discover', 'extract'):
-            from apps.production_task_imports.worker import runtime_payload
-            from apps.production_task_imports.storage import ImportFailure
+        if operation.action == 'nest':
+            from apps.boms.nesting_codex import runtime_payload
+            from apps.boms.nesting_storage import NestingFailure
             try:
                 payload = {'payload': runtime_payload(operation)}
-            except ImportFailure as exc:
+            except NestingFailure as exc:
                 finish_without_result(*key, 'FAILED', exc.code)
                 return True
         try:
             snapshot = runtime.call('status', {})
         except RuntimeFailure as exc:
             finish_without_result(*key, 'FAILED', exc.code)
+            return True
+        if operation.action == 'nest' and 'nest_tools_v1' not in snapshot.get('capabilities', []):
+            finish_without_result(*key, 'FAILED', 'UNSUPPORTED_CAPABILITY')
             return True
         if not bind_boot(*key, snapshot['boot_id']):
             return True
@@ -246,6 +280,8 @@ def process_tick(runtime=None, *, owner_id=None):
             return True
         try:
             apply_result(*key, snapshot, read_parsing_result(runtime, operation, params, snapshot))
+        except NestingFailure as exc:
+            finish_without_result(*key, 'FAILED', exc.code)
         except RuntimeFailure as exc:
             mark_unknown(*key, exc.code)
         return True
@@ -259,6 +295,8 @@ def process_tick(runtime=None, *, owner_id=None):
             snapshot = runtime.call('cancel', params)
             mark_cancel_sent(*key)
         apply_result(*key, snapshot, read_parsing_result(runtime, operation, params, snapshot))
+    except NestingFailure as exc:
+        finish_without_result(*key, 'FAILED', exc.code)
     except RuntimeFailure as exc:
         mark_unknown(*key, exc.code)
     return True
@@ -266,9 +304,12 @@ def process_tick(runtime=None, *, owner_id=None):
 
 def read_parsing_result(runtime, operation, params, snapshot):
     result = snapshot.get('operation')
-    if operation.action not in ('discover', 'extract') or not result or result['state'] != 'SUCCEEDED':
+    if operation.action != 'nest' or not result or result['state'] != 'SUCCEEDED':
         return None
     value = runtime.call('result', params)
     if value['boot_id'] != snapshot['boot_id']:
         raise RuntimeFailure('INTERRUPTED')
-    return value['result']
+    from apps.boms.nesting_codex import prepare_codex_result
+    if not reserve_artifact_transfer(operation):
+        return None
+    return prepare_codex_result(operation, runtime, value['result'], snapshot['boot_id'])

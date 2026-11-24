@@ -7,7 +7,7 @@ import SampleOutboundView from './SampleOutboundView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const routerPush = vi.hoisted(() => vi.fn())
-const apiMocks = vi.hoisted(() => ({ deleteOutbound: vi.fn(), list: vi.fn(), summary: vi.fn(), options: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ deleteOutbound: vi.fn(), list: vi.fn(), options: vi.fn() }))
 enableAutoUnmount(afterEach)
 afterEach(() => vi.restoreAllMocks())
 
@@ -42,12 +42,6 @@ vi.mock('@/api/samples', () => ({
     data: [fixture.row],
     meta: { page: 1, page_size: 50, total: 1, total_pages: 1 },
   }),
-  fetchSampleOutboundSummary: apiMocks.summary.mockResolvedValue({
-    outbound_today: 3,
-    outbound_this_month: 18,
-    mailed: 12,
-    salesperson_carried: 5,
-  }),
   fetchSampleOutboundOptions: apiMocks.options.mockResolvedValue({
     outbound_methods: [
       { value: 'MERCHANDISER_MAIL', label: '跟单员邮寄' },
@@ -67,7 +61,6 @@ vi.mock('@/api/samples', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.list.mockResolvedValue({ data: [fixture.row], meta: { page: 1, page_size: 50, total: 1, total_pages: 1 } })
-  apiMocks.summary.mockResolvedValue({ outbound_today: 3, outbound_this_month: 18, mailed: 12, salesperson_carried: 5 })
   apiMocks.options.mockResolvedValue({ outbound_methods: [{ value: 'MERCHANDISER_MAIL', label: '跟单员邮寄' }], product_categories: ['户外桌椅'] })
   apiMocks.deleteOutbound.mockResolvedValue(undefined)
 })
@@ -171,7 +164,6 @@ describe('SampleOutboundView', () => {
     apiMocks.list.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
     expect(wrapper.find('.erp-list-summary').exists()).toBe(false)
-    expect(apiMocks.summary).not.toHaveBeenCalled()
     expect(wrapper.findAll('.load-error')).toHaveLength(1)
     expect(wrapper.find('.list-error').exists()).toBe(true)
     await wrapper.findAll('button').find(item => item.text() === '重新加载')!.trigger('click'); await flushPromises()

@@ -1,4 +1,5 @@
 import { flushPromises, mount, shallowMount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import ElementPlus, { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/productionTasks'
@@ -63,8 +64,8 @@ type EditPage = {
 let options: ProductionTaskOptions
 const wrappers: ReturnType<typeof shallowMount>[] = []
 async function mountPages() {
-  const create = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
-  const edit = shallowMount(ProductionTaskEditView, { global: { plugins: [ElementPlus] } })
+  const create = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus, createPinia()] } })
+  const edit = shallowMount(ProductionTaskEditView, { global: { plugins: [ElementPlus, createPinia()] } })
   wrappers.push(create, edit)
   await flushPromises()
   return { create: create.vm as unknown as CreatePage, edit: edit.vm as unknown as EditPage }

@@ -31,16 +31,16 @@ const actualAuxiliarySnapshot: MaterialSelectionSnapshot = {
 }
 const planLine: TubeDetailLine = {
   id: 'plan-line-1', component_identity: 'component-1', part_name: '总单横管', factory_id: 'planned-factory', factory_name: '计划加工厂',
-  quantity: '8000', unit_price: '0.25', planned_amount: '2000', stock_quantity: null, meters: null,
+  quantity: '8000', price_unit: 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: '1000', unit_price: '0.25', planned_amount: '250', stock_quantity: null, meters: null,
   material: '总单钢', specification: '总单Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '总单黑',
   pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [],
   bom_quantity: '8000', dispatched_quantity: '160', received_quantity: '110', receivable_quantity: '50',
 }
 const dispatchRecords: TubePlanDispatchRecord[] = [
   { id: 'batch-1', client_request_id: 'dispatch-request-1', order_number: 'WF-BATCH-001', actual_dispatch_date: '2026-11-01', created_at: '2026-11-01T08:00:00+08:00', actor_name: '发出经办甲', source_kind: 'RAW_PIPE', zone_name: '原料一区', total_quantity: '100',
-    lines: [{ component_identity: 'component-1', quantity: '100', factory_id: 'batch-factory-1', factory_name: '实际加工厂甲', unit_price: '0.75' }] },
+    lines: [{ component_identity: 'component-1', quantity: '100', factory_id: 'batch-factory-1', factory_name: '实际加工厂甲', price_unit: 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: '12.5', unit_price: '0.75', planned_amount: '9.38' }] },
   { id: 'batch-2', client_request_id: 'dispatch-request-2', order_number: 'WF-BATCH-002', actual_dispatch_date: '2026-11-02', created_at: '2026-11-02T08:00:00+08:00', actor_name: '发出经办乙', source_kind: 'PUBLIC_SEMI', zone_name: '半成品二区', total_quantity: '60',
-    lines: [{ component_identity: 'component-1', quantity: '60', factory_id: 'batch-factory-2', factory_name: '实际加工厂乙', unit_price: '0.95' }] },
+    lines: [{ component_identity: 'component-1', quantity: '60', factory_id: 'batch-factory-2', factory_name: '实际加工厂乙', price_unit: 'PIECE', unit_area_sqm: '0.125', line_area_sqm: '7.5', unit_price: '0.95', planned_amount: '57' }] },
 ]
 const receiptRecords: TubePlanReceiptRecord[] = [
   { id: 'receipt-1', client_request_id: 'receipt-request-1', receipt_number: 'RK-001', receipt_date: '2026-11-02', created_at: '2026-11-02T09:00:00+08:00', actor_name: '入库经办甲', warehouse_id: 'receipt-warehouse', warehouse_name: '已加工仓', total_received_quantity: '90',
@@ -51,7 +51,7 @@ const receiptRecords: TubePlanReceiptRecord[] = [
 const plan: TubeOrderDetail = {
   id: 'plan-1', is_plan: true, order_number: 'WF-PLAN', status: 'PROCESSING', version: 1, etag: '"plan-v1"', created: false,
   client_request_id: 'plan-request', source_kind: 'PUBLIC_SEMI', source_label: '未喷塑半成品', schedule_product_id: 'schedule-product', product_line_id: 'product-line',
-  planned_dispatch_date: '2026-11-01', expected_return_date: '2026-11-10', total_quantity: '8000', planned_amount: '2000', total_stock_quantity: null, total_meters: null,
+  planned_dispatch_date: '2026-11-01', expected_return_date: '2026-11-10', total_quantity: '8000', total_area_sqm: '1000', planned_amount: '250', total_stock_quantity: null, total_meters: null,
   task_order_number: 'DD-PLAN', task_number: 'SC-PLAN', schedule_number: 'PC-PLAN', product_number: 'CP-PLAN', item_number: '', product_name: '测试产品', quantity: '4000', unit: '把', color: '黑',
   zone_id: 'planned-zone', zone_name: '总单库区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '总单备注', created_at: '', created_by_name: '制单人',
   actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
@@ -67,12 +67,13 @@ function batch(id = 'batch-1'): TubeOrderDetail {
   return { ...value, id, plan_id: plan.id, is_plan: false, order_number: second ? 'WF-BATCH-002' : 'WF-BATCH-001',
     source_kind: second ? 'PUBLIC_SEMI' : 'RAW_PIPE', source_label: second ? '未喷塑半成品' : '原材料',
     actual_dispatch_date: second ? '2026-11-02' : '2026-11-01', dispatched_by_name: second ? '发出经办乙' : '发出经办甲',
-    zone_name: second ? '半成品二区' : '原料一区', total_quantity: second ? '60' : '100', planned_amount: second ? '57' : '75',
+    zone_name: second ? '半成品二区' : '原料一区', total_quantity: second ? '60' : '100', total_area_sqm: second ? '7.5' : '12.5', planned_amount: second ? '57' : '9.38',
     total_stock_quantity: second ? null : '10', total_meters: second ? null : '60', remark: '本批交接备注',
     lines: [{ ...value.lines[0]!, id: `${id}-line`, part_name: second ? '批次乙横管' : '批次甲横管', material: '批次钢',
       specification: second ? '批次Φ32' : '批次Φ28', cutting_length_mm: second ? '700' : '600', thickness: '1.5', spray_color: second ? '批次蓝' : '批次红',
       quantity: second ? '60' : '100', factory_id: second ? 'batch-factory-2' : 'batch-factory-1', factory_name: second ? '实际加工厂乙' : '实际加工厂甲',
-      unit_price: second ? '0.95' : '0.75', planned_amount: second ? '57' : '75', stock_quantity: second ? null : '10', meters: second ? null : '60',
+      price_unit: second ? 'PIECE' : 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: second ? '7.5' : '12.5',
+      unit_price: second ? '0.95' : '0.75', planned_amount: second ? '57' : '9.38', stock_quantity: second ? null : '10', meters: second ? null : '60',
       input_material_selection_snapshot: savedMaterial,
     }], dispatch_records: [], receipt_records: [],
     materials: [{ id: 'attached-1', bom_line_id: 'bom-attached', component_identity: null, order_line_id: null, part_name: '',
@@ -129,6 +130,57 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('委外总单历史收发表格', () => {
+  it('裁片历史批次按冻结行单位分组展示，不把件和片合为片', async () => {
+    const value = structuredClone(plan)
+    Object.assign(value, { part_flow: true, sewing_inputs: true, source_kind: 'CUTTING' })
+    const saved = batch()
+    Object.assign(saved, { part_flow: true, sewing_inputs: true, source_kind: 'CUTTING' })
+    saved.lines = [
+      { ...saved.lines[0]!, component_identity: 'piece-one', part_name: '面片', unit: '片', quantity: '20' },
+      { ...saved.lines[0]!, id: 'piece-two', component_identity: 'piece-two', part_name: '棉片', unit: '件', quantity: '3' },
+    ]
+    value.dispatch_records = [{ ...value.dispatch_records![0]!, source_kind: 'CUTTING', total_quantity: '23',
+      lines: saved.lines.map(line => ({ ...line })) }]
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(saved)
+    const wrapper = await mountRecords(value)
+    expect(wrapper.get('.plan-dispatch-records').text()).toContain('20 片 / 3 件')
+    await openDispatch(wrapper)
+    expect(wrapper.get('[role="dialog"]').text()).toContain('20 片 / 3 件')
+    expect(records(wrapper, '.dispatch-record-lines').map(row => row['单位'])).toEqual(['片', '件'])
+    expect(wrapper.get('[role="dialog"]').text()).not.toContain('23 片')
+  })
+
+  it('部位回货使用记录冻结价和属性，缺失旧价不回填总单最新单价', async () => {
+    const value = structuredClone(plan)
+    value.part_flow = true; value.sewing_inputs = true; value.source_kind = 'CUTTING'
+    value.lines[0] = { ...value.lines[0]!, part_name: '床面', unit: '个', unit_price: '9.90' }
+    const snapshot: MaterialSelectionSnapshot = { ...savedMaterial, name: '床面', processing_stage: '',
+      category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', unit_name: '个', attributes: { model: 'A版' } }
+    value.receipt_records![0]!.received_amount = '108.00'
+    Object.assign(value.receipt_records![0]!.lines[0]!, { unit: '个', part_name: '床面', specification: 'A版',
+      unit_price: '1.20', received_amount: '108.00', component_material_selection_snapshot: snapshot,
+      component_source_materials: [{ source_bom_line_id: 'saved-fabric', name: '保存面布', material: '涤纶',
+        color: '蓝', color_code: '', fabric_spec: '600D', width: '', unit: '米' }] })
+    value.lines[0]!.component_source_materials = [{ source_bom_line_id: 'other', name: '不可替代回货来源', material: '',
+      color: '', color_code: '', fabric_spec: '', width: '', unit: '米' }]
+    Object.assign(value.receipt_records![1]!.lines[0]!, { unit: '个', unit_price: null, received_amount: null })
+    const wrapper = await mountRecords(value, false)
+    await openReceipt(wrapper)
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('1.2 元/个')
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('108')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('9.9')
+    const receiptTable = wrapper.get('.receipt-record-lines')
+    expect(receiptTable.find('thead').text()).toContain('来源布料材质颜色面料规格')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('保存面布')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('涤纶')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('蓝')
+    expect(receiptTable.findAll('tbody tr')[0]!.findAll('td').map(cell => cell.text())).toContain('600D')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('不可替代回货来源')
+    expect(wrapper.findAllComponents(ProcessingMaterialDetails).some(item => item.props('materials').component_material_selection_snapshot?.attributes?.model === 'A版')).toBe(true)
+    await closeDialog(wrapper); await openReceipt(wrapper, 'RK-002')
+    expect(wrapper.get('.receipt-record-lines').text()).toContain('未知')
+    expect(wrapper.get('.receipt-record-lines').text()).not.toContain('9.9')
+  })
   it('空记录显示两张真实表格和宿主操作槽，不预读批次', async () => {
     const wrapper = await mountRecords({ ...structuredClone(plan), dispatch_records: [], receipt_records: [] })
     expect(wrapper.get('.plan-dispatch-records').find('table').exists()).toBe(true)
@@ -159,7 +211,7 @@ describe('委外总单历史收发表格', () => {
     for (const text of ['批次甲横管', '批次钢', '批次Φ28', '方管', '1.5', '批次红', '600', '100', '实际加工厂甲']) expect(table.text()).toContain(text)
     for (const text of ['总单Φ22', '总单钢', '总单黑', '计划加工厂']) expect(table.text()).not.toContain(text)
     expect(table.findAll('th').some(cell => cell.text().includes('支'))).toBe(true)
-    expect(table.findAll('th').some(cell => /单价|金额/.test(cell.text()))).toBe(false)
+    expect(table.findAll('th').some(cell => /喷塑面积|计价方式|单价|金额/.test(cell.text()))).toBe(false)
     const materials = wrapper.get('.dispatch-record-materials')
     for (const text of ['本批保存织带', '12.5', '米', '实际加工厂甲', '辅料一区']) expect(materials.text()).toContain(text)
     expect(materials.text()).not.toContain('计划用织带')
@@ -185,13 +237,14 @@ describe('委外总单历史收发表格', () => {
     expect(records(wrapper, '.dispatch-record-lines')[0]).toMatchObject({ 材质: '本批涤纶', 规格: '本批45×60', 颜色: '本批红', 每套片数: '4' })
     expect(table.text()).not.toContain('总单40×50')
   })
-  it('车间外发明细保留批次真实单价，仓库不同价款规则不影响只读查询', async () => {
+  it('车间外发明细显示批次冻结面积、计价方式、动态单价和金额，仓库不同价款规则不影响只读查询', async () => {
     const wrapper = await mountRecords(structuredClone(plan), false)
     await openDispatch(wrapper)
     expect(api.fetchTubeOrder).toHaveBeenCalledWith('batch-1', false)
-    expect(wrapper.get('.dispatch-record-lines').findAll('th').some(cell => cell.text().includes('单价'))).toBe(true)
-    expect(wrapper.get('.dispatch-record-lines').text()).toContain('0.75')
-    expect(wrapper.get('.dispatch-record-lines').text()).not.toContain('0.25')
+    const table = wrapper.get('.dispatch-record-lines')
+    expect(table.findAll('th').map(cell => cell.text())).toEqual(expect.arrayContaining(['单支喷塑面积（㎡）', '本批喷塑面积（㎡）', '计价方式', '单价', '金额']))
+    for (const text of ['0.125', '12.5', '按㎡', '0.75 元/㎡', '9.38']) expect(table.text()).toContain(text)
+    expect(table.text()).not.toContain('0.25')
   })
   it('每次外发独立读取，第二批不遗留第一批厂家规格数量', async () => {
     const wrapper = await mountRecords()
@@ -405,6 +458,16 @@ describe('实际收发记录调整与整次删除', () => {
     await clickRecordButton(wrapper, '保存调整')
     expect(wrapper.emitted('correct')).toBeUndefined(); expect(wrapper.text()).toContain('正整数')
     expect(wrapper.get('.receipt-record-lines').findAll('button')).toHaveLength(0)
+  })
+  it('入库可调增超过实发和目标，发货减量不受已有实收反向限制', async () => {
+    const wrapper = await mountRecords(); await openReceipt(wrapper); await clickRecordButton(wrapper, '调整记录')
+    await wrapper.get('input[aria-label="总单横管调整数量"]').setValue('10001')
+    await clickRecordButton(wrapper, '保存调整')
+    expect(wrapper.emitted('correct')!.at(-1)![0]).toMatchObject({ record_kind: 'RECEIPT', lines: [{ component_identity: 'component-1', quantity: '10001' }] })
+    await closeDialog(wrapper); await openDispatch(wrapper); await clickRecordButton(wrapper, '调整记录')
+    await wrapper.get('input[aria-label="批次甲横管调整数量"]').setValue('10')
+    await clickRecordButton(wrapper, '保存调整')
+    expect(wrapper.emitted('correct')!.at(-1)![0]).toMatchObject({ record_kind: 'DISPATCH', lines: [{ component_identity: 'component-1', quantity: '10' }] })
   })
   it('原管按保存的每根可切数校验，不能悄悄改成零散根', async () => {
     const wrapper = await mountRecords(); await openDispatch(wrapper); await clickRecordButton(wrapper, '调整记录')

@@ -1,4 +1,4 @@
-export type SemiReceiptCategory = 'METAL' | 'SEWING'
+export type SemiReceiptCategory = 'METAL' | 'CUTTING' | 'SEWING'
 export interface SemiMaterialSnapshot { catalog_id?: string; name?: string; unit_name?: string; processing_stage?: string; attributes?: Record<string, string> }
 export interface SemiReceiptBasis {
   basis_ready: boolean; blockers: string[]; as_of: string; issued: string; reported_minimum: string | null
@@ -9,6 +9,7 @@ export interface SemiReceiptBasis {
 }
 export interface SemiReceiptLine {
   bom_line_id: string; component_key: string; component_identity?: string; usage: string; stage: string
+  component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'; parent_part_id?: string | null; parent_part_name?: string; unit?: string
   attributes: { part_name: string; category?: string; material: string; color: string; unit_name: string; specification?: string; tube_diameter?: string; tube_thickness?: string; cutting_length_mm?: string | number; thickness?: string }
   specification?: string; required: string | null; received: string; can_receive: string
   input_remaining?: string | null; input_supported?: string | null; directly_committed?: string

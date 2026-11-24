@@ -1,6 +1,6 @@
 import type { ProductionTask, ProductionTaskListProduct } from '@/types/productionTask'
-export function isTaskReadyForScheduling(task: Pick<ProductionTask, 'status' | 'bom_status' | 'purchase_status'> | null) {
-  return task?.status === 'READY' && task.bom_status === 'VERIFIED'
+export function isTaskReadyForScheduling(task: Pick<ProductionTask, 'status' | 'has_confirmed_bom_product'> | null) {
+  return task?.status === 'READY' && task.has_confirmed_bom_product === true
 }
 export function productLabels(products: ProductionTaskListProduct[]) {
   return products.map((item) => [item.customer_product_name || item.product_name || '未命名产品', item.item_number?.trim()].filter(Boolean).join(' · '))

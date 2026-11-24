@@ -12,6 +12,7 @@ from apps.core.numbering import next_business_number
 from apps.core.audit import write_audit_log
 from apps.reference_data.pinyin_search import build_pinyin_search
 from apps.procurement.source_access import purchase_order_access
+from apps.procurement.pipe_purchase import pipe_meters, pipe_roots_from_weight
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.samples.models import SampleMaterialPurchaseSource, SampleRequest
 
@@ -27,13 +28,50 @@ from .stock_services import credit_confirmed_inbound_line
 def _matches_receipt(inbound, *, purchase_order_id, inbound_date, remark, items):
     expected = sorted((str(row['purchase_order_line_id']), str(row['zone_id']),
                        str(row.get('location_id') or ''), row.get('remark', '')) for row in items)
+    lines = list(inbound.lines.all())
     actual = sorted((str(row.purchase_order_line_id), str(row.zone_id),
-                     str(row.location_id or ''), row.remark) for row in inbound.lines.all())
+                     str(row.location_id or ''), row.remark) for row in lines)
+    by_id = {str(item['purchase_order_line_id']): item for item in items}
+    for line in lines:
+        item = by_id.get(str(line.purchase_order_line_id), {})
+        if line.measurement_kind == 'PIPE' and line.source_unit_text_snapshot == 'KG':
+            if item.get('received_weight_kg', line.received_weight_kg) != line.received_weight_kg:
+                return False
+            roots = item.get('received_bar_count')
+            if roots is None:
+                roots = pipe_roots_from_weight(line.received_weight_kg, line.bar_weight_kg, field='received_weight_kg')
+            if roots != line.received_bar_count:
+                return False
+        elif 'received_weight_kg' in item or 'received_bar_count' in item:
+            return False
     return (inbound.purchase_order_id == purchase_order_id
             and inbound.status == MaterialInboundStatus.CONFIRMED
             and inbound.quality_confirmed_at is None
             and inbound.inbound_date == inbound_date and inbound.remark == remark
             and expected == actual)
+
+
+def _sample_receipt_row(*, line, item, remaining):
+    """样品仍一次全收；KG只核对余量，真实根数允许仓库核实。"""
+    row = {**item, 'received_quantity': remaining, 'expected_remaining_quantity': remaining}
+    weight_pipe = line.section_type_snapshot == 'PROFILE' and line.source_unit_text == 'KG'
+    if weight_pipe:
+        if item.get('received_weight_kg', remaining) != remaining:
+            raise ValidationError({'received_weight_kg': '样品管材一次全部入库，实收重量须等于剩余采购重量，请刷新后核对。'})
+        roots = item.get('received_bar_count')
+        if roots is None:
+            roots = pipe_roots_from_weight(remaining, line.raw_bar_weight_kg, field='received_weight_kg')
+        roots, _ = pipe_meters(roots, line.raw_bar_length_m, field='received_bar_count')
+        row.update(received_weight_kg=remaining, received_bar_count=roots, raw_bar_length_m=line.raw_bar_length_m)
+    else:
+        if 'received_weight_kg' in item or 'received_bar_count' in item:
+            raise ValidationError({'items': '只有KG管材入库可以核对实收重量和根数；历史米单及其他材料沿用原剩余数量。'})
+        if line.section_type_snapshot == 'PROFILE':
+            length = line.raw_bar_length_m
+            if not length or remaining % length:
+                raise Conflict('管材剩余数量与采购单根长度不一致，请先核对根数和米数。')
+            row.update(received_bar_count=int(remaining / length), raw_bar_length_m=length)
+    return row
 
 
 def _append_catalog_lines(*, inbound, order, inbound_date, remark, items, line_map, client_request_id, actor_employee, request):
@@ -128,13 +166,7 @@ def receive_sample_purchase(*, purchase_order_id, client_request_id, inbound_dat
     for item in items:
         line_id = item['purchase_order_line_id']
         line = line_map[line_id]
-        row = {**item, 'received_quantity': remaining[line_id], 'expected_remaining_quantity': remaining[line_id]}
-        if line.section_type_snapshot == 'PROFILE':
-            length = line.raw_bar_length_m
-            if not length or remaining[line_id] % length:
-                raise Conflict('管材剩余数量与采购单根长度不一致，请先核对根数和米数。')
-            row.update(received_bar_count=int(remaining[line_id] / length), raw_bar_length_m=length)
-        prepared.append(row)
+        prepared.append(_sample_receipt_row(line=line, item=item, remaining=remaining[line_id]))
     try:
         with transaction.atomic():
             old_items = [row for row in prepared if not line_map[row['purchase_order_line_id']].material_catalog_id]

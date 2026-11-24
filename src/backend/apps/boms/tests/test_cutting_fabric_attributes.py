@@ -18,7 +18,7 @@ class CuttingFabricAttributeTests(SimpleTestCase):
         bom = Bom(order_quantity=10)
         fabric = BomLine(section=BomSection(bom=bom, section_type="FABRIC", title="面料类"),
                          material="PU", raw_values={"fabric_color_name": "绿色"})
-        cutting = BomLine(section=BomSection(bom=bom, section_type="FABRIC", title="裁剪明细"),
+        cutting = BomLine(section=BomSection(bom=bom, section_type="FABRIC", title="裁剪明细"), component_kind="CUT_PIECE",
                           fabric_source_line=fabric, material="210D", specification="20", unit="套",
                           raw_values={"cutting_color": "红色", "cutting_material_original": "210D"})
         inherit_cutting_fabric_attributes(cutting)
@@ -84,5 +84,5 @@ class CuttingFabricAttributeTests(SimpleTestCase):
                          ("PU", "绿色"))
 
     def test_pending_cutting_cannot_use_a_fabric_line_outside_submitted_bom(self):
-        with self.assertRaisesMessage(ValidationError, "本 BOM 保留的面料行"):
+        with self.assertRaisesMessage(ValidationError, "本 BOM 保留的有效来源原料行"):
             self.plan(foreign_source=True)

@@ -13,6 +13,7 @@ from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 from apps.inventory.models import MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, WarehouseZone
+from apps.inventory.pipe_weight_quantities import actual_pipe_weight, issued_pipe_weight, returned_pipe_weight
 from apps.inventory.stock_services import inbound_batch_available_quantities, inbound_line_material, debit_material_stock
 from apps.material_issues.pipe_requirements import sync_pipe_requirement
 from apps.material_issues.requirements import sync_order_requirements
@@ -159,19 +160,43 @@ def flow_dispatch_context(order):
 
 
 def change_pipe_balance(balance, amount, *, direction, source_type, source_id, source_line_id, task, actor, snapshot):
-    """调用方已锁定来源和余额；根米必须同进同出。"""
+    """调用方已锁定来源和余额；实际重量随根数出入，退料沿用原出库余重。"""
     sign = 1 if direction == "IN" else -1
     before, before_meters = balance.quantity, balance.meter_quantity
     meters = amount * balance.raw_bar_length_m
     if sign < 0 and amount > before:
         raise Conflict("管材批次整根库存不足。")
+    before_weight = balance.weight_quantity
+    movement_weight = None
+    original = None
+    if direction == "IN" and snapshot.get("dispatch_line_id"):
+        original = MaterialStockMovement.objects.filter(balance_id=balance.pk, direction="OUT",
+            source_type="OUTSOURCING_DISPATCH", source_line_id=snapshot["dispatch_line_id"]).first()
+    weight_mode = (before_weight is not None or balance.bar_weight_kg is not None
+                   or (original is not None and original.weight_quantity is not None))
+    if weight_mode:
+        actual_pipe_weight(before_weight)
+        if direction == "OUT":
+            movement_weight = issued_pipe_weight(available_roots=before,
+                available_weight_kg=before_weight, issued_roots=amount)
+        else:
+            if original is None:
+                raise Conflict("管材退料缺少原出库实际重量凭据，不能自动退回。")
+            history = MaterialStockMovement.objects.filter(balance_id=balance.pk, direction="IN",
+                source_type="OUTSOURCING_RAW_RETURN",
+                snapshot__dispatch_line_id=snapshot["dispatch_line_id"]).order_by("occurred_at", "id")
+            movement_weight = returned_pipe_weight(original=original, adjustments=history, returned_roots=amount)
+            actual_pipe_weight(movement_weight)
+        balance.weight_quantity = actual_pipe_weight(before_weight + sign * movement_weight)
     balance.quantity += sign * amount
     balance.meter_quantity += sign * meters
     balance.version += 1
-    balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
+    balance.save(update_fields=["quantity", "meter_quantity", "weight_quantity", "version", "updated_at"])
     return MaterialStockMovement.objects.create(balance=balance, direction=direction, quantity=amount, meter_quantity=meters,
         before_quantity=before, after_quantity=balance.quantity, before_meter_quantity=before_meters,
-        after_meter_quantity=balance.meter_quantity, source_type=source_type, source_id=source_id,
+        after_meter_quantity=balance.meter_quantity, weight_quantity=movement_weight,
+        before_weight_quantity=before_weight, after_weight_quantity=balance.weight_quantity,
+        source_type=source_type, source_id=source_id,
         source_line_id=source_line_id, production_task=task, actor_employee=actor, snapshot=snapshot)
 
 

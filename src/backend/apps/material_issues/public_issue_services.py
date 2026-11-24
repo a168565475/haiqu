@@ -60,6 +60,24 @@ def _identity(line):
     return validate_public_identity(value) if value else None
 
 
+def _cutting_direct(line):
+    return line.conversion_snapshot.get('source_kind') == 'CUTTING_DIRECT'
+
+
+def _direct_available(line, *, exclude_issue_id=None):
+    from apps.inventory.part_flow_quantities import first_output_available
+    bom_line = line.semi_requirement.bom_line
+    return first_output_available(line.issue.product_line_id, bom_line,
+        bom_line.section.bom.order_quantity, exclude_issue_id=exclude_issue_id)
+
+
+def _validate_direct_source(issue, requirement):
+    from .scopes import issue_plan_category, semi_plan_category
+    if (requirement is None or requirement.bom_line.component_kind != 'CUT_PIECE'
+            or semi_plan_category(issue.workshop.name, issue_plan_category(issue)) != 'SEWING'):
+        _fail('DIRECT_SOURCE_INVALID', '只有车缝计划的裁片可以从裁剪车间直接交接。')
+
+
 def _frozen_requirement_bom(requirement):
     source = requirement.contributions.filter(is_current=True).select_related(
         "bom_line__section").order_by("-created_at", "id").first()
@@ -180,7 +198,8 @@ def public_issue_quantity_context(issue, *, exclude_issue_id=None, lines=None, e
         rows = pending_rows.filter(
             issue__stock_mode=PUBLIC_MODE,
             conversion_snapshot__public_identity__identity_key__in=[identity["identity_key"] for identity in identities.values()],
-        ).only("conversion_snapshot", "requested_quantity", "raw_material_id", "unit_id")
+        ).exclude(conversion_snapshot__contains={'source_kind': 'CUTTING_DIRECT'}).only(
+            "conversion_snapshot", "requested_quantity", "raw_material_id", "unit_id")
         for row in rows:
             stock_pending[_pool(row)] += _stock_quantity(row)
     if ordinary:
@@ -275,7 +294,7 @@ def public_line_quantities(line, *, exclude_issue_id=None, context=None, limit_t
     available = _issue_quantity(line, context["stock"][pool])
     public_pending = _issue_quantity(line, context["pending_stock"][pool])
     free = max(available - public_pending, Decimal(0))
-    return {
+    result = {
         "required_quantity": str(required_quantity),
         "internal_issued_quantity": str(issued_quantity),
         "outsourcing_issued_quantity": str(external), "pending_issue_quantity": str(pending_quantity),
@@ -283,6 +302,12 @@ def public_line_quantities(line, *, exclude_issue_id=None, context=None, limit_t
         "order_remaining": str(remaining), "available_stock": str(available),
         "max_issue_quantity": str(max(min(remaining, free) if limit_to_order else free, Decimal(0))),
     }
+    if _cutting_direct(line) or line.conversion_snapshot.get('component_kind') == 'CUT_PIECE':
+        direct = _direct_available(line, exclude_issue_id=exclude_issue_id or line.issue_id)
+        result['direct_available_quantity'] = str(direct)
+        if _cutting_direct(line):
+            result['max_issue_quantity'] = str(direct)
+    return result
 
 
 def public_pipe_requirement_rows(task_id, product_id, *, exclude_issue_id=None):
@@ -354,12 +379,23 @@ def replace_public_issue_lines(issue, inputs):
         section = "SEMI" if semi else raw.section_code
         if section not in allowed:
             _fail("WORKSHOP_MATERIAL_SCOPE_INVALID", f"第 {index} 行不属于所选车间。")
+        if raw:
+            from .scopes import raw_requirement_allowed_for_issue
+            if not raw_requirement_allowed_for_issue(issue, raw):
+                _fail('WORKSHOP_MATERIAL_SCOPE_INVALID', '裁片引用的原料应由裁剪计划领取，车缝、装配领取裁片或部位。')
         quantity = item["requested_quantity"]
+        source_kind = item.get('source_kind', 'STOCK')
+        if source_kind not in {'STOCK', 'CUTTING_DIRECT'}:
+            _fail('DIRECT_SOURCE_INVALID', '领料来源无效。')
+        if source_kind == 'CUTTING_DIRECT':
+            _validate_direct_source(issue, semi)
+            if item.get('batch_allocations'):
+                _fail('DIRECT_SOURCE_INVALID', '裁剪车间直交不使用库存批次或库区分配。')
         if not quantity.is_finite() or quantity <= 0:
             _fail("QUANTITY_INVALID", "领料数量必须为大于零的有限数字。")
         if semi:
             if quantity != quantity.to_integral_value():
-                _fail("INTEGER_REQUIRED", "半成品必须按整支或整套领取。")
+                _fail("INTEGER_REQUIRED", "半成品必须按对应单位的整数数量领取。")
             identity = public_semi_identity(semi)
             frozen = identity["identity_snapshot"]
             bom_attributes = bom_attribute_fields(
@@ -373,7 +409,9 @@ def replace_public_issue_lines(issue, inputs):
                 material_number_snapshot="", material_name_snapshot=frozen["part_name"],
                 specification_snapshot=specification,
                 color_snapshot=frozen["color"], unit_snapshot=semi.unit.unit_name,
-                 conversion_snapshot={"kind": "PUBLIC_SEMI", "bom_attributes": bom_attributes, "public_identity": _json(identity),
+                 conversion_snapshot={"kind": "PUBLIC_SEMI", "source_kind": source_kind,
+                    "component_kind": semi.bom_line.component_kind,
+                    "bom_attributes": bom_attributes, "public_identity": _json(identity),
                     "source_revision_hash": semi.source_revision_hash, "component_identity": str(semi.component_identity),
                     "completed_craft": semi.completed_craft.name, "integer_required": True,
                     "raw_deducted_bar_count": "0", "raw_deducted_meters": "0.00"},
@@ -501,7 +539,7 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
             ).digest()[:8], "big", signed=True)
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", [value])
-        _lock_public_issue_stock(issue, lines)
+        _lock_public_issue_stock(issue, [line for line in lines if not _cutting_direct(line)])
         lines = _lines(issue)
     context = public_issue_quantity_context(issue, exclude_issue_id=issue.pk, lines=lines)
     if not include_pending:
@@ -513,12 +551,18 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
             list(context.get("all_semi_requirements", {}).values()), context["pending_semi"]
         )
     allowed = material_section_codes_for_issue(issue) or set()
-    required_stock, errors = defaultdict(Decimal), []
+    required_stock, direct_needed, errors = defaultdict(Decimal), defaultdict(Decimal), []
     for line in lines:
         requirement = line.semi_requirement if line.semi_requirement_id else line.requirement
         if line.section_code_snapshot not in allowed:
             errors.append({"line_id": str(line.pk), "code": "WORKSHOP_MATERIAL_SCOPE_INVALID", "detail": "材料不属于所选车间。"})
             continue
+        if line.requirement_id:
+            from .scopes import raw_requirement_allowed_for_issue
+            if not raw_requirement_allowed_for_issue(issue, requirement):
+                errors.append({'line_id': str(line.pk), 'code': 'WORKSHOP_MATERIAL_SCOPE_INVALID',
+                    'detail': '该原料的裁剪来源与当前作业计划不匹配，请刷新领料明细。'})
+                continue
         if (requirement.production_task_id != issue.production_task_id
                 or (line.semi_requirement_id and requirement.product_line_id != issue.product_line_id)
                 or (line.requirement_id and not requirement.contributions.filter(is_current=True, product_line_id=issue.product_line_id).exists())):
@@ -528,6 +572,14 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
                 or (_identity(line) and line.conversion_snapshot.get("kind") != "CATALOG"
                     and line.requested_quantity != line.requested_quantity.to_integral_value())):
             errors.append({"line_id": str(line.pk), "code": "INTEGER_REQUIRED", "detail": "公共管材或半成品数量必须是正整数。"})
+            continue
+        if _cutting_direct(line):
+            _validate_direct_source(issue, line.semi_requirement if line.semi_requirement_id else None)
+            component = str(line.semi_requirement.component_identity)
+            direct_needed[component] += line.requested_quantity
+            if direct_needed[component] > _direct_available(line, exclude_issue_id=issue.pk):
+                errors.append({'line_id': str(line.pk), 'code': 'PART_FLOW_OUTPUT_RESERVED',
+                    'detail': '裁片可直交数量不足，已扣除入库、外发直发及其他厂内直交占用。'})
             continue
         try:
             required_stock[_pool(line)] += _stock_quantity(line)
@@ -551,7 +603,12 @@ def confirm_public_issue(issue, actor_employee):
     for line in context["lines"]:
         pool, identity = _pool(line), _identity(line)
         stock_before = _issue_quantity(line, context["stock"][pool])
-        if identity:
+        if _cutting_direct(line):
+            requirement = line.semi_requirement
+            requirement.internal_issued_quantity += line.requested_quantity
+            requirement.save(update_fields=['internal_issued_quantity', 'updated_at'])
+            context['semi_component_allowances'][_semi_component_key(requirement)]['issued'] += line.requested_quantity
+        elif identity:
             remaining = _stock_quantity(line)
             for balance in context["balances"][pool]:
                 reserved = context["tube_reserved_by_zone"].get((pool, str(balance.zone_id)), Decimal(0))
@@ -578,11 +635,15 @@ def confirm_public_issue(issue, actor_employee):
                 )
                 allocation.movement = movement
                 allocation.snapshot.update({"before_quantity": str(movement.before_quantity), "after_quantity": str(movement.after_quantity),
+                    "weight_quantity": str(movement.weight_quantity) if movement.weight_quantity is not None else None,
+                    "before_weight_quantity": str(movement.before_weight_quantity) if movement.before_weight_quantity is not None else None,
+                    "after_weight_quantity": str(movement.after_weight_quantity) if movement.after_weight_quantity is not None else None,
                     "before_meter_quantity": str(movement.before_meter_quantity) if movement.before_meter_quantity is not None else None,
                     "after_meter_quantity": str(movement.after_meter_quantity) if movement.after_meter_quantity is not None else None})
                 allocation.save(update_fields=["movement", "snapshot", "updated_at"])
                 balance.quantity = movement.after_quantity
                 balance.meter_quantity = movement.after_meter_quantity
+                balance.weight_quantity = movement.after_weight_quantity
                 context["stock"][pool] -= taken
                 remaining -= taken
                 if remaining == 0:
@@ -604,7 +665,9 @@ def confirm_public_issue(issue, actor_employee):
             if line.conversion_snapshot.get("kind") == "PIPE":
                 line.conversion_snapshot["manufacturing_issued_pieces"] = str(line.requested_quantity)
         if line.semi_requirement_id:
-            line.conversion_snapshot.update({"issued_pieces" if line.unit_snapshot == "支" else "issued_sets": str(line.requested_quantity)})
+            quantity_key = ('issued_pieces' if line.unit_snapshot in {'支', '片'} else
+                'issued_quantity' if line.conversion_snapshot.get('component_kind') else 'issued_sets')
+            line.conversion_snapshot[quantity_key] = str(line.requested_quantity)
         line.save(update_fields=["issued_quantity", "conversion_snapshot", "updated_at"])
         issued_snapshots.append({"line_id": str(line.pk),
             "stock_before": str(stock_before), "stock_after": str(_issue_quantity(line, context["stock"][pool])),
@@ -612,6 +675,9 @@ def confirm_public_issue(issue, actor_employee):
     # 同部位多工艺混领时，各行均冻结本单全部扣减后的共享剩余额度。
     for line, snapshot in zip(context["lines"], issued_snapshots):
         snapshot.update(public_line_quantities(line, context=context, limit_to_order=False))
+        if _cutting_direct(line):
+            remaining = max(_direct_available(line, exclude_issue_id=issue.pk) - line.requested_quantity, Decimal(0))
+            snapshot.update(direct_available_quantity=str(remaining), max_issue_quantity=str(remaining))
     return issued_snapshots
 
 
@@ -628,7 +694,9 @@ def public_line_flow_data(line):
         bars, meters = str(plan["bar_count"]), str(plan["meters"])
     else:
         bars, meters = "0", "0.00"
-    return {"conversion_snapshot": line.conversion_snapshot, "batch_allocations": [],
+    return {"conversion_snapshot": line.conversion_snapshot,
+            "source_kind": line.conversion_snapshot.get('source_kind', 'STOCK'),
+            "component_kind": line.conversion_snapshot.get('component_kind', ''), "batch_allocations": [],
             "public_stock_allocations": allocations, "bar_count": bars, "meters": meters}
 
 
@@ -668,7 +736,9 @@ def preview_public_issue(issue):
                         current[line.requirement_id]["revision"] != line.conversion_snapshot.get("source_revision_hash")):
                     errors.append({"code": "SOURCE_CHANGED", "detail": "保存材料需求来源已变化。"})
     if any(line.semi_requirement_id for line in context["lines"]):
-        specs, blockers = build_public_semi_specs(issue.production_task_id, issue.product_line_id, allow_excess_issue=True)
+        from .scopes import issue_plan_category, semi_plan_category
+        specs, blockers = build_public_semi_specs(issue.production_task_id, issue.product_line_id,
+            allow_excess_issue=True, plan_category=semi_plan_category(issue.workshop.name, issue_plan_category(issue)))
         selected_ids = {str(line.semi_requirement_id) for line in context["lines"] if line.semi_requirement_id}
         errors.extend(row for row in blockers if not row.get("requirement_id") or str(row["requirement_id"]) in selected_ids)
         current = {row["id"]: row for row in specs}

@@ -5,13 +5,87 @@ import ElementPlus from 'element-plus'
 import { blankLine } from '@/views/boms/bomEditorHelpers'
 import BomLineEditorForm from './BomLineEditorForm.vue'
 
-vi.mock('@/components/production/PinyinFilterSelect.vue', () => ({ default: { template: '<select />' } }))
 vi.mock('@/api/materialCatalog', () => ({ fetchMaterialCatalog: vi.fn(), fetchMaterialCatalogOptions: vi.fn(), fetchMaterialCatalogs: vi.fn(), fetchPublicMaterialOptions: vi.fn(), materialCatalogError: String }))
 vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 
 describe('BOM管材沿原根米支输入流程', () => {
-  it('包材行编辑不再输入单个用量，按当前订单与装箱量显示需求', () => {
+  it('手工模式独立填写每根长料重量，自动模式仅保留公式结果', async () => {
+    const line = reactive({ ...blankLine('根'), manual_tube_metrics: true, purchase_unit_weight_kg: '0.4' })
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: { long_material_unit_weight_kg: '2.5' }, tubeCalculationReadonly: false,
+      editorReferenceOptionsError: '', ensureEditorReferenceOptions: vi.fn(),
+      tubeCoatingColors: [],
+      tubeOptionsLoading: false, normalizeTubeCutPieceCount: vi.fn(), openLineImageManager: vi.fn(),
+      auxiliaryLineHasActiveProduct: () => false, auxiliarySpecificationOptions: () => [], setAuxiliarySpecification: vi.fn(),
+      auxiliaryColorOptions: () => [], setAuxiliaryColor: vi.fn(), auxiliaryMaterialOptions: () => [], setAuxiliaryMaterial: vi.fn(),
+      fabricSpecificationOptions: () => [], setFabricSpecification: vi.fn(), fabricColorSnapshot: () => '',
+      fabricColorOptions: () => [], setFabricColor: vi.fn(), fabricMaterialOptions: () => [], setFabricMaterial: vi.fn(),
+      fabricWidthOptions: () => [], setFabricWidth: vi.fn(), isPipeCuttingLine: () => false,
+      editingFabricSourceKey: '', fabricSourceLines: [], legacyPipeCuttingValues: () => null,
+      editingCuttingCalculation: null, bom: null, number: String,
+    } as never, global: { plugins: [ElementPlus] } })
+    const input = wrapper.findAllComponents({ name: 'ElInput' }).find(item => item.props('ariaLabel') === '长料单重')!
+    input.vm.$emit('update:modelValue', '2.5')
+    await wrapper.vm.$nextTick()
+    expect(line.long_material_unit_weight_kg).toBe('2.5')
+    expect(line.purchase_unit_weight_kg).toBe('0.4')
+    await wrapper.setProps({ tubeCalculationReadonly: true })
+    expect(wrapper.find('[aria-label="长料单重"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('长料单重（kg）2.5')
+    wrapper.unmount()
+  })
+  it('采购余量回显自动档，任何数量均能手动换档，数量变化不覆盖手动选择', async () => {
+    const line = reactive({ ...blankLine('根'), purchase_allowance_mode: 'AUTO' as 'AUTO' | 'MANUAL', purchase_allowance_rule: '' as '' | 'PERCENT_0_5' })
+    const calculations = { base_purchase_bar_count: '500', purchase_allowance_bar_count: '5', branch_count: '505', purchase_allowance_rule: 'PLUS_5' }
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: calculations,
+    } as never, global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const allowanceField = wrapper.findAll('.drawer-field').find(field => field.find('span').text() === '采购余量')!
+    const selector = allowanceField.findComponent({ name: 'ElSelect' })
+    expect(selector.props('modelValue')).toBe('AUTO')
+    expect(allowanceField.findAllComponents({ name: 'ElOption' }).map((option: { props: () => Record<string, unknown> }) => option.props().value)).toEqual(['AUTO', 'NONE', 'PLUS_5', 'PLUS_8', 'PERCENT_0_5', 'PERCENT_1'])
+    expect(allowanceField.findComponent({ name: 'ElOption' }).props('label')).toBe('自动（+5 根）')
+    expect(wrapper.text()).toContain('采购根数500')
+    expect(wrapper.text()).toContain('采购余量（根）5')
+    expect(wrapper.text()).toContain('建议采购根数505')
+    selector.vm.$emit('change', 'PLUS_5')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PLUS_5' })
+    selector.vm.$emit('change', 'PERCENT_0_5')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5' })
+    await wrapper.setProps({ editingLineCalculations: { ...calculations, purchase_allowance_rule: 'PERCENT_1', base_purchase_bar_count: '5001' } })
+    expect(selector.props('modelValue')).toBe('PERCENT_0_5')
+    selector.vm.$emit('change', 'AUTO')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'AUTO', purchase_allowance_rule: '' })
+    expect(selector.props('modelValue')).toBe('AUTO')
+    expect(allowanceField.findComponent({ name: 'ElOption' }).props('label')).toBe('自动（+1%）')
+    wrapper.unmount()
+  })
+
+  it('历史行打开时保持原规则，用户选项后才切换新模式', async () => {
+    const line = reactive(blankLine('根'))
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: null,
+    } as never, global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const selector = wrapper.find('[aria-label="采购余量"]')
+    expect(selector.attributes('placeholder')).toBe('沿用已保存规则')
+    expect(line.purchase_allowance_mode).toBeUndefined()
+    wrapper.findAll('.drawer-field').find(field => field.find('span').text() === '采购余量')!.findComponent({ name: 'ElSelect' }).vm.$emit('change', 'NONE')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'NONE' })
+    wrapper.unmount()
+  })
+
+  it('包材行编辑按当前订单与用量显示需求，缺少用量提示待填写', async () => {
     const line = { ...blankLine('个'), units_per_box: '10', unit_consumption: '999', packaging_material_number: 'PK-001', raw_material: 'PK-OLD' }
     const wrapper = shallowMount(BomLineEditorForm, { props: {
       displayLineImages: () => [], formatHardwareColor: String,
@@ -21,9 +95,14 @@ describe('BOM管材沿原根米支输入流程', () => {
     } as never })
     expect(wrapper.find('[aria-label="单个用量"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('需求数量3')
+    expect(wrapper.find('[aria-label="用量（多少成品用一份）"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('订单数量 ÷')
+    expect(wrapper.text()).not.toContain('每箱')
     expect(wrapper.text()).not.toContain('品号')
     expect(wrapper.text()).not.toContain('PK-001')
     expect(line.packaging_material_number).toBe('PK-001')
+    await wrapper.setProps({ editingLineDraft: { ...line, units_per_box: '' } })
+    expect(wrapper.text()).toContain('需求数量待填写')
     wrapper.unmount()
   })
 
@@ -105,7 +184,7 @@ describe('BOM管材沿原根米支输入流程', () => {
     if (title !== '裁剪明细') expect(wrapper.find('[aria-label="单个用量"]').exists()).toBe(true)
     wrapper.unmount()
   })
-  it('管材喷塑颜色只回显共享行的选中值，读取公共候选不赋默认值', async () => {
+  it('管材喷塑颜色只回显共享行的选中值，读取候选不赋默认值', async () => {
     const line = reactive(blankLine('根'))
     const wrapper = shallowMount(BomLineEditorForm, { props: {
       displayLineImages: () => [], formatHardwareColor: String,
@@ -141,17 +220,18 @@ describe('BOM管材沿原根米支输入流程', () => {
       global: { plugins: [ElementPlus], renderStubDefaultSlot: true },
     })
     const selector = wrapper.findComponent({ name: 'MaterialSelectionPanel' })
-    expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(false)
+    const coatingSelector = () => wrapper.findAllComponents({ name: 'ElSelect' }).find(input => input.props('ariaLabel') === '喷塑颜色')
+    expect(coatingSelector()).toBeUndefined()
     await wrapper.setProps({ editingLineDraft: { ...line, material_catalog_id: 'A' } })
     selector.vm.$emit('loaded', { id: 'A', spray_enabled: false })
     selector.vm.$emit('public-options', { values: [{ id: 'C', field_key: 'color', value: '黑色' }] })
     await wrapper.vm.$nextTick()
-    expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(false)
+    expect(coatingSelector()).toBeUndefined()
     selector.vm.$emit('loaded', { id: 'A', spray_enabled: true })
     await wrapper.vm.$nextTick()
-    const coating = wrapper.findComponent({ name: 'ElSelect' })
+    const coating = coatingSelector()!
     expect(coating.props()).toMatchObject({ disabled: false, filterable: false, allowCreate: false, placeholder: '选择喷塑颜色' })
-    expect(wrapper.findComponent({ name: 'ElOption' }).props()).toMatchObject({ label: '黑色', value: '黑色' })
+    expect(coating.findComponent({ name: 'ElOption' }).props()).toMatchObject({ label: '黑色', value: '黑色' })
     selector.vm.$emit('public-options', { values: [] })
     await wrapper.vm.$nextTick()
     expect(coating.props('placeholder')).toBe('暂无喷塑颜色，请到维护配置新增')

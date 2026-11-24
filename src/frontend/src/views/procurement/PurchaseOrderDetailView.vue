@@ -7,9 +7,12 @@ import { fetchPurchaseOrderReadDetail } from '@/api/purchaseOrderReadDetail'
 import { fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import { useAuthStore } from '@/stores/auth'
 import { usePageTabsStore } from '@/stores/pageTabs'
-import type { PurchaseOrderReadDetail } from '@/types/purchaseOrderReadDetail'
+import type { PurchaseOrderReadDetail, PurchaseReadInboundLine, PurchaseReadLine } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue, type MaterialAttributeSource } from '@/utils/materialAttributes'
-import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
+import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal, quantityWithUnit } from './purchaseOrderDetailDisplay'
+import { setPriceText } from './purchaseSetPricing'
+import { isHardwareWeightLine, isKilogramUnit } from './purchaseWeight'
+import ReceiptRecordMaterialTables from '@/components/inventory/ReceiptRecordMaterialTables.vue'
 import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 
 type Tab = 'materials' | 'inbounds' | 'returns' | 'completion'
@@ -21,13 +24,14 @@ const router = useRouter()
 const auth = useAuthStore()
 const pageTabs = usePageTabsStore()
 const can = (permission: string) => auth.user?.is_superuser === true || auth.hasPermission(permission)
-const canRead = computed(() => ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'].some(can))
-const canReadSheets = computed(() => auth.user?.is_superuser === true || auth.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
+const canRead = computed(() => ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material', 'procurement.manage_packagingpurchase'].some(can))
+const canReadSheets = computed(() => packaging.value ? can('procurement.manage_packagingpurchase') : auth.user?.is_superuser === true || auth.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
 const fromInbound = computed(() => route.name === 'purchase-inbound-detail')
-const canReadGroup = computed(() => can('procurement.view_purchaseorder'))
+const canReadGroup = computed(() => packaging.value ? can('procurement.manage_packagingpurchase') : can('procurement.view_purchaseorder'))
 const groupNumber = ref('')
 const groupError = ref('')
 const order = ref<PurchaseOrderReadDetail | null>(null)
+const packaging = computed(() => order.value?.purchase_scope === 'PACKAGING')
 const inboundColors = computed(() => Object.fromEntries((order.value?.lines ?? []).map(line => [line.id, line.color])))
 const headerStatus = computed(() => order.value?.purchase_group_id ? order.value.display_status ?? order.value.status : order.value?.status || '')
 const headerStatusLabel = computed(() => order.value?.purchase_group_id && headerStatus.value === 'COMPLETED' ? '采购完成' : order.value?.status_display || '')
@@ -113,41 +117,79 @@ const sampleReturnColumns: Column[] = [
 ]
 const columns = computed(() => {
   const isSample = order.value?.source_type === 'SAMPLE'
-  if (activeTab.value === 'inbounds') return isSample ? sampleInboundColumns : inboundColumns
-  if (activeTab.value === 'returns') return isSample ? sampleReturnColumns : returnColumns
-  return isSample ? sampleMaterialColumns : materialColumns
+  const base = activeTab.value === 'inbounds' ? isSample ? sampleInboundColumns : inboundColumns
+    : activeTab.value === 'returns' ? isSample ? sampleReturnColumns : returnColumns
+      : isSample ? sampleMaterialColumns : materialColumns
+  return fromInbound.value ? base.map(column => ['purchase', 'received', 'accepted', 'returned', 'quantity'].includes(column.key)
+    ? { ...column, width: Math.max(column.width, 190) } : column) : base
 })
 const tableWidth = computed(() => columns.value.reduce((total, column) => total + column.width, 0))
+function isWeightUnit(unit: unknown): boolean { return isKilogramUnit(unit) }
+ function quantityValue(line: { source_unit_text?: string; source_unit_text_snapshot?: string; section_type?: string | null; section_type_snapshot?: string | null; section_title?: string | null; section_title_snapshot?: string | null; measurement_kind?: string | null; calculation_snapshot?: Record<string, unknown> | null; raw_bar_length_m?: string | null; received_weight_kg?: string | null; accepted_weight_kg?: string | null; return_weight_kg?: string | null }, kind: 'received' | 'accepted' | 'return', fallback: unknown): unknown {
+  const unit = line.source_unit_text || line.source_unit_text_snapshot
+  const hardwareWeight = isHardwareWeightLine({
+    section_type: line.section_type,
+    section_type_snapshot: line.section_type_snapshot,
+    section_title: line.section_title,
+    section_title_snapshot: line.section_title_snapshot,
+    source_unit_text: unit,
+    measurement_kind: line.measurement_kind,
+    calculation_snapshot: line.calculation_snapshot,
+  })
+  if (!isWeightUnit(unit) || (!line.raw_bar_length_m && !hardwareWeight)) return fallback
+  return line[`${kind}_weight_kg`] ?? (hardwareWeight ? fallback : null)
+}
+function receiptText(line: PurchaseReadLine | PurchaseReadInboundLine, kind: 'received' | 'accepted' | 'return') {
+  const value = line[`${kind}_quantity`]
+  const unit = 'source_unit_text_snapshot' in line ? line.source_unit_text_snapshot : line.source_unit_text
+  if (('receipt_quantity_mode' in line && line.receipt_quantity_mode === 'ROOTS') || line.calculation_snapshot?.receipt_quantity_mode === 'ROOTS') {
+    return quantityWithUnit(String(line[`${kind}_bar_count`] ?? ''), '根')
+  }
+  return purchaseQuantityText(quantityValue(line, kind, value), unit, line.raw_bar_length_m, line[`${kind}_bar_count`])
+}
+function orderQuantityText(line: PurchaseReadLine) {
+  return purchaseQuantityText(line.actual_purchase_weight_kg ?? line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count)
+}
+function warehouseMaterialQuantities(line: PurchaseReadLine) {
+  return [orderQuantityText(line), receiptText(line, 'received'), receiptText(line, 'return'), receiptText(line, 'accepted')]
+}
 const rows = computed<RecordRow[]>(() => {
   if (!order.value) return []
-  if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line, cells: {
-    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: purchaseQuantityText(line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count),
-    price: `${formatUnitPrice(line.unit_price)}${line.raw_bar_length_m && line.unit_price !== null ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/米` : ''}`, amount: formatMoney(line.amount), received: purchaseQuantityText(line.received_quantity, line.source_unit_text, line.raw_bar_length_m, line.received_bar_count),
-    accepted: purchaseQuantityText(line.accepted_quantity, line.source_unit_text, line.raw_bar_length_m, line.accepted_bar_count), returned: purchaseQuantityText(line.return_quantity, line.source_unit_text, line.raw_bar_length_m, line.return_bar_count),
+  if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line,
+    cells: {
+    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: orderQuantityText(line),
+    price: setPriceText(line) || `${formatUnitPrice(line.unit_price)}${line.unit_price !== null && (line.raw_bar_length_m || isWeightUnit(line.source_unit_text)) ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/${isWeightUnit(line.source_unit_text) ? 'kg' : '米'}` : ''}`, amount: line.set_pricing && line.set_pricing.anchor_id !== line.purchase_group_line_id ? '—' : formatMoney(line.amount), received: receiptText(line, 'received'),
+    accepted: receiptText(line, 'accepted'), returned: receiptText(line, 'return'),
   } }))
   if (activeTab.value === 'inbounds') {
     const materials = new Map(order.value.lines.map(line => [line.id, line]))
     return order.value.inbounds.flatMap(batch => batch.lines.map(line => ({ id: line.id, status: batch.status, materialSource: line, cells: {
-      number: batch.inbound_number, date: batch.inbound_date, name: line.part_name_snapshot, specification: order.value?.source_type === 'SAMPLE' ? (line.specification_snapshot || '—') : materialSpecificationValue(line), material: line.material_snapshot || '—', color: materials.get(line.purchase_order_line_id)?.color || '—', supplier: line.supplier_name_snapshot || '—',
-      received: purchaseQuantityText(line.received_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.received_bar_count),
-      accepted: batch.status === 'CONFIRMED' ? purchaseQuantityText(line.accepted_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.accepted_bar_count) : '—',
-      returned: batch.status === 'CONFIRMED' ? purchaseQuantityText(line.return_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.return_bar_count) : '—',
+      number: batch.inbound_number, date: batch.inbound_date, name: line.part_name_snapshot, specification: materialSpecificationValue(line), material: line.material_snapshot || '—', color: materials.get(line.purchase_order_line_id)?.color || '—', supplier: line.supplier_name_snapshot || '—',
+      received: receiptText(line, 'received'),
+      accepted: batch.status === 'CONFIRMED' ? receiptText(line, 'accepted') : '—',
+      returned: batch.status === 'CONFIRMED' ? receiptText(line, 'return') : '—',
       status: batch.status_display, warehouse: [line.warehouse_name, line.zone_name, line.location_number].filter(Boolean).join(' / ') || '—',
       receiver: batch.received_by_name || '—', inspector: batch.quality_confirmed_by_name || '—', time: formatTime(batch.quality_confirmed_at), remark: line.quality_remark || '—',
     } })))
   }
   return order.value.returns.flatMap(record => record.lines.map(line => ({ id: line.id, status: record.status, materialSource: line, cells: {
-    number: record.return_number, inbound: record.inbound_number, name: line.part_name, specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', supplier: record.supplier_name || '—', quantity: purchaseQuantityText(line.quantity, line.unit, line.raw_bar_length_m, line.return_bar_count), status: record.status_display,
+    number: record.return_number, inbound: record.inbound_number, name: line.part_name, specification: materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', supplier: record.supplier_name || '—', quantity: purchaseQuantityText(line.quantity, line.unit, line.raw_bar_length_m, line.return_bar_count), status: record.status_display,
     remark: line.quality_remark || '—', confirmedBy: record.confirmed_by_name || '—', completedBy: record.completed_by_name || '—', time: formatTime(record.completed_at),
   } })))
 })
 const totals = computed<Record<string, string>>(() => {
   const lines = order.value?.lines ?? []
-  const units = lines.map(line => ({ source_unit_text: line.raw_bar_length_m ? '根' : line.source_unit_text }))
-  const quantity = (line: typeof lines[number], meters: unknown, bars: unknown) => line.raw_bar_length_m ? (bars == null ? null : String(bars)) : meters
-  return { index: '合计', purchase: quantityTotal(units, lines.map(line => quantity(line, line.actual_purchase_quantity, line.actual_bar_count))),
-    amount: formatMoney(order.value?.total_amount), received: quantityTotal(units, lines.map(line => quantity(line, line.received_quantity, line.received_bar_count))),
-    accepted: quantityTotal(units, lines.map(line => quantity(line, line.accepted_quantity, line.accepted_bar_count))), returned: quantityTotal(units, lines.map(line => quantity(line, line.return_quantity, line.return_bar_count))) }
+  const units = lines.map(line => ({ source_unit_text: isWeightUnit(line.source_unit_text) ? 'kg' : line.source_unit_text }))
+  const quantity = (line: typeof lines[number], meters: unknown, _bars: unknown, weight: unknown) => isWeightUnit(line.source_unit_text)
+    ? (line.raw_bar_length_m ? weight : isHardwareWeightLine(line) ? weight ?? meters : meters)
+    : meters
+  const receiptUnits = lines.map((line, index) => line.receipt_quantity_mode === 'ROOTS' ? { source_unit_text: '根' } : units[index]!)
+  const receivedTotal = (kind: 'received' | 'accepted' | 'return') => quantityTotal(receiptUnits, lines.map(line =>
+    line.receipt_quantity_mode === 'ROOTS' ? String(line[`${kind}_bar_count`] ?? '') : quantityValue(line, kind, line[`${kind}_quantity`])))
+  const result: Record<string, string> = { index: '合计', purchase: quantityTotal(units, lines.map(line => quantity(line, line.actual_purchase_quantity, line.actual_bar_count, line.actual_purchase_weight_kg))),
+    amount: formatMoney(order.value?.total_amount), received: receivedTotal('received'),
+    accepted: receivedTotal('accepted'), returned: receivedTotal('return') }
+  return result
 })
 function statusTone(status: string) {
   return ['COMPLETED', 'CONFIRMED'].includes(status) ? 'success' : ['DRAFT', 'PENDING_QUALITY', 'QUALITY_GENERATED'].includes(status) ? 'warning' : 'info'
@@ -155,10 +197,10 @@ function statusTone(status: string) {
 function backToList() {
   void router.push(fromInbound.value ? { name: 'purchase-inbounds' }
     : order.value?.purchase_group_id && canReadGroup.value && !groupError.value
-      ? { name: 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
+      ? { name: packaging.value ? 'packaging-purchase-detail' : 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
       : { name: 'purchase-orders', query: { view: 'orders' } })
 }
-function openSheets() { if (order.value && canReadSheets.value) void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id } }) }
+function openSheets() { if (order.value && canReadSheets.value) void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id, ...(packaging.value ? { purchase_scope: 'PACKAGING' } : {}) } }) }
 function switchTab(event: KeyboardEvent, index: number) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
@@ -176,7 +218,10 @@ async function load() {
   if (!canRead.value) return
   loading.value = true
   try {
-    const result = await fetchPurchaseOrderReadDetail(String(route.params.id || ''))
+    const id = String(route.params.id || '')
+    const result = fromInbound.value
+      ? await fetchPurchaseOrderReadDetail(id, { receiving: true })
+      : await fetchPurchaseOrderReadDetail(id)
     if (disposed || version !== requestVersion) return
     order.value = result
     if (result.purchase_group_id && canReadGroup.value) void loadGroupNumber(result.purchase_group_id, version)
@@ -193,10 +238,10 @@ async function load() {
 }
 async function loadGroupNumber(id: string, version: number): Promise<void> {
   try {
-    const result = await fetchVersionedPurchaseGroup(id)
+    const result = await (packaging.value ? fetchVersionedPurchaseGroup(id, undefined, true) : fetchVersionedPurchaseGroup(id))
     if (!disposed && version === requestVersion) groupNumber.value = result.data.group_number
   } catch {
-    if (!disposed && version === requestVersion) groupError.value = '总单信息暂不可读，批次明细仍可查看。'
+    if (!disposed && version === requestVersion) groupError.value = '采购需求信息暂不可读，批次明细仍可查看。'
   }
 }
 watch([() => route.params.id, canRead, fromInbound], () => {
@@ -211,8 +256,8 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <header class="detail-heading">
       <div class="heading-identity"><h1>{{ fromInbound ? '采购入库详情' : '采购订单详情' }}</h1><span v-if="order" class="detail-tag" :class="statusTone(headerStatus)">{{ headerStatusLabel }}</span><span class="readonly-label">只读</span></div>
       <div class="heading-actions">
-        <button v-if="order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
-        <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : order?.purchase_group_id && canReadGroup && !groupError ? '采购总单' : '采购订单' }}</button>
+        <button v-if="!fromInbound && order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
+        <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : order?.purchase_group_id && canReadGroup && !groupError ? '采购需求' : '采购订单' }}</button>
       </div>
     </header>
     <div v-if="!canRead" class="detail-state" role="status">无权查看采购明细，请联系管理员开通相应权限。</div>
@@ -221,7 +266,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <template v-else-if="order">
       <ElAlert v-if="groupError" :title="groupError" type="warning" :closable="false" />
       <dl class="order-metadata">
-        <div v-if="order.purchase_group_id"><dt>所属采购总单 / 批次</dt><dd>{{ groupNumber || '已关联采购总单' }} · 第 {{ order.batch_number }} 批 · {{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</dd></div>
+        <div v-if="order.purchase_group_id"><dt>所属采购需求 / 批次</dt><dd>{{ groupNumber || '已关联采购需求' }} · 第 {{ order.batch_number }} 批 · {{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</dd></div>
         <div><dt>采购单号</dt><dd :title="order.order_number">{{ order.order_number }}</dd></div>
         <div><dt>采购来源</dt><dd>{{ order.source_type_display || (order.source_type === 'SAMPLE' ? '打样采购' : '生产订单') }}</dd></div>
         <div><dt>{{ order.source_type === 'SAMPLE' ? '打样单号' : '生产单号' }}</dt><dd :title="order.source_number || order.production_task_number">{{ order.source_number || order.production_task_number || '—' }}</dd></div>
@@ -236,7 +281,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           </ElTooltip><span v-else>未分配供应商</span>
         </dd></div>
         <div><dt>采购员</dt><dd :title="order.created_by_name">{{ order.created_by_name || '—' }}</dd></div>
-        <div><dt>采购金额{{ order.currency_code && order.currency_code !== 'CNY' ? `（${order.currency_code}）` : '' }}</dt><dd class="order-amount">{{ order.total_amount === null ? '—' : `${order.currency_symbol || ''}${formatMoney(order.total_amount)}` }}</dd></div>
+        <div v-if="!fromInbound"><dt>采购金额{{ order.currency_code && order.currency_code !== 'CNY' ? `（${order.currency_code}）` : '' }}</dt><dd class="order-amount">{{ order.total_amount === null ? '—' : `${order.currency_symbol || ''}${formatMoney(order.total_amount)}` }}</dd></div>
       </dl>
       <section class="detail-content-card">
       <nav class="detail-tabs" role="tablist" aria-label="采购明细分类">
@@ -247,7 +292,13 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <template v-if="order.completed_at"><dl><div><dt>采购状态</dt><dd><span class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span></dd></div><div><dt>完成人</dt><dd>{{ order.completed_by_name || '—' }}</dd></div><div><dt>完成时间</dt><dd>{{ formatTime(order.completed_at) }}</dd></div></dl><p><span>完成备注</span>{{ order.completion_remark || '—' }}</p></template>
           <p v-else class="empty-record">暂无完成记录</p>
         </div>
-        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :colors="inboundColors" embedded />
+        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :hide-material-section="order.source_type === 'SAMPLE'" embedded>
+          <template #material-details="{ record, quantity }">
+            <ReceiptRecordMaterialTables :receipt="{ source: 'PURCHASE', data: record, productionTaskNumber: order.production_task_number, fallbackColors: inboundColors, formatQuantity: quantity }" />
+          </template>
+        </PurchaseInboundHistory>
+        <ReceiptRecordMaterialTables v-else-if="fromInbound && activeTab === 'materials'"
+          :receipt="{ source: 'ORDER', data: { lines: order.lines }, formatQuantities: warehouseMaterialQuantities, totals: [totals.purchase, totals.received, totals.returned, totals.accepted] }" />
         <div v-else class="detail-table-scroll" tabindex="0" :aria-label="`${tabs.find(tab => tab.key === activeTab)?.label}表格`">
           <table class="detail-table" :style="{ minWidth: `${tableWidth}px` }" :data-testid="`detail-table-${activeTab}`">
             <colgroup><col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
@@ -266,6 +317,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
+
 .purchase-detail-page { color: token.$crm-text-primary; font-family: token.$crm-font-body; font-size: 13px; min-width: 0; container-type: inline-size; background: transparent; }
 .detail-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; min-height: 46px; margin-bottom: 14px; }
 .heading-identity, .heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }

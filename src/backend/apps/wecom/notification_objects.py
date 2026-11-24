@@ -58,9 +58,10 @@ def _subject(event_code, object_id, context):
         if event_code in codes:
             # 每次保存是独立知悉事实，后一次保存不合并掉厂长尚未收到的前一条。
             return resolver(event_code, object_id, None if event_code == 'WORK_REPORT_SAVED' else version), None
+    from apps.boms.notification_events import TASK_BOM_EVENTS
     models = {
         'PRODUCTION_TASK_CONFIRMED': ('production_tasks', 'ProductionTask'),
-        'PRODUCTION_TASK_BOMS_CONFIRMED': ('production_tasks', 'ProductionTask'),
+        **dict.fromkeys(TASK_BOM_EVENTS, ('production_tasks', 'ProductionTask')),
         'BOM_CONFIRMED': ('boms', 'Bom'), 'PRODUCTION_PLAN_CREATED': ('production_scheduling', 'ProductionSchedule'),
         'MATERIAL_RECEIPT_RECORDED': ('inventory', 'MaterialInbound'),
         'MATERIAL_INSPECTION_CONFIRMED': ('inventory', 'MaterialInbound'),
@@ -70,7 +71,7 @@ def _subject(event_code, object_id, context):
         'COATING_REWORK_DISPATCHED': ('material_issues', 'MetalProcessingExternalHandoff'),
         'COATING_REWORK_RECEIVED': ('material_issues', 'MetalProcessingExternalGoodReturn'),
     }
-    if event_code == 'PRODUCTION_TASK_BOMS_CONFIRMED':
+    if event_code in TASK_BOM_EVENTS:
         from apps.boms.notification_events import current_task_bom_snapshot, snapshot_version
         current = current_task_bom_snapshot(object_id)
         if current is None or snapshot_version(current) != version:
@@ -118,9 +119,20 @@ def object_facts(event_code, object_id, context):
     model = obj._meta.model_name
     if model == 'productiontask':
         facts['task_ids'] = {str(obj.pk)}
+        if event_code == 'PRODUCTION_TASK_BOMS_CONFIRMED':
+            from apps.boms.notification_events import task_bom_purchase_scopes
+            facts['only_packaging_bom'] = task_bom_purchase_scopes(context.get('bom_versions', ())) == {'PACKAGING'}
     elif model == 'materialinbound':
         if obj.purchase_order_id and obj.purchase_order.production_task_id:
             facts['task_ids'] = {str(obj.purchase_order.production_task_id)}
+            group = obj.purchase_order.purchase_group
+            facts['packaging_purchase'] = bool(group and group.purchase_scope == 'PACKAGING')
+            if facts['packaging_purchase'] and event_code == 'MATERIAL_RECEIPT_RECORDED' and obj.status != 'PENDING_QUALITY':
+                return None
+    elif model == 'purchaseorder':
+        if obj.production_task_id:
+            facts['task_ids'] = {str(obj.production_task_id)}
+        facts['packaging_purchase'] = bool(obj.purchase_group_id and obj.purchase_group.purchase_scope == 'PACKAGING')
     elif model == 'internalsemifinishedreceipt':
         facts['task_ids'] = {str(obj.schedule_product.schedule.production_task_id)}
         facts['workshop_ids'] = {str(obj.completed_craft.workshop_id)} if obj.completed_craft.workshop_id else set()
@@ -197,6 +209,8 @@ def target_for_roles(event_code, object_id, roles, facts):
             name, params = 'production-task-detail', {'taskId': str(obj.pk)}
         else:
             name = 'boms'
+    if event_code == 'PACKAGING_BOMS_CONFIRMED':
+        name = 'packaging-purchase-create'
     if roles == ['MERCHANDISER'] and model in {'materialissue', 'internalsemifinishedreceipt', 'finishedgoodsreceipt', 'finishedgoodsoutbound'}:
         if len(facts['task_ids']) == 1:
             name, params = 'production-task-detail', {'taskId': next(iter(facts['task_ids']))}

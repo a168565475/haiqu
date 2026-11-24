@@ -48,6 +48,7 @@ MULTILINE_DEFAULT_BODIES = {
     "PRODUCTION_TASK_CONFIRMED": "任务单号：{{document_no}}\n确认人：{{operator}}\n确认时间：{{occurred_at}}",
     "BOM_CONFIRMED": "BOM编号：{{document_no}}\n产品名称：{{product_name}}\nBOM版本：{{object_version}}\n确认人：{{operator}}\n确认时间：{{occurred_at}}",
     "PRODUCTION_TASK_BOMS_CONFIRMED": "任务单号：{{document_no}}\n产品项数：{{product_count}}\n操作人：{{operator}}\n完成时间：{{occurred_at}}\n确认范围：产品明细最新BOM已全部确认",
+    "PACKAGING_BOMS_CONFIRMED": "任务单号：{{document_no}}\n操作人：{{operator}}\n完成时间：{{occurred_at}}\n待办：请按该任务的 BOM 办理包材采购",
     "SUPPLIER_PURCHASE_SHEET_PUBLISHED": "采购表号：{{document_no}}\n发布状态：已发布",
     "MATERIAL_RECEIPT_RECORDED": "到货单号：{{document_no}}\n登记人：{{operator}}\n登记时间：{{occurred_at}}\n检验状态：等待检验",
     "MATERIAL_INSPECTION_CONFIRMED": "采购单号：{{purchase_order_no}}\n到货单号：{{document_no}}\n检验结果：{{status}}",
@@ -129,6 +130,12 @@ EVENTS = {
         "PRODUCTION_TASK_BOMS_CONFIRMED", "任务BOM全部确认",
         "生产任务 {{document_no}} 的 {{product_count}} 项产品明细最新BOM已全部确认，由 {{operator}} 于 {{occurred_at}} 完成。",
         ["PURCHASING"], ["ROLE_MEMBERS"], "boms.view_bom", "task-boms",
+        variables=("document_no", "product_count", "operator", "occurred_at", "object_version"),
+    ),
+    "PACKAGING_BOMS_CONFIRMED": _event(
+        "PACKAGING_BOMS_CONFIRMED", "包材采购待办理",
+        "生产任务 {{document_no}} 的 BOM 已由 {{operator}} 于 {{occurred_at}} 确认，请办理包材采购。",
+        ["MERCHANDISER"], ["ROLE_POLICY"], "procurement.manage_packagingpurchase", "packaging-purchase-create",
         variables=("document_no", "product_count", "operator", "occurred_at", "object_version"),
     ),
     "SUPPLIER_PURCHASE_SHEET_PUBLISHED": _event(
@@ -302,6 +309,15 @@ EVENTS = {
 
 
 from .notification_plan_catalog import definitions as plan_definitions
+for tracking_code, tracking_title in (
+    ('PURCHASE_TRACKING_RISK', '采购跟踪即时提醒'),
+    ('PURCHASE_TRACKING_DIGEST', '采购跟踪每日汇总'),
+):
+    MULTILINE_DEFAULT_BODIES[tracking_code] = '{{reason_summary}}'
+    EVENTS[tracking_code] = _event(tracking_code, tracking_title, '{{reason_summary}}',
+        ['PURCHASING', 'PMC', 'MERCHANDISER'], ['ROLE_POLICY'],
+        'procurement.view_purchaseorder', 'purchase-tracking', enabled=False, variables=['reason_summary'])
+
 EVENTS.update(plan_definitions())
 MULTILINE_DEFAULT_BODIES.update({code: event['default_body'] for code, event in plan_definitions().items()})
 
@@ -327,9 +343,11 @@ def current_body_template(event_code, body):
 
 
 def all_events():
+    from apps.boms.notification_events import PACKAGING_EVENT_CODE
     from .notification_plan_catalog import PLAN_EVENTS
     from .notification_role_policy import enabled
-    return [get_event(code) for code in EVENTS if enabled() or code not in PLAN_EVENTS]
+    policy_only = {*PLAN_EVENTS, PACKAGING_EVENT_CODE}
+    return [get_event(code) for code in EVENTS if enabled() or code not in policy_only]
 
 
 def target_for(event_code, object_id):
@@ -340,6 +358,7 @@ def target_for(event_code, object_id):
         "PRODUCTION_TASK_CONFIRMED": ("production-task-detail", "taskId"),
         "BOM_CONFIRMED": ("bom-preview", "bomId"),
         "PRODUCTION_TASK_BOMS_CONFIRMED": ("boms", None),
+        "PACKAGING_BOMS_CONFIRMED": ("packaging-purchase-create", None),
         "SUPPLIER_PURCHASE_SHEET_PUBLISHED": ("supplier-purchase-sheet-editor", "id"),
         "MATERIAL_RECEIPT_RECORDED": ("material-quality-confirmation", None),
         "MATERIAL_INSPECTION_CONFIRMED": ("purchase-order-detail", "id"),

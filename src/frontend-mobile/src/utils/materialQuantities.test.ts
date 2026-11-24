@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MaterialIssueLine, MaterialRequirement } from '@/types/materialIssue'
-import { buildIssueLines, decimalUnits, pipePlan, quantityError, quantityText, restoreIssueQuantities, selectedQuantityError } from './materialQuantities'
+import { buildIssueLines, decimalUnits, pipePlan, quantityError, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError } from './materialQuantities'
 
 const ordinary = { requirement_id: 'one', stock_item_id: 'stock', material_name: '面料', line_type: 'RAW', unit: '米', max_issue_quantity: '30', stock_mode: 'PUBLIC_V2' } as MaterialRequirement
 const pipe = { ...ordinary, unit: '支', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' }, max_issue_quantity: '99999999999999' } as MaterialRequirement
@@ -49,6 +49,36 @@ describe('手机领料数量和分配', () => {
   it('PUBLIC_V2需求ID保留，不被历史半成品余额拆分', () => {
     const row = { ...ordinary, line_type: 'SEMI', semi_balance_allocations: [{ balance_id: 'legacy', max_issue_quantity: '10' }] } as MaterialRequirement
     expect(buildIssueLines([row], { one: '5' })).toEqual([{ requirement_id: 'one', requested_quantity: '5' }])
+  })
+  it('裁片和不同单位车缝部位按整数领料，库存上限继续生效', () => {
+    for (const [kind, unit] of [['CUT_PIECE', '片'], ['SEWN_PART', '个']] as const) {
+      const row: MaterialRequirement = { ...ordinary, line_type: 'SEMI', component_kind: kind, unit }
+      expect(quantityError('1.5', row)).toContain('正整数')
+      expect(quantityError('30', row)).toBe('')
+      expect(quantityError('31', row)).toContain('可领上限')
+    }
+  })
+  it('裁剪直交使用独立余量且保留来源，库存领取仍按真实库存上限', () => {
+    const row: MaterialRequirement = { ...ordinary, line_type: 'SEMI', component_kind: 'CUT_PIECE', unit: '片',
+      direct_available_quantity: '10', max_issue_quantity: '0' }
+    expect(quantityError('2', row)).toContain('可领上限')
+    expect(quantityError('10', row, 'CUTTING_DIRECT')).toBe('')
+    expect(quantityError('11', row, 'CUTTING_DIRECT')).toContain('裁剪直交余量')
+    expect(quantityError('1.5', row, 'CUTTING_DIRECT')).toContain('正整数')
+    expect(buildIssueLines([row], { one: '10' }, { one: 'CUTTING_DIRECT' })).toEqual([
+      { requirement_id: 'one', requested_quantity: '10', source_kind: 'CUTTING_DIRECT' },
+    ])
+    expect(quantityError('1', { ...row, component_kind: 'SEWN_PART' }, 'CUTTING_DIRECT')).toContain('不可选择')
+  })
+  it('直交量不混入同实物库存合计，编辑恢复来源不悄悄改为库存领取', () => {
+    const row: MaterialRequirement = { ...ordinary, line_type: 'SEMI', component_kind: 'CUT_PIECE', unit: '片',
+      direct_available_quantity: '10', max_issue_quantity: '10' }
+    const other = { ...row, requirement_id: 'two' }
+    expect(selectedQuantityError('8', row, [row, other], { one: '8', two: '8' }, { two: 'CUTTING_DIRECT' })).toBe('')
+    expect(selectedQuantityError('8', row, [row, other], { one: '8', two: '8' })).toContain('合计申请数量')
+    const saved = { ...row, id: 'line', requested_quantity: '8', issued_quantity: null, source_kind: 'CUTTING_DIRECT' as const }
+    expect(restoreIssueSources([saved], [row])).toEqual({ one: 'CUTTING_DIRECT' })
+    expect(() => restoreIssueSources([saved, { ...saved, source_kind: 'STOCK' }], [row])).toThrow('不同领取来源')
   })
   it('LEGACY半成品按各余额可领量拆分且不静默截断', () => {
     const row = { ...ordinary, stock_mode: 'LEGACY', line_type: 'SEMI', unit: '支', semi_balance_allocations: [

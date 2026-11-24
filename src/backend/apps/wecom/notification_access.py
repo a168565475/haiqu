@@ -6,9 +6,12 @@ from uuid import UUID
 
 # 办理通知检查对应动作；知悉通知检查真实读取动作。配置角色不产生权限。
 EVENT_OBJECT_PERMISSIONS = {
+    'PURCHASE_TRACKING_RISK': ('procurement.view_purchaseorder',),
+    'PURCHASE_TRACKING_DIGEST': ('procurement.view_purchaseorder',),
     "PRODUCTION_TASK_CONFIRMED": ("production_tasks.view_productiontask",),
     "BOM_CONFIRMED": ("boms.view_bom",),
     "PRODUCTION_TASK_BOMS_CONFIRMED": ("boms.view_bom",),
+    "PACKAGING_BOMS_CONFIRMED": ("procurement.manage_packagingpurchase",),
     "SUPPLIER_PURCHASE_SHEET_PUBLISHED": ("procurement.view_supplierpurchasesheet",),
     "MATERIAL_RECEIPT_RECORDED": ("inventory.quality_confirm_material",),
     "MATERIAL_INSPECTION_CONFIRMED": ("inventory.view_materialinbound", "procurement.view_purchaseorder"),

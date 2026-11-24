@@ -17,7 +17,8 @@ function preview(category: SemiReceiptCategory): SemiReceiptPreview {
     product: '产品', order_quantity: '100', actor: '班组长', receipt_date: '2028-02-29', excluded: ['不适用部位'],
     zones: [{ id: zoneId, warehouse: '半成品仓', name: '一区' }],
     lines: [{ bom_line_id: lineId, component_key: 'component-one', usage: 'INTERNAL', stage: '完成',
-      attributes: { part_name: '部位一', material: '原料', color: '', unit_name: category === 'METAL' ? '支' : '套' },
+      ...(category === 'CUTTING' ? { component_kind: 'CUT_PIECE' as const } : {}),
+      attributes: { part_name: '部位一', material: '原料', color: '', unit_name: category === 'METAL' ? '支' : category === 'CUTTING' ? '片' : '套' },
       required: '100.0000', received: '20.0000', can_receive: '30.0000',
       ...(category === 'METAL' ? { metal_processing: {
         basis_ready: true, blockers: [], future_blockers: [], operations: [], schemes: [], as_of: '2028-02-29',
@@ -30,8 +31,8 @@ function preview(category: SemiReceiptCategory): SemiReceiptPreview {
 
 beforeEach(() => vi.resetAllMocks())
 
-describe('金工和车缝入库API契约', () => {
-  it.each(['METAL', 'SEWING'] as const)('%s读取原ERP预览，保留真实额度、库区与ETag', async category => {
+describe('金工、裁剪和车缝入库API契约', () => {
+  it.each(['METAL', 'CUTTING', 'SEWING'] as const)('%s读取原ERP预览，保留真实额度、库区与ETag', async category => {
     const data = preview(category)
     request.get.mockResolvedValueOnce({ data: { data } })
     const signal = new AbortController().signal
@@ -39,6 +40,22 @@ describe('金工和车缝入库API契约', () => {
     expect(request.get).toHaveBeenCalledExactlyOnceWith('/api/v1/semi-finished-receipts/preview/', {
       params: { schedule_product_id: plan, plan_category: category }, signal, timeout: 15000,
     })
+  })
+
+  it.each(['片', '件', '个', '米'])('裁剪接受后端有效的行单位%s，不转换整数数量', async unit => {
+    const data = preview('CUTTING')
+    data.lines[0]!.unit = unit
+    data.lines[0]!.attributes.unit_name = unit
+    request.get.mockResolvedValueOnce({ data: { data } })
+    expect(await fetchSemiReceiptPreview(plan, 'CUTTING')).toBe(data)
+    expect(data.lines[0]!.can_receive).toBe('30.0000')
+  })
+
+  it.each(['', ' ', '件'])('裁剪拒绝空或与冻结属性不一致的行单位%j', async unit => {
+    const data = preview('CUTTING')
+    data.lines[0]!.unit = unit
+    request.get.mockResolvedValueOnce({ data: { data } })
+    await expect(fetchSemiReceiptPreview(plan, 'CUTTING')).rejects.toThrow('半成品入库预览不完整或来源已变化')
   })
 
   it.each([
@@ -80,7 +97,18 @@ describe('金工和车缝入库API契约', () => {
     expect(await fetchSemiReceiptPreview(plan, 'METAL')).toBe(data)
   })
 
-  it.each(['METAL', 'SEWING'] as const)('%s提交原payload与原ETag，不转换旧金工number或另建请求编号', async category => {
+  it('车缝新部位保留独立单位，裁剪不可混入部位', async () => {
+    const data = preview('SEWING')
+    data.lines[0]!.component_kind = 'SEWN_PART'
+    data.lines[0]!.attributes.unit_name = '个'
+    request.get.mockResolvedValueOnce({ data: { data } })
+    expect(await fetchSemiReceiptPreview(plan, 'SEWING')).toBe(data)
+    data.plan_category = 'CUTTING'
+    request.get.mockResolvedValueOnce({ data: { data } })
+    await expect(fetchSemiReceiptPreview(plan, 'CUTTING')).rejects.toThrow('半成品入库预览不完整或来源已变化')
+  })
+
+  it.each(['METAL', 'CUTTING', 'SEWING'] as const)('%s提交原payload与原ETag，不转换旧金工number或另建请求编号', async category => {
     const payload: SemiReceiptPayload = { request_id: requestId, schedule_product_id: plan, plan_category: category,
       zone_id: zoneId, receipt_date: '2028-02-29', remark: '原提交备注', lines: [{ bom_line_id: lineId, quantity: category === 'METAL' ? 12 : '12' }] }
     Object.freeze(payload.lines[0]); Object.freeze(payload.lines); Object.freeze(payload)

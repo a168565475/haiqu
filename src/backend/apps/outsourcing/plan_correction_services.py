@@ -111,12 +111,21 @@ def _dispatch(order, correction, data, request):
     action = batch.actions.select_for_update().filter(kind='DISPATCH').first()
     if action is None:
         raise Conflict('原外发确认凭证缺失，不能自动更正。')
-    lines = list(batch.lines.select_for_update(of=('self',)).order_by('pk'))
+    sewing_inputs = bool(batch.source_snapshot.get('sewing_inputs'))
+    lines = list((batch.inputs if sewing_inputs else batch.lines).select_for_update(of=('self',)).order_by('pk'))
     materials = list(batch.materials.select_for_update(of=('self',)).select_related(
         'requirement', 'zone', 'unit', 'raw_material').order_by('pk'))
     entered = _quantities(data, [line.component_identity for line in lines])
     values = plan_quantities([order])[str(order.pk)]['lines']
     parent = {str(line.component_identity): line for line in order.lines.all()}
+    if sewing_inputs:
+        from types import SimpleNamespace
+        from .part_flow_sources import input_dispatched
+        sent = input_dispatched(order)
+        parent = {piece['component_identity']: SimpleNamespace(pk=piece['component_identity'],
+            quantity=line.quantity * piece['pieces_per_part']) for line in parent.values()
+            for piece in line.snapshot.get('pieces', [])}
+        values = {key: {'dispatched_quantity': str(quantity)} for key, quantity in sent.items()}
     history = list(order.record_corrections.filter(record_kind='DISPATCH', record_id=batch.pk))
     before = {'number': batch.order_number, 'business_date': str(action.actual_dispatch_date),
         'remark': batch.remark, 'status': batch.status,
@@ -137,10 +146,13 @@ def _dispatch(order, correction, data, request):
         quantity = entered[key]
         value = values[str(target.pk)]
         dispatched_quantity = int(value['dispatched_quantity']) - line.quantity + quantity
-        if dispatched_quantity < int(value['received_quantity']):
-            raise ValidationError({'lines': f'“{line.snapshot.get("part_name", "部件")}”更正后的累计实发不能少于累计实收。'})
         if quantity > line.quantity and dispatched_quantity > target.quantity:
             raise ValidationError({'lines': f'“{line.snapshot.get("part_name", "部件")}”更正后的累计实发不能超过委外总单填写的{target.quantity}{output_unit(order.source_kind)}。'})
+        if batch.source_snapshot.get('part_flow') and batch.source_kind in DIRECT_SOURCES and quantity > line.quantity:
+            from apps.inventory.part_flow_quantities import first_output_available
+            available = first_output_available(order.product_line_id, line.bom_line, order.bom.order_quantity)
+            if quantity-line.quantity > available:
+                raise Conflict('调增数量超过厂内首次产出的可用数量。')
         current_stock, current_meters = _stock_amount(batch.source_kind, line.quantity, line.snapshot)
         if current_stock != line.stock_quantity or (batch.source_kind == 'RAW_PIPE'
                 and Decimal(str(line.snapshot.get('meters', 'NaN'))) != Decimal(current_meters)):
@@ -207,7 +219,6 @@ def _receipt(order, correction, data, request):
     lines = list(receipt.lines.select_for_update(of=('self',)).select_related('order_line',
         'stock_movement__balance__zone__warehouse', 'stock_movement__balance__unit').order_by('pk'))
     entered = _quantities(data, [line.order_line.component_identity for line in lines])
-    values = plan_quantities([order])[str(order.pk)]['lines']
     history = list(order.record_corrections.filter(record_kind='RECEIPT', record_id=receipt.pk))
     before = {'number': receipt.receipt_number, 'business_date': str(receipt.receipt_date),
         'remark': receipt.remark, 'voided_at': None, 'lines': [{'id': str(line.pk),
@@ -219,9 +230,6 @@ def _receipt(order, correction, data, request):
     events = []
     for line in lines:
         quantity = entered[str(line.order_line.component_identity)]
-        value = values[str(line.order_line_id)]
-        if int(value['received_quantity']) - line.received_quantity + quantity > int(value['dispatched_quantity']):
-            raise ValidationError({'lines': f'“{line.snapshot.get("part_name", "部件")}”累计实收不能超过累计实发。'})
         original = line.stock_movement
         if (original.direction != 'IN' or original.source_type != 'TUBE_OUTSOURCING_RETURN'
                 or original.source_id != receipt.pk or original.source_line_id != line.pk

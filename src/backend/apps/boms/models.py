@@ -220,6 +220,18 @@ class BomSection(TimeStampedModel):
 
 
 class BomLine(TimeStampedModel):
+    @property
+    def purchase_required(self):
+        return not isinstance(self.raw_values, dict) or self.raw_values.get("purchase_required") is not False
+
+    component_kind = models.CharField(max_length=20, blank=True, default="", choices=[
+        ("", "历史用料"), ("CUT_PIECE", "裁片"), ("SEWN_PART", "车缝部位"),
+    ])
+    parent_part = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="cut_pieces",
+    )
+    pieces_per_part = models.PositiveBigIntegerField(null=True, blank=True)
+    parts_per_product = models.PositiveBigIntegerField(null=True, blank=True)
     material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True,
         on_delete=models.PROTECT, related_name="bom_lines")
     material_selection_snapshot = models.JSONField(default=dict, blank=True)
@@ -229,9 +241,9 @@ class BomLine(TimeStampedModel):
     cutting_length_mm = models.PositiveBigIntegerField(null=True, blank=True)
     pieces_per_product = models.PositiveBigIntegerField(null=True, blank=True)
     pieces_per_bar = models.PositiveBigIntegerField(null=True, blank=True)
-    raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    raw_bar_length_m = models.DecimalField(max_digits=19, decimal_places=3, null=True, blank=True)
     suggested_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
-    suggested_purchase_meters = models.DecimalField(max_digits=22, decimal_places=2, null=True, blank=True)
+    suggested_purchase_meters = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
     fabric_source_line = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="cutting_components",
     )
@@ -271,6 +283,16 @@ class BomLine(TimeStampedModel):
         ordering = ["section", "line_number"]
         constraints = [
             models.UniqueConstraint(fields=["section", "line_number"], name="bom_line_number_unique"),
+            models.CheckConstraint(condition=Q(component_kind__in=["", "CUT_PIECE", "SEWN_PART"]),
+                                   name="bom_component_kind_valid"),
+            models.CheckConstraint(condition=Q(pieces_per_part__isnull=True) | Q(pieces_per_part__gt=0),
+                                   name="bom_pieces_per_part_positive"),
+            models.CheckConstraint(condition=Q(parts_per_product__isnull=True) | Q(parts_per_product__gt=0),
+                                   name="bom_parts_per_product_positive"),
+            models.CheckConstraint(condition=(Q(component_kind="CUT_PIECE", parts_per_product__isnull=True)
+                | Q(component_kind="SEWN_PART", parent_part__isnull=True, pieces_per_part__isnull=True)
+                | Q(component_kind="", parent_part__isnull=True, pieces_per_part__isnull=True,
+                    parts_per_product__isnull=True)), name="bom_component_fields_match_kind"),
             models.CheckConstraint(
                 condition=(Q(cutting_length_mm__isnull=True, pieces_per_product__isnull=True, pieces_per_bar__isnull=True,
                              raw_bar_length_m__isnull=True, suggested_bar_count__isnull=True, suggested_purchase_meters__isnull=True)
@@ -364,3 +386,6 @@ class BomLineImageDraft(TimeStampedModel):
                 name="bom_image_draft_scope_idx",
             ),
         ]
+
+
+from .nesting_models import BomNestingJob  # noqa: E402,F401

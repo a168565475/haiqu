@@ -43,7 +43,7 @@ function displayProgress(): ScheduleProgressStatus {
     }])) as ScheduleProgressStatus['stage_progress'] }
 }
 function preview(): ScheduleCompletionPreview {
-  return { schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"',
+  return { schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"', unscheduled_product_count: 0,
     task: { id: 'task-1', task_number: 'HT-001', status: 'IN_PRODUCTION', status_display: '生产中', etag: '"task-v2"' },
     progress: progress(), products: [{ schedule_product_id: 'p1', product_name: '靠背凳', specification: '28x59', color: '酒红', material: 'PE', required_quantity: 200, received_quantity: 199, unit_name: '箱' }],
     sales_order: { id: null, order_number: null, status: null, status_display: null, etag: null, can_sync: false, reason: '当前账号无关联销售订单查看权限。' } }
@@ -121,9 +121,12 @@ describe('计划排产列表展示', () => {
       source: { followers: [{ name: '旧跟单员' }] },
     })], meta: { total: 1 } })
     const wrapper = await createView()
-    const text = wrapper.get('.el-table__body-wrapper tbody tr').text()
-    expect(text).toContain('0.00')
-    expect(text).toContain('1,234.50')
+    const record = wrapper.get('.el-table__body-wrapper tbody tr')
+    const cells = record.findAll('td').map(cell => cell.text())
+    const headers = wrapper.findAll('.el-table__header-wrapper th').map(cell => cell.text())
+    expect(cells[headers.indexOf('总工价')]).toBe('0')
+    expect(cells[headers.indexOf('报工总额')]).toBe('1,234.5')
+    const text = record.text()
     expect(text).toContain('跟单甲、跟单乙')
     expect(text).not.toContain('旧跟单员')
   })

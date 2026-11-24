@@ -98,6 +98,14 @@ class Factory:
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retired_production_import_actions_do_not_open_session(self):
+        for action in ('discover', 'extract'):
+            for payload in ({}, {'payload': {'sources': {}, 'selected_candidate': None, 'images': []}}):
+                with self.subTest(action=action, payload=bool(payload)):
+                    with self.assertRaisesRegex(RuntimeErrorCode, 'INVALID_REQUEST'):
+                        await self.runtime.dispatch('start', {**self.params(action), **payload})
+        self.assertEqual(self.factory.sessions, [])
+
     def model_events(self, text, commentary=False):
         events = []
         if commentary:

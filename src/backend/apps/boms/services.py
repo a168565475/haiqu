@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from django.db import transaction
 from django.db.models.deletion import ProtectedError
-from django.db.models import Max, Sum
+from django.db.models import Max, Q, Sum
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import require_matching_etag
@@ -19,16 +19,18 @@ from apps.sales_orders.models import SalesOrder, SalesOrderLine
 from apps.quotations.product_writeback import save_bom_product_information
 from apps.products.material_identity import lock_bom_line_material_identities
 from apps.products.lineage import resolve_production_task_product_lineage
-from apps.product_catalog.selection import is_product_entry_snapshot
+from apps.product_catalog.selection import is_product_entry_snapshot, resolve_bom_product_selection
 from apps.product_catalog.finalization import finalize_product_entry
 from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, validate_fabric_links, validate_used_components
 from .material_flow_calculations import CUTTING_QUANTITY_FIELDS, pipe_plan, MaterialFlowValueError
 from .duplicate_lines import validate_duplicate_material_lines
+from .component_parts import COMPONENT_FIELDS, is_cut_piece, is_sewn_part, validate_component_parts
+from .component_structure import imported_component_structure, new_bom_source_metadata, require_component_structure
 
 from .image_files import delete_business_file_if_unreferenced
 from .maintenance import match_maintenance_configuration
 from .material_save_plan import (build_material_save_plan, lock_material_references,
-                                persist_material_plan, require_save_permissions)
+                                persist_material_plan, require_save_permissions, validate_deferred_import_matching)
 from .models import (
     Bom,
     BomCreationMethod,
@@ -46,6 +48,7 @@ from .workbook_import import BomWorkbookError, parse_bom_workbook, validate_work
 
 
 EDITABLE_LINE_FIELDS = [
+    *COMPONENT_FIELDS,
     "material_quantity",
     "category",
     "material",
@@ -81,7 +84,12 @@ TUBE_DETAIL_FIELDS = [
     "tube_coating_color",
     "coating_unit_area_sqm",
     "purchase_unit_weight_kg",
+    "long_material_unit_weight_kg",
     "tube_cut_piece_count",
+    "source_purchase_allowance_percent",
+    "purchase_allowance_mode",
+    "purchase_allowance_rule",
+    "source_raw_bar_length_m",
 ]
 
 TUBE_CALCULATED_FIELDS = [
@@ -219,7 +227,11 @@ def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
         plan = pipe_plan(cutting_length_mm=line_data.get("length_value"),
                          pieces_per_product=line_data.get("unit_consumption"),
                           pieces_per_bar=line_data.get("tube_cut_piece_count"), order_quantity=product_quantity,
-                          calculation_version=calculation_version)
+                          calculation_version=calculation_version,
+                          source_purchase_allowance_percent=line_data.get("source_purchase_allowance_percent"),
+                          source_raw_bar_length_m=line_data.get("source_raw_bar_length_m"),
+                          purchase_allowance_mode=line_data.get("purchase_allowance_mode"),
+                          purchase_allowance_rule=line_data.get("purchase_allowance_rule"))
         total_consumption = Decimal(plan["demand_pieces"])
         cut_length = Decimal(plan["raw_bar_length_m"])
         branch_count = Decimal(plan["suggested_bar_count"])
@@ -261,19 +273,30 @@ def _editable_model_values(line_data, section_type, product_quantity, *, existin
 
 def _merged_raw_values(existing_values, line_data, section_type, section_title, calculated_values):
     values = dict(existing_values or {})
+    if section_title.strip() == "裁剪明细":
+        values.pop("purchase_required", None)
+    elif "purchase_required" in line_data:
+        if line_data["purchase_required"] is False or "purchase_required" in values:
+            values["purchase_required"] = line_data["purchase_required"]
     if "source_inventory_material_id" in line_data:
         source_id = line_data["source_inventory_material_id"]
         values["source_inventory_material_id"] = str(source_id) if source_id else ""
     if section_type == "PROFILE":
         from .tube_metrics import supports_tube_metrics
+        if values.get("purchase_allowance_mode") and line_data.get("purchase_allowance_mode") == "":
+            raise ValidationError({"sections": "已启用的采购余量不能清空模式；无需余量请选择不加余量。"})
         if "manual_tube_metrics" in line_data:
             values["tube_metrics_manual"] = line_data["manual_tube_metrics"]
         tube_shape = line_data.get("tube_shape", values.get("tube_shape", values.get("E", "")))
         automatic_metrics = supports_tube_metrics(tube_shape) and values.get("tube_metrics_manual") is not True
+        if not automatic_metrics and values.get("tube_formula_snapshot") and "long_material_unit_weight_kg" not in line_data:
+            # 切换手填时不能把旧公式的长料重量当作已核实的手工输入。
+            values["long_material_unit_weight_kg"] = ""
+            values["long_material_total_weight_kg"] = ""
         if line_data.get("pipe_source_sync_pending"):
             values["pipe_source_sync_pending"] = True
         for field in TUBE_DETAIL_FIELDS:
-            if automatic_metrics and field in {"coating_unit_area_sqm", "purchase_unit_weight_kg"}:
+            if automatic_metrics and field in {"coating_unit_area_sqm", "purchase_unit_weight_kg", "long_material_unit_weight_kg"}:
                 continue
             if field in line_data:
                 values[field] = (
@@ -419,6 +442,7 @@ def preview_imported_bom(uploaded_file, actor_employee, product_line):
             "has_more_preview_rows": plan["line_count"] > PREVIEW_LINE_LIMIT,
             "sections": _safe_preview_sections(plan),
             "calculation_summary": plan["calculation_summary"],
+            "component_structure": imported_component_structure(plan),
             "maintenance": maintenance,
             "identity_errors": identity_errors,
             "quantity": {
@@ -444,14 +468,18 @@ def _next_version(product_line):
         .filter(product_line=product_line)
         .aggregate(latest=Max("version_number"))["latest"]
     )
-    return (latest or 0) + 1
+    deleted_versions = AuditLog.objects.filter(
+        object_type="BOM", context_type="PRODUCTION_TASK", context_id=product_line.production_task_id,
+        action="DELETE", before_data__product_line_id=str(product_line.pk),
+    ).values_list("before_data__version_number", flat=True)
+    return max(latest or 0, max(deleted_versions, default=0)) + 1
 
 
 def _bom_number():
     return next_business_number("BOM")
 
 
-def _create_sections(bom, plan):
+def _create_sections(bom, plan, *, defer_import_material_matching=False):
     for section_index, section_data in enumerate(plan["sections"], start=1):
         section = BomSection.objects.create(
             bom=bom,
@@ -471,6 +499,8 @@ def _create_sections(bom, plan):
         )
 
     for line in BomLine.objects.filter(section__bom=bom).select_related("section"):
+        if defer_import_material_matching:
+            line.raw_values = {**line.raw_values, "import_material_matching_deferred": True}
         if is_meter_fabric_section(line.section) and not line.unit_consumption:
             line.unit_consumption = line.purchase_consumption
         apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
@@ -481,6 +511,7 @@ def _create_sections(bom, plan):
 def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
     copied_by_source = {}
     links = []
+    part_links = []
     for section_data in source_bom.sections.prefetch_related("lines__images").all():
         section = BomSection.objects.create(
             bom=bom,
@@ -494,7 +525,7 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
         )
         fields = [
             field.name for field in BomLine._meta.fields
-            if field.name not in {"id", "section", "created_at", "updated_at", "component_identity", "fabric_source_line"}
+            if field.name not in {"id", "section", "created_at", "updated_at", "component_identity", "fabric_source_line", "parent_part"}
         ]
         source_lines = list(section_data.lines.all())
         copied_lines = BomLine.objects.bulk_create(
@@ -504,6 +535,7 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
         for source_line, copied_line in zip(source_lines, copied_lines):
             copied_by_source[source_line.pk] = copied_line
             links.append((source_line.fabric_source_line_id, copied_line))
+            part_links.append((source_line.parent_part_id, copied_line))
             apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
                                   recalculate_tube_metrics=not preserve_tube_formula)
             copied_line.save()
@@ -525,6 +557,14 @@ def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
                 raise ValidationError({"source_bom_id": "来源 BOM 的裁片面料关联不完整，请先修正。"})
             line.fabric_source_line = copied_by_source[source_id]
             line.save(update_fields=["fabric_source_line"])
+    for source_id, line in part_links:
+        if source_id:
+            if source_id not in copied_by_source:
+                raise ValidationError({"source_bom_id": "来源 BOM 的部位组成不完整，请先修正。"})
+            line.parent_part = copied_by_source[source_id]
+            apply_line_quantities(line, bom.order_quantity)
+            line.save()
+    validate_component_parts(list(copied_by_source.values()))
 
 
 
@@ -539,7 +579,10 @@ def create_bom(
     request=None,
     link_source=False,
     preserve_tube_formula=False,
+    defer_import_material_matching=False,
 ):
+    if defer_import_material_matching and creation_method != BomCreationMethod.IMPORT:
+        raise ValidationError({"defer_import_material_matching": "只有 Excel 导入 BOM 可以暂缓物料匹配。"})
     prepared = None
     persisted_path = None
     plan = None
@@ -630,7 +673,7 @@ def create_bom(
                 source_file=source_file,
                 source_sheet_name=plan["sheet_name"] if plan else (source_bom.source_sheet_name if source_bom else ""),
                 source_original_name=plan["original_name"] if plan else (source_bom.source_original_name if source_bom else ""),
-                source_metadata=plan["metadata"] if plan else (source_bom.source_metadata if source_bom else {}),
+                source_metadata=new_bom_source_metadata(plan["metadata"] if plan else (source_bom.source_metadata if source_bom else {})),
                 calculation_summary=plan["calculation_summary"] if plan else (source_bom.calculation_summary if source_bom else {}),
                 maintenance_match_count=maintenance["matched_count"],
                 maintenance_unmatched_count=maintenance["unmatched_count"],
@@ -642,7 +685,7 @@ def create_bom(
             )
             _reuse_confirmed_product_review(bom, actor_employee=actor_employee, request=request)
             if plan:
-                _create_sections(bom, plan)
+                _create_sections(bom, plan, defer_import_material_matching=defer_import_material_matching)
             elif source_bom:
                 _copy_sections(bom, source_bom, preserve_tube_formula=preserve_tube_formula)
             else:
@@ -747,9 +790,7 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
     if new_product is not None:
         raise ValidationError({"new_product": "请使用逐项选填的产品信息；新产品仅在最终确认 BOM 时建档。"})
     if product_catalog_id or has_entry:
-        from apps.product_catalog.selection import resolve_product_selection
-
-        catalog, snapshot = resolve_product_selection(
+        catalog, snapshot = resolve_bom_product_selection(
             product_catalog_id, product_selection,
             existing_catalog_id=locked_bom.product_catalog_id,
             existing_snapshot=locked_bom.product_selection_snapshot,
@@ -1078,7 +1119,11 @@ def _sync_profile_lines_to_order_quantity(bom, *, previous_order_quantity=None):
                               recalculate_pipe=previous_order_quantity is not None and Decimal(previous_order_quantity) != Decimal(bom.order_quantity))
         if line.section.section_type == "PROFILE":
             _, raw = _tube_calculations({"length_value": line.length_value, "unit_consumption": line.unit_consumption,
-                                         "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", "")}, bom.order_quantity,
+                                         "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", ""),
+                                         "source_purchase_allowance_percent": (line.raw_values or {}).get("source_purchase_allowance_percent"),
+                                         "purchase_allowance_mode": (line.raw_values or {}).get("purchase_allowance_mode"),
+                                         "purchase_allowance_rule": (line.raw_values or {}).get("purchase_allowance_rule"),
+                                         "source_raw_bar_length_m": (line.raw_values or {}).get("source_raw_bar_length_m")}, bom.order_quantity,
                                         calculation_version=(line.raw_values or {}).get("pipe_plan_version", 2))
             line.raw_values = {**line.raw_values, **raw}
         line.save()
@@ -1219,11 +1264,12 @@ def _edit_snapshot(bom):
 
 @transaction.atomic
 def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", confirmation_token="",
-                     quantity_confirmation_reason=""):
+                     quantity_confirmation_reason="", defer_import_material_matching=False):
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked = Bom.objects.select_for_update().get(pk=bom.pk)
     require_matching_etag(request, locked)
     require_save_permissions(request, intent)
+    validate_deferred_import_matching(bom=locked, intent=intent, defer_import_material_matching=defer_import_material_matching)
     lock_material_references(sections, bom=locked)
     # 字典/版本在等待锁期间可能改变；事务内重新验证，预检凭据会对比实际建档内容。
     from .api.serializers import BomUpdateInputSerializer
@@ -1334,7 +1380,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
                 raise ValidationError({"sections": "每条用料明细最多保留 20 张图片。"})
             drafts_for_payload_line[id(line_data)] = ordered_drafts
 
-    material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True)
+    material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True,
+                                            defer_import_material_matching=defer_import_material_matching)
     if intent == "verify":
         validate_duplicate_material_lines(material_plan["lines"].values())
     persist_material_plan(plan=material_plan, bom=locked, request=request, actor_employee=actor_employee,
@@ -1349,7 +1396,9 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
 
     saved_lines = []
     saved_lines_by_client_key = {}
+    new_lines_by_client_key = {}
     fabric_links = []
+    part_links = []
     kept_section_ids = set()
     kept_line_ids = set()
     for section_number, section_data in enumerate(sections, start=1):
@@ -1420,8 +1469,12 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
 
             if line_data.get("client_key"):
                 saved_lines_by_client_key[line_data["client_key"]] = line
+                if not line_id:
+                    new_lines_by_client_key[line_data["client_key"]] = line
             if "fabric_source_line_id" in line_data or line_data.get("fabric_source_client_key"):
                 fabric_links.append((line, line_data))
+            if "parent_part_id" in line_data or line_data.get("parent_part_client_key"):
+                part_links.append((line, line_data))
             was_piece_usage = any(getattr(line, field) is not None for field in CUTTING_QUANTITY_FIELDS)
             for field in CUTTING_QUANTITY_FIELDS:
                 if field in line_data:
@@ -1438,7 +1491,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             line.raw_material, line.category, line.unit = planned_line.raw_material, planned_line.category, planned_line.unit
             line.specification = planned_line.specification
             line.material = planned_line.material
-            apply_line_quantities(line, locked.order_quantity)
+            if not (is_cut_piece(line) or is_sewn_part(line)):
+                apply_line_quantities(line, locked.order_quantity)
             line.save()
             saved_lines.append(line)
 
@@ -1473,12 +1527,27 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
         line.fabric_source_line_id = source_id
         line.save(update_fields=["fabric_source_line"])
 
+    saved_lines_by_id = {line.pk: line for line in saved_lines}
+    for line, line_data in part_links:
+        parent_key, parent_id = line_data.get("parent_part_client_key"), line_data.get("parent_part_id")
+        if parent_key and parent_id:
+            raise ValidationError({"sections": "所属部位不能同时指定已保存行和未保存行。"})
+        parent = saved_lines_by_client_key.get(parent_key) if parent_key else saved_lines_by_id.get(parent_id)
+        if (parent_key or parent_id) and parent is None:
+            raise ValidationError({"sections": "所属部位已移除或不属于当前 BOM。"})
+        line.parent_part = parent
+        line.save(update_fields=["parent_part"])
+    validate_component_parts(saved_lines)
     validate_fabric_links(saved_lines)
+    from .nesting_services import bind_draft_jobs
+    bind_draft_jobs(bom=locked, owner_user=request.user, new_lines_by_client_key=new_lines_by_client_key)
     for line in saved_lines:
         if line.section.title.strip() != "裁剪明细":
             continue
         inherit_cutting_fabric_attributes(line)
-        line.save(update_fields=["material", "raw_values", "specification", "material_selection_snapshot"])
+        if is_cut_piece(line) or is_sewn_part(line):
+            apply_line_quantities(line, locked.order_quantity)
+        line.save()
     stale_line_ids = set(existing_lines) - kept_line_ids
     stale_image_file_ids = []
     if stale_line_ids:
@@ -1487,7 +1556,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             .values_list("business_file_id", flat=True)
             .distinct()
         )
-        BomLine.objects.filter(id__in=stale_line_ids).update(fabric_source_line=None)
+        BomLine.objects.filter(id__in=stale_line_ids).update(fabric_source_line=None, parent_part=None)
         try:
             BomLine.objects.filter(id__in=stale_line_ids).delete()
         except ProtectedError as error:
@@ -1587,6 +1656,8 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
 
     lines = list(BomLine.objects.select_for_update(of=("self",)).filter(section__bom=locked).select_related("section").order_by("pk"))
     lock_bom_line_material_identities(lines)
+    require_component_structure(locked, lines)
+    validate_component_parts(lines, require_complete=True)
     for line in lines:
         apply_line_quantities(line, locked.order_quantity, require_complete=True)
         line.save()
@@ -1633,25 +1704,54 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
         after_data={"status": locked.status, "quantity_confirmation_reason": reason},
         request=request,
     )
+    from apps.procurement.external_supply import sync_external_supply
+    sync_external_supply(locked, lines, actor_employee=actor_employee, request=request)
     register_task_boms_confirmed(task_id=locked.production_task_id, actor_employee=actor_employee,
                                  confirmed_at=locked.confirmed_at)
     return locked
 
 
 @transaction.atomic
-def archive_bom(*, bom, actor_employee, request):
+def delete_bom(*, bom, actor_employee, request):
+    from apps.procurement.models import PurchaseGroup, PurchaseOrderLine
+
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
-    locked = Bom.objects.select_for_update().get(pk=bom.pk)
+    try:
+        locked = Bom.objects.select_for_update().get(pk=bom.pk)
+    except Bom.DoesNotExist as error:
+        raise NotFound("BOM 不存在。") from error
     require_matching_etag(request, locked)
-    locked.archived_at = timezone.now()
-    locked.archived_by_employee = actor_employee
-    locked.archive_reason = "BOM 列表删除"
-    locked.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+    lines = BomLine.objects.filter(section__bom=locked)
+    line_ids = lines.values("pk")
+    if PurchaseGroup.objects.filter(
+        Q(source_bom_id_snapshot=locked.pk) | Q(lines__source_bom_line_id_snapshot__in=line_ids)
+    ).exists():
+        raise Conflict("该 BOM 已被采购需求引用，无法删除。")
+    if PurchaseOrderLine.objects.filter(source_bom_line_id_snapshot__in=line_ids).exists():
+        raise Conflict("该 BOM 已被采购明细引用，无法删除。")
+
+    bom_id, task_id = locked.pk, locked.production_task_id
+    before = {
+        "bom_number": locked.bom_number, "status": locked.status,
+        "product_line_id": str(locked.product_line_id), "version_number": locked.version_number,
+    }
+    image_files = set(BomLineImage.objects.filter(bom_line__section__bom=locked).values_list("business_file_id", flat=True))
+    if locked.source_file_id:
+        image_files.add(locked.source_file_id)
+
+    # 解除同一 BOM 内将一起删除的引用，其余引用继续由外键保护。
+    lines.filter(parent_part__section__bom=locked).update(parent_part=None)
+    lines.filter(fabric_source_line__section__bom=locked).update(fabric_source_line=None)
+    try:
+        locked.delete()
+    except ProtectedError as error:
+        raise Conflict("该 BOM 或其明细已被其他业务记录引用，无法删除。") from error
+
     write_audit_log(
-        object_type="BOM", object_id=locked.pk, context_type="PRODUCTION_TASK", context_id=locked.production_task_id,
-        action="ARCHIVE", actor_employee=actor_employee,
-        before_data={"archived_at": None, "bom_number": locked.bom_number},
-        after_data={"archived_at": locked.archived_at.isoformat(), "bom_number": locked.bom_number}, request=request,
+        object_type="BOM", object_id=bom_id, context_type="PRODUCTION_TASK", context_id=task_id,
+        action="DELETE", actor_employee=actor_employee, before_data=before,
+        after_data={"deleted": True}, request=request,
     )
-    expire_task_bom_events(locked.production_task_id)
-    return locked
+    expire_task_bom_events(task_id)
+    for file_id in image_files:
+        transaction.on_commit(lambda file_id=file_id: delete_business_file_if_unreferenced(file_id))

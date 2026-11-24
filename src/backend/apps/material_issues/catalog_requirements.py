@@ -15,7 +15,7 @@ from apps.inventory.catalog_stock_identity import build_catalog_stock_identity
 from apps.inventory.public_bom_snapshot import freeze_bom_line
 from apps.material_catalog.saved_selection import validate_saved_material
 from apps.procurement.pipe_purchase import pipe_source_snapshot
-from apps.procurement.services import _is_purchasable_bom_section, _source_quantity
+from apps.procurement.services import _is_purchasable_bom_section
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.reference_data.models import ProductionUnit
 from .models import OrderMaterialRequirement, RequirementContribution
@@ -29,7 +29,7 @@ def _json(value):
 
 
 def catalog_requirement_specs(task_id, product_id, *, lock=False):
-    from .requirements import _bom_line_section_code
+    from .requirements import _bom_line_section_code, inventory_source_quantity
 
     boms = Bom.objects.filter(production_task_id=task_id, product_line_id=product_id, archived_at__isnull=True)
     if lock:
@@ -51,16 +51,17 @@ def catalog_requirement_specs(task_id, product_id, *, lock=False):
                 plan = pipe_source_snapshot(line) if section.section_type == "PROFILE" else {}
                 identity = build_catalog_stock_identity(material_catalog_id=line.material_catalog_id, material_selection_snapshot=selected,
                     raw_bar_length_m=plan.get("raw_bar_length_m"))
-                quantity, _, _, unit_name, status = _source_quantity(line, bom)
-                if status != "READY" or quantity is None or quantity <= 0 or (not plan and unit_name != selected["unit_name"]):
-                    raise ValidationError("缺少所选材料单位下的明确需求数量。")
                 roots = bool(plan)
                 unit_id = selected["unit_id"]
                 if roots:
+                    # 管材领料依据制造支数，不依赖采购公斤数是否齐备。
                     unit = ProductionUnit.objects.filter(unit_name="支", status="ACTIVE", archived_at__isnull=True).first()
                     quantity = Decimal(plan["allowance_pieces"])
                 else:
-                    unit = ProductionUnit.objects.filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
+                    quantity, _, _, unit_name, status = inventory_source_quantity(line, bom)
+                    if status != "READY" or quantity is None or quantity <= 0 or unit_name != selected["unit_name"]:
+                        raise ValidationError("缺少所选材料单位下的明确需求数量。")
+                    unit = ProductionUnit.for_catalog(line.material_catalog_id).filter(pk=unit_id, status="ACTIVE", archived_at__isnull=True).first()
                 if unit is None:
                     raise ValidationError("需求数量单位不存在、已停用或归档。")
                 snapshot = _json({**(plan if roots else {}), "kind": "PIPE" if roots else "CATALOG",

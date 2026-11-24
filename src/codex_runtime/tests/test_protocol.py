@@ -18,6 +18,17 @@ class Writer:
 
 
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_result_limit_is_not_reported_as_upstream_outage(self):
+        reader = asyncio.StreamReader()
+        peer = RpcPeer(reader, Writer())
+        peer.bytes_read = peer.max_total_bytes
+        try:
+            reader.feed_data(b'{}\n')
+            with self.assertRaisesRegex(RuntimeErrorCode, '^RESULT_LIMIT$'):
+                await peer.notification(.2)
+        finally:
+            await peer.close()
+
     async def test_usage_limit_error_code_is_preserved_and_unknown_code_is_sanitized(self):
         self.assertEqual(RuntimeErrorCode('USAGE_LIMIT_EXCEEDED').code, 'USAGE_LIMIT_EXCEEDED')
         self.assertEqual(RuntimeErrorCode('private-upstream-reason').code, 'UPSTREAM_UNAVAILABLE')
@@ -108,3 +119,32 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             await peer.notification(0.2)
         self.assertEqual(writer.data[-1]['error']['code'], -32601)
         await peer.close()
+
+    async def test_dynamic_request_opt_in_preserves_server_id_and_rejects_replay(self):
+        reader, writer = asyncio.StreamReader(), Writer()
+        peer = RpcPeer(reader, writer)
+        try:
+            peer.enable_dynamic_tools()
+            request = {'method': 'item/tool/call', 'id': 'server-9', 'params': {'tool': 'inspect_source'}}
+            reader.feed_data((json.dumps(request) + '\n').encode())
+            self.assertEqual(await peer.notification(.2), request)
+            await peer.respond_tool_call('server-9', {'success': True, 'contentItems': []})
+            self.assertEqual(writer.data[-1], {'id': 'server-9', 'result': {'success': True, 'contentItems': []}})
+            with self.assertRaises(RuntimeErrorCode):
+                await peer.respond_tool_call('server-9', {'success': True, 'contentItems': []})
+            reader.feed_data((json.dumps(request) + '\n').encode())
+            with self.assertRaises(RuntimeErrorCode):
+                await peer.notification(.2)
+        finally:
+            await peer.close()
+
+    async def test_dynamic_opt_in_does_not_allow_shell_requests(self):
+        reader, writer = asyncio.StreamReader(), Writer()
+        peer = RpcPeer(reader, writer)
+        try:
+            peer.enable_dynamic_tools()
+            reader.feed_data(b'{"method":"item/commandExecution/requestApproval","id":3,"params":{}}\n')
+            with self.assertRaises(RuntimeErrorCode):
+                await peer.notification(.2)
+        finally:
+            await peer.close()

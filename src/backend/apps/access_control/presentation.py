@@ -3,6 +3,11 @@ RESOURCE_NAMES = dict(item.split(":", 1) for item in (
     "financeaccount:公司账户",
     "accountingsubject:会计科目",
     "receivablestatement:应收对账单",
+    "purchasepayable:采购应付",
+    "supplierledger:供应商往来明细",
+    "supplierpayment:供应商付款",
+    "supplierpaymentapplication:供应商付款申请",
+    "supplieroffset:供应商抵账",
     "receipt:收款确认单",
     "productionplan:生产计划",
     "productiontaskexpense:生产零星费用",
@@ -36,6 +41,25 @@ ACTION_NAMES = {
 
 
 def presentation(code, permission, module):
+    if code == "finance.view_supplierledger":
+        return {"resource": "finance.supplierledger", "resource_name": RESOURCE_NAMES["supplierledger"],
+                "action": "view", "action_name": "查看", "label": "供应商往来明细 · 查看"}
+    if code == "finance.view_supplierpayment":
+        return {"resource": "finance.supplierpayment", "resource_name": RESOURCE_NAMES["supplierpayment"],
+                "action": "view", "action_name": "查看", "label": "供应商付款 · 查看"}
+    if code in {"finance.add_supplierpaymentapplication", "finance.withdraw_supplierpaymentapplication"}:
+        is_add = code == "finance.add_supplierpaymentapplication"
+        name = RESOURCE_NAMES["supplierpaymentapplication"]
+        label = "提交" if is_add else "撤回"
+        return {"resource": "finance.supplierpaymentapplication", "resource_name": name,
+                "action": "add" if is_add else "special", "action_name": label, "label": f"{name} · {label}"}
+    if code in {"finance.add_supplierpayment", "finance.void_supplierpayment",
+                "finance.add_supplieroffset", "finance.void_supplieroffset"}:
+        operation, resource = code.split(".", 1)[1].split("_", 1)
+        name = RESOURCE_NAMES[resource]
+        label = {"add": "登记", "void": "更正"}[operation]
+        return {"resource": f"finance.{resource}", "resource_name": name,
+                "action": "add" if operation == "add" else "special", "action_name": label, "label": f"{name} · {label}"}
     if code == 'production_task_imports.import_production_task':
         return {'resource': 'production_tasks.productiontask', 'resource_name': '生产任务单',
                 'action': 'special', 'action_name': 'AI 导入任务单', 'label': '生产任务单 · AI 导入任务单'}
@@ -58,6 +82,9 @@ def presentation(code, permission, module):
     if code == "organizations.manage_organization":
         return {"resource": "organizations.organizationunit", "resource_name": "部门与组织",
                 "action": "special", "action_name": "管理部门与组织归属", "label": "部门与组织 · 管理部门与组织归属"}
+    if code == "procurement.manage_packagingpurchase":
+        return {"resource": "procurement.purchasegroup", "resource_name": "包材采购",
+                "action": "special", "action_name": "办理采购", "label": "包材采购 · 办理采购"}
     if module == "attendance":
         actions = {"attendance.view_attendance": ("view", "查看考勤"),
                    "attendance.sync_attendance": ("special", "同步考勤"),
@@ -74,6 +101,8 @@ def presentation(code, permission, module):
         model = "accountingsubject"
     if code in {f"finance.{action}_receivablestatement" for action in ("view", "add", "change", "void", "delete")}:
         model = "receivablestatement"
+    if code in {f"finance.{action}_purchasepayable" for action in ("view", "add", "change", "confirm", "void", "delete")}:
+        model = "purchasepayable"
     if code.startswith("access_control."):
         model = codename.split("_reference_", 1)[-1] if "_reference_" in codename else codename.split("_", 1)[1]
     model = {'samplefee': 'samplefeerecord', 'sample': 'samplerequest', 'purchasesheets': 'supplierpurchasesheet', 'bomquantity': 'bom'}.get(model, model)

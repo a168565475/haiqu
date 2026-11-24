@@ -1,25 +1,31 @@
-import { flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchPurchaseOrderOptions } from '@/api/purchaseOrders'
-import type { PurchaseOrderInput, PurchaseOrderSource, PurchaseOrderSupplierOption } from '@/types/purchaseOrder'
+import { createPurchaseOrder, fetchPurchaseOrderOptions, fetchPurchaseOrderSource } from '@/api/purchaseOrders'
+import { createPurchaseBatch, createPurchaseGroup } from '@/api/purchaseGroups'
+import type { PurchaseOrderInput, PurchaseOrderSource, PurchaseOrderSupplierOption, PurchaseSetPricing } from '@/types/purchaseOrder'
 import type { SupplierCategory } from '@/types/supplier'
 import PurchaseOrderFormView from './PurchaseOrderFormView.vue'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ name: 'purchase-order-create-details', query: {} }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
 vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSource: vi.fn(), fetchSamplePurchaseOrderSource: vi.fn(), createPurchaseOrder: vi.fn() }))
+vi.mock('@/api/purchaseGroups', () => ({ createPurchaseBatch: vi.fn(), createPurchaseGroup: vi.fn(), fetchVersionedPurchaseGroup: vi.fn() }))
 
 type Page = {
-  lines: Array<{ category: string; supplier_id: string | null; suggested_supplier_category: SupplierCategory | null }>
+  lines: Array<{ category: string; supplier_id: string | null; delivery_date: string; suggested_supplier_category: SupplierCategory | null; set_pricing?: PurchaseSetPricing }>
+  options: { suppliers: PurchaseOrderSupplierOption[] }
   source: PurchaseOrderSource
   sourceLoading: boolean
+  saving: boolean
   supplierCategories: string[]
   bulkSupplierCategory: string | null
   bulkSupplierId: string | null
+  bulkDeliveryDate: string
   bulkSupplierOptions: PurchaseOrderSupplierOption[]
   applyBulkSupplier: (value: string | null) => void
   refreshBulkSupplier: () => void
+  handleGridNavigation: (event: KeyboardEvent, rowIndex: number, columnIndex: number) => void
   resetSource: () => void
   applySource: (source: PurchaseOrderSource) => void
   buildPayload: () => PurchaseOrderInput
@@ -53,7 +59,7 @@ beforeEach(async () => {
   page.applySource(source())
   await flushPromises()
 })
-afterEach(() => wrapper.unmount())
+afterEach(() => { wrapper.unmount(); vi.restoreAllMocks() })
 const categorySelect = () => wrapper.get('[data-testid="purchase-bulk-supplier-category"]').getComponent({ name: 'ElSelect' })
 async function chooseCategory(value: string | null) {
   categorySelect().vm.$emit('update:modelValue', value)
@@ -159,5 +165,272 @@ describe('采购按分类统一供应商', () => {
     expect(page.lines[2]!.supplier_id).toBe('supplier-a')
     page.applyBulkSupplier('supplier-b')
     expect(page.lines[2]!.supplier_id).toBe('supplier-b')
+  })
+
+})
+
+describe('采购行内回车下填', () => {
+  beforeEach(async () => {
+    wrapper.unmount()
+    wrapper = mount(PurchaseOrderFormView, { attachTo: document.body, global: {
+      plugins: [ElementPlus],
+      config: { warnHandler: (message, _instance, trace) => {
+        // 现有 CalendarIcon 函数触发的属性类型警告与回车行为无关，其他警告继续输出。
+        if (!message.startsWith('Invalid prop: type check failed for prop "prefixIcon".')) console.warn(message, trace)
+      } },
+    } })
+    await flushPromises()
+    page = wrapper.vm as unknown as Page
+    page.applySource(source())
+    await flushPromises()
+    wrapper.findAll('[data-grid-field]').forEach(field => {
+      Object.defineProperty(field.element, 'scrollIntoView', { configurable: true, value: vi.fn() })
+    })
+    page.lines[0]!.supplier_id = 'supplier-c'
+    page.lines[1]!.supplier_id = 'supplier-a'
+    page.lines[2]!.supplier_id = 'supplier-b'
+    page.lines[0]!.delivery_date = '2099-11-10'
+    page.lines[1]!.delivery_date = '2099-11-11'
+    page.lines[2]!.delivery_date = '2099-11-12'
+    await flushPromises()
+  })
+
+  const field = (row: number, column: number) => wrapper.get(`[data-grid-row="${row}"][data-grid-column="${column}"]`)
+
+  async function openSupplierDropdown(row: number) {
+    const select = field(row, 0)
+    await select.get('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    const popupId = select.get('[role="combobox"]').attributes('aria-controls')
+    const popup = document.getElementById(popupId!)
+    expect(popup).not.toBeNull()
+    const items = [...popup!.querySelectorAll('[role="option"]')].map(option => option.textContent?.trim())
+    await select.get('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    return items
+  }
+
+  it('行内下拉按各行的物料分类匹配供应商，与表头当前选择的分类无关', async () => {
+    page.lines[0]!.suggested_supplier_category = 'TUBE'
+    page.options.suppliers.push(
+      { id: 'tube', supplier_number: 'D', supplier_name: '管材供应商', supplier_categories: ['TUBE'] },
+      { id: 'tube-packaging', supplier_number: 'E', supplier_name: '管材包材供应商', supplier_categories: ['TUBE', 'PACKAGING'] },
+    )
+    await chooseCategory('包材')
+
+    expect(await openSupplierDropdown(0)).toEqual(['管材供应商', '管材包材供应商'])
+    expect(await openSupplierDropdown(1)).toEqual(['五金供应商', '五金包材供应商'])
+    expect(await openSupplierDropdown(2)).toEqual(['包材供应商', '五金包材供应商', '管材包材供应商'])
+    expect(page.lines.map(line => line.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+  })
+
+  it('已对应类别却无供应商时提示维护，未对应的旧材料仍可逐行选择', async () => {
+    page.lines[0]!.suggested_supplier_category = 'FABRIC'
+    page.lines[1]!.suggested_supplier_category = null
+    await flushPromises()
+
+    expect(field(0, 0).text()).toContain('五金包材供应商')
+    expect(field(0, 0).getComponent({ name: 'ElSelect' }).props('noDataText')).toContain('维护对应类别')
+    expect(await openSupplierDropdown(1)).toEqual(['五金供应商', '包材供应商', '五金包材供应商'])
+  })
+
+  async function press(row: number, column: number, options: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
+    field(row, column).get('input').element.dispatchEvent(event)
+    await flushPromises()
+    return event
+  }
+
+  // jsdom 没有系统剪贴板，两个真实输入框共享同一份事件数据。
+  function clipboard(text = '') {
+    const formats = new Map([['text/plain', text]])
+    return {
+      getData: (format: string) => formats.get(format) || '',
+      setData: (format: string, value: string) => formats.set(format, value),
+      get types() { return [...formats.keys()] },
+    }
+  }
+  async function transfer(action: 'copy' | 'paste', row: number, column: number, data: ReturnType<typeof clipboard>) {
+    const event = Object.assign(new Event(action, { bubbles: true, cancelable: true }), { clipboardData: data })
+    field(row, column).get('input').element.dispatchEvent(event)
+    await flushPromises()
+    return event
+  }
+
+  it.each([
+    [0, 'supplier_id', '包材供应商', 'supplier-b', 'supplier-a'],
+    [1, 'delivery_date', '2099-11-12', '2099-11-12', '2099-11-11'],
+  ] as const)('第 %i 列粘贴已选值停在目标格，再按回车才填写下一行', async (column, key, text, value, original) => {
+    const data = clipboard()
+    await transfer('copy', 2, column, data)
+    expect(data.getData('text/plain')).toBe(text)
+    const target = field(0, column).get('input').element
+    target.focus()
+    expect((await transfer('paste', 0, column, data)).defaultPrevented).toBe(true)
+    expect(page.lines.map(row => row[key])).toEqual([value, original, value])
+    expect(document.activeElement).toBe(target)
+    await press(0, column)
+    expect(page.lines.map(row => row[key])).toEqual([value, value, value])
+    expect(document.activeElement).toBe(field(1, column).get('input').element)
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+  })
+
+  it('外部名称精确匹配供应商，同名时可从表内复制准确的供应商', async () => {
+    expect((await transfer('paste', 0, 0, clipboard('包材'))).defaultPrevented).toBe(false)
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-b')
+    page.options.suppliers[2]!.supplier_name = '包材供应商'
+    page.lines[0]!.supplier_id = 'supplier-a'
+    page.lines[2]!.supplier_id = 'supplier-c'
+    await flushPromises()
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-a')
+    const data = clipboard()
+    await transfer('copy', 2, 0, data)
+    await transfer('paste', 0, 0, data)
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+  })
+
+  it('粘贴过去的交期或无效日期时保留原值', async () => {
+    for (const text of ['2000-01-01', '2099-02-30', '无日期']) {
+      expect((await transfer('paste', 0, 1, clipboard(text))).defaultPrevented).toBe(true)
+      expect(page.lines[0]!.delivery_date).toBe('2099-11-10')
+    }
+  })
+
+  it.each(['preview', 'loading', 'saving'])('%s 时粘贴不能修改供应商或交期', async state => {
+    if (state === 'preview') page.source.can_create = false
+    if (state === 'loading') page.sourceLoading = true
+    if (state === 'saving') page.saving = true
+    await flushPromises()
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    await transfer('paste', 0, 1, clipboard('2099-11-12'))
+    expect(page.lines[0]!.supplier_id).toBe('supplier-c')
+    expect(page.lines[0]!.delivery_date).toBe('2099-11-10')
+  })
+
+  it('粘贴到套餐部件时，同套部件沿用相同供应商和交期', async () => {
+    const setPrice = { anchor_id: 'line-1', quantity: 1, unit_price: '1' }
+    page.lines[0]!.set_pricing = page.lines[2]!.set_pricing = setPrice
+    page.lines[2]!.supplier_id = page.lines[0]!.supplier_id
+    await transfer('paste', 0, 0, clipboard('包材供应商'))
+    await transfer('paste', 0, 1, clipboard('2099-12-01'))
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-b', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-12-01', '2099-11-11', '2099-12-01'])
+  })
+
+  it('每次回车只复制供应商到下一行，再按一次才继续下一行', async () => {
+    await chooseCategory('__all__')
+    const event = await press(0, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-c', 'supplier-b'])
+    expect(page.bulkSupplierId).toBeNull()
+    expect(document.activeElement).toBe(field(1, 0).get('input').element)
+    expect(event.defaultPrevented).toBe(true)
+    await press(1, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-c', 'supplier-c'])
+    expect(document.activeElement).toBe(field(2, 0).get('input').element)
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+    expect(fetchPurchaseOrderSource).not.toHaveBeenCalled()
+  })
+
+  it('交期回车只同步下一行，不覆盖更后面的日期或提交采购', async () => {
+    await press(0, 1)
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-10', '2099-11-12'])
+    expect(page.bulkDeliveryDate).toBe('')
+    expect(document.activeElement).toBe(field(1, 1).get('input').element)
+    await press(1, 1)
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-10', '2099-11-10'])
+    expect(page.bulkDeliveryDate).toBe('2099-11-10')
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+  })
+
+  it.each([0, 1])('第 %i 列 Shift+Enter 只向上移动，不覆盖后续值', async column => {
+    await press(1, column, { shiftKey: true })
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+    expect(document.activeElement).toBe(field(0, column).get('input').element)
+  })
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])('输入法选字回车不覆盖、不跳到下一行：%j', async options => {
+    await press(0, 0, options)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(document.activeElement).not.toBe(field(1, 0).get('input').element)
+  })
+
+  it.each([0, 1])('第 %i 列弹层展开时回车交给选项/日期控件，不批量覆盖', async column => {
+    field(0, column).get('input').element.setAttribute('aria-expanded', 'true')
+    await press(0, column)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+  })
+
+  it.each(['preview', 'loading', 'saving'])('%s 状态禁止回车批量覆盖', async state => {
+    if (state === 'preview') page.source.can_create = false
+    if (state === 'loading') page.sourceLoading = true
+    if (state === 'saving') page.saving = true
+    await flushPromises()
+    await press(0, 0)
+    await press(0, 1)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+  })
+
+  it('末行回车不越界、不提交采购', async () => {
+    const event = await press(2, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('空白当前供应商和日期不通过回车批量清空', async () => {
+    page.lines[0]!.supplier_id = null
+    page.lines[0]!.delivery_date = ''
+    await flushPromises()
+    await press(0, 0)
+    await press(0, 1)
+    expect(page.lines.map(row => row.supplier_id)).toEqual([null, 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['', '2099-11-11', '2099-11-12'])
+  })
+
+  it.each([2, 3])('第 %i 列回车仅导航，不复制供应商或日期', async column => {
+    await press(0, column)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+    expect(document.activeElement).toBe(field(1, column).get('input').element)
+  })
+})
+
+describe('采购下填同步处理开销', () => {
+  it.each([100, 1000])('%i 行通过按键处理器只同步一行，并记录不含页面渲染的耗时', async count => {
+    const template = source()
+    page.applySource({ ...template, lines: Array.from({ length: count }, (_, index) => ({
+      ...template.lines[0]!, bom_line_id: `line-${index}`, source_bom_line_id_snapshot: `line-${index}`,
+    })) })
+    const input = document.createElement('input')
+    input.addEventListener('keydown', event => page.handleGridNavigation(event, 0, 0))
+    const durations: number[] = []
+    for (let sample = 0; sample < 7; sample += 1) {
+      for (const line of page.lines) line.supplier_id = 'supplier-b'
+      page.lines[0]!.supplier_id = 'supplier-a'
+      const started = performance.now()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      durations.push(performance.now() - started)
+      expect(page.lines.slice(0, 2).every(line => line.supplier_id === 'supplier-a')).toBe(true)
+      expect(page.lines.slice(2).every(line => line.supplier_id === 'supplier-b')).toBe(true)
+      await flushPromises()
+    }
+    durations.sort((left, right) => left - right)
+    console.info(`采购下填 ${count} 行，7次同步处理：中位 ${durations[3]!.toFixed(3)} ms，最大 ${durations[6]!.toFixed(3)} ms（不含页面渲染）`)
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
   })
 })

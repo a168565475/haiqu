@@ -2,7 +2,8 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/boms'
-import * as productsApi from '@/api/products'
+import { fetchProductCatalogSelectionOptions } from '@/api/productCatalog'
+import ProductCatalogSelection from '@/components/productCatalog/ProductCatalogSelection.vue'
 import BomEditorView from './BomEditorView.vue'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -13,7 +14,7 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { bomId: 'b1' } }), us
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (key: string) => auth.editable || key === 'boms.view_bom', moduleCan: () => auth.editable }) }))
 vi.mock('@/api/boms', async original => ({ ...await original<typeof import('@/api/boms')>(), fetchBomForEdit: vi.fn(), confirmBomProduct: vi.fn() }))
 vi.mock('@/api/productionData', async original => ({ ...await original<typeof import('@/api/productionData')>(), fetchAllProductionDataRecords: vi.fn().mockResolvedValue([]) }))
-vi.mock('@/api/products', async original => ({ ...await original<typeof import('@/api/products')>(), fetchProductOptions: vi.fn() }))
+vi.mock('@/api/productCatalog', async original => ({ ...await original<typeof import('@/api/productCatalog')>(), fetchProductCatalogSelectionOptions: vi.fn() }))
 
 const record = {
   id: 'b1', bom_number: 'BOM0000775', version_number: 1, status: 'PENDING_CONFIRMATION',
@@ -28,23 +29,30 @@ const record = {
   configured_field_labels: {}, is_order_quantity_outdated: false, is_order_product_outdated: false,
 }
 const versioned = (overrides = {}) => ({ data: { ...record, ...overrides }, etag: 'v1' })
-function open() {
+function open(realCatalog = false) {
   return shallowMount(BomEditorView, { attachTo: document.body, global: { plugins: [ElementPlus], renderStubDefaultSlot: true,
-    stubs: { BomProductInfoDialog: false, BomProductOverview: false, BomQuantityCompareCard: false, BomSectionSidebar: false, BomProductConfirmationDialogs: false, ElButton: false, ElInput: false, ElTableColumn: { template: '<div />' } } } })
+    stubs: { ...(realCatalog ? { InquiryProductDialog: false, ProductCatalogSelection: false } : {}), BomProductInfoDialog: false, BomProductOverview: false, BomQuantityCompareCard: false, BomSectionSidebar: false, BomProductConfirmationDialogs: false, ElButton: false, ElInput: false, ElTableColumn: { template: '<div />' } } } })
 }
 beforeEach(() => {
   vi.clearAllMocks(); auth.editable = true
   vi.mocked(api.fetchBomForEdit).mockResolvedValue(versioned() as never)
-  vi.mocked(productsApi.fetchProductOptions).mockResolvedValue({ categories: [], units: [], items: [] })
+  vi.mocked(fetchProductCatalogSelectionOptions).mockResolvedValue({ categories: [], names: [], products: [], units: [] })
 })
 
 describe('BOM 编辑页页签与核对集成', () => {
+  it.each([['PENDING_CONFIRMATION', '待确认'], ['VERIFIED', '已确认']])('状态 %s 显示为 %s', async (status, label) => {
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue(versioned({ status }) as never)
+    const wrapper = open(); await flushPromises()
+    try {
+      expect(wrapper.get('.editor-status-tag').text()).toBe(label)
+    } finally { wrapper.unmount() }
+  })
   it('打印保留所有分区和当前未保存输入，不调用保存接口', async () => {
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
     const wrapper = open(); await flushPromises()
     try {
       const vm = wrapper.vm as unknown as { sections: Array<{ title: string; lines: Array<{ part_name: string }> }> }
-      vm.sections[0]!.lines[0]!.part_name = '本地未保存部件'
+      vm.sections[0]!.lines.push({ part_name: '本地未保存部件' })
       await wrapper.findAll('button').find(button => button.text() === '预览打印')!.trigger('click')
       expect(print).toHaveBeenCalledOnce()
       const document = wrapper.findComponent(BomPrintDocument)
@@ -62,7 +70,7 @@ describe('BOM 编辑页页签与核对集成', () => {
       const reason = wrapper.get('input[placeholder="填写数量差异确认原因"]')
       await reason.setValue('本次核对说明')
       const vm = wrapper.vm as unknown as { sections: Array<{ lines: Array<{ component_name: string }> }> }
-      vm.sections[0]!.lines[0]!.component_name = '未保存的床架'
+      vm.sections[0]!.lines.push({ component_name: '未保存的床架' })
       await product.trigger('click')
       expect(wrapper.get('#bom-product-panel').isVisible()).toBe(true)
       expect(wrapper.get('#bom-material-panel').isVisible()).toBe(false)
@@ -82,7 +90,7 @@ describe('BOM 编辑页页签与核对集成', () => {
       const dialog = wrapper.findComponent(InquiryProductDialog)
       expect(dialog.props('modelValue')).toBe(true)
       const vm = wrapper.vm as unknown as { sections: Array<{ lines: Array<{ component_name: string }> }> }
-      vm.sections[0]!.lines[0]!.component_name = '本地草稿'
+      vm.sections[0]!.lines.push({ component_name: '本地草稿' })
       vi.mocked(api.confirmBomProduct).mockRejectedValueOnce(new Error('保存失败'))
       dialog.vm.$emit('confirm', { item: { product_id: 'p1', product_color_id: 'color1', material: 'PE' } })
       await flushPromises()
@@ -134,13 +142,15 @@ describe('BOM 编辑页页签与核对集成', () => {
 
   it('字典重试重新读取但不重新打开核对窗口', async () => {
     vi.mocked(api.fetchBomForEdit).mockResolvedValue(versioned({ product_information_confirmed: false }) as never)
-    vi.mocked(productsApi.fetchProductOptions).mockRejectedValueOnce(new Error('字典失败'))
-    const wrapper = open(); await flushPromises()
+    vi.mocked(fetchProductCatalogSelectionOptions).mockRejectedValueOnce(new Error('字典失败'))
+    const wrapper = open(true); await flushPromises()
     try {
       const dialog = wrapper.findComponent(InquiryProductDialog)
-      expect(dialog.props('catalogError')).toContain('字典失败')
-      dialog.vm.$emit('retry-catalog'); await flushPromises()
-      expect(dialog.props('catalogError')).toBe('')
+      const picker = dialog.getComponent(ProductCatalogSelection)
+      expect(picker.get('[role="alert"]').text()).toContain('字典失败')
+      await picker.get('[role="alert"] button').trigger('click'); await flushPromises()
+      expect(fetchProductCatalogSelectionOptions).toHaveBeenCalledTimes(2)
+      expect(picker.find('[role="alert"]').exists()).toBe(false)
       expect(dialog.props('modelValue')).toBe(true)
       expect(api.fetchBomForEdit).toHaveBeenCalledTimes(1)
     } finally { wrapper.unmount() }

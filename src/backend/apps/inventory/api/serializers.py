@@ -3,6 +3,9 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 from apps.boms.api.serializers import BomCatalogSelectionSerializer
+from ..bom_inventory_sections import RAW_SECTIONS, SEMI_SECTIONS, SECTIONS_BY_STOCK_KIND
+from ..pipe_receipt_basis import is_root_receipt
+from ..purchase_receiving_sections import RECEIVING_SELECTIONS
 
 
 from ..models import (
@@ -12,12 +15,26 @@ from ..models import (
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
+    PURCHASE_INBOUND_SECTION_NAMES,
     RecordStatus,
     Warehouse,
     WarehouseLocation,
     WarehouseType,
     WarehouseZone,
 )
+
+
+class MaterialInventorySectionQuerySerializer(serializers.Serializer):
+    stock_kind = serializers.ChoiceField(
+        choices=["RAW", "SEMI"], default="RAW", error_messages={"invalid_choice": "请选择原材料或半成品。"},
+    )
+    bom_section = serializers.ChoiceField(choices=list(dict.fromkeys([*RAW_SECTIONS, *SEMI_SECTIONS])), required=False)
+
+    def validate(self, attrs):
+        section = attrs.get("bom_section")
+        if section and section not in SECTIONS_BY_STOCK_KIND[attrs["stock_kind"]]:
+            raise serializers.ValidationError({"bom_section": "请选择当前库存性质下的 BOM 分区。"})
+        return attrs
 
 
 class WarehouseSerializer(serializers.ModelSerializer):
@@ -37,6 +54,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+        extra_kwargs = {"warehouse_number": {"required": False}}
 
     def validate_warehouse_number(self, value):
         return value.strip().upper()
@@ -247,8 +265,10 @@ class FinishedGoodsOutboundListResponseSerializer(serializers.Serializer):
 
 class MaterialInboundLineInputSerializer(serializers.Serializer):
     purchase_order_line_id = serializers.UUIDField()
+    received_piece_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
     received_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal('0.01'), required=False)
+    received_weight_kg = serializers.DecimalField(max_digits=22, decimal_places=4, min_value=Decimal('0.0001'), required=False)
     zone_id = serializers.UUIDField()
     location_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     expected_remaining_quantity = serializers.DecimalField(
@@ -272,6 +292,7 @@ class MaterialInboundLineInputSerializer(serializers.Serializer):
 
 
 class MaterialInboundInputSerializer(serializers.Serializer):
+    material_section = serializers.ChoiceField(choices=RECEIVING_SELECTIONS, required=False)
     inbound_date = serializers.DateField(default=timezone.localdate)
     remark = serializers.CharField(
         max_length=3000,
@@ -283,15 +304,21 @@ class MaterialInboundInputSerializer(serializers.Serializer):
     items = MaterialInboundLineInputSerializer(many=True, allow_empty=False, max_length=100)
 
 
+class ReceivingSectionQuerySerializer(serializers.Serializer):
+    material_section = serializers.ChoiceField(choices=RECEIVING_SELECTIONS, required=False)
+
+
 class SampleMaterialInboundLineInputSerializer(serializers.Serializer):
     purchase_order_line_id = serializers.UUIDField()
+    received_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal('0.0001'), required=False)
+    received_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
     zone_id = serializers.UUIDField()
     location_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     remark = serializers.CharField(max_length=3000, required=False, allow_blank=True, default='')
 
     def to_internal_value(self, data):
         if isinstance(data, dict) and set(data) - set(self.fields):
-            raise serializers.ValidationError({'non_field_errors': ['样品全部入库只提交采购明细及库区，不填写数量或长度。']})
+            raise serializers.ValidationError({'non_field_errors': ['样品全部入库仅支持采购明细、库区及KG管材实收重量和核实根数，不填写米数或长度。']})
         return super().to_internal_value(data)
 
 
@@ -313,7 +340,8 @@ class ManualMaterialInboundLineInputSerializer(serializers.Serializer):
     material_catalog_id = serializers.UUIDField(required=False)
     material_selection = BomCatalogSelectionSerializer(required=False)
     received_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
-    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal('0.01'), required=False)
+    received_weight_kg = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal('0.0001'), required=False)
     zone_id = serializers.UUIDField()
     location_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     received_quantity = serializers.DecimalField(
@@ -350,16 +378,47 @@ class ManualMaterialInboundInputSerializer(serializers.Serializer):
 
 
 class MaterialInboundLineSerializer(serializers.ModelSerializer):
+    measurement_kind = serializers.SerializerMethodField()
+    piece_unit = serializers.SerializerMethodField()
+    quantity_unit = serializers.SerializerMethodField()
+    received_piece_count = serializers.SerializerMethodField()
+    accepted_piece_count = serializers.SerializerMethodField()
+    return_piece_count = serializers.SerializerMethodField()
     warehouse_id = serializers.UUIDField(source="zone.warehouse_id", read_only=True)
     warehouse_number = serializers.CharField(source="zone.warehouse.warehouse_number", read_only=True)
     warehouse_name = serializers.CharField(source="zone.warehouse.warehouse_name", read_only=True)
     zone_name = serializers.CharField(source="zone.zone_name", read_only=True)
     location_number = serializers.CharField(source="location.location_number", read_only=True, allow_null=True)
 
+    def get_measurement_kind(self, instance) -> str:
+        from apps.inventory.hardware_receipts import is_hardware_weight
+        return "HARDWARE_WEIGHT" if is_hardware_weight(instance) else instance.measurement_kind
+
+    def get_piece_unit(self, instance) -> str:
+        return (instance.calculation_snapshot or {}).get("piece_unit", "")
+
+    def get_quantity_unit(self, instance) -> str:
+        return self.get_piece_unit(instance) or instance.source_unit_text_snapshot
+
+    def _has_piece_quantity(self, instance):
+        from apps.inventory.hardware_receipts import KG_UNITS
+        return self.get_measurement_kind(instance) == "HARDWARE_WEIGHT" and self.get_piece_unit(instance).upper() not in KG_UNITS
+
+    def get_received_piece_count(self, instance) -> str | None:
+        return str(instance.received_quantity) if self._has_piece_quantity(instance) else None
+
+    def get_accepted_piece_count(self, instance) -> str | None:
+        return str(instance.accepted_quantity) if self._has_piece_quantity(instance) else None
+
+    def get_return_piece_count(self, instance) -> str | None:
+        return str(instance.return_quantity) if self._has_piece_quantity(instance) else None
+
     class Meta:
         model = MaterialInboundLine
         fields = [
-            "measurement_kind", "raw_bar_length_m", "received_bar_count", "accepted_bar_count", "return_bar_count", "calculation_snapshot",
+            "piece_unit", "quantity_unit", "received_piece_count", "accepted_piece_count", "return_piece_count",
+            "measurement_kind", "raw_bar_length_m", "bar_weight_kg", "received_bar_count", "accepted_bar_count", "return_bar_count",
+            "received_weight_kg", "accepted_weight_kg", "return_weight_kg", "calculation_snapshot",
             "id", "purchase_order_line_id", "raw_material_information_id", "material_catalog_id", "material_selection_snapshot", "zone_id", "location_id", "received_quantity",
             "return_quantity", "accepted_quantity", "remark", "quality_remark",
             "purchase_order_number_snapshot", "production_task_number_snapshot", "sales_order_number_snapshot",
@@ -388,11 +447,17 @@ class ProcurementInboundSupplierSerializer(serializers.Serializer):
     total_amount = serializers.CharField(allow_null=True)
 
 
+class ProcurementReceivingSectionSerializer(serializers.Serializer):
+    id = serializers.ChoiceField(choices=PURCHASE_INBOUND_SECTION_NAMES)
+    name = serializers.CharField()
+
+
 class ProcurementInboundOrderSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     order_number = serializers.CharField()
     batch_number = serializers.IntegerField(allow_null=True, min_value=1)
     source_type = serializers.ChoiceField(choices=["PRODUCTION", "SAMPLE"])
+    production_task_number = serializers.CharField(allow_blank=True)
     source_number = serializers.CharField(allow_blank=True)
     sales_order_number = serializers.CharField(allow_blank=True)
     product_summary = ProcurementInboundProductSerializer(many=True)
@@ -401,10 +466,17 @@ class ProcurementInboundOrderSerializer(serializers.Serializer):
     supplier_names = serializers.ListField(child=serializers.CharField())
     line_count = serializers.IntegerField()
     remaining_line_count = serializers.IntegerField()
+    receiving_sections = ProcurementReceivingSectionSerializer(many=True)
     pending_quality_count = serializers.IntegerField()
     confirmed_batch_count = serializers.IntegerField()
     received_quantity = serializers.CharField()
     return_quantity = serializers.CharField()
+    received_weight_quantity = serializers.CharField(allow_null=True)
+    return_weight_quantity = serializers.CharField(allow_null=True)
+    weight_unit = serializers.BooleanField()
+    quantity_unit = serializers.CharField(allow_blank=True)
+    receipt_progress_percent = serializers.CharField(allow_null=True)
+    receiving_status = serializers.ChoiceField(choices=["PENDING_RECEIPT", "PARTIAL_RECEIVED", "RECEIPT_COMPLETE", "COMPLETED"])
     return_status = serializers.CharField()
     workflow_status = serializers.CharField()
     workflow_status_display = serializers.CharField()
@@ -423,10 +495,14 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    material_section_display = serializers.CharField(read_only=True)
     purchase_order_number = serializers.CharField(source="purchase_order.order_number", read_only=True, allow_null=True)
     total_received_quantity = serializers.SerializerMethodField()
     total_return_quantity = serializers.SerializerMethodField()
     total_accepted_quantity = serializers.SerializerMethodField()
+    total_received_weight_kg = serializers.SerializerMethodField()
+    total_return_weight_kg = serializers.SerializerMethodField()
+    total_accepted_weight_kg = serializers.SerializerMethodField()
     source_type = serializers.SerializerMethodField()
     source_type_display = serializers.SerializerMethodField()
     lines = MaterialInboundLineSerializer(many=True, read_only=True)
@@ -435,24 +511,47 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         model = MaterialInbound
         fields = [
             "id", "inbound_number", "source_type", "source_type_display", "purchase_order_id", "purchase_order_number", "inbound_date",
+            "material_section", "material_section_display",
             "status", "status_display", "remark", "received_by_name", "quality_confirmed_by_name",
             "quality_confirmed_at", "total_received_quantity", "total_return_quantity",
-            "total_accepted_quantity", "created_at", "updated_at", "lines",
+            "total_accepted_quantity", "total_received_weight_kg", "total_return_weight_kg", "total_accepted_weight_kg",
+            "created_at", "updated_at", "lines",
         ]
         read_only_fields = fields
 
     @staticmethod
-    def _sum(instance, field):
-        return sum((getattr(line, field) for line in instance.lines.all()), Decimal("0"))
+    def _sum_quantity(instance, kind):
+        values = (getattr(line, f"{kind}_bar_count" if is_root_receipt(line) else f"{kind}_quantity")
+                  for line in instance.lines.all())
+        total = sum(values, Decimal("0"))
+        return f"{total:.4f}"
 
     def get_total_received_quantity(self, instance):
-        return f"{self._sum(instance, 'received_quantity'):.4f}"
+        return self._sum_quantity(instance, "received")
 
     def get_total_return_quantity(self, instance):
-        return f"{self._sum(instance, 'return_quantity'):.4f}"
+        return self._sum_quantity(instance, "return")
 
     def get_total_accepted_quantity(self, instance):
-        return f"{self._sum(instance, 'accepted_quantity'):.4f}"
+        return self._sum_quantity(instance, "accepted")
+
+    @staticmethod
+    def _sum_weight(instance, field):
+        total = Decimal("0")
+        for line in instance.lines.all():
+            if is_root_receipt(line):
+                return None
+            total += getattr(line, field) or 0
+        return f"{total:.4f}"
+
+    def get_total_received_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "received_weight_kg")
+
+    def get_total_return_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "return_weight_kg")
+
+    def get_total_accepted_weight_kg(self, instance) -> str | None:
+        return self._sum_weight(instance, "accepted_weight_kg")
 
     @staticmethod
     def get_source_type(instance):
@@ -469,12 +568,14 @@ class SampleMaterialInboundResponseSerializer(serializers.Serializer):
 
 class MaterialQualityLineInputSerializer(serializers.Serializer):
     line_id = serializers.UUIDField()
+    return_piece_count = serializers.IntegerField(min_value=0, max_value=99999999999999, required=False)
     expected_received_quantity = serializers.DecimalField(
         max_digits=18,
         decimal_places=4,
         min_value=Decimal("0.0001"),
     )
     return_bar_count = serializers.IntegerField(min_value=0, max_value=99999999999999, required=False)
+    return_weight_kg = serializers.DecimalField(max_digits=22, decimal_places=4, min_value=Decimal("0"), required=False)
     return_quantity = serializers.DecimalField(
         required=False,
         max_digits=18,

@@ -18,6 +18,11 @@ export interface MaterialIssueProduct {
   specification_display?: string; material?: string
 }
 export interface MaterialRequirement {
+  component_kind?: '' | 'CUT_PIECE' | 'SEWN_PART'
+  parent_part_id?: string | null
+  parent_part_name?: string
+  source_kind?: 'STOCK' | 'CUTTING_DIRECT'
+  direct_available_quantity?: string
   material_catalog_id?: string | null
   material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   bom_attributes?: BomAttributeField[]
@@ -26,6 +31,7 @@ export interface MaterialRequirement {
   stock_after?: string | null
   public_stock_allocations?: MaterialIssuePublicAllocation[]
   conversion_snapshot?: {
+    source_kind?: 'STOCK' | 'CUTTING_DIRECT'
     kind: string; part_name?: string; pieces_per_bar?: number; raw_bar_length_m?: string
     whole_bar_required?: boolean; integer_required?: boolean; issued_pieces?: number | string
     raw_deducted_bar_count?: string; raw_deducted_meters?: string
@@ -43,6 +49,7 @@ export interface MaterialRequirement {
   material_number: string; material_name: string; material?: string; part_names?: string[]; specification: string; color: string; unit: string
   required_quantity: string; internal_issued_quantity: string; outsourcing_issued_quantity: string
   pending_issue_quantity?: string
+  product_order_remaining?: string | null
   order_remaining: string; available_stock: string; max_issue_quantity: string; bom_version: number
   warehouse_zones?: string[]
   validation_errors: string[]

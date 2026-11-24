@@ -3,12 +3,14 @@ from .catalog_manual_receipts import lock_manual_request, manual_request_snapsho
 from apps.procurement.catalog_materials import purchase_catalog_selection
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from .pipe_receipts import receipt_pipe_values, quality_pipe_quantities
+from .pipe_receipt_basis import freeze_settlement_weights, is_root_receipt, root_receipt_line_ids
 from apps.organizations.selectors import active_department_employees
 from apps.procurement.pipe_purchase import pipe_meters
+from apps.procurement.set_pricing import material_calculation_snapshot
 from collections import defaultdict
 from decimal import Decimal, ROUND_FLOOR
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -123,6 +125,9 @@ def _active_stock_for_location(location):
 
 @stock_write_transaction
 def save_warehouse(*, instance, validated_data, actor_employee, request):
+    # 新建自动编号与历史手工编号共用事务锁，避免同时读取最大编号后重复分配。
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ["inventory-warehouse-number"])
     current = Warehouse.objects.select_for_update().filter(pk=getattr(instance, "pk", None)).first()
     target = current or Warehouse()
     before = _warehouse_snapshot(target) if current else None
@@ -133,6 +138,10 @@ def save_warehouse(*, instance, validated_data, actor_employee, request):
     if current:
         target.updated_by_employee = actor_employee
     else:
+        if not target.warehouse_number:
+            numbers = Warehouse.objects.filter(warehouse_number__regex=r"^CK[0-9]+$").values_list("warehouse_number", flat=True)
+            next_number = max((int(number[2:]) for number in numbers), default=0) + 1
+            target.warehouse_number = f"CK{next_number:03d}"
         target.created_by_employee = actor_employee
         target.updated_by_employee = actor_employee
     target.full_clean()
@@ -536,7 +545,7 @@ def _lock_purchase_receipt_materials(purchase_lines, existing_identity_rows):
 
 @stock_write_transaction
 def create_material_inbound(*, inbound_date, remark, items, actor_employee, request,
-                            sample_direct=False, client_request_id=None):
+                            sample_direct=False, client_request_id=None, material_section=None):
     from apps.procurement.source_access import purchase_order_access
     from apps.production_tasks.selectors import accessible_production_tasks
     if inbound_date > timezone.localdate():
@@ -547,17 +556,20 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     # 与采购完成、品质确认统一先锁采购单，避免并发时读到过期状态。
     order_ids = PurchaseOrderLine.objects.filter(pk__in=line_ids).values_list("purchase_order_id", flat=True)
     list(PurchaseOrder.objects.select_for_update().filter(pk__in=order_ids).order_by("id"))
-    locked_lines = list(
+    locked_queryset = (
         PurchaseOrderLine.objects.select_for_update(of=("self",))
-        .select_related("purchase_order", "purchase_order__production_task", "supplier")
+        .select_related("purchase_order", "purchase_order__production_task", "purchase_order__purchase_group", "supplier")
         .filter(purchase_order_access(accessible_production_tasks(request).values_list("id", flat=True), request, "purchase_order__"),
                 pk__in=line_ids, purchase_order__archived_at__isnull=True)
         .order_by("id")
     )
+    from .purchase_receiving_sections import can_start_receiving, resolve_receiving_section, with_receiving_section
+    locked_lines = list(locked_queryset if sample_direct else with_receiving_section(locked_queryset))
     if len(locked_lines) != len(line_ids):
         raise ValidationError({"items": "部分采购明细不存在。"})
     if any((line.purchase_order.source_type == 'SAMPLE') != sample_direct for line in locked_lines):
         raise Conflict('样品采购请使用全部入库；普通采购仍须收货并完成品质确认。')
+    receipt_section = "" if sample_direct else resolve_receiving_section(request, locked_lines, material_section)
     line_map = {line.pk: line for line in locked_lines}
     existing_identity_rows = list(
         MaterialInboundLine.objects.filter(
@@ -604,6 +616,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
 
     # 待检批次按到货量占用采购余额；已质检批次只按合格量占用，退货数量可重新收货。
     received_totals = material_received_totals(line_ids)
+    root_lines = root_receipt_line_ids(locked_lines)
+    ordered_quantities = {line.pk: line.actual_bar_count if line.pk in root_lines else line.actual_purchase_quantity for line in locked_lines}
     completed_return_line_ids = set(
         PurchaseReturnLine.objects.filter(
             inbound_line__purchase_order_line_id__in=line_ids,
@@ -626,6 +640,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     )
     submitted_totals = {}
     expected_values = {}
+    remarked_lines = set()
     for item in items:
         line_id = item["purchase_order_line_id"]
         line = line_map[line_id]
@@ -638,7 +653,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             and line_id in completed_return_line_ids
             and line_id not in open_return_line_ids
         )
-        if line.purchase_order.status != PurchaseOrderStatus.PURCHASING and not can_replenish_completed_return:
+        if not can_start_receiving(line.purchase_order) and not can_replenish_completed_return:
             raise Conflict(
                 f"采购单 {line.purchase_order.order_number} 必须处于采购中；已完成单仅允许补收已完成退货的数量。"
             )
@@ -647,21 +662,34 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         if not line.source_unit_text.strip():
             raise ValidationError({"items": f"采购单第 {line.line_number} 行缺少单位。"})
         current_received = Decimal(received_totals.get(line_id, 0))
-        current_remaining = line.actual_purchase_quantity - current_received
+        current_remaining = ordered_quantities[line_id] - current_received
         expected = item["expected_remaining_quantity"]
         if expected != current_remaining:
             raise Conflict(f"采购单第 {line.line_number} 行剩余数量已变化，请刷新后重试。")
+        if current_remaining <= 0:
+            raise ValidationError({"items": f"采购单第 {line.line_number} 行已收齐。"})
         if line_id in expected_values and expected_values[line_id] != expected:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
-        item['_pipe_values'] = (catalog_receipt_values(purchase_line=line, item=item) if line.material_catalog_id
-                                else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode))
-        pipe_material = item['_pipe_values'].get('raw_material_information')
+        by_roots = line_id in root_lines
+        receipt_values = (catalog_receipt_values(purchase_line=line, item=item, by_roots=by_roots) if line.material_catalog_id
+                          else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line, by_roots=by_roots), stock_mode))
+        if "calculation_snapshot" in receipt_values:
+            receipt_values["calculation_snapshot"] = material_calculation_snapshot(receipt_values["calculation_snapshot"])
+        item['_pipe_values'] = receipt_values
+        pipe_material = receipt_values.get('raw_material_information')
         if pipe_material is not None and pipe_material.pk != purchase_materials[line.pk].pk:
             raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
         if item.get('received_quantity') is None:
             raise ValidationError({'received_quantity': '请填写到货数量。'})
-        submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + item["received_quantity"]
+        submitted_quantity = receipt_values["received_bar_count"] if by_roots else (
+            item["received_weight_kg"]
+            if line.source_unit_text in {"KG", "kg", "千克"} and item.get("received_weight_kg") is not None
+            else item["received_quantity"]
+        )
+        submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + submitted_quantity
+        if item.get("remark"):
+            remarked_lines.add(line_id)
 
         zone = zone_map[item["zone_id"]]
         if (
@@ -677,18 +705,23 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             if location.status != RecordStatus.ACTIVE or location.zone_id != zone.pk:
                 raise Conflict("入库库位必须是所选库区下的正常库位。")
 
+    # 同一采购明细可拆分到多个库位，按本批合计判断是否超收。
     for line_id, submitted in submitted_totals.items():
+        remaining = expected_values[line_id]
+        if submitted <= remaining:
+            continue
         line = line_map[line_id]
-        current_received = Decimal(received_totals.get(line_id, 0))
-        if current_received + submitted > line.actual_purchase_quantity:
-            remaining = line.actual_purchase_quantity - current_received
+        if sample_direct or line.purchase_order.status == PurchaseOrderStatus.COMPLETED:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行最多还能入库 {remaining}。"})
+        if line_id not in remarked_lines:
+            raise ValidationError({"items": f"采购单第 {line.line_number} 行超出待收量，请填写该行备注。"})
 
     inbound = MaterialInbound.objects.create(
         stock_mode=stock_mode,
         inbound_number=next_business_number("MATERIAL_INBOUND", business_date=inbound_date),
         purchase_order_id=purchase_order_ids.pop(),
         inbound_date=inbound_date,
+        material_section=receipt_section,
         status=MaterialInboundStatus.CONFIRMED if sample_direct else MaterialInboundStatus.PENDING_QUALITY,
         client_request_id=client_request_id,
         remark=remark,
@@ -738,6 +771,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         after_data={
             "inbound_number": inbound.inbound_number,
             "inbound_date": inbound.inbound_date,
+            "material_section": inbound.material_section,
             "line_count": len(created),
             "total_quantity": str(sum((line.received_quantity for line in created), Decimal("0"))),
         },
@@ -838,6 +872,7 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
             category__status="ACTIVE",
             unit__archived_at__isnull=True,
             unit__status="ACTIVE",
+            unit__catalog_owner__isnull=True,
         )
         .order_by("id")
     )
@@ -917,15 +952,17 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
                 material_selection_snapshot=selected, calculation_snapshot=item["calculation_snapshot"],
                 **({"measurement_kind": "PIPE", "raw_bar_length_m": item["raw_bar_length_m"],
                     "received_bar_count": item["received_bar_count"], "accepted_bar_count": item["received_bar_count"],
-                    "return_bar_count": 0} if selected["category_key"] == "TUBE" else {}),
+                    "return_bar_count": 0, "received_weight_kg": item["received_weight_kg"],
+                    "accepted_weight_kg": item["received_weight_kg"], "return_weight_kg": Decimal("0")}
+                   if selected["category_key"] == "TUBE" else {}),
                 zone=zone_map[item["zone_id"]], location=location_map.get(item.get("location_id")),
                 received_quantity=item["received_quantity"], accepted_quantity=item["received_quantity"],
                 return_quantity=Decimal("0"), remark=item.get("remark", ""),
                 section_type_snapshot="PROFILE" if selected["category_key"] == "TUBE" else "GENERAL",
                 section_title_snapshot=item["section_title"], category_snapshot=item["section_title"],
                 material_snapshot=attrs.get("material", ""), part_name_snapshot=selected["name"],
-                specification_snapshot=item["specification"][:500], source_unit_text_snapshot="米" if selected["category_key"] == "TUBE" else selected["unit_name"],
-                purchased_quantity_snapshot=item["received_quantity"],
+                specification_snapshot=item["specification"][:500], source_unit_text_snapshot="KG" if selected["category_key"] == "TUBE" else selected["unit_name"],
+                purchased_quantity_snapshot=item["received_weight_kg"] if selected["category_key"] == "TUBE" else item["received_quantity"],
                 material_pinyin_search=build_pinyin_search(selected["display_name"]),
             ))
             continue
@@ -965,8 +1002,8 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
             part_name_snapshot=material.material_name,
             specification_snapshot=material.specification,
             raw_material_snapshot=material.material,
-            source_unit_text_snapshot='米' if pipe_values else material.unit.unit_name,
-            purchased_quantity_snapshot=quantity,
+            source_unit_text_snapshot='KG' if pipe_values.get('received_weight_kg') is not None else ('米' if pipe_values else material.unit.unit_name),
+            purchased_quantity_snapshot=pipe_values.get('received_weight_kg') if pipe_values.get('received_weight_kg') is not None else quantity,
             material_pinyin_search=build_pinyin_search(search_text),
         ))
 
@@ -1100,7 +1137,12 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     prepared = []
     for item in items:
         line = line_map[item["line_id"]]
-        if item["expected_received_quantity"] != line.received_quantity:
+        expected_received = line.received_bar_count if is_root_receipt(line) else (
+            line.received_weight_kg
+            if line.source_unit_text_snapshot in {"KG", "kg", "千克"} and line.received_weight_kg is not None
+            else line.received_quantity
+        )
+        if item["expected_received_quantity"] != expected_received:
             raise Conflict(f"第 {line.purchase_order_line.line_number} 行到货数量已变化，请刷新后重试。")
         return_quantity = quality_pipe_quantities(line, item)
         if return_quantity < 0 or return_quantity > line.received_quantity:
@@ -1115,10 +1157,12 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
         line.quality_remark = item.get("quality_remark", "")
         if line.material_catalog_id:
             validate_catalog_inbound(line)
-        elif accepted_quantity > 0 and line.measurement_kind != 'PIPE':
+        elif (accepted_quantity > 0 or ((line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+                and line.accepted_weight_kg is not None and line.accepted_weight_kg > 0)) and line.measurement_kind != 'PIPE':
             validate_inbound_stock_identity(line)
         prepared.append(line)
 
+    freeze_settlement_weights(prepared, (row for row in locked_purchase_lines if row.inbound.status == MaterialInboundStatus.CONFIRMED))
     total_return = Decimal("0")
     total_accepted = Decimal("0")
     for line in prepared:
@@ -1128,6 +1172,8 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
                 "return_bar_count", "accepted_bar_count",
                 "return_quantity",
                 "accepted_quantity",
+                "return_weight_kg", "accepted_weight_kg",
+                "calculation_snapshot",
                 "quality_remark",
                 "updated_at",
             ]
@@ -1140,12 +1186,16 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     inbound.quality_confirmed_at = timezone.now()
     inbound.save(update_fields=["status", "quality_confirmed_by_employee", "quality_confirmed_at", "updated_at"])
     generate_quality_returns(inbound=inbound, lines=locked_lines, actor_employee=actor_employee, request=request)
+    if inbound.purchase_order_id:
+        from apps.finance.purchase_payable_services import create_payables_for_inbound
+        create_payables_for_inbound(inbound_id=inbound.pk, actor_employee=actor_employee, request=request)
     binding_by_line = {binding.purchase_order_line_id: binding for binding in bindings}
     for line in sorted(
         locked_lines,
         key=lambda item: (str(item.raw_material_information_id), str(item.zone_id), str(item.pk)),
     ):
-        if line.accepted_quantity > 0:
+        if line.accepted_quantity > 0 or ((line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT"
+                and line.accepted_weight_kg is not None and line.accepted_weight_kg > 0):
             credit_confirmed_inbound_line(line=line, actor_employee=actor_employee)
         binding = binding_by_line.get(line.purchase_order_line_id)
         if binding and line.accepted_quantity > 0:
@@ -1186,7 +1236,16 @@ def _inspection_quantities(lines):
     # 不混加根、米、件等不同单位；历史缺失根数仍按保存的米数说明。
     quantities = {}
     for line in lines:
-        if line.measurement_kind == "PIPE" and line.accepted_bar_count is not None and line.return_bar_count is not None:
+        if (line.calculation_snapshot or {}).get("measurement_kind") == "HARDWARE_WEIGHT":
+            unit = line.calculation_snapshot.get("piece_unit") or "（个数单位未记录）"
+            accepted, returned = line.accepted_quantity, line.return_quantity
+            if unit.upper() in {"KG", "千克", "公斤"}:
+                unit = "KG"
+            else:
+                weights = quantities.setdefault("KG", [Decimal("0"), Decimal("0")])
+                weights[0] += line.accepted_weight_kg or Decimal("0")
+                weights[1] += line.return_weight_kg or Decimal("0")
+        elif line.measurement_kind == "PIPE" and line.accepted_bar_count is not None and line.return_bar_count is not None:
             unit, accepted, returned = "根", line.accepted_bar_count, line.return_bar_count
         else:
             unit = ("米（历史根数未记录）" if line.measurement_kind == "PIPE"

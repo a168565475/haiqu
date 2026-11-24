@@ -62,7 +62,9 @@ def synchronize_pipe_material(line, *, bom, actor_employee, request, sources, ha
         return
     try:
         plan = pipe_plan(cutting_length_mm=line.length_value, pieces_per_product=line.unit_consumption,
-                         pieces_per_bar=raw["tube_cut_piece_count"], order_quantity=bom.order_quantity)
+                         pieces_per_bar=raw["tube_cut_piece_count"], order_quantity=bom.order_quantity,
+                         source_purchase_allowance_percent=raw.get("source_purchase_allowance_percent"),
+                         source_raw_bar_length_m=raw.get("source_raw_bar_length_m"))
     except MaterialFlowValueError as error:
         raise ValidationError({"sections": f"{label}：{error}"}) from error
     length_mm = Decimal(plan["raw_bar_length_m"]) * 1000

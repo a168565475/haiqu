@@ -25,7 +25,7 @@ from apps.workshop_config.selectors import active_employees
 
 from ..material_flow import pipe_requirement_rows, ordinary_pending_stock_quantities, ordinary_available_stock
 from ..models import MaterialIssueStatus, OrderMaterialRequirement
-from ..requirements import build_requirement_specs
+from ..requirements import build_requirement_specs, product_material_usage
 from ..scopes import (
     WORKSHOP_MATERIAL_SECTION_CODES,
     filter_blockers_for_scope,
@@ -351,11 +351,16 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             public_stock = current_issue.stock_mode == "PUBLIC_V2"
             exclude_issue_id = current_issue.pk
             allowed_section_codes = material_section_codes_for_issue(current_issue)
+            from ..scopes import issue_plan_category
+            plan_category = issue_plan_category(current_issue)
         else:
             plan_category = request.query_params.get("plan_category")
             allowed_section_codes = material_section_codes_for_workshop(workshop.name, plan_category)
         if allowed_section_codes is None:
             raise ValidationError({"plan_category": "作业计划类型与领料车间不一致或暂未开放生产领料。"})
+        from ..scopes import cutting_source_line_ids, raw_line_allowed_for_plan, semi_plan_category
+        cutting_sources = cutting_source_line_ids(product_line_id)
+        source_plan_category = semi_plan_category(workshop.name, plan_category)
         _, specs, blockers, revision_hash = build_requirement_specs(task.pk)
         blockers = filter_blockers_for_scope(
             blockers,
@@ -383,31 +388,33 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             if balance.zone.zone_name not in zones:
                 zones.append(balance.zone.zone_name)
         pending_raw, _ = pending_issue_quantities(requirement_ids=[item["id"] for item in specs], exclude_issue_id=exclude_issue_id)
+        used_by_product = product_material_usage(product_line_id, existing.keys(), exclude_issue_id=exclude_issue_id)
         public_pending = ordinary_pending_stock_quantities(stock_material_ids, exclude_issue_id=exclude_issue_id)
         rows = []
         for spec in specs:
             if spec["section_code"] not in allowed_section_codes:
                 continue
-            if not any(item["product_line"].pk == product_line_id for item in spec["contributions"]):
+            contributions = [item for item in spec["contributions"] if item["product_line"].pk == product_line_id]
+            if not any(raw_line_allowed_for_plan(
+                    item['bom_line'].pk, spec['section_code'], source_plan_category, cutting_sources)
+                    for item in contributions):
                 continue
             current = existing.get(spec["id"])
             internal = current.internal_issued_quantity if current else 0
             outsourcing = current.outsourcing_issued_quantity if current else 0
             pending = pending_raw.get(spec["id"], 0)
             remaining = spec["required_quantity"] - internal - outsourcing - pending
+            product_remaining = sum(item["quantity"] for item in contributions) - used_by_product[spec["id"]]
             stock = ordinary_available_stock(spec["raw_material"].pk, spec["unit"].pk)
             stock_pending = public_pending.get((spec["raw_material"].pk, spec["unit"].pk), 0)
             material = spec["raw_material"]
             part_names = list(dict.fromkeys(
                 (item["bom_line"].part_name or item["bom_line"].material or "").strip()
-                for item in spec["contributions"]
-                if item["product_line"].pk == product_line_id
-                and (item["bom_line"].part_name or item["bom_line"].material or "").strip()
+                for item in contributions if (item["bom_line"].part_name or item["bom_line"].material or "").strip()
             ))
             bom_attributes = merge_bom_attribute_fields(
                 bom_attribute_fields(item["bom_line"])
-                for item in spec["contributions"]
-                if item["product_line"].pk == product_line_id
+                for item in contributions
             )
             rows.append(
                 {
@@ -427,6 +434,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                     "outsourcing_issued_quantity": str(outsourcing),
                     "pending_issue_quantity": str(pending),
                     "order_remaining": str(max(remaining, 0)),
+                    "product_order_remaining": str(max(product_remaining, 0)),
                     "available_stock": str(stock),
                     "max_issue_quantity": str(max(stock - stock_pending, 0)),
                     "warehouse_zones": stock_zones.get((material.pk, spec["unit"].pk), []),
@@ -443,7 +451,9 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         from ..catalog_requirements import catalog_requirement_rows
         catalog_rows, catalog_blockers = catalog_requirement_rows(task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
         blockers.extend(item for item in catalog_blockers if item["section_code"] in allowed_section_codes)
-        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes]
+        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes
+            and raw_line_allowed_for_plan(_uuid(row['conversion_snapshot']['bom_line_id'], 'bom_line_id'),
+                row['section_code'], source_plan_category, cutting_sources)]
         if public_stock:
             rows.extend(catalog_rows)
         elif catalog_rows:
@@ -451,8 +461,10 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         if public_stock:
             if "SEMI" in allowed_section_codes:
                 from ..public_semi_requirements import public_semi_requirement_rows
+                from ..scopes import semi_plan_category
                 semi_rows, semi_blockers = public_semi_requirement_rows(
-                    task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
+                    task.pk, product_line_id, exclude_issue_id=exclude_issue_id,
+                    plan_category=semi_plan_category(workshop.name, plan_category))
                 rows.extend(semi_rows)
                 blockers.extend(semi_blockers)
             for row in rows:
@@ -508,6 +520,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 "required_quantity": str(item["quantity"]), "internal_issued_quantity": "0",
                 "outsourcing_issued_quantity": "0", "pending_issue_quantity": str(item["pending"]),
                 "order_remaining": str(remaining), "available_stock": str(item["quantity"]),
+                "product_order_remaining": None,
                 "max_issue_quantity": str(remaining), "bom_version": component.section.bom.version_number,
                 "completed_craft": balance.completed_craft.name,
                 "warehouse_zone": f"{balance.zone.warehouse.warehouse_name} / {balance.zone.zone_name}",

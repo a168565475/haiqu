@@ -5,6 +5,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, connections, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
@@ -18,6 +19,7 @@ from apps.inventory.models import PublicStockBalance, PublicStockMovement, Wareh
 from apps.inventory.public_stock_identity import build_pipe_stock_identity, build_semi_finished_identity
 from apps.inventory.public_stock_services import credit_public_stock
 from apps.inventory.tests.test_pipe_stock_foundation import PipeFixture
+from apps.organizations.models import Employee
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.production_scheduling.services import create_schedule
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
@@ -35,6 +37,9 @@ from ..services import confirm_issue, create_issue, preview_issue, return_issue,
 class PublicIssueFixture(PipeFixture):
     def setUp(self):
         super().setUp()
+        self.reviewer_user = get_user_model().objects.create_user(username="public_issue_reviewer")
+        self.reviewer = Employee.objects.create(user=self.reviewer_user, employee_code="PUBLIC_ISSUE_REVIEWER", display_name="公共领料审核员")
+        self.reviewer_user.user_permissions.set(self.user.user_permissions.all())
         self.bom_line.section.section_type = "PROFILE"
         self.bom_line.section.save(update_fields=["section_type"])
         self.bom_line.raw_values.update(tube_shape="圆管", tube_diameter="25", tube_thickness="1.0", tube_coating_color="黑色")
@@ -58,8 +63,8 @@ class PublicIssueFixture(PipeFixture):
         return credit_public_stock(identity=identity, zone=zone, quantity=quantity, source_type="S4_FIXTURE",
             source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee)
 
-    def request(self, issue):
-        return SimpleNamespace(user=self.user, headers={"If-Match": etag_for_instance(issue)})
+    def request(self, issue, *, review=False):
+        return SimpleNamespace(user=self.reviewer_user if review else self.user, headers={"If-Match": etag_for_instance(issue)})
 
     def scope(self):
         return SimpleNamespace(task=self.task, product_line=self.product_line, bom_line=self.bom_line, schedule_product=self.schedule_product)
@@ -113,7 +118,7 @@ class PublicIssueFixture(PipeFixture):
 
     def confirm(self, issue, request_id=None):
         issue.refresh_from_db()
-        return confirm_issue(issue_id=issue.pk, request_id=request_id or uuid.uuid4(), actor_employee=self.employee, request=self.request(issue))
+        return confirm_issue(issue_id=issue.pk, request_id=request_id or uuid.uuid4(), actor_employee=self.reviewer, request=self.request(issue, review=True))
 
     def assert_code(self, code, callback):
         with self.assertRaises(ValidationError) as caught:
@@ -171,7 +176,7 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         self.assertEqual(self.public_pipe.quantity, 10)
         self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(second))
         first.refresh_from_db()
-        return_issue(issue_id=first.pk, reason="调整领料", actor_employee=self.employee, request=self.request(first))
+        return_issue(issue_id=first.pk, reason="调整领料", actor_employee=self.reviewer, request=self.request(first, review=True))
         self.assertEqual(self.submit(second).status, "PENDING_REVIEW")
 
     def test_stock_quantity_is_physical_and_pending_is_displayed_separately(self):

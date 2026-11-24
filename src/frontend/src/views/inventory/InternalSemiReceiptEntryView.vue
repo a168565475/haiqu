@@ -8,9 +8,9 @@ import MetalInternalReceiptView from './MetalInternalReceiptView.vue'
 const route = useRoute()
 const validSource = computed(() => typeof route.query.schedule_product_id === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(route.query.schedule_product_id)
-  && (route.query.plan_category === 'METAL' || route.query.plan_category === 'SEWING'))
+  && (route.query.plan_category === 'METAL' || route.query.plan_category === 'CUTTING' || route.query.plan_category === 'SEWING'))
 const sourceError = computed(() => {
-  const category = route.query.plan_category === 'METAL' ? '金工' : route.query.plan_category === 'SEWING' ? '车缝' : '金工或车缝'
+  const category = route.query.plan_category === 'METAL' ? '金工' : route.query.plan_category === 'SEWING' ? '车缝' : route.query.plan_category === 'CUTTING' ? '裁剪' : '金工、裁剪或车缝'
   return `入库来源参数无效，请从${category}内部计划的产品行进入半成品入库。`
 })
 </script>

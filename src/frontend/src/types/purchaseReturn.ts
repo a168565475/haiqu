@@ -13,6 +13,7 @@ export interface PurchaseReturnLine {
 export interface PurchaseReturn {
   id: string; return_number: string; purchase_order_id: string; order_number: string
   production_task_number: string; inbound_id: string; inbound_number: string
+  purchase_scope?: 'STANDARD' | 'PACKAGING'
   supplier_id: string; supplier_number: string; supplier_name: string
   return_amount: string | null; currency_code: string
   status: ReturnOrderStatus; status_display: string; generated_by_name: string
@@ -21,6 +22,7 @@ export interface PurchaseReturn {
   lines: PurchaseReturnLine[]
 }
 export interface ReturnQuery {
+  purchase_scope?: PurchaseReturn['purchase_scope']
   q?: string; purchase_order_id?: string; supplier_id?: string; status?: ReturnOrderStatus
   page?: number; page_size?: number; ordering?: 'updated_at' | '-updated_at'
 }

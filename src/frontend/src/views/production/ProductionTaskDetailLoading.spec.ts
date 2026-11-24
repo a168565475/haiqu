@@ -12,6 +12,24 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => pe
 vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), fetchProductionTaskOptions: vi.fn(), decideProductionTaskByPmc: vi.fn(), holdProductionTask: vi.fn(), transitionProductionTask: vi.fn(), cancelProductionTask: vi.fn(), finishProductionTask: vi.fn() }))
 
 describe('生产任务详情按需选项', () => {
+  it('原含税未知在详情显示待补，PMC 确认继续提交 null', async () => {
+    const response = await api.fetchProductionTask('one')
+    const data = { ...response.data, includes_tax: null, tax_rate: null, order_date: '2026-11-01', delivery_date: '2026-11-10',
+      followers: [{ id: 'follower', employee_code: 'F1', display_name: '跟单' }] }
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data, etag: 'unknown-tax' })
+    vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue({ employees: [] } as never)
+    vi.mocked(api.decideProductionTaskByPmc).mockResolvedValue({ data, etag: 'confirmed' })
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('待补')
+    const page = wrapper.vm as unknown as { openPmcDialog: (mode: 'CONFIRM') => void; decideByPmc: () => Promise<void>; pmcForm: Record<string, unknown> }
+    page.openPmcDialog('CONFIRM'); await flushPromises()
+    expect(page.pmcForm.includes_tax).toBeNull()
+    Object.assign(page.pmcForm, { planned_start_date: '2026-11-03', planned_end_date: '2026-11-04' })
+    await page.decideByPmc()
+    expect(api.decideProductionTaskByPmc).toHaveBeenCalledWith('one', expect.objectContaining({ includes_tax: null, tax_rate: null }), 'unknown-tax')
+    wrapper.unmount()
+  })
   it.each([['READY', 'production_tasks.start_productiontask', '开始生产'], ['IN_PRODUCTION', 'access_control.cancel_productiontask', '取消任务']] as const)('%s 只显示授权生命周期动作，携带原因和版本', async (status, permission, label) => {
     const response = await api.fetchProductionTask('one')
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data, status, allowed_permissions: [permission], allowed_update_fields: [] } })
@@ -88,15 +106,18 @@ describe('生产任务详情按需选项', () => {
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: { id: 'one', task_number: 'PROD-ONE', status: 'PENDING_VALIDATION', salesperson: { display_name: '业务员' }, products: [], followers: [], delivery_batches: [], current_boms: [], audit_timeline: [] }, etag: 'v1' } as never)
   })
   it.each([
-    ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false],
-    ['VERIFIED', 'ORDER_PURCHASING', true, true],
-    ['VERIFIED', 'NOT_STARTED', true, true],
-    ['VERIFIED', 'ORDER_COMPLETED', false, false],
-    ['VERIFIED', 'ORDER_COMPLETED', true, true],
-  ])('排产按钮遵守 BOM=%s、采购=%s 和权限=%s', async (bomStatus, purchaseStatus, allowed, visible) => {
+    ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false, false],
+    ['VERIFIED', 'ORDER_PURCHASING', true, true, true],
+    ['VERIFIED', 'NOT_STARTED', true, true, true],
+    ['VERIFIED', 'ORDER_COMPLETED', false, true, false],
+    ['VERIFIED', 'ORDER_COMPLETED', true, true, true],
+    ['PARTIAL', 'NOT_STARTED', true, true, true],
+    ['PARTIAL', 'ORDER_COMPLETED', true, false, false],
+    ['VERIFIED', 'ORDER_COMPLETED', true, false, false],
+  ])('排产按钮遵守 BOM=%s、采购=%s、权限=%s 和存在已确认产品=%s', async (bomStatus, purchaseStatus, allowed, hasConfirmedProduct, visible) => {
     permissionState.allowed = Boolean(allowed)
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: {
-      id: 'one', task_number: 'HT26201', status: 'READY', bom_status: bomStatus, purchase_status: purchaseStatus,
+      id: 'one', task_number: 'HT26201', status: 'READY', bom_status: bomStatus, purchase_status: purchaseStatus, has_confirmed_bom_product: hasConfirmedProduct,
       salesperson: { display_name: '业务员' }, products: [], followers: [], current_boms: [], audit_timeline: [],
     }, etag: 'v1' } as never)
     const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
@@ -113,7 +134,7 @@ describe('生产任务详情按需选项', () => {
     expect(files).toHaveLength(2)
     expect(files.map(file => (file.element as HTMLDetailsElement).open)).toEqual([true, false])
     expect(wrapper.find('.compare-table').exists()).toBe(false)
-    expect(wrapper.get('.summary-bar').text()).toContain('62.5000')
+    expect(wrapper.get('.summary-bar').text()).toContain('62.5')
     expect(wrapper.get('.summary-bar').text()).toContain('2 把 / 3 张')
     expect(files[0].text()).toContain('独立包装')
     expect(files[0].text()).toContain('保留备注')

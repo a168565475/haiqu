@@ -479,9 +479,6 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
           <section class="form-section">
             <h3><span>3</span>存放与属性</h3>
             <div class="form-grid">
-              <ElFormItem label="仓库号" prop="warehouse_number" :error="fieldError('warehouse_number')">
-                <ElInput v-model="form.warehouse_number" maxlength="100" placeholder="请输入仓库号" />
-              </ElFormItem>
               <ElFormItem label="仓库名称" prop="warehouse_name" :error="fieldError('warehouse_name')">
                 <ElInput v-model="form.warehouse_name" maxlength="150" placeholder="请输入仓库名称" />
               </ElFormItem>

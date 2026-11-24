@@ -241,6 +241,81 @@ class ScheduleCompleteApiTests(APITestCase):
         self.assertEqual(AuditLog.objects.filter(object_id=self.task.pk, action="COMPLETED").count(), 1)
         self.assertEqual(AuditLog.objects.filter(object_id=self.schedule.pk, action="COMPLETED").count(), 1)
 
+    def test_unscheduled_product_blocks_completion_despite_full_scheduled_progress(self):
+        self.seed_completed_progress()
+        second = ProductionTaskProduct.objects.get(pk=self.line.pk)
+        second.pk = None
+        second.line_number = 2
+        second.save()
+        preview = self.preview()
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertTrue(all(row["percentage"] == 100 for row in preview.data["data"]["progress"].values()))
+        self.assertEqual(preview.data["data"].get("unscheduled_product_count"), 1)
+        response = self.complete()
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("未排产", str(response.data))
+        self.assert_task_unchanged()
+
+    def test_removed_schedule_product_counts_as_unscheduled(self):
+        second = ProductionTaskProduct.objects.get(pk=self.line.pk)
+        second.pk = None
+        second.line_number = 2
+        second.save()
+        remaining_plan = ProductionScheduleProduct.objects.get(pk=self.plan.pk)
+        remaining_plan.pk = None
+        remaining_plan.product_line = second
+        remaining_plan.line_number = 2
+        remaining_plan.save()
+        ProductionScheduleProductCraft.objects.create(
+            schedule_product=remaining_plan, craft=self.internal_craft, craft_type_snapshot="INTERNAL",
+            craft_name_snapshot=self.internal_craft.name, plan_category="METAL",
+        )
+        self.plan.removed_at = timezone.now()
+        self.plan.removed_by_employee = self.employee
+        self.plan.crafts.update(removed_at=self.plan.removed_at, removed_by_employee=self.employee)
+        self.plan.save(update_fields=["removed_at", "removed_by_employee", "updated_at"])
+        preview = self.preview()
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["data"].get("unscheduled_product_count"), 1)
+        response = self.complete()
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("未排产", str(response.data))
+        self.assert_task_unchanged()
+
+    def test_task_finish_cannot_bypass_unscheduled_product_guard(self):
+        second = ProductionTaskProduct.objects.get(pk=self.line.pk)
+        second.pk = None
+        second.line_number = 2
+        second.save()
+        for linked_sales in (False, True):
+            with self.subTest(linked_sales=linked_sales):
+                if linked_sales:
+                    self.link_sales_order()
+                self.task.refresh_from_db()
+                response = self.client.post(
+                    f"/api/v1/production-tasks/{self.task.pk}/finish/",
+                    {"reason": "尝试完成部分排产任务", "actual_quantity": 200, "actual_good_quantity": 200},
+                    format="json", HTTP_IF_MATCH=etag_for_instance(self.task),
+                )
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertIn("未排产", str(response.data))
+                self.assert_task_unchanged()
+
+    def test_void_schedule_does_not_allow_finishing_task(self):
+        self.schedule.record_status = "VOID"
+        self.schedule.void_reason = "测试作废旧计划"
+        self.schedule.voided_at = timezone.now()
+        self.schedule.voided_by_employee = self.employee
+        self.schedule.save()
+        self.task.refresh_from_db()
+        response = self.client.post(
+            f"/api/v1/production-tasks/{self.task.pk}/finish/", {"reason": "尝试使用旧作废计划完成任务"},
+            format="json", HTTP_IF_MATCH=etag_for_instance(self.task),
+        )
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("未排产", str(response.data))
+        self.assert_task_unchanged()
+
     def test_each_percentage_must_be_exactly_one_hundred(self):
         for category in ("MATERIAL", "METAL", "SEWING", "ASSEMBLY"):
             for percentage in (0, 99, None, 101):
@@ -557,6 +632,7 @@ class ScheduleCompleteApiTests(APITestCase):
         self.assertEqual(result["schedule_number"], self.schedule.schedule_number)
         self.assertEqual(response["ETag"], etag_for_instance(self.schedule))
         self.assertEqual(result["schedule_etag"], response["ETag"])
+        self.assertEqual(result["unscheduled_product_count"], 0)
         self.assertEqual(result["task"], {
             "id": str(self.task.pk), "task_number": self.task.task_number, "status": "IN_PRODUCTION",
             "status_display": self.task.get_status_display(), "etag": etag_for_instance(self.task),

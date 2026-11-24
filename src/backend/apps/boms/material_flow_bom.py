@@ -7,8 +7,10 @@ from rest_framework.exceptions import ValidationError
 
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, resolve_bom_line_raw_material, resolve_cutting_fabric_material
 from apps.reference_data.models import FabricMaterial
+from .component_parts import apply_component_quantities, is_cut_piece, is_sewn_part, is_cut_piece_source
 from .material_flow_calculations import (
-    CUTTING_QUANTITY_FIELDS, MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, packaging_quantity, pipe_plan, positive_integer,
+    CUTTING_QUANTITY_FIELDS, PIPE_PURCHASE_ALLOWANCE_MODES, PIPE_PURCHASE_ALLOWANCE_RULES,
+    MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, packaging_quantity, pipe_plan, positive_integer,
 )
 
 PIPE_FIELDS = ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
@@ -18,6 +20,16 @@ PIPE_FIELDS = ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw
 def is_meter_fabric_section(section):
     title = "".join(section.title.split())
     return section.section_type == "FABRIC" and not any(word in title for word in ("裁剪", "裁片")) and any(word in title for word in ("面辅料", "面料", "布料"))
+
+
+def is_meter_raw_cotton_line(line):
+    snapshot = line.material_selection_snapshot or {}
+    return (bool(line.material_catalog_id) and line.section.section_type == "FABRIC"
+            and line.section.title.strip() == "辅料类"
+            and snapshot.get("category_key") == "AUXILIARY"
+            and snapshot.get("template_key") == "COTTON"
+            and snapshot.get("processing_state") == "RAW"
+            and str(snapshot.get("unit_name", "")).strip().lower() in {"米", "m"})
 
 
 def is_pipe_cutting_line(line):
@@ -37,27 +49,38 @@ def cutting_fabric_attributes(source):
 
 
 def inherit_cutting_fabric_attributes(line):
-    if line.section.title.strip() != "裁剪明细" or is_pipe_cutting_line(line):
+    if line.section.title.strip() != "裁剪明细" or is_sewn_part(line) or (not is_cut_piece(line) and is_pipe_cutting_line(line)):
         return
     line.raw_values.pop("cutting_material_original", None)
     source = line.fabric_source_line
     inherited = cutting_fabric_attributes(source)
+    if is_cut_piece(line) and source is not None and not inherited.get("color"):
+        inherited["color"] = str((source.raw_values or {}).get("accessory_color") or "").strip()
     line.material = inherited.get("material", "")
-    if source is not None:
+    if source is not None and not is_cut_piece(line):
         line.specification = source.specification
     line.raw_values["cutting_color"] = inherited.get("color", "")
     line.raw_values["fabric_width"] = inherited.get("width", "")
-    if line.material_catalog_id and line.material_selection_snapshot and source is not None:
+    from .component_catalog import is_component_catalog_reference
+    if (line.material_catalog_id and line.material_selection_snapshot and source is not None
+            and not is_component_catalog_reference(line.material_selection_snapshot)):
         from apps.material_catalog.colors import COLOR_FIELDS
         snapshot = deepcopy(line.material_selection_snapshot)
         attrs = {key: value for key, value in snapshot["attributes"].items()
                  if key not in {"material", "width", "color", "fabric_spec", "specification", "size", "model", "process"}}
         attrs.update(inherited)
+        if is_cut_piece(line):
+            # 新裁片保留实际裁剪尺寸；原布/棉规格只作为来源属性，不能覆盖裁片尺寸。
+            attrs.pop("specification", None)
+            if source.specification:
+                attrs["fabric_spec"] = source.specification
+            if line.specification:
+                attrs["size"] = line.specification
         snapshot["attributes"] = attrs
         for key in COLOR_FIELDS:
             snapshot.pop(key, None)
         source_snapshot = source.material_selection_snapshot or {}
-        if source_snapshot.get("product_color_id"):
+        if any(source_snapshot.get(key) for key in ("product_color_id", "color_card", "color_code")):
             snapshot.update({key: source_snapshot.get(key, "") for key in COLOR_FIELDS})
         snapshot["display_name"] = " / ".join([snapshot["name"], *attrs.values(), snapshot["unit_name"]])
         line.material_selection_snapshot = snapshot
@@ -73,6 +96,19 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                           recalculate_tube_metrics=False, expected_tube_formula_version=None):
     """旧展示字段只是新规则的投影；导入缺参留待补齐，不能猜每根切割支数。"""
     label = f"{line.section.title}第 {line.line_number} 行"
+    raw_values = line.raw_values or {}
+    mode, rule = raw_values.get("purchase_allowance_mode"), raw_values.get("purchase_allowance_rule")
+    if mode not in (None, "") or rule not in (None, ""):
+        if line.section.section_type != "PROFILE":
+            raise ValidationError({"sections": f"{label}采购余量只能填写在管材类。"})
+        if mode not in PIPE_PURCHASE_ALLOWANCE_MODES or (rule not in (None, "") and rule not in PIPE_PURCHASE_ALLOWANCE_RULES):
+            raise ValidationError({"sections": f"{label}采购余量模式或选项无效。"})
+        if mode == "MANUAL" and rule not in PIPE_PURCHASE_ALLOWANCE_RULES:
+            raise ValidationError({"sections": f"{label}手动采购余量必须选择有效选项。"})
+    if require_complete and (line.raw_values or {}).get("import_material_matching_deferred"):
+        raise ValidationError({"sections": f"{label}的导入物料尚未核对，请完成物料匹配后再确认 BOM。"})
+    if apply_component_quantities(line, order_quantity, require_complete=require_complete):
+        return
     if require_complete and line.section.section_type == "PROFILE" and (line.raw_values or {}).get("pipe_source_sync_pending"):
         raise ValidationError({"sections": f"{label}请补齐材质、形状、截面、厚度及切割参数，保存后再确认 BOM。"})
     if require_complete and is_meter_fabric_section(line.section) and (line.raw_values or {}).get("fabric_source_sync_pending"):
@@ -112,25 +148,37 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
             else:
                 inputs_changed = any(positive_integer(value, field) != getattr(line, field)
                                      for field, value in inputs.items())
-                version = 3 if recalculate_pipe or inputs_changed else (line.raw_values or {}).get("pipe_plan_version", 2)
-                snapshot = pipe_plan(**inputs, order_quantity=order_quantity, calculation_version=version)
+                saved_version = (line.raw_values or {}).get("pipe_plan_version", 2)
+                version = 4 if mode or saved_version == 4 else (3 if recalculate_pipe or inputs_changed else saved_version)
+                snapshot = pipe_plan(**inputs, order_quantity=order_quantity, calculation_version=version,
+                    source_purchase_allowance_percent=(line.raw_values or {}).get("source_purchase_allowance_percent"),
+                    source_raw_bar_length_m=(line.raw_values or {}).get("source_raw_bar_length_m"),
+                    purchase_allowance_mode=mode, purchase_allowance_rule=rule)
             for field in PIPE_FIELDS:
                 setattr(line, field, snapshot[field] if snapshot else None)
             line.branch_count = str(snapshot["suggested_bar_count"]) if snapshot else ""
             line.original_material_length = snapshot["raw_bar_length_m"] if snapshot else ""
             line.total_purchase_quantity = snapshot["suggested_purchase_meters"] if snapshot else ""
             line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": line.original_material_length}
+            for field in ("base_purchase_bar_count", "purchase_allowance_bar_count"):
+                line.raw_values.pop(field, None)
             if snapshot:
-                if snapshot.get("calculation_version", 2) == 3:
-                    line.raw_values["pipe_plan_version"] = 3
+                if snapshot.get("calculation_version", 2) in (3, 4):
+                    line.raw_values["pipe_plan_version"] = snapshot["calculation_version"]
+                if snapshot.get("calculation_version") == 4:
+                    line.raw_values.update({field: snapshot[field] for field in (
+                        "base_purchase_bar_count", "purchase_allowance_bar_count",
+                        "purchase_allowance_mode", "purchase_allowance_rule",
+                    )})
                 line.length_value = str(snapshot["cutting_length_mm"])
                 line.unit_consumption = str(snapshot["pieces_per_product"])
                 line.total_consumption = str(snapshot["demand_pieces"])
                 line.raw_values["tube_cut_piece_count"] = str(snapshot["pieces_per_bar"])
             from .tube_metrics import apply_tube_metrics
-            apply_tube_metrics(line, recalculate=recalculate_tube_metrics, require_complete=require_complete,
-                               recalculate_total=previous_bar_count != line.suggested_bar_count,
-                               expected_formula_version=expected_tube_formula_version)
+            if not line.raw_values.get("import_material_matching_deferred") or line.raw_values.get("tube_metrics_manual") is True:
+                apply_tube_metrics(line, recalculate=recalculate_tube_metrics, require_complete=require_complete,
+                                   recalculate_total=previous_bar_count != line.suggested_bar_count,
+                                   expected_formula_version=expected_tube_formula_version)
             line.unit = "根"
         else:
             for field in PIPE_FIELDS:
@@ -160,11 +208,12 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                     quantity = packaging_quantity(units_per_box=units_per_box, order_quantity=order_quantity)
                     line.total_consumption = line.total_purchase_quantity = str(quantity)
                 elif require_complete or not tolerate_legacy:
-                    raise ValidationError({"sections": f"{label}请填写箱数（多少一箱）。"})
+                    raise ValidationError({"sections": f"{label}请填写用量（多少成品用一份）。"})
                 else:
                     line.total_consumption = line.total_purchase_quantity = ""
     except MaterialFlowValueError as error:
-        if not tolerate_legacy:
+        if not tolerate_legacy or any((line.raw_values or {}).get(field) not in (None, "")
+                                     for field in ("source_purchase_allowance_percent", "source_raw_bar_length_m", "purchase_allowance_mode")):
             raise ValidationError({"sections": f"{label}：{error}"}) from error
         for field in PIPE_FIELDS:
             setattr(line, field, None)
@@ -188,6 +237,32 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
 def validate_fabric_links(lines, *, require_complete=False):
     current = {line.pk: line for line in lines}
     for line in lines:
+        if is_cut_piece(line) or is_sewn_part(line):
+            label = "部位" if is_sewn_part(line) else "裁片"
+            source = current.get(line.fabric_source_line_id)
+            if line.fabric_source_line_id:
+                if source is None or source.section.bom_id != line.section.bom_id or not is_cut_piece_source(source):
+                    raise ValidationError({"sections": f"{label}第 {line.line_number} 行须选择本 BOM 保留的面料或辅料原料。"})
+                line.fabric_source_line = source
+            if require_complete:
+                if source is None:
+                    # 旧部位可不选归属面布；裁片仍须有实际裁剪原料。
+                    if is_sewn_part(line):
+                        continue
+                    raise ValidationError({"sections": f"裁片第 {line.line_number} 行请选择来源原料。"})
+                if source.material_catalog_id:
+                    from apps.material_catalog.saved_selection import validate_saved_material
+                    validate_saved_material(source.material_selection_snapshot, material_catalog_id=source.material_catalog_id)
+                else:
+                    material, _ = resolve_bom_line_raw_material(source)
+                    if (material is None or material.item_type != "MATERIAL" or material.unit.status != "ACTIVE"
+                            or material.unit.archived_at is not None):
+                        raise ValidationError({"sections": f"{label}第 {line.line_number} 行的来源尚未关联有效库存原料。"})
+                # 确认时与后续库存使用相同实物属性校验，避免确认后才发现原料规格缺失。
+                if is_cut_piece(line):
+                    from apps.inventory.part_flow_identity import _piece_properties
+                    _piece_properties(line)
+            continue
         if line.section.title.strip() != "裁剪明细":
             if line.fabric_source_line_id:
                 raise ValidationError({"sections": "只有裁剪明细可以设置来源面料。"})
@@ -195,13 +270,14 @@ def validate_fabric_links(lines, *, require_complete=False):
         if line.fabric_source_line_id:
             source = current.get(line.fabric_source_line_id)
             if (source is None or source.section.bom_id != line.section.bom_id
-                    or not is_meter_fabric_section(source.section)):
-                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行须选择本 BOM 保留的面料行。"})
+                    or not (is_meter_fabric_section(source.section) or is_meter_raw_cotton_line(source))):
+                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行须选择本 BOM 保留的面料或米制棉类原料行。"})
             line.fabric_source_line = source
             if source.material_catalog_id:
                 snapshot = source.material_selection_snapshot
-                if snapshot.get("category_key") != "FABRIC" or snapshot.get("processing_state") != "RAW":
-                    raise ValidationError({"sections": "来源面料必须是本BOM的基础面料。"})
+                if not (is_meter_raw_cotton_line(source) or (
+                        snapshot.get("category_key") == "FABRIC" and snapshot.get("processing_state") == "RAW")):
+                    raise ValidationError({"sections": "来源必须是本 BOM 的基础面料或米制棉类原料。"})
                 continue
             material, error = resolve_cutting_fabric_material(line)
             if error or material is None:

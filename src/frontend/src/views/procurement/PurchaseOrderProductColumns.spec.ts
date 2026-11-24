@@ -74,6 +74,21 @@ describe('采购来源产品列', () => {
     wrapper = undefined
   })
 
+  it('选中产品后同时显示 BOM 确认和具体用料的阻断原因，相同提示只显示一次', async () => {
+    const confirmation = { code: 'BOM_NOT_VERIFIED', message: '该产品最新 BOM 尚未校验。' }
+    const quantity = { code: 'BOM_PURCHASE_QUANTITY_INVALID', message: '五金件第 7 行缺少单个材料重量。' }
+    const blocked = sourceWithProduct()
+    blocked.can_create = false
+    blocked.has_creatable_bom = false
+    blocked.blockers = [confirmation, quantity, confirmation]
+    vi.mocked(api.fetchPurchaseOrderSource).mockResolvedValueOnce(blocked)
+
+    const page = await selectOrder()
+    const caption = page.get('.product-selection-caption').text()
+    expect(caption).toContain(quantity.message)
+    expect(caption.split(confirmation.message)).toHaveLength(2)
+  })
+
   it('保留产品编码，移除重复的产品编号，保持九列顺序', async () => {
     const page = await selectOrder()
     expect(page.get('.selected-product-row--heading').findAll('span').map(cell => cell.text())).toEqual([

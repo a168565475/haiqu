@@ -8,12 +8,14 @@
 
 1. [项目执行约定](../../AGENTS.md)
 2. 本入口页
-3. [正式设计规范](../../DESIGN.md)
+3. [正式设计规范](../../DESIGN.md)（仅 UI 任务时，按相关章节查阅，不要求通读）
 4. 与任务相关的 PRD、开发报告和验收记录
 5. 实际前端、后端、模型、迁移和 API 代码
 6. 与当前任务对应的最新 QA 证据
 
 旧聊天不能作为唯一事实来源。聊天中未确认的内容只能作为候选，不能直接当作项目规则。
+
+涉及页面、弹窗、表单、表格或打印修改时，按问题类型查阅 [UI 改动错误与防复发记录](ui_change_lessons.md)。它用于复查同类错误，不替代正式设计规范，也不要求每次通读。
 
 ## 2. 项目是什么
 
@@ -61,7 +63,7 @@ HAIQU ERP 面向户外用品外贸及工厂业务，逐步建设客户与销售�
 | [询盘](inquiry_module.md) | 询盘来源、产品需求和处理进度 | `src/frontend/src/views/inquiries` | `src/backend/apps/inquiries` | 已建立模块知识卡；删除保护和跨模块回写仍需按证据核对 |
 | [报价](quotation_module.md) | 报价单、报价版本和报价相关记录 | `src/frontend/src/views/quotations` | `src/backend/apps/quotations` | 已建立模块知识卡；发送、接受和转单仍需按证据核对 |
 | [样品](sample_module.md) | 样品申请、打样、费用、物流和客户反馈 | `src/frontend/src/views/samples`、`components/samples` | `src/backend/apps/samples` | 已建立模块知识卡；材料采购、到料、领料和库存扩展与 CRM 分层记录 |
-| [产品与物料](product_material_module.md) | 产品资料、BOM、原料和物料业务 | `src/frontend/src/views/products`、`boms` | `src/backend/apps/products`、`boms`、`material_issues` | 已建立知识卡；产品/原料/BOM数量边界仍需按证据核对 |
+| [产品与物料](product_material_module.md) | 产品资料、独立产品管理、BOM、原料和物料业务 | `src/frontend/src/views/products`、`boms`；新产品管理 `/product-catalog` | `src/backend/apps/products`、`product_catalog`、`boms`、`material_issues` | 新产品管理保留旧身份与下游边界；2026-10-16导入与验收进度见[专项记录](../superpowers/reports/product-catalog-delivery-20261016.md) |
 | [采购](procurement_module.md) | 供应商、采购订单、采购来源和采购履约 | `src/frontend/src/views/procurement` | `src/backend/apps/procurement` | 已建立模块知识卡；采购到货和样品采购变更仍需按证据核对 |
 | [库存](inventory_module.md) | 仓库、入库、库存余额、库存移动和出库 | `src/frontend/src/views/inventory` | `src/backend/apps/inventory` | 已建立模块知识卡；旧模式、公共库存和样品库存边界分开记录 |
 | [销售订单](sales_order_module.md) | 销售订单、交付批次和订单完结 | `src/frontend/src/views/salesOrders` | `src/backend/apps/sales_orders` | 已建立模块知识卡；下游生产、BOM、采购边界单独记录 |
@@ -99,7 +101,7 @@ HAIQU ERP 面向户外用品外贸及工厂业务，逐步建设客户与销售�
 ### 尚未建立或尚未确认
 
 - 产品与物料知识卡已建立；产品、原料、BOM 与采购库存的数量和引用边界仍需持续核对。
-- 经验、研究、发布和工作日志尚未形成独立知识块；当前的任务进度、技术债和证据缺口先集中记录在[状态与待办队列](project_status_and_queue.md)，不重复拆文件。
+- UI 改动错误与防复发经验已形成[专项记录](ui_change_lessons.md)；其他经验、研究、发布和工作日志尚未形成独立知识块。任务进度、技术债和证据缺口继续集中记录在[状态与待办队列](project_status_and_queue.md)，不重复拆文件。
 - 历史聊天不能视为已全部扫描；当前知识库只依据已访问的项目文件、代码、现有记录和用户已确认决定。
 - 设计规范确认不代表真实 ERP 页面已经全部同步或验收。
 - 客户删除门禁、建档校验、权限和文件安全等差异目前只完成记录，尚未完成代码修复和运行验收。

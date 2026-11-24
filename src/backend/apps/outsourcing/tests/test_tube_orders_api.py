@@ -28,6 +28,7 @@ from apps.organizations.models import Employee
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine, MaterialIssueAuditEvent, MaterialIssuePublicStockAllocation
 from apps.material_issues.pipe_requirements import PIPE_NAMESPACE
 from apps.production_scheduling.models import ProductionScheduleProductCraft
+from apps.procurement.tracking_models import PurchaseTrackingPolicy
 from apps.workshop_config.models import Craft
 from apps.workshop_reporting.models import WorkReportLine
 from apps.boms.models import BomLine
@@ -89,6 +90,8 @@ class TubeApiFixture(tube_fixture.TubeProcessingFixture):
 
     @transaction.atomic
     def setUp(self):
+        # TransactionTestCase 清库不会重放数据迁移；业务回调仍须具备默认政策。
+        PurchaseTrackingPolicy.objects.get_or_create(key='default')
         super().setUp()
         self.raw_balance.refresh_from_db()
         self.spray = Craft.objects.create(craft_type='EXTERNAL', name='测试喷塑', outsourcing_code='POWDER_COATING')

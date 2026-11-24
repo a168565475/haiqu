@@ -7,7 +7,7 @@ import SampleLoanView from './SampleLoanView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const routerPush = vi.hoisted(() => vi.fn())
-const apiMocks = vi.hoisted(() => ({ deleteLoan: vi.fn(), list: vi.fn(), summary: vi.fn(), options: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ deleteLoan: vi.fn(), list: vi.fn(), options: vi.fn() }))
 enableAutoUnmount(afterEach)
 afterEach(() => vi.restoreAllMocks())
 
@@ -39,12 +39,6 @@ vi.mock('@/api/samples', () => ({
     data: [fixture.row],
     meta: { page: 1, page_size: 50, total: 1, total_pages: 1 },
   }),
-  fetchSampleLoanSummary: apiMocks.summary.mockResolvedValue({
-    active_documents: 3,
-    cumulative_borrowed: 11,
-    customer_confirmation: 5,
-    showroom_or_photo: 6,
-  }),
   fetchSampleLoanOptions: apiMocks.options.mockResolvedValue({
     borrower_names: ['王立新'],
     product_categories: ['户外桌椅'],
@@ -60,7 +54,6 @@ vi.mock('@/api/samples', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.list.mockResolvedValue({ data: [fixture.row], meta: { page: 1, page_size: 50, total: 1, total_pages: 1 } })
-  apiMocks.summary.mockResolvedValue({ active_documents: 3, cumulative_borrowed: 11, customer_confirmation: 5, showroom_or_photo: 6 })
   apiMocks.options.mockResolvedValue({ borrower_names: ['王立新'], product_categories: ['户外桌椅'] })
   apiMocks.deleteLoan.mockResolvedValue(undefined)
 })
@@ -163,7 +156,6 @@ describe('SampleLoanView', () => {
     apiMocks.list.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
     expect(wrapper.find('.erp-list-summary').exists()).toBe(false)
-    expect(apiMocks.summary).not.toHaveBeenCalled()
     expect(wrapper.findAll('.load-error')).toHaveLength(1)
     expect(wrapper.find('.list-error').exists()).toBe(true)
     await wrapper.findAll('button').find(item => item.text() === '重新加载')!.trigger('click'); await flushPromises()

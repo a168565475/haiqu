@@ -24,6 +24,8 @@ urlpatterns = [
     path("", include("apps.workshop_config.api.urls")),
     path("", include("apps.preferences.api.urls")),
     path("", include("apps.email_accounts.api.urls")),
+    path("", include("apps.ai_openai_config.urls")),
+    path("", include("apps.ai_production_import.urls")),
     path("", include("apps.imports.api.urls")),
     path("", include("apps.audit.api.urls")),
     path("", include("apps.reference_data.api.urls")),

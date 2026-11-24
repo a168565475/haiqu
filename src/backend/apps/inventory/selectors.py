@@ -396,7 +396,8 @@ def eligible_material_purchase_orders(queryset=None, *, include_open_returns=Fal
                 returns_for_order.exclude(return_order__status=PurchaseReturnStatus.COMPLETED)
             ),
         )
-    purchasing_filter = Q(status=PurchaseOrderStatus.PURCHASING)
+    from .purchase_receiving_sections import open_receiving_orders
+    purchasing_filter = open_receiving_orders()
     if not include_open_returns:
         purchasing_filter &= Q(has_open_material_return=False)
     result = (
@@ -417,6 +418,7 @@ def eligible_material_purchase_orders(queryset=None, *, include_open_returns=Fal
 
 
 def eligible_material_lines(purchase_order_id, *, read_optimized=False, receiving_lines=None):
+    from .purchase_receiving_sections import open_receiving_orders
     returns_for_line = PurchaseReturnLine.objects.filter(
         inbound_line__purchase_order_line_id=OuterRef("pk"),
     )
@@ -432,10 +434,7 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False, receivin
                 open_returns_for_order
             ),
         ).filter(
-            Q(
-                purchase_order__status=PurchaseOrderStatus.PURCHASING,
-                has_open_material_return=False,
-            )
+            (open_receiving_orders("purchase_order__") & Q(has_open_material_return=False))
             | Q(
                 purchase_order__status=PurchaseOrderStatus.COMPLETED,
                 has_completed_material_return=True,
@@ -678,8 +677,10 @@ def material_receipt_progress(purchase_lines, *, root_ids=None):
 
 
 def material_inbounds(queryset=None, *, read_optimized=False):
+    from .purchase_receiving_sections import with_receipt_section_history
     if queryset is None:
         queryset = MaterialInbound.objects.all()
+    queryset = with_receipt_section_history(queryset)
     if read_optimized:
         # 品质读取使用数量/物料快照，无需再加载采购行和原料对象。
         return queryset.select_related("purchase_order", "received_by_employee", "quality_confirmed_by_employee").prefetch_related(

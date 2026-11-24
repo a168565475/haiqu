@@ -3,6 +3,15 @@ import type { PageMeta } from './referenceData'
 
 export type PurchaseGroupStatus = 'PENDING' | 'PURCHASING' | 'COMPLETED' | 'UNKNOWN'
 
+export interface PackagingPurchaseSource {
+  production_task_id: string
+  task_number: string
+  bom_id: string
+  bom_number: string
+  product_name: string
+  source_revision: string
+}
+
 export interface PurchaseGroupSourceSnapshot {
   source_contributions?: {
     bom_id: string
@@ -79,6 +88,7 @@ export interface PurchaseGroupProgress {
 
 export interface PurchaseBatchSummary {
   id: string
+  batch_session_id?: string | null
   order_number: string
   batch_number: number
   batch_type: PurchaseBatchType

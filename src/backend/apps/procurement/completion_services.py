@@ -109,8 +109,10 @@ def purchase_completion_summary(order):
     elif return_pending_confirmation_count and return_pending_completion_count:
         return_status_display = f"退货处理中 · {return_pending_confirmation_count}单待确认 / {return_pending_completion_count}单待完成"
 
+    from apps.inventory.purchase_receiving_sections import can_start_receiving
     inbound_status, inbound_status_display = purchase_inbound_workflow_status(
         order_status=order.status,
+        can_receive_submitted=can_start_receiving(order),
         has_lines=any(line.actual_purchase_quantity is not None for line in lines),
         has_remaining_lines=remaining_line_count > 0,
         pending_quality_count=int(pending_quality),

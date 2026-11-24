@@ -289,6 +289,7 @@ export interface PurchaseOrderProductSummary {
 export interface PurchaseOrderListItem {
   /** 兼容尚未启用总单字段的旧响应；样品采购的归属为null。 */
   purchase_group_id?: string | null
+  purchase_scope?: 'STANDARD' | 'PACKAGING'
   batch_number?: number | null
   batch_type?: PurchaseBatchType | ''
   source_type?: PurchaseOrderSourceType
@@ -480,6 +481,7 @@ export interface SupplierPurchaseSheet {
   id: string
   series_id: string
   purchase_order_id: string | null
+  purchase_scope?: 'STANDARD' | 'PACKAGING'
   purchase_order_number: string | null
   purchase_batch_number?: number | null
   purchase_request_id: string | null

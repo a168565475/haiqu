@@ -1,5 +1,7 @@
 """Stage 5 operation overrides; old independently granted codes retain compatibility."""
 
+PACKAGING_PURCHASE = "procurement.manage_packagingpurchase"
+
 MODULE_OPERATIONS = (
     ('complete_purchaseorder', '完成采购订单', 'procurement', 'procurement.submit_purchaseorder'),
     ('generate_purchasesheets', '生成供应商采购单', 'procurement', 'procurement.add_purchaseorder'),
@@ -93,16 +95,21 @@ ACTION_OVERRIDES = {
         'create': 'procurement.add_purchaseorder', 'batches': 'procurement.add_purchaseorder',
         'destroy': 'procurement.delete_purchaseorder',
         'complete': 'access_control.complete_purchaseorder'},
+    'PackagingPurchaseGroupViewSet': {},
     'PurchaseReturnViewSet': {
-        'confirm': 'access_control.confirm_purchasereturn',
-        'complete': 'access_control.complete_purchasereturn',
+        'confirm': ('access_control.confirm_purchasereturn', PACKAGING_PURCHASE),
+        'complete': ('access_control.complete_purchasereturn', PACKAGING_PURCHASE),
     },
     'PurchaseContractTemplateViewSet': {'list': 'procurement.view_purchasecontracttemplate', 'retrieve': 'procurement.view_purchasecontracttemplate',
         'create': 'procurement.add_purchasecontracttemplate', 'update': 'procurement.change_purchasecontracttemplate', 'partial_update': 'procurement.change_purchasecontracttemplate'},
     'SupplierPurchaseSheetViewSet': {
-        **{action: 'procurement.view_supplierpurchasesheet' for action in ('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'preview.GET', 'line_image.GET', 'seal_image.GET')},
-        **{action: 'procurement.change_supplierpurchasesheet' for action in ('update', 'partial_update', 'preview.POST', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE')},
-        'new_version': 'procurement.add_supplierpurchasesheet', 'publish': 'procurement.publish_supplierpurchasesheet', 'batch_publish': 'procurement.publish_supplierpurchasesheet'},
+        **dict.fromkeys(('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'preview.GET', 'line_image.GET', 'seal_image.GET'),
+                        ('procurement.view_supplierpurchasesheet', PACKAGING_PURCHASE)),
+        **dict.fromkeys(('update', 'partial_update', 'preview.POST', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE'),
+                        ('procurement.change_supplierpurchasesheet', PACKAGING_PURCHASE)),
+        'new_version': ('procurement.add_supplierpurchasesheet', PACKAGING_PURCHASE),
+        'publish': ('procurement.publish_supplierpurchasesheet', PACKAGING_PURCHASE),
+        'batch_publish': ('procurement.publish_supplierpurchasesheet', PACKAGING_PURCHASE)},
     'ProductionTaskViewSet': {'cancel': 'access_control.cancel_productiontask', 'finish': 'access_control.finish_productiontask'},
     'BomViewSet': {'sync_order_quantity': 'access_control.sync_bomquantity'},
     'SampleRequestViewSet': {

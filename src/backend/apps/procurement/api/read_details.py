@@ -7,7 +7,7 @@ from rest_framework import serializers
 
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
 from apps.inventory.pipe_receipt_basis import is_root_receipt, root_receipt_line_ids
-from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope
+from apps.inventory.purchase_receiving_sections import receiving_lines_in_scope, with_receipt_section_history
 from ..group_selectors import purchase_batch_display_status
 from ..catalog_materials import is_weight_purchase
 from ..models import PurchaseOrderStatus, PurchaseReturn, PurchaseReturnLine
@@ -18,7 +18,7 @@ from .return_views import PurchaseReturnSerializer
 def with_read_detail_records(queryset, *, receiving_sections=None):
     inbound_lines = MaterialInboundLine.objects.select_related("zone__warehouse", "location")
     inbound_lines = receiving_lines_in_scope(inbound_lines, receiving_sections, order_field="inbound__purchase_order")
-    inbounds = MaterialInbound.objects.select_related(
+    inbounds = with_receipt_section_history(MaterialInbound.objects.all()).select_related(
         "received_by_employee", "quality_confirmed_by_employee",
     ).prefetch_related(Prefetch("lines", queryset=inbound_lines))
     return_lines = PurchaseReturnLine.objects.select_related("inbound_line__purchase_order_line")

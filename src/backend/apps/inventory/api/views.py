@@ -53,7 +53,8 @@ from apps.reference_data.pinyin_search import build_pinyin_search
 from ..pipe_receipts import estimated_receipt_roots
 from ..pipe_receipt_basis import root_receipt_line_ids
 from ..purchase_receiving_sections import (
-    SECTION_BY_CATEGORY, assigned_receiving_sections, receiving_categories, receiving_lines_in_scope, with_receiving_section,
+    SECTION_BY_CATEGORY, assigned_receiving_sections, open_receiving_orders, receiving_categories,
+    receiving_lines_in_scope, with_receiving_section,
 )
 
 from ..models import (
@@ -990,7 +991,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         accessible_orders = PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request))
         order_queryset = eligible_material_purchase_orders(accessible_orders)
         purchasing_count = accessible_orders.filter(
-            archived_at__isnull=True, status=PurchaseOrderStatus.PURCHASING,
+            open_receiving_orders(), archived_at__isnull=True,
         ).count() if request.user.has_perm("inventory.receive_material") else 0
         sections = list(
             MaterialInboundLine.objects.values_list("section_title_snapshot", flat=True)
@@ -1075,7 +1076,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         queryset = (
             PurchaseOrder.objects.filter(
                 purchase_order_access(self._accessible_task_ids(request), request),
-                status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED],
+                open_receiving_orders() | Q(status=PurchaseOrderStatus.COMPLETED),
                 archived_at__isnull=True,
             )
             .annotate(production_task_number=Coalesce(
@@ -1150,6 +1151,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 current_return_status = "NONE"
             workflow_status, workflow_status_display = purchase_inbound_workflow_status(
                 order_status=order.status,
+                can_receive_submitted=True,  # 此列表中的已确认单来自包材采购。
                 has_lines=bool(lines),
                 has_remaining_lines=bool(remaining_lines),
                 pending_quality_count=pending_count,

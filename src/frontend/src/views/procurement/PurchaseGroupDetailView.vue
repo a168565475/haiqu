@@ -17,10 +17,22 @@ import PurchaseQuantitySources from './PurchaseQuantitySources.vue'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const canView = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.view_purchaseorder'))
-const canAdd = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.add_purchaseorder'))
-const canComplete = computed(() => auth.user?.is_superuser === true || auth.moduleCan('access_control.complete_purchaseorder', 'procurement.submit_purchaseorder'))
-const canDelete = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.delete_purchaseorder'))
+const packaging = computed(() => route.name === 'packaging-purchase-detail')
+const canManagePackaging = computed(() => auth.hasPermission('procurement.manage_packagingpurchase'))
+const canView = computed(() => auth.user?.is_superuser === true || (packaging.value ? canManagePackaging.value : auth.hasPermission('procurement.view_purchaseorder')))
+const canAdd = computed(() => auth.user?.is_superuser === true || (packaging.value ? canManagePackaging.value : auth.hasPermission('procurement.add_purchaseorder')))
+const canComplete = computed(() => auth.user?.is_superuser === true || (packaging.value ? canManagePackaging.value : auth.moduleCan('access_control.complete_purchaseorder', 'procurement.submit_purchaseorder')))
+const canDelete = computed(() => auth.user?.is_superuser === true || (packaging.value ? canManagePackaging.value : auth.hasPermission('procurement.delete_purchaseorder')))
+const detailRouteName = computed(() => packaging.value ? 'packaging-purchase-detail' : 'purchase-group-detail')
+const getGroup = (id: string) => packaging.value ? fetchVersionedPurchaseGroup(id, undefined, true) : fetchVersionedPurchaseGroup(id)
+function returnToList() {
+  void router.push(packaging.value ? { name: 'packaging-purchases' } : { name: 'purchase-orders', query: { view: 'groups' } })
+}
+function startBatch(groupId: string) {
+  void router.push(packaging.value
+    ? { name: 'packaging-purchase-batch', query: { group_ids: [groupId] } }
+    : { name: 'purchase-batch-create', params: { groupId } })
+}
 const group = ref<PurchaseGroup | null>(null)
 const groupEtag = ref('')
 const loading = ref(false)
@@ -77,7 +89,7 @@ async function load(): Promise<void> {
   if (!canView.value) return
   loading.value = true
   try {
-    const result = await fetchVersionedPurchaseGroup(String(route.params.id))
+    const result = await getGroup(String(route.params.id))
     if (current === version) { group.value = result.data; groupEtag.value = result.etag }
   } catch (error) {
     if (current === version) errorMessage.value = (error as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message || '采购需求加载失败，请重试。'
@@ -91,7 +103,7 @@ async function openCompletion(): Promise<void> {
   completionError.value = ''
   completionSuccess.value = ''
   try {
-    const result = await fetchVersionedPurchaseGroup(id)
+    const result = await getGroup(id)
     if (current !== version) return
     group.value = result.data
     groupEtag.value = result.etag
@@ -112,7 +124,7 @@ async function submitCompletion(): Promise<void> {
   completionSubmitting.value = true
   completionError.value = ''
   try {
-    const result = await completePurchaseGroup(id, completionRemark.value.trim(), groupEtag.value)
+    const result = await completePurchaseGroup(id, completionRemark.value.trim(), groupEtag.value, ...(packaging.value ? [true] as const : []))
     if (current !== version) return
     group.value = result.data
     groupEtag.value = result.etag
@@ -125,7 +137,7 @@ async function submitCompletion(): Promise<void> {
     groupEtag.value = ''
     if (response?.status === 412 || response?.status === 409) {
       try {
-        const latest = await fetchVersionedPurchaseGroup(id)
+        const latest = await getGroup(id)
         if (current !== version) return
         group.value = latest.data
         groupEtag.value = latest.etag
@@ -146,18 +158,18 @@ async function removeGroup(): Promise<void> {
   deletionError.value = ''
   completionSuccess.value = ''
   try {
-    const latest = await fetchVersionedPurchaseGroup(id)
+    const latest = await getGroup(id)
     if (current !== version) return
     group.value = latest.data
     groupEtag.value = latest.etag
     await confirmPurchaseGroupDeletion(latest)
     if (current !== version || !canDelete.value) return
-    await deletePurchaseGroup(id, latest.etag)
+    await deletePurchaseGroup(id, latest.etag, ...(packaging.value ? [true] as const : []))
     if (current !== version) return
     group.value = null
     groupEtag.value = ''
     ElMessage.success('采购需求及未确认草稿批次已删除，可按最新 BOM 重新创建。')
-    void router.push({ name: 'purchase-orders', query: { view: 'groups' } })
+    returnToList()
   } catch (error) {
     if (current !== version || error === 'cancel' || error === 'close') return
     const response = (error as { response?: { status?: number; data?: { error?: { message?: string } } } }).response
@@ -165,7 +177,7 @@ async function removeGroup(): Promise<void> {
     groupEtag.value = ''
     if (response?.status === 412 || response?.status === 409) {
       try {
-        const latest = await fetchVersionedPurchaseGroup(id)
+        const latest = await getGroup(id)
         if (current !== version) return
         group.value = latest.data
         groupEtag.value = latest.etag
@@ -176,7 +188,7 @@ async function removeGroup(): Promise<void> {
     } else deletionError.value = message
   } finally { if (current === version) deleting.value = false }
 }
-watch(() => route.params.id, () => {
+watch([() => route.params.id, packaging], () => {
   deleting.value = false
   deletionError.value = ''
   completionVisible.value = false
@@ -191,12 +203,12 @@ onBeforeUnmount(() => { version++ })
 <template>
   <section class="group-detail erp-glass-detail" data-testid="purchase-group-detail" v-loading="loading">
     <header><div><h1>采购需求</h1><strong v-if="group?.production_task_number_snapshot" class="production-task-number">{{ group.production_task_number_snapshot }}</strong></div><div class="actions">
-      <ElButton @click="router.push({ name: 'purchase-orders', query: { view: 'groups' } })">返回采购需求列表</ElButton>
+      <ElButton @click="returnToList">{{ packaging ? '返回包材采购' : '返回采购需求列表' }}</ElButton>
       <ElButton v-if="canView" :disabled="completionLoading || completionSubmitting || deleting" @click="load">刷新进度</ElButton>
       <ElTooltip v-if="group?.completion && canComplete" :content="completionBlockedReason" :disabled="!completionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-complete" :loading="completionLoading" :disabled="!!completionBlockedReason || completionSubmitting || deleting" @click="openCompletion">完成采购</ElButton></span></ElTooltip>
       <ElTooltip v-if="group && canDelete" :content="deletionBlockedReason" :disabled="!deletionBlockedReason" placement="bottom"><span><ElButton data-testid="purchase-group-delete" type="danger" plain :loading="deleting" :disabled="!!deletionBlockedReason || completionLoading || completionSubmitting || completionVisible" @click="removeGroup">删除采购需求</ElButton></span></ElTooltip>
-      <ElButton v-if="group?.combined_into_group_id" data-testid="open-combined-group" type="primary" @click="router.push({ name: 'purchase-group-detail', params: { id: group.combined_into_group_id } })">打开合并采购需求</ElButton>
-      <ElButton v-else-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="!group.progress.line_count || group.progress.status === 'UNKNOWN' || deleting" @click="router.push({ name: 'purchase-batch-create', params: { groupId: group.id } })">新增采购批次</ElButton>
+      <ElButton v-if="group?.combined_into_group_id" data-testid="open-combined-group" type="primary" @click="router.push({ name: detailRouteName, params: { id: group.combined_into_group_id } })">打开合并采购需求</ElButton>
+      <ElButton v-else-if="group && canAdd" data-testid="purchase-group-add-batch" type="primary" :disabled="!group.progress.line_count || group.progress.status === 'UNKNOWN' || deleting" @click="startBatch(group.id)">新增采购批次</ElButton>
     </div></header>
     <ElAlert v-if="!canView" title="当前账号无权查看采购需求。" type="warning" :closable="false" />
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"><ElButton link @click="load">重新加载</ElButton></ElAlert>
@@ -232,7 +244,18 @@ onBeforeUnmount(() => { version++ })
         </table></div>
       </section>
       <section class="group-content-card"><h2>采购批次 <small>{{ batchCount }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="batch in group.batches" :key="batch.id"><td>第 {{ batch.batch_number }} 批</td><td>{{ batch.order_number }}</td><td>{{ batch.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</td><td>{{ batchStatusLabels[batch.display_status ?? batch.status] }}</td><td>{{ formatMoney(batch.total_amount) }} {{ batch.currency_code_snapshot }}</td><td><ElButton link type="primary" @click="router.push({ name: 'purchase-order-detail', params: { id: batch.id } })">查看明细</ElButton><ElButton v-if="batch.status === 'DRAFT'" link @click="router.push({ name: 'purchase-order-confirm', params: { id: batch.id } })">编辑 / 确认</ElButton></td></tr>
+        <tr v-for="batch in group.batches" :key="batch.id">
+          <td>第 {{ batch.batch_number }} 批</td><td>{{ batch.order_number }}</td>
+          <td>{{ batch.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</td><td>{{ batchStatusLabels[batch.display_status ?? batch.status] }}</td>
+          <td>{{ formatMoney(batch.total_amount) }} {{ batch.currency_code_snapshot }}</td>
+          <td>
+            <ElButton link type="primary" @click="router.push({ name: 'purchase-order-detail', params: { id: batch.id } })">查看明细</ElButton>
+            <ElButton v-if="packaging && batch.status === 'DRAFT' && batch.batch_session_id" link
+              @click="router.push({ name: 'packaging-purchase-batch', query: { batch_session_id: batch.batch_session_id } })">继续填写</ElButton>
+            <ElButton v-else-if="!packaging && batch.status === 'DRAFT'" link
+              @click="router.push({ name: 'purchase-order-confirm', params: { id: batch.id } })">编辑 / 确认</ElButton>
+          </td>
+        </tr>
         <tr v-if="!group.batches.length"><td colspan="6" class="empty">暂无批次，可从本采购需求选择材料创建首批采购。</td></tr>
       </tbody></table></div></section>
     </template>

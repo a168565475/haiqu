@@ -3,7 +3,7 @@ from drf_spectacular.utils import PolymorphicProxySerializer
 
 from apps.procurement.api.read_details import ReadInboundSerializer
 
-from ..models import PURCHASE_INBOUND_SECTION_NAMES
+from ..models import LEGACY_PACKAGING_RECEIPT_NAME, PURCHASE_INBOUND_SECTION_NAMES
 from ..purchase_receipt_records import RECEIPT_SOURCES, RECEIPT_STATUSES, UNASSIGNED_SECTION
 from .serializers import ProcurementInboundProductSerializer
 
@@ -42,6 +42,8 @@ class PurchaseReceiptRecordSerializer(serializers.Serializer):
     can_quality_confirm = serializers.BooleanField()
 
     def get_material_section_display(self, record) -> str:
+        if record['has_legacy_packaging']:
+            return LEGACY_PACKAGING_RECEIPT_NAME
         return PURCHASE_INBOUND_SECTION_NAMES.get(record['material_section'], '未登记')
 
 

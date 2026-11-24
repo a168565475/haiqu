@@ -1,6 +1,6 @@
 """2026-11-02确认的角色目标；精确启用使用configure_confirmed_roles。"""
 from .catalog import PERMISSION_CODES, scopes_for
-from .role_policy import FOLLOWED_PERMISSIONS
+from .role_policy import FOLLOWED_TASK_PERMISSIONS
 from .superuser_services import SUPERUSER_ROLE_CODES
 
 PENDING = {
@@ -29,8 +29,11 @@ def module_rows(*codes):
 
 
 def full_permissions():
-    return [{'permission': code, 'scope': 'ALL' if 'ALL' in scopes_for(code) else
-             'MODULE' if 'MODULE' in scopes_for(code) else 'OWN'} for code in PERMISSION_CODES]
+    rows = []
+    for code in PERMISSION_CODES:
+        scopes = scopes_for(code)
+        rows.append({'permission': code, 'scope': 'ALL' if 'ALL' in scopes else scopes[0]})
+    return rows
 
 
 def scoped_rows(codes, scope, ids):
@@ -111,7 +114,7 @@ def templates(workshops, coating_craft_ids=()):
         'production_tasks.start_productiontask', 'production_tasks.delete_productiontask',
         'access_control.cancel_productiontask', 'access_control.finish_productiontask',
         'boms.view_bom', 'procurement.view_purchaseorder', 'workshop_reporting.view_workreport')
-    result['MERCHANDISER'] = [{'permission': code, 'scope': 'FOLLOWED'} for code in FOLLOWED_PERMISSIONS]
+    result['MERCHANDISER'] = [{'permission': code, 'scope': 'FOLLOWED'} for code in FOLLOWED_TASK_PERMISSIONS]
     result['OUTSOURCING'] = module_rows('outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder',
         'outsourcing.cancel_outsourcingorder', 'outsourcing.reconcile_outsourcingorder',
         'outsourcing.complete_outsourcingorder', 'outsourcing.view_outsourcingfactory',

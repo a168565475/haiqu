@@ -350,6 +350,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
     source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
+    purchase_scope = serializers.CharField(source="purchase_group.purchase_scope", read_only=True, default="STANDARD")
     source_number = serializers.SerializerMethodField()
     completion = serializers.SerializerMethodField()
     production_task_id = serializers.UUIDField(read_only=True)
@@ -375,7 +376,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
         model = PurchaseOrder
         fields = [
             "source_type", "source_type_display", "source_number", "sample_procurement_request_id", "sample_number_snapshot",
-            "purchase_group_id", "batch_number", "batch_type",
+            "purchase_group_id", "purchase_scope", "batch_number", "batch_type",
             "completion", "completed_at", "completion_remark",
             "id",
             "order_number",
@@ -615,6 +616,7 @@ class PurchaseContractTemplateSerializer(serializers.ModelSerializer):
 
 class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
     purchase_order_number = serializers.SerializerMethodField()
+    purchase_scope = serializers.CharField(source="purchase_order.purchase_group.purchase_scope", read_only=True, default="STANDARD")
     purchase_batch_number = serializers.IntegerField(source="purchase_order.batch_number", read_only=True, allow_null=True)
     purchase_request_number = serializers.CharField(source="purchase_request.request_number", read_only=True, allow_null=True)
     production_task_number = serializers.SerializerMethodField()
@@ -637,6 +639,7 @@ class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
             "id",
             "series_id",
             "purchase_order_id",
+            "purchase_scope",
             "purchase_order_number",
             "purchase_batch_number",
             "purchase_request_id",

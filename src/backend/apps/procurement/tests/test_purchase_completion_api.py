@@ -4,6 +4,7 @@ import uuid
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 
 from apps.inventory.tests import test_inventory_api as inventory_fixture
@@ -353,3 +354,11 @@ class PurchaseCompletionApiTests(APITestCase):
         self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
         self.assertEqual(self.client.post(return_url, {}, format="json").status_code, 403)
         self.assertEqual(self.client.post(order_url, {}, format="json").status_code, 403)
+
+    @override_settings(MODULE_ACCESS_ENABLED=False)
+    def test_standard_return_action_keeps_legacy_submit_permission(self):
+        self.user.user_permissions.remove(Permission.objects.get(content_type__app_label="procurement", codename="manage_packagingpurchase"))
+        receipt = self.receive()
+        self.assertEqual(self.confirm_quality(receipt, return_quantity="1.0000").status_code, 200)
+        record = PurchaseReturn.objects.get()
+        self.assertEqual(self.advance_return(record, "confirm").status_code, 200)

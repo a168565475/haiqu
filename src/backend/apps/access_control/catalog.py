@@ -15,7 +15,7 @@ FULL_DATA_CODES = (
     'workshop_config.view_workshop', 'samples.view_sample_procurement', 'customers.manage_customer_access',
 )
 
-PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet',
+PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet', 'procurement.manage_packagingpurchase',
     'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview',
     'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense',
     'production_task_imports.import_production_task'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
@@ -51,10 +51,12 @@ def module_for(code):
 
 def scopes_for(code):
     from .resource_scopes import configured, scope_kind
-    from .role_policy import FOLLOWED_PERMISSIONS, STATEMENT_OWN_PERMISSIONS
+    from .role_policy import FOLLOWED_TASK_PERMISSIONS, PACKAGING_PERMISSION, STATEMENT_OWN_PERMISSIONS
+    if code == PACKAGING_PERMISSION:
+        return ('FOLLOWED',)
     if code in STATEMENT_OWN_PERMISSIONS:
         return ('MODULE', 'OWN')
-    followed = ('FOLLOWED',) if code in FOLLOWED_PERMISSIONS else ()
+    followed = ('FOLLOWED',) if code in FOLLOWED_TASK_PERMISSIONS else ()
     if configured() and scope_kind(code):
         if code.startswith('outsourcing.') and 'outsourcingorder' in code:
             return ('MODULE', 'CRAFT', 'WORKSHOP', 'STOCK') + followed

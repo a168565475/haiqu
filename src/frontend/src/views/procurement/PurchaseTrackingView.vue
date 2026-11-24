@@ -11,7 +11,16 @@ import type { PurchaseTrackingAction, PurchaseTrackingArrival, PurchaseTrackingC
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const canView = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.view_purchaseorder'))
+const canViewStandard = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.view_purchaseorder'))
+const canViewPackaging = computed(() => {
+  if (auth.user?.is_superuser || auth.hasPermission('procurement.manage_packagingpurchase')) return true
+  const access = auth.user?.effective_access
+  const pmc = new Set(access?.roles.filter(role => role.code === 'PMC').map(role => role.id))
+  return canViewStandard.value && access?.actions['procurement.view_purchaseorder']?.sources.some(
+    source => source.role_id && pmc.has(source.role_id) && (source.scope === 'MODULE' || source.scope === 'ALL'),
+  ) === true
+})
+const canView = computed(() => canViewStandard.value || canViewPackaging.value)
 const canManagePolicy = computed(() => auth.user?.is_superuser === true || auth.managementCan('access_control.manage_notifications'))
 const policyVisible = ref(false)
 
@@ -44,7 +53,12 @@ function positiveInteger(value: string, fallback: number, max = Number.MAX_SAFE_
 
 // 菜单入口已经是两个独立路由；保留旧的 tab 参数只用于兼容历史站内消息链接。
 const mode = computed<PurchaseTrackingTab>(() => route.name === 'purchase-alerts' || queryText('tab') === 'coverage' ? 'coverage' : 'arrival')
-const pageTitle = computed(() => mode.value === 'arrival' ? '采购跟踪' : '采购提醒')
+const purchaseScope = computed<PurchaseTrackingQuery['purchase_scope']>(() => {
+  const scope = queryText('purchase_scope')
+  if (scope === 'PACKAGING' || scope === 'STANDARD' || scope === 'ALL') return scope
+  return !canViewStandard.value && canViewPackaging.value ? 'PACKAGING' : undefined
+})
+const pageTitle = computed(() => (purchaseScope.value === 'PACKAGING' ? '包材' : '') + (mode.value === 'arrival' ? '采购跟踪' : '采购提醒'))
 const taskId = computed(() => queryText('production_task_id'))
 const rowKey = computed(() => queryText('row_key'))
 const risk = computed(() => riskOptions[mode.value].find(item => item.value === queryText('risk'))?.value ?? '')
@@ -88,6 +102,7 @@ function updateQuery(changes: LocationQueryRaw): void {
 }
 
 function filterTask(value: string | undefined): void { updateQuery({ production_task_id: value || undefined, row_key: undefined, page: undefined }) }
+function filterScope(value: PurchaseTrackingQuery['purchase_scope']): void { updateQuery({ purchase_scope: value, row_key: undefined, page: undefined }) }
 function filterRisk(value: string | undefined): void { updateQuery({ risk: value || undefined, row_key: undefined, page: undefined }) }
 function filterHistory(value: boolean | string | number): void { updateQuery({ include_history: value ? 'true' : undefined, page: undefined, row_key: undefined }) }
 function resetFilters(): void { updateQuery({ production_task_id: undefined, risk: undefined, include_history: undefined, row_key: undefined, page: undefined }) }
@@ -111,6 +126,7 @@ async function load(): Promise<void> {
   const query: PurchaseTrackingQuery = {
     page: currentPage.value,
     page_size: pageSize.value,
+    ...(purchaseScope.value ? { purchase_scope: purchaseScope.value } : {}),
     ...(taskId.value ? { production_task_id: taskId.value } : {}),
     ...(risk.value ? { risk: risk.value } : {}),
     ...(includeHistory.value ? { include_history: true } : {}),
@@ -150,7 +166,8 @@ async function loadOptions(): Promise<void> {
   const controller = new AbortController()
   optionsController = controller
   try {
-    const result = await fetchPurchaseTrackingFilterOptions(controller.signal)
+    const result = await (purchaseScope.value ? fetchPurchaseTrackingFilterOptions(controller.signal, purchaseScope.value)
+      : fetchPurchaseTrackingFilterOptions(controller.signal))
     if (!disposed && !controller.signal.aborted) tasks.value = result.production_tasks
   } catch (error) {
     if (!disposed && !controller.signal.aborted) optionsError.value = errorText(error, '生产订单筛选选项加载失败。')
@@ -257,7 +274,7 @@ function showAction(row: PurchaseTrackingRow): boolean { return actionsFor(row).
 function showActionBlocked(row: PurchaseTrackingRow): boolean { return !showAction(row) && Boolean(row.action_blocked_reason) }
 function rowClassName({ row }: { row: PurchaseTrackingRow }): string { return row.row_key === rowKey.value ? 'is-located' : '' }
 function productionOrderGroupKey(row: PurchaseTrackingArrival | PurchaseTrackingCoverage): string {
-  return JSON.stringify([row.production_task_id, row.product_line_id || row.row_key, row.product_name,
+  return JSON.stringify([row.purchase_scope, row.production_task_id, row.product_line_id || row.row_key, row.product_name,
     'bom_created_at' in row ? row.bom_created_at : null])
 }
 function arrivalGroupKey(row: PurchaseTrackingArrival): string { return `${row.purchase_order_no}\u0000${row.supplier_name}` }
@@ -283,7 +300,7 @@ function coverageSpanMethod({ row, column, rowIndex }: { row: PurchaseTrackingCo
 }
 
 watch(() => [route.fullPath, canView.value], () => { void load() }, { immediate: true })
-watch(canView, () => { void loadOptions() }, { immediate: true })
+watch([canView, purchaseScope], () => { void loadOptions() }, { immediate: true })
 watch(() => [mode.value, canView.value, canManagePolicy.value], () => { policyVisible.value = false })
 onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.abort(); optionsController?.abort() })
 </script>
@@ -299,6 +316,12 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
       </header>
       <section v-if="canView" class="filter-section" :aria-label="`${pageTitle}筛选`">
         <form class="filter-row erp-list-filters" @submit.prevent="applyFilters">
+          <ElSelect v-if="canViewStandard && canViewPackaging" :model-value="purchaseScope ?? 'STANDARD'"
+            aria-label="采购范围" class="risk-filter" @update:model-value="filterScope">
+            <ElOption label="普通采购" value="STANDARD" />
+            <ElOption label="包材采购" value="PACKAGING" />
+            <ElOption label="全部采购" value="ALL" />
+          </ElSelect>
           <ElSelect :model-value="taskId" filterable clearable class="task-filter" placeholder="生产订单：全部" aria-label="生产订单筛选" @update:model-value="filterTask">
             <ElOption v-for="task in tasks" :key="task.id" :value="task.id" :label="[task.task_number, task.order_number].filter(Boolean).join(' · ')" />
           </ElSelect>
@@ -339,6 +362,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
         </div>
         <div ref="panel" class="erp-list-table-frame" :aria-busy="loading" @scroll.capture="hideMaterialAttributes">
           <ElTable v-if="mode === 'arrival'" v-loading="loading" :data="arrivals" row-key="row_key" :row-class-name="rowClassName" :span-method="arrivalSpanMethod" class="tracking-table arrival-table" height="100%" @cell-mouse-enter="showMaterialAttributes" @cell-mouse-leave="hideMaterialAttributes" @mouseleave="hideMaterialAttributes">
+            <ElTableColumn v-if="purchaseScope === 'ALL'" label="采购范围" width="112"><template #default="{ row }">{{ row.purchase_scope === 'PACKAGING' ? '包材采购' : '普通采购' }}</template></ElTableColumn>
             <ElTableColumn prop="task_number" label="生产订单号" width="190"><template #default="{ row }"><div class="tracking-order-info" data-testid="arrival-order-info"><span class="tracking-cell tracking-strong" :title="row.task_number">{{ row.task_number }}</span><span class="tracking-cell" :title="row.product_name || '产品待核对'">{{ row.product_name || '产品待核对' }}</span></div></template></ElTableColumn>
             <ElTableColumn prop="supplier_name" label="供应商" width="150" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell">{{ row.supplier_name || '供应商待核对' }}</span></template></ElTableColumn>
             <ElTableColumn label="采购批次" width="108" align="center"><template #default="{ row }"><span class="tracking-cell">{{ row.batch_number === null ? '待核对' : `第${row.batch_number}批` }}</span></template></ElTableColumn>
@@ -357,6 +381,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
           </ElTable>
 
           <ElTable v-else v-loading="loading" :data="coverage" row-key="row_key" :row-class-name="rowClassName" :span-method="coverageSpanMethod" class="tracking-table coverage-table" height="100%" @cell-mouse-enter="showMaterialAttributes" @cell-mouse-leave="hideMaterialAttributes" @mouseleave="hideMaterialAttributes">
+            <ElTableColumn v-if="purchaseScope === 'ALL'" label="采购范围" width="112"><template #default="{ row }">{{ row.purchase_scope === 'PACKAGING' ? '包材采购' : '普通采购' }}</template></ElTableColumn>
             <ElTableColumn prop="task_number" label="生产订单号" width="190"><template #default="{ row }"><div class="tracking-order-info" data-testid="coverage-order-info"><span class="tracking-cell tracking-strong" :title="row.task_number">{{ row.task_number }}</span><span class="tracking-cell" :title="row.product_name || '产品待核对'">{{ row.product_name || '产品待核对' }}</span><span class="tracking-cell tracking-order-time" :title="bomTimingText(row)">BOM创建：{{ formatTime(row.bom_created_at) }}</span></div></template></ElTableColumn>
             <ElTableColumn label="订单交期" width="112" show-overflow-tooltip><template #default="{ row }"><span v-if="row.order_delivery_date" class="tracking-cell">{{ row.order_delivery_date }}</span><ElTag v-else type="warning" effect="dark" disable-transitions class="tracking-risk-tag" title="订单交期未填写，需核对补充" data-testid="coverage-order-date-missing">缺交期</ElTag></template></ElTableColumn>
             <ElTableColumn label="品名" min-width="150"><template #default="{ row }"><span class="tracking-cell" tabindex="0" data-testid="coverage-material-name" :aria-label="`查看材料属性：${row.material_name || '材料待核对'}`" @focus="focusMaterialAttributes(row, $event)" @blur="hideMaterialAttributes" @keydown.esc="hideMaterialAttributes">{{ row.material_name || '材料待核对' }}</span></template></ElTableColumn>

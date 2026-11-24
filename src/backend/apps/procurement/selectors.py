@@ -144,11 +144,11 @@ def purchase_orders_with_context(queryset=None, *, read_optimized=False, receivi
         "material_snapshot",
     ).order_by("line_number", "id")
     relations = (
-        "production_task",
+        "production_task", "purchase_group",
         "sample_procurement_request__material_request__sample_request",
         "created_by_employee",
     ) if read_optimized else (
-        "production_task",
+        "production_task", "purchase_group",
         "production_task__sales_order",
         "sample_procurement_request__material_request__sample_request__customer_account",
         "currency",
@@ -181,6 +181,7 @@ def search_purchase_orders(queryset, search_text):
 
 
 def production_tasks_with_purchase_sources(queryset=None):
+    from .purchase_scope import packaging_order_filter
     if queryset is None:
         queryset = ProductionTask.objects.filter(archived_at__isnull=True)
     boms = (
@@ -195,5 +196,7 @@ def production_tasks_with_purchase_sources(queryset=None):
     )
     return queryset.select_related("customer_account").prefetch_related(
         Prefetch("products", queryset=products, to_attr="purchase_source_products"),
-        Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(), to_attr="purchase_source_orders"),
+        Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(
+            PurchaseOrder.objects.exclude(packaging_order_filter()),
+        ), to_attr="purchase_source_orders"),
     )

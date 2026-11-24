@@ -1,6 +1,7 @@
 """2026-11-02确认的逐岗位收件规则。授权与收件资格分开，兼岗取合法来源并集。"""
 from django.conf import settings
 from apps.access_control.superuser_services import SUPERUSER_ROLE_CODES
+from apps.access_control.module_operations import PACKAGING_PURCHASE
 
 
 POLICY_SCOPE = 'ROLE_POLICY'
@@ -71,6 +72,7 @@ ROLE_POLICIES = {
         'PURCHASING': _rule('procurement.add_purchaseorder'), 'ADMINISTRATION': _rule(READ_TASK),
         'PMC': _rule('boms.view_bom', exclude_actor=True), 'MERCHANDISER': _follow('boms.view_bom'),
     },
+    'PACKAGING_BOMS_CONFIRMED': {'MERCHANDISER': _follow(PACKAGING_PURCHASE)},
     'MATERIAL_RECEIPT_RECORDED': {
         'QUALITY': _rule('inventory.quality_confirm_material'), 'PURCHASING': _rule(READ_PURCHASE),
         'PMC': _rule(READ_PURCHASE, exclude_actor=True), 'MERCHANDISER': _follow(READ_PURCHASE),
@@ -190,10 +192,16 @@ def matching_roles(event_code, employee, role_codes, facts):
     from apps.production_tasks.models import ProductionTask
     roles = []
     policies = ROLE_POLICIES.get(event_code, {})
+    if facts.get('packaging_purchase') and event_code in {
+            'MATERIAL_RECEIPT_RECORDED', 'MATERIAL_INSPECTION_CONFIRMED', 'PURCHASE_ORDER_COMPLETED'}:
+        policies = {role: policy for role, policy in policies.items() if role != 'PURCHASING'}
+        policies['MERCHANDISER'] = _follow(PACKAGING_PURCHASE)
     tasks = ProductionTask.objects.filter(pk__in=facts['task_ids'], archived_at__isnull=True)
     for role_code in role_codes:
         policy = policies.get(role_code)
         if policy is None or role_code in SILENT_ROLES:
+            continue
+        if event_code == 'PRODUCTION_TASK_BOMS_CONFIRMED' and role_code == 'PURCHASING' and facts.get('only_packaging_bom'):
             continue
         if policy['exclude_actor'] and str(employee.pk) == facts['actor_id']:
             continue

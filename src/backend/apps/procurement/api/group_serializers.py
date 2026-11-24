@@ -166,6 +166,7 @@ class PurchaseGroupProgressSerializer(serializers.Serializer):
 
 class PurchaseBatchSummarySerializer(serializers.Serializer):
     id = serializers.UUIDField()
+    batch_session_id = serializers.UUIDField(read_only=True, allow_null=True)
     order_number = serializers.CharField()
     batch_number = serializers.IntegerField()
     batch_type = serializers.ChoiceField(choices=PurchaseBatchType.choices)

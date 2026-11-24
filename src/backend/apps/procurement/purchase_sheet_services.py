@@ -27,6 +27,7 @@ from .models import (
     SupplierPurchaseSheetSealImage,
     SupplierPurchaseSheetStatus,
 )
+from .purchase_scope import is_packaging_bom_line
 from .services import MAX_MONEY_VALUE, MONEY_QUANT, next_purchase_order_number
 from .set_pricing import line_set_pricing, set_sheet_fields
 
@@ -385,6 +386,8 @@ def generate_supplier_purchase_sheet_from_request(
     )
     if not allocations:
         raise ValidationError({"allocations": "该供应商和采购批次没有待下单的分配明细。"})
+    if any(is_packaging_bom_line(row.purchase_request_line.bom_line) for row in allocations):
+        raise Conflict("包材请从包材采购入口办理。")
     if SupplierPurchaseSheet.objects.filter(
         purchase_request=purchase_request,
         supplier=supplier,

@@ -32,13 +32,16 @@ class PurchaseInboundSection(models.TextChoices):
     A = "A", "A区"
     B = "B", "B区"
     C = "C", "C区"
+    D = "D", "包材"
 
 
 PURCHASE_INBOUND_SECTION_NAMES = {
     PurchaseInboundSection.A: "管材",
-    PurchaseInboundSection.B: "五金件、塑料件、包材",
+    PurchaseInboundSection.B: "五金件、塑料件",
     PurchaseInboundSection.C: "面料、辅料",
+    PurchaseInboundSection.D: "包材",
 }
+LEGACY_PACKAGING_RECEIPT_NAME = "五金件、塑料件、包材（历史）"
 
 
 class MaterialTransferDirection(models.TextChoices):
@@ -344,6 +347,8 @@ class MaterialInbound(TimeStampedModel):
 
     @property
     def material_section_display(self):
+        if getattr(self, "has_legacy_packaging", False):
+            return LEGACY_PACKAGING_RECEIPT_NAME
         return PURCHASE_INBOUND_SECTION_NAMES.get(self.material_section, "")
 
     class Meta:

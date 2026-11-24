@@ -6,8 +6,9 @@ const basePath = '/api/v1/purchase-returns/'
 export async function fetchPurchaseReturns(query: ReturnQuery): Promise<ReturnList> {
   return (await apiClient.get<ReturnList>(basePath, { params: query })).data
 }
-export async function fetchReturnOptions(): Promise<ReturnOptions> {
-  return (await apiClient.get<DataResponse<ReturnOptions>>(`${basePath}filter-options/`)).data.data
+export async function fetchReturnOptions(purchaseScope?: ReturnQuery['purchase_scope']): Promise<ReturnOptions> {
+  return (await apiClient.get<DataResponse<ReturnOptions>>(`${basePath}filter-options/`,
+    purchaseScope ? { params: { purchase_scope: purchaseScope } } : undefined)).data.data
 }
 export async function fetchPurchaseReturn(id: string) {
   const response = await apiClient.get<DataResponse<PurchaseReturn>>(`${basePath}${encodeURIComponent(id)}/`)

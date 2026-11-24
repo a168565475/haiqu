@@ -7,15 +7,17 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.access_control import module_policy, sales_policy
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.inventory.pipe_receipt_basis import is_root_receipt
 from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..completion_services import advance_purchase_return
-from ..source_access import purchase_order_access
+from ..purchase_scope import PACKAGING_PERMISSION, packaging_order_filter
+from ..source_access import current_operations, packaging_purchase_tasks, purchase_order_access
 from ..selectors import purchase_return_amount
-from ..models import PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus
+from ..models import PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus, PurchaseScope
 
 
 class PurchaseReturnLineSerializer(serializers.ModelSerializer):
@@ -51,6 +53,10 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
     currency_code = serializers.CharField(source="purchase_order.currency_code_snapshot", read_only=True)
     order_number = serializers.CharField(source="purchase_order.order_number", read_only=True)
     production_task_number = serializers.CharField(source="purchase_order.production_task_number_snapshot", read_only=True)
+    purchase_scope = serializers.ChoiceField(
+        choices=PurchaseScope.choices, source="purchase_order.purchase_group.purchase_scope",
+        read_only=True, default=PurchaseScope.STANDARD,
+    )
     inbound_number = serializers.CharField(source="inbound.inbound_number", read_only=True)
     supplier_number = serializers.CharField(source="supplier_number_snapshot", read_only=True)
     supplier_name = serializers.CharField(source="supplier_name_snapshot", read_only=True)
@@ -62,7 +68,7 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PurchaseReturn
-        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "return_amount", "currency_code", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
+        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "purchase_scope", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "return_amount", "currency_code", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
         read_only_fields = fields
 
     def get_return_amount(self, instance) -> str | None:
@@ -74,25 +80,46 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
         "procurement.view_purchaseorder",
         "inventory.receive_material",
         "inventory.quality_confirm_material",
+        PACKAGING_PERMISSION,
     )
     action_permission_map = {
         "list": return_read_permissions, "retrieve": return_read_permissions,
         "stats": return_read_permissions, "filter_options": return_read_permissions,
-        "confirm": "procurement.submit_purchaseorder",
-        "complete": "procurement.submit_purchaseorder",
+        "confirm": ("procurement.submit_purchaseorder", PACKAGING_PERMISSION),
+        "complete": ("procurement.submit_purchaseorder", PACKAGING_PERMISSION),
     }
     serializer_class = PurchaseReturnSerializer
 
-    def _task_ids(self):
-        return accessible_production_tasks(self.request).filter(archived_at__isnull=True).order_by().values_list("id", flat=True)
+    def _operations(self):
+        if module_policy.enabled():
+            return current_operations(self.request, "procurement.view_purchaseorder")
+        codes = self.action_permission_map.get(self.action, ())
+        return tuple(code for code in codes if sales_policy.has_permission(self.request, code))
 
     def get_queryset(self):
+        operations = self._operations()
+        warehouse = {"inventory.receive_material", "inventory.quality_confirm_material"}
+        packaging = packaging_order_filter("purchase_order__")
+        packaging_access = packaging & Q(purchase_order__production_task_id__in=packaging_purchase_tasks(self.request).values("pk"))
+        access = Q(pk__in=[])
+        for code in set(operations) - {PACKAGING_PERMISSION}:
+            tasks = accessible_production_tasks(self.request, permission=code).values("id")
+            scope = purchase_order_access(tasks, self.request, "purchase_order__", permission=code)
+            access |= scope if code in warehouse else scope & ~packaging
+        if PACKAGING_PERMISSION in operations:
+            access |= packaging_access
         queryset = PurchaseReturn.objects.filter(
-            purchase_order_access(self._task_ids(), self.request, "purchase_order__"), purchase_order__archived_at__isnull=True,
+            access, purchase_order__archived_at__isnull=True,
         )
+        scope = self.request.query_params.get("purchase_scope")
+        if scope == PurchaseScope.PACKAGING:
+            queryset = queryset.filter(packaging)
+        elif scope == PurchaseScope.STANDARD:
+            queryset = queryset.exclude(packaging)
+        elif scope:
+            raise ValidationError({"purchase_scope": "采购范围参数不正确。"})
         lines = PurchaseReturnLine.objects.select_related("inbound_line", "inbound_line__purchase_order_line")
         if self.action in {"list", "retrieve", "stats", "filter_options"}:
-            from apps.access_control.module_policy import has_permission
             from apps.inventory.models import MaterialInboundLine
             from apps.inventory.purchase_receiving_sections import assigned_receiving_sections, receiving_lines_in_scope
 
@@ -101,20 +128,21 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
                 inbound_lines = receiving_lines_in_scope(
                     MaterialInboundLine.objects.all(), sections, order_field="inbound__purchase_order",
                 )
-                other_scope = Q()
+                other_scope = packaging_access if PACKAGING_PERMISSION in operations else Q(pk__in=[])
                 for code in ("procurement.view_purchaseorder", "inventory.quality_confirm_material"):
-                    if has_permission(self.request, code):
+                    if code in operations:
                         tasks = accessible_production_tasks(self.request, permission=code).values("id")
-                        other_scope |= purchase_order_access(tasks, self.request, "purchase_order__", permission=code)
-                lines = lines.filter(Q(inbound_line__in=inbound_lines) | other_scope)
+                        scope = purchase_order_access(tasks, self.request, "purchase_order__", permission=code)
+                        other_scope |= (scope & ~packaging) if code == "procurement.view_purchaseorder" else scope
+                full_records = PurchaseReturn.objects.filter(other_scope).order_by().values("pk")
+                lines = lines.filter(Q(inbound_line__in=inbound_lines) | Q(return_order_id__in=full_records))
                 queryset = queryset.filter(Exists(lines.filter(return_order_id=OuterRef("pk"))))
         if self.action in {"list", "retrieve"}:
-            queryset = queryset.select_related("purchase_order", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee").prefetch_related(
+            queryset = queryset.select_related("purchase_order__purchase_group", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee").prefetch_related(
                 Prefetch("lines", queryset=lines),
             )
         elif self.action not in {"stats", "filter_options"}:
-            # 写操作沿用原查询；读取优化不改变推进状态时的对象和校验。
-            queryset = queryset.select_related("purchase_order", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee").prefetch_related("lines__inbound_line")
+            queryset = queryset.select_related("purchase_order__purchase_group", "inbound", "generated_by_employee", "confirmed_by_employee", "completed_by_employee").prefetch_related("lines__inbound_line")
         if self.action not in {"list", "stats"}:
             return queryset
         status = self.request.query_params.get("status", "").strip()
@@ -133,7 +161,12 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
                 queryset = queryset.filter(**{field: value})
         keyword = self.request.query_params.get("q", "").strip()
         if keyword:
-            queryset = queryset.filter(Q(return_number__icontains=keyword) | Q(purchase_order__order_number__icontains=keyword) | Q(supplier_name_snapshot__icontains=keyword))
+            queryset = queryset.filter(
+                Q(purchase_order__production_task_number_snapshot__icontains=keyword)
+                | Q(return_number__icontains=keyword)
+                | Q(purchase_order__order_number__icontains=keyword)
+                | Q(supplier_name_snapshot__icontains=keyword)
+            )
         ordering = self.request.query_params.get("ordering", "-updated_at")
         if ordering not in {"updated_at", "-updated_at"}:
             raise ValidationError({"ordering": "仅支持按更新时间排序。"})
@@ -167,9 +200,19 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
         return response
 
     def _advance(self, request, target_status):
+        operations = self._operations()
+        if operations == (PACKAGING_PERMISSION,) and not packaging_purchase_tasks(request).exists():
+            self.permission_denied(request, message="当前账号没有可办理包材退货的跟进任务。")
         record = self.get_object()
+        group = record.purchase_order.purchase_group
+        if group and group.purchase_scope == PurchaseScope.PACKAGING:
+            tasks = packaging_purchase_tasks(request)
+        else:
+            standard_permission = next(code for code in operations if code != PACKAGING_PERMISSION)
+            tasks = accessible_production_tasks(request, permission=standard_permission)
         advance_purchase_return(
-            return_id=record.pk, target_status=target_status, allowed_task_ids=self._task_ids(),
+            return_id=record.pk, target_status=target_status,
+            allowed_task_ids=tasks.filter(archived_at__isnull=True).order_by().values_list("pk", flat=True),
             actor_employee=request.employee, request=request,
         )
         return self.retrieve(request)

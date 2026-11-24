@@ -125,9 +125,14 @@ const legalBasisText = '根据《中华人民共和国民法典》《中华人�
 
 const activeAction = ref(false)
 const busy = computed(() => activeAction.value || saving.value || publishing.value || loading.value)
-const canEdit = computed(() => auth.user?.is_superuser || auth.moduleCan('procurement.change_supplierpurchasesheet', 'procurement.add_purchaseorder'))
-const canNewVersion = computed(() => auth.moduleCan('procurement.add_supplierpurchasesheet', 'procurement.add_purchaseorder'))
-const canPublish = computed(() => auth.user?.is_superuser || auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder'))
+const packaging = computed(() => sheet.value?.purchase_scope === 'PACKAGING')
+const canManagePackaging = computed(() => auth.user?.is_superuser || auth.hasPermission('procurement.manage_packagingpurchase'))
+const canEdit = computed(() => packaging.value ? canManagePackaging.value : auth.user?.is_superuser || auth.moduleCan('procurement.change_supplierpurchasesheet', 'procurement.add_purchaseorder'))
+const canNewVersion = computed(() => packaging.value ? canManagePackaging.value : auth.moduleCan('procurement.add_supplierpurchasesheet', 'procurement.add_purchaseorder'))
+const canPublish = computed(() => packaging.value ? canManagePackaging.value : auth.user?.is_superuser || auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder'))
+const sheetsQuery = computed(() => packaging.value
+  ? { ...route.query, purchase_scope: 'PACKAGING', ...(route.query.batch_session_id || route.query.purchase_group_id ? {} : { purchase_order_id: sheet.value?.purchase_order_id || undefined }) }
+  : { purchase_order_id: sheet.value?.purchase_order_id || undefined })
 const editable = computed(() => sheet.value?.status === 'DRAFT' && canEdit.value)
 const isPublished = computed(() => sheet.value?.status === 'PUBLISHED')
 watch(sheet, value => { purchaseSheetPageStatus.value = value ? { id: value.id, status: value.status } : null })
@@ -474,7 +479,7 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
 
     <div v-if="sheet && content" class="editor-layout" :inert="publishVisible || undefined">
       <aside v-if="isPublished" class="published-info" aria-label="采购表只读信息">
-        <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: sheet.purchase_order_id || undefined } })" />
+        <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: sheetsQuery })" />
         <h2>采购表信息</h2>
         <dl class="published-fields">
           <div><dt>采购表编号</dt><dd>{{ sheet.sheet_number }}</dd></div>
@@ -496,7 +501,7 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
       </aside>
       <aside v-else class="property-panel">
         <div class="panel-nav">
-          <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: sheet.purchase_order_id || undefined } })" />
+          <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: sheetsQuery })" />
         </div>
         <section class="settings-section"><h2>采购表设置</h2>
           <label>合同标题<ElInput v-model="content.title" aria-label="设置合同标题" :disabled="!editable || busy" @input="markOriginalEdit('title')" /></label>

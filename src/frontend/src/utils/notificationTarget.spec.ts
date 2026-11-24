@@ -34,7 +34,8 @@ describe('通知命名路由白名单', () => {
   })
   it('岗位策略按服务端目标进入采购来源、当前跟单任务及财务列表', () => {
     const policy = { ...target, target_key: 'role-policy' }
-    expect(notificationRoute('PRODUCTION_TASK_BOMS_CONFIRMED', { ...policy, route_name: 'purchase-order-create', params: {} })).toEqual({ name: 'purchase-order-create', params: {} })
+    expect(notificationRoute('PRODUCTION_TASK_BOMS_CONFIRMED', { ...policy, route_name: 'purchase-order-create', params: {} }))
+      .toEqual({ name: 'purchase-order-create', params: {}, query: { production_task_id: id } })
     expect(notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', { ...policy, route_name: 'production-task-detail', params: { taskId: id } })).toEqual({ name: 'production-task-detail', params: { taskId: id } })
     expect(notificationRoute('FINANCE_RECEIPT_CHANGED', { ...policy, route_name: 'finance-receipts', params: {} })).toEqual({ name: 'finance-receipts', params: {} })
     expect(notificationRoute('OUTSOURCING_ORDER_CREATED', { ...policy, route_name: 'workshop-outsourcing-detail', params: { orderId: id } }).name).toBe('workshop-outsourcing-detail')
@@ -143,6 +144,16 @@ describe('通知命名路由白名单', () => {
     const report = { ...target, route_name: 'work-report-day-detail', params: { productionDate: '2026-10-21' } }
     expect(notificationRoute('WORK_REPORT_SAVED', report).params.productionDate).toBe('2026-10-21')
     expect(() => notificationRoute('WORK_REPORT_SAVED', { ...report, params: { productionDate: '2026-02-30' } })).toThrow()
-    expect(notificationRoute('MATERIAL_RECEIPT_RECORDED', { ...target, route_name: 'material-quality-confirmation', params: {} }).params).toEqual({})
+    expect(notificationRoute('MATERIAL_RECEIPT_RECORDED', { ...target, route_name: 'material-quality-confirmation', params: {} }))
+      .toEqual({ name: 'material-quality-confirmation', params: {}, query: { receipt: id } })
+  })
+  it('包材待办定位生产任务，包材风险进入相同采购范围', () => {
+    const notice = { ...target, target_key: 'role-policy', route_name: 'packaging-purchase-create', params: {} }
+    expect(notificationRoute('PACKAGING_BOMS_CONFIRMED', notice))
+      .toEqual({ name: 'packaging-purchase-create', params: {}, query: { production_task_id: id } })
+    const tracking = { ...target, target_key: 'purchase-tracking', route_name: 'purchase-tracking', params: {} }
+    expect(notificationRoute('PURCHASE_TRACKING_RISK', { ...tracking, query: { tab: 'coverage', purchase_scope: 'PACKAGING' } }))
+      .toEqual({ name: 'purchase-alerts', params: {}, query: { purchase_scope: 'PACKAGING' } })
+    expect(() => notificationRoute('PURCHASE_TRACKING_RISK', { ...tracking, query: { purchase_scope: 'invalid' } })).toThrow()
   })
 })

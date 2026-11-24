@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.organizations.models import Employee, EmployeeRoleAssignment
 from apps.production_tasks.models import ProductionTask
 from apps.wecom.models import NotificationDelivery, NotificationEvent, NotificationRecipient, NotificationRule, WeComBinding, WeComConfig
+from .models import PurchaseScope
 from .tracking_models import PurchaseTrackingContent, PurchaseTrackingDigest, PurchaseTrackingIssue, PurchaseTrackingNotice
 
 
@@ -53,22 +54,33 @@ def candidate_employees(now):
     ).select_related("user").distinct().order_by("pk")
 
 
-def recipient_roles(employee, task_id, now=None, event_code=None, cache=None):
+def recipient_roles(employee, task_id, now=None, event_code=None, cache=None, purchase_scope=None):
     from .tracking_permissions import employee_can_view_task
     now = now or timezone.now()
-    key = ('purchase-tracking-roles', str(employee.pk), str(task_id), event_code)
+    packaging = purchase_scope == PurchaseScope.PACKAGING
+    key = ('purchase-tracking-roles', str(employee.pk), str(task_id), event_code, packaging)
     if cache is not None and key in cache:
         return cache[key]
-    if not employee_can_view_task(employee, task_id):
+    may_view = (employee_can_view_task(employee, task_id, packaging=True) if packaging
+                else employee_can_view_task(employee, task_id))
+    if not may_view:
         if cache is not None:
             cache[key] = []
         return []
     roles = set(EmployeeRoleAssignment.objects.filter(
-        employee=employee, role_profile__role_code__in=TRACKING_ROLES[:2],
+        employee=employee, role_profile__role_code__in=('PMC', 'MERCHANDISER') if packaging else TRACKING_ROLES[:2],
         role_profile__archived_at__isnull=True, effective_from__lte=now,
     ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).values_list("role_profile__role_code", flat=True))
-    if ProductionTask.objects.filter(pk=task_id, followers=employee).exists():
+    if not packaging and ProductionTask.objects.filter(pk=task_id, followers=employee).exists():
         roles.add("MERCHANDISER")
+    if packaging:
+        from apps.access_control.selectors import effective_access
+        from .tracking_permissions import can_read_packaging_as_pmc, packaging_tracking_tasks
+        access = effective_access(employee.user)
+        if 'PMC' in roles and not can_read_packaging_as_pmc(access):
+            roles.remove('PMC')
+        if 'MERCHANDISER' in roles and not packaging_tracking_tasks(employee.user, employee, access, manage=True).filter(pk=task_id).exists():
+            roles.remove('MERCHANDISER')
     if event_code:
         configured = NotificationRule.objects.filter(event_code=event_code).values_list('recipient_role_codes', flat=True).first()
         roles &= set(configured or [])
@@ -88,6 +100,9 @@ def issue_item(issue):
 def content_target(items, *, object_id):
     query = {}
     kinds = {item['kind'] for item in items}
+    scopes = {item['snapshot'].get('purchase_scope', PurchaseScope.STANDARD) for item in items}
+    if PurchaseScope.PACKAGING in scopes:
+        query['purchase_scope'] = 'ALL' if len(scopes) > 1 else PurchaseScope.PACKAGING
     if len(kinds) == 1:
         query['tab'] = 'coverage' if 'coverage' in kinds else 'arrival'
     if any(item.get('historical_state') or item['snapshot'].get('is_history') for item in items):
@@ -109,7 +124,8 @@ def render_content(items, *, digest=False, templates=None):
         labels = [risk['label'] for risk in row.get('risks', []) if
             (risk['code'] == 'RETURN_PENDING') == (item['code'] == 'RETURN_PENDING')]
         label = '；'.join(labels) or item['code']
-        text = f"{row.get('task_number', '任务待核对')} / {row.get('product_name', '产品待核对')} / {row.get('material_name', '材料待核对')}\n{label}"
+        scope_label = '包材采购 · ' if row.get('purchase_scope') == PurchaseScope.PACKAGING else ''
+        text = f"{row.get('task_number', '任务待核对')} / {row.get('product_name', '产品待核对')} / {scope_label}{row.get('material_name', '材料待核对')}\n{label}"
         if item.get('historical_state'):
             text += f"（{item['historical_state']}，请查看当前状态）"
         unit = row.get("unit") or "单位待核对"
@@ -207,7 +223,7 @@ def create_event(owner, employee, items, *, now, digest=False, channels=('IN_APP
         target=content_target(items, object_id=owner.pk), status="CREATED")
     config = WeComConfig.objects.first()
     roles = sorted({role for item in items for role in recipient_roles(employee, item["production_task_id"],
-        now, event_code=code, cache=roles_cache)})
+        now, event_code=code, purchase_scope=item['snapshot'].get('purchase_scope'), cache=roles_cache)})
     recipient = NotificationRecipient.objects.create(event=event, employee=employee, employee_name=employee.display_name,
         role_codes=roles, scope="ROLE_POLICY", eligibility_snapshot={"tracking": True,
             "corp_id": config.corp_id if config else "", "agent_id": config.agent_id if config else ""})
@@ -254,10 +270,12 @@ def current_content_items(delivery, *, now, live=True, candidates=None, roles_ca
     result = []
     for item in content.items:
         task_id = item["production_task_id"]
-        if task_id not in permitted:
-            permitted[task_id] = bool(recipient_roles(employee, task_id, now,
-                event_code=delivery.recipient.event.event_code, cache=roles_cache))
-        if not permitted[task_id]:
+        scope = item['snapshot'].get('purchase_scope')
+        key = (task_id, scope)
+        if key not in permitted:
+            permitted[key] = bool(recipient_roles(employee, task_id, now,
+                event_code=delivery.recipient.event.event_code, purchase_scope=scope, cache=roles_cache))
+        if not permitted[key]:
             continue
         issue = issues.get(item["issue_id"])
         if live:
@@ -304,7 +322,7 @@ def empty_content_reason(delivery, *, now, candidates=None, roles_cache=None):
         cycle=item['cycle'], transition=item['transition'], rank=item['rank']).exists()
     if current and candidate and candidate['rank'] == item['rank'] and not recipient_roles(
             delivery.recipient.employee, item['production_task_id'], now,
-            event_code=delivery.recipient.event.event_code, cache=roles_cache):
+            event_code=delivery.recipient.event.event_code, purchase_scope=item['snapshot'].get('purchase_scope'), cache=roles_cache):
         return 'TRACKING_RECIPIENT_INELIGIBLE'
     return 'TRACKING_NO_CURRENT_ITEMS'
 

@@ -151,17 +151,44 @@ class PurchaseReceivingSectionTests(ScopedActorMixin, APITestCase):
         self.selection.save(update_fields=['sections'])
         rows = self.get('procurement-inbound-orders').data['data']
         self.assertEqual(rows[0]['receiving_sections'], [
-            {'id': 'A', 'name': '管材'}, {'id': 'B', 'name': '五金件、塑料件、包材'}, {'id': 'C', 'name': '面料、辅料'},
+            {'id': 'A', 'name': '管材'}, {'id': 'B', 'name': '五金件、塑料件'}, {'id': 'C', 'name': '面料、辅料'},
+            {'id': 'D', 'name': '包材'},
         ])
         eligible = self.get('eligible-lines', {'purchase_order_id': self.order.pk, 'material_section': 'B'}).json()
-        self.assertEqual(eligible['material_section_display'], '五金件、塑料件、包材')
+        self.assertEqual(eligible['material_section_display'], '五金件、塑料件')
         lines = eligible['data']
-        self.assertEqual({line['id'] for line in lines}, {str(self.hardware.pk), str(self.packaging.pk)})
+        self.assertEqual({line['id'] for line in lines}, {str(self.hardware.pk)})
+        eligible = self.get('eligible-lines', {'purchase_order_id': self.order.pk, 'material_section': 'D'}).json()
+        self.assertEqual(eligible['material_section_display'], '包材')
+        self.assertEqual([line['id'] for line in eligible['data']], [str(self.packaging.pk)])
         response = self.client.post(self.root + 'receivings/', {
             'material_section': 'A', 'items': [item(self.line), item(self.hardware)],
         }, format='json')
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(MaterialInbound.objects.exists())
+
+    def test_quality_keeps_complete_historical_b_record(self):
+        self.grant('inventory.quality_confirm_material')
+        inbound = MaterialInbound.objects.create(
+            inbound_number='RECEIVING-OLD-B', purchase_order=self.order, received_by_employee=self.employee,
+            material_section='B',
+        )
+        for line in (self.hardware, self.packaging):
+            MaterialInboundLine.objects.create(
+                inbound=inbound, purchase_order_line=line, raw_material_information=self.raw_material,
+                zone=self.zone, section_title_snapshot=line.section_title_snapshot,
+                received_quantity=2, accepted_quantity=2, purchased_quantity_snapshot=line.actual_purchase_quantity,
+            )
+        root = self.root + 'purchase-receipt-records/'
+        row = self.client.get(root, {'section': 'B'}).data['data'][0]
+        self.assertEqual(row['material_section_display'], '五金件、塑料件、包材（历史）')
+        self.assertTrue(row['can_quality_confirm'])
+        self.assertEqual(row['line_count'], 2)
+        detail = self.client.get(self.root + f'quality-batches/{inbound.pk}/')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['material_section'], 'B')
+        self.assertEqual(len(detail.data['data']['lines']), 2)
+        self.assertFalse(self.client.get(root, {'section': 'D'}).data['data'])
 
 
 @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
@@ -190,14 +217,18 @@ class AuthorizedSectionReceiptTests(ScopedActorMixin, APITestCase):
         body = {**self.payload(), 'material_section': 'B'}
         body['items'].append({**body['items'][0], 'purchase_order_line_id': str(packaging.pk),
                               'received_quantity': '1', 'expected_remaining_quantity': '5'})
+        mixed = self.client.post('/api/v1/material-inventory/receivings/', body, format='json')
+        self.assertEqual(mixed.status_code, 400, mixed.data)
+        self.assertFalse(MaterialInbound.objects.exists())
+        body = {**body, 'material_section': 'D', 'items': [body['items'][1]]}
         response = self.client.post('/api/v1/material-inventory/receivings/', body, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         record = MaterialInbound.objects.get(pk=response.data['data']['id'])
         self.assertEqual(record.purchase_order_id, self.purchase_line.purchase_order_id)
         self.assertEqual(record.received_by_employee, self.scope_employee)
         self.assertEqual(record.status, 'PENDING_QUALITY')
-        self.assertEqual(record.material_section, 'B')
-        self.assertEqual(set(record.lines.values_list('purchase_order_line_id', flat=True)), {self.purchase_line.pk, packaging.pk})
+        self.assertEqual(record.material_section, 'D')
+        self.assertEqual(set(record.lines.values_list('purchase_order_line_id', flat=True)), {packaging.pk})
         detail = self.client.get(f'/api/v1/purchase-orders/{record.purchase_order_id}/details/', {'receiving': '1'})
         self.assertEqual(detail.status_code, 200, detail.data)
-        self.assertEqual(detail.data['data']['inbounds'][0]['material_section_display'], '五金件、塑料件、包材')
+        self.assertEqual(detail.data['data']['inbounds'][0]['material_section_display'], '包材')

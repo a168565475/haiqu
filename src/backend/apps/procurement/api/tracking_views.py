@@ -6,14 +6,19 @@ from django.db.models import Q
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
-from apps.access_control import module_policy
+from apps.access_control import module_policy, sales_policy
 from apps.core.api.permissions import HasActiveEmployee
 from apps.production_tasks.models import ProductionTask
 
-from ..tracking_permissions import VIEW_PERMISSION, accessible_tracking_task_ids
+from ..models import PurchaseScope
+from ..purchase_scope import PACKAGING_PERMISSION
+from ..tracking_permissions import (
+    VIEW_PERMISSION, accessible_packaging_tracking_task_ids, accessible_tracking_task_ids, can_read_packaging_as_pmc,
+)
 from ..tracking_selectors import arrival_rows, coverage_rows
 from .group_serializers import PurchaseGroupFilterOptionsSerializer
 from .tracking_serializers import (
@@ -26,7 +31,7 @@ class TrackingViewPermission(BasePermission):
     message = '当前账号没有采购查看权限。'
 
     def has_permission(self, request, view):
-        return module_policy.has_permission(request, VIEW_PERMISSION)
+        return any(module_policy.has_permission(request, code) for code in (VIEW_PERMISSION, PACKAGING_PERMISSION))
 
 
 def _decimal_value(value):
@@ -90,13 +95,27 @@ class PurchaseTrackingViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         return serializer.validated_data
 
+    def _task_scopes(self, filters):
+        request = self.request
+        can_standard = module_policy.has_permission(request, VIEW_PERMISSION)
+        can_packaging = module_policy.has_permission(request, PACKAGING_PERMISSION) or (
+            can_standard and can_read_packaging_as_pmc(sales_policy.access_for(request)))
+        selected = filters.get('purchase_scope', PurchaseScope.STANDARD if can_standard else PurchaseScope.PACKAGING)
+        scopes = {}
+        if can_standard and selected in (PurchaseScope.STANDARD, 'ALL'):
+            scopes[PurchaseScope.STANDARD] = accessible_tracking_task_ids(request)
+        if can_packaging and selected in (PurchaseScope.PACKAGING, 'ALL'):
+            scopes[PurchaseScope.PACKAGING] = accessible_packaging_tracking_task_ids(request)
+        if not scopes:
+            raise PermissionDenied('当前账号无权查看所选采购范围。')
+        task_id = filters.get('production_task_id')
+        return {scope: tasks.filter(pk=task_id) if task_id else tasks for scope, tasks in scopes.items()}
+
     def _rows(self, selector, serializer_class, *, mode):
         filters = self._filters()
-        tasks = accessible_tracking_task_ids(self.request)
-        if filters.get('production_task_id'):
-            tasks = tasks.filter(pk=filters['production_task_id'])
         # 必须先在数据库限定可见任务，再进行批量事实计算；分页不会影响权限边界。
-        rows = selector(task_ids=tasks, include_history=filters['include_history'])
+        rows = [row for scope, tasks in self._task_scopes(filters).items()
+                for row in selector(task_ids=tasks, include_history=filters['include_history'], purchase_scope=scope)]
         rows = [row for row in rows if _arrival_is_incomplete(row)] if mode == 'arrival' else [row for row in rows if _coverage_is_incomplete(row)]
         if filters.get('risk'):
             rows = [row for row in rows if any(risk['code'] == filters['risk'] for risk in row['risks'])]
@@ -124,15 +143,21 @@ class PurchaseTrackingViewSet(viewsets.GenericViewSet):
 
     def _filter_actions(self, rows):
         visible_task_ids = {row['production_task_id'] for row in rows}
-        required = {'create_group': 'procurement.add_purchaseorder', 'create_batch': 'procurement.add_purchaseorder',
-                    'view_bom': 'boms.view_bom'}
-        wanted = {required[action['kind']] for row in rows for action in row['actions'] if action['kind'] in required}
+        required = {
+            PurchaseScope.STANDARD: dict.fromkeys(('create_group', 'create_batch'), 'procurement.add_purchaseorder'),
+            PurchaseScope.PACKAGING: dict.fromkeys(('create_group', 'create_batch', 'view_group', 'view_return'), PACKAGING_PERMISSION),
+        }
+        for permissions in required.values():
+            permissions['view_bom'] = 'boms.view_bom'
+        wanted = {required[row['purchase_scope']][action['kind']] for row in rows for action in row['actions']
+                  if action['kind'] in required[row['purchase_scope']]}
         allowed = {permission: {str(pk) for pk in accessible_tracking_task_ids(self.request, permission=permission)
                                .filter(pk__in=visible_task_ids)} for permission in wanted}
         for row in rows:
             actions = row['actions']
-            row['actions'] = [action for action in actions if action['kind'] not in required
-                              or row['production_task_id'] in allowed[required[action['kind']]]]
+            permissions = required[row['purchase_scope']]
+            row['actions'] = [action for action in actions if action['kind'] not in permissions
+                              or row['production_task_id'] in allowed[permissions[action['kind']]]]
             if any(action['kind'].startswith('create_') for action in actions) and not any(
                     action['kind'].startswith('create_') for action in row['actions']):
                 row['action_blocked_reason'] = '当前账号没有该任务的新增采购权限'
@@ -151,8 +176,10 @@ class PurchaseTrackingViewSet(viewsets.GenericViewSet):
         fields={'data': PurchaseGroupFilterOptionsSerializer()}))
     @action(detail=False, methods=['get'], url_path='filter-options')
     def filter_options(self, request):
-        self._filters()
-        tasks = ProductionTask.objects.filter(pk__in=accessible_tracking_task_ids(request)).filter(
+        task_filter = Q(pk__in=[])
+        for task_ids in self._task_scopes(self._filters()).values():
+            task_filter |= Q(pk__in=task_ids)
+        tasks = ProductionTask.objects.filter(task_filter).filter(
             Q(status__in=['READY', 'IN_PRODUCTION', 'PAUSED', 'COMPLETED', 'CANCELLED'])
             | Q(purchase_orders__isnull=False)).order_by('task_number', 'id').values('id', 'task_number', 'order_number').distinct()
         return Response({'data': PurchaseGroupFilterOptionsSerializer({'production_tasks': list(tasks)}).data})

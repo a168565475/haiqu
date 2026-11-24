@@ -24,13 +24,14 @@ const router = useRouter()
 const auth = useAuthStore()
 const pageTabs = usePageTabsStore()
 const can = (permission: string) => auth.user?.is_superuser === true || auth.hasPermission(permission)
-const canRead = computed(() => ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'].some(can))
-const canReadSheets = computed(() => auth.user?.is_superuser === true || auth.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
+const canRead = computed(() => ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material', 'procurement.manage_packagingpurchase'].some(can))
+const canReadSheets = computed(() => packaging.value ? can('procurement.manage_packagingpurchase') : auth.user?.is_superuser === true || auth.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
 const fromInbound = computed(() => route.name === 'purchase-inbound-detail')
-const canReadGroup = computed(() => can('procurement.view_purchaseorder'))
+const canReadGroup = computed(() => packaging.value ? can('procurement.manage_packagingpurchase') : can('procurement.view_purchaseorder'))
 const groupNumber = ref('')
 const groupError = ref('')
 const order = ref<PurchaseOrderReadDetail | null>(null)
+const packaging = computed(() => order.value?.purchase_scope === 'PACKAGING')
 const inboundColors = computed(() => Object.fromEntries((order.value?.lines ?? []).map(line => [line.id, line.color])))
 const headerStatus = computed(() => order.value?.purchase_group_id ? order.value.display_status ?? order.value.status : order.value?.status || '')
 const headerStatusLabel = computed(() => order.value?.purchase_group_id && headerStatus.value === 'COMPLETED' ? '采购完成' : order.value?.status_display || '')
@@ -196,10 +197,10 @@ function statusTone(status: string) {
 function backToList() {
   void router.push(fromInbound.value ? { name: 'purchase-inbounds' }
     : order.value?.purchase_group_id && canReadGroup.value && !groupError.value
-      ? { name: 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
+      ? { name: packaging.value ? 'packaging-purchase-detail' : 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
       : { name: 'purchase-orders', query: { view: 'orders' } })
 }
-function openSheets() { if (order.value && canReadSheets.value) void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id } }) }
+function openSheets() { if (order.value && canReadSheets.value) void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id, ...(packaging.value ? { purchase_scope: 'PACKAGING' } : {}) } }) }
 function switchTab(event: KeyboardEvent, index: number) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
@@ -237,7 +238,7 @@ async function load() {
 }
 async function loadGroupNumber(id: string, version: number): Promise<void> {
   try {
-    const result = await fetchVersionedPurchaseGroup(id)
+    const result = await (packaging.value ? fetchVersionedPurchaseGroup(id, undefined, true) : fetchVersionedPurchaseGroup(id))
     if (!disposed && version === requestVersion) groupNumber.value = result.data.group_number
   } catch {
     if (!disposed && version === requestVersion) groupError.value = '采购需求信息暂不可读，批次明细仍可查看。'

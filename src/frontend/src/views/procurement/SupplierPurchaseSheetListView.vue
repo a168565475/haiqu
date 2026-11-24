@@ -36,11 +36,14 @@ const pageSize = ref(50)
 const loadError = ref('')
 const purchaseOrderId = computed(() => String(route.query.purchase_order_id || ''))
 const purchaseGroupId = computed(() => String(route.query.purchase_group_id || ''))
+const packaging = computed(() => route.query.purchase_scope === 'PACKAGING')
+const batchSessionId = computed(() => String(route.query.batch_session_id || ''))
 const publishedSelected = computed(() => selected.value.filter((item) => item.status === 'PUBLISHED'))
 const draftSelected = computed(() => selected.value.filter((item) => item.status === 'DRAFT'))
 
 const busy = computed(() => publishing.value || downloading.value || publishConfirmVisible.value)
-const canPublish = computed(() => auth.user?.is_superuser || auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder'))
+const canPublish = computed(() => auth.user?.is_superuser || (packaging.value
+  ? auth.hasPermission('procurement.manage_packagingpurchase') : auth.moduleCan('procurement.publish_supplierpurchasesheet', 'procurement.submit_purchaseorder')))
 const canGenerate = computed(() => auth.user?.is_superuser || auth.moduleCan('access_control.generate_purchasesheets', 'procurement.add_purchaseorder'))
 const publishReady = computed(() => canPublish.value && !loading.value && !loadError.value && !busy.value && selected.value.length > 0 && selected.value.length <= 100 && draftSelected.value.length === selected.value.length)
 const downloadReady = computed(() => !loading.value && !loadError.value && !busy.value && selected.value.length > 0 && publishedSelected.value.length === selected.value.length)
@@ -82,7 +85,7 @@ async function load(): Promise<void> {
   selected.value = []
   tableRef.value?.clearSelection()
   try {
-    if (purchaseOrderId.value && canGenerate.value) {
+    if (purchaseOrderId.value && canGenerate.value && !packaging.value) {
       await ensureDefaultPurchaseSheets(purchaseOrderId.value)
       if (sequence !== loadSequence) return
     }
@@ -91,6 +94,8 @@ async function load(): Promise<void> {
       page_size: pageSize.value,
       purchase_order_id: purchaseOrderId.value || undefined,
       ...(purchaseGroupId.value ? { purchase_group_id: purchaseGroupId.value } : {}),
+      ...(packaging.value ? { purchase_scope: 'PACKAGING' as const } : {}),
+      ...(batchSessionId.value ? { batch_session_id: batchSessionId.value } : {}),
       is_current: true,
     })
     if (sequence !== loadSequence) return
@@ -113,7 +118,7 @@ function resetPageAndLoad(): void {
 }
 
 function edit(row: SupplierPurchaseSheet): void {
-  void router.push({ name: 'supplier-purchase-sheet-editor', params: { id: row.id } })
+  void router.push({ name: 'supplier-purchase-sheet-editor', params: { id: row.id }, ...(packaging.value ? { query: route.query } : {}) })
 }
 
 function handleRowAction(command: string, row: SupplierPurchaseSheet): void {
@@ -186,7 +191,7 @@ async function confirmBatchPublish(): Promise<void> {
   }
 }
 
-watch([purchaseOrderId, purchaseGroupId], () => {
+watch([purchaseOrderId, purchaseGroupId, packaging, batchSessionId], () => {
   page.value = 1
   void load()
 })

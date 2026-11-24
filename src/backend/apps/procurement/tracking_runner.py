@@ -7,6 +7,7 @@ from django.utils import timezone
 from apps.wecom.models import NotificationDelivery, WeComBinding, WeComConfig
 from apps.wecom.notification_services import _lock_key
 from .tracking_models import PurchaseTrackingDigest, PurchaseTrackingIssue, PurchaseTrackingNotice
+from .models import PurchaseScope
 from .tracking_notifications import (
     BEIJING, TRACKING_EVENTS, candidate_employees, create_event, fingerprint, issue_item,
     issue_transition, recipient_roles, refresh_pending_delivery, rule_enabled, semantic_snapshot,
@@ -19,8 +20,10 @@ def collect_candidates(*, task_ids=None, now=None):
     from .tracking_selectors import arrival_rows, coverage_rows
     now = now or timezone.now()
     today = now.astimezone(BEIJING).date()
-    return (issue_candidates(arrival_rows(task_ids=task_ids, today=today), 'arrival')
-            + issue_candidates(coverage_rows(task_ids=task_ids, today=today, now=now), 'coverage'))
+    return [candidate for scope in PurchaseScope.values
+            for rows, kind in ((arrival_rows(task_ids=task_ids, today=today, purchase_scope=scope), 'arrival'),
+                               (coverage_rows(task_ids=task_ids, today=today, now=now, purchase_scope=scope), 'coverage'))
+            for candidate in issue_candidates(rows, kind)]
 
 
 def preview_candidates(candidates, now):
@@ -32,9 +35,9 @@ def preview_candidates(candidates, now):
     recipients = []
     roles_cache = {}
     for employee in candidate_employees(now):
-        roles_by_task = {task_id: recipient_roles(employee, task_id, now, cache=roles_cache)
-                        for task_id in {item['production_task_id'] for item in candidates}}
-        visible = [item for item in candidates if roles_by_task[item['production_task_id']]]
+        keys = {(item['production_task_id'], item['snapshot'].get('purchase_scope')) for item in candidates}
+        roles_by_task = {key: recipient_roles(employee, key[0], now, purchase_scope=key[1], cache=roles_cache) for key in keys}
+        visible = [item for item in candidates if roles_by_task[(item['production_task_id'], item['snapshot'].get('purchase_scope'))]]
         if not visible:
             continue
         binding = WeComBinding.objects.filter(employee=employee).first()
@@ -183,11 +186,11 @@ def recompute_tracking(*, task_ids=None, now=None, dry_run=False):
         for employee in candidate_employees(now):
             if after_nine and rule_enabled('PURCHASE_TRACKING_DIGEST'):
                 visible = [issue for issue in issues if recipient_roles(employee, issue.production_task_id, now,
-                    event_code='PURCHASE_TRACKING_DIGEST', cache=roles_cache)]
+                    event_code='PURCHASE_TRACKING_DIGEST', purchase_scope=issue.snapshot.get('purchase_scope'), cache=roles_cache)]
                 _produce_digest(employee, visible, now, result, roles_cache)
             if rule_enabled('PURCHASE_TRACKING_RISK'):
                 visible = [issue for issue in issues if recipient_roles(employee, issue.production_task_id, now,
-                    event_code='PURCHASE_TRACKING_RISK', cache=roles_cache)]
+                    event_code='PURCHASE_TRACKING_RISK', purchase_scope=issue.snapshot.get('purchase_scope'), cache=roles_cache)]
                 _produce_immediate(employee, visible, now, roles_cache)
         result['active_issue_count'] = PurchaseTrackingIssue.objects.filter(active=True).count()
         result['deliveries_created'] = NotificationDelivery.objects.filter(

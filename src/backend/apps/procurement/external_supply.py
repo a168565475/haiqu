@@ -9,7 +9,8 @@ from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from .group_services import _save_bom_snapshot, bom_group_line_snapshot, save_bom_group_line
 from .multi_bom_sources import merge_purchase_snapshots, purchase_merge_key
-from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus
+from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus, PurchaseScope
+from .purchase_scope import is_packaging_bom_line
 from .services import _is_purchasable_bom_section, _source_line
 
 
@@ -120,6 +121,11 @@ def _sync_combined_group(group, bom, choices, previous_group_id):
     return changed_ids
 
 
+def _scope_choices(group, choices):
+    packaging = group.purchase_scope == PurchaseScope.PACKAGING
+    return {pk: line for pk, line in choices.items() if is_packaging_bom_line(line) == packaging}
+
+
 def sync_external_supply(bom, bom_lines, *, actor_employee, request):
     choices = {line.pk: line for line in bom_lines
                if _is_purchasable_bom_section(line.section) and "purchase_required" in (line.raw_values or {})}
@@ -137,22 +143,27 @@ def sync_external_supply(bom, bom_lines, *, actor_employee, request):
         production_task_id=bom.production_task_id, product_line_id_snapshot=bom.product_line_id,
         archived_at__isnull=True,
     ))
-    group = (groups[0] if len(groups) == 1 else
-             next((group for group in groups if group.source_bom_id_snapshot == bom.pk), None))
-    if group:
+    for scope in PurchaseScope.values:
+        matches = [group for group in groups if group.purchase_scope == scope]
+        group = matches[0] if len(matches) == 1 else next(
+            (group for group in matches if group.source_bom_id_snapshot == bom.pk), None,
+        )
+        if not group:
+            continue
+        scoped = _scope_choices(group, choices)
         sources = {source.source_bom_line_id_snapshot: source for source in group.lines.all()}
         # 同产品复制时 component_identity 保留，跨产品复制时重建；不能用名称映射冻结行。
         prior_ids = {}
         if group.source_bom_id_snapshot != bom.pk:
             previous = BomLine.objects.filter(
                 section__bom_id=group.source_bom_id_snapshot,
-                component_identity__in=[line.component_identity for line in choices.values()],
+                component_identity__in=[line.component_identity for line in scoped.values()],
             )
             prior_ids = dict(previous.values_list("component_identity", "pk"))
             prior_ids.update(BomLine.objects.filter(pk__in=sources).values_list("component_identity", "pk"))
         next_number = max((row.line_number for row in sources.values()), default=0)
         changed = []
-        for pk, line in choices.items():
+        for pk, line in scoped.items():
             prior_id = prior_ids.get(line.component_identity)
             source = sources.get(pk) or sources.get(prior_id)
             if source is None:
@@ -180,7 +191,7 @@ def sync_external_supply(bom, bom_lines, *, actor_employee, request):
     external_group_lines = set()
     for combined in combined_groups:
         previous = combined.bom_sources.get(product_line_id_snapshot=bom.product_line_id)
-        changed = _sync_combined_group(combined, bom, choices, previous.previous_group_id)
+        changed = _sync_combined_group(combined, bom, _scope_choices(combined, choices), previous.previous_group_id)
         if changed:
             combined.save(update_fields=["updated_at"])
             write_audit_log(object_type="PURCHASE_GROUP", object_id=combined.pk, action="BOM_PURCHASE_SCOPE_UPDATED",

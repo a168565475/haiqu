@@ -26,17 +26,17 @@ async function renderProgress(percent: string | null | undefined, receivingSecti
 
 describe('采购入库列表显示到货进度', () => {
   it('采购入库有待质检批次时仍只显示详情和分区收货操作', async () => {
-    const wrapper = await renderProgress('25.0', [{ id: 'B', name: '五金件、塑料件、包材' }])
+    const wrapper = await renderProgress('25.0', [{ id: 'D', name: '包材' }])
     try {
       const actions = wrapper.get('.more-action')
       expect(actions.findAll('button')).toHaveLength(1)
       expect(wrapper.findAllComponents({ name: 'ElDropdownItem' })).toHaveLength(0)
       await actions.get('button').trigger('click')
       await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).map(item => item.text()))
-        .toEqual(['查看详情', '五金件、塑料件、包材入库']))
+        .toEqual(['查看详情', '包材入库']))
       wrapper.findAllComponents({ name: 'ElDropdownItem' })[1]!.vm.$emit('click')
       expect(push).toHaveBeenCalledWith({
-        name: 'material-purchase-inbound', params: { purchaseOrderId: 'order' }, query: { material_section: 'B' },
+        name: 'material-purchase-inbound', params: { purchaseOrderId: 'order' }, query: { material_section: 'D' },
       })
     } finally { wrapper.unmount() }
   })

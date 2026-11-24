@@ -29,9 +29,10 @@ from .group_selectors import (
     purchase_group_batch_numbers, purchase_group_completion_summary, purchase_group_deletion_summary,
     purchase_group_progress, purchase_groups_with_context,
 )
-from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier
+from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, PurchaseScope, Supplier
 from .multi_bom_sources import matches_combined_source, merge_purchase_snapshots, purchase_merge_key
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
+from .purchase_scope import is_packaging_snapshot, validate_source_scope
 from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
 from .set_pricing import apply_set_pricing, material_calculation_snapshot, validate_set_members
 from .services import (
@@ -222,6 +223,7 @@ def attach_purchase_order_group(order):
     existing = PurchaseGroup.objects.select_for_update().filter(
         production_task=order.production_task,
         product_line_id_snapshot__in=product_ids, archived_at__isnull=True,
+        purchase_scope=PurchaseScope.STANDARD,
     ).first()
     if existing is not None:
         if (issues or existing.compatibility_issues or existing.batches.exists()
@@ -263,8 +265,10 @@ def attach_purchase_order_group(order):
     return group
 
 
-def _selected_group_sources(task, revisions):
-    groups = list(PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True).prefetch_related("bom_sources"))
+def _selected_group_sources(task, revisions, purchase_scope):
+    groups = list(PurchaseGroup.objects.filter(
+        production_task=task, archived_at__isnull=True, purchase_scope=purchase_scope,
+    ).prefetch_related("bom_sources"))
     product_for_bom = {str(p.purchase_source_boms[0].pk): p.pk for p in task.purchase_source_products if p.purchase_source_boms}
     single_groups = defaultdict(list)
     combined_groups = []
@@ -339,7 +343,7 @@ def _previous_group_snapshots(group, product, components):
 
 
 @transaction.atomic
-def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, request=None):
+def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, request=None, purchase_scope=PurchaseScope.STANDARD):
     task = ProductionTask.objects.select_for_update().filter(
         pk=validated_data["production_task_id"], pk__in=allowed_task_ids, archived_at__isnull=True,
     ).first()
@@ -352,7 +356,7 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
     entries = validated_data.get("sources") or [validated_data]
     revisions = {str(entry["bom_id"]): entry["source_revision"] for entry in entries}
     task = production_tasks_with_purchase_sources(ProductionTask.objects.filter(pk=task.pk)).get()
-    existing, selected = _selected_group_sources(task, revisions)
+    existing, selected = _selected_group_sources(task, revisions, purchase_scope)
     if existing:
         return existing
     if all(previous for _, _, _, previous in selected) and task.status not in PURCHASABLE_TASK_STATUSES:
@@ -365,7 +369,7 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
             continue
         product_source = copy(task)
         product_source.purchase_source_products = [product]
-        source = evaluate_purchase_source(product_source, bom_id=bom_id)
+        source = evaluate_purchase_source(product_source, bom_id=bom_id, purchase_scope=purchase_scope)
         if not source["can_create"]:
             raise PurchaseSourceUnavailable(source["blockers"])
         if revision != source["source_revision"]:
@@ -374,6 +378,7 @@ def create_purchase_group(*, validated_data, allowed_task_ids, actor_employee, r
     combined = len(selected) > 1
     group = PurchaseGroup.objects.create(
         group_number="CGZD" + next_purchase_order_number()[4:], production_task=task,
+        purchase_scope=purchase_scope,
         product_line_id_snapshot=None if combined else selected[0][0].pk,
         source_bom_id_snapshot=None if combined else selected[0][1],
         production_task_number_snapshot=task.task_number, sales_order_number_snapshot=task.order_number,
@@ -422,6 +427,7 @@ def bom_group_line_snapshot(item):
 
 
 def _save_bom_snapshot(group, number, snapshot):
+    validate_source_scope(is_packaging_snapshot(snapshot), group.purchase_scope, number)
     line = _save_group_line(group, number, snapshot)
     if line.compatibility_issues:
         raise ValidationError({"lines": f"第{number}行来源建议量、单位或材料身份不完整，请先核对BOM。"})
@@ -481,7 +487,7 @@ def _lock_group_for_batch(group_id, allowed_task_ids):
 
 
 @transaction.atomic
-def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request=None):
+def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request=None, group_version_checked=False):
     task, group = _lock_group_for_batch(group_id, allowed_task_ids)
     fingerprint = _batch_request_fingerprint(validated_data)
     existing = group.batches.filter(batch_request_id=validated_data["request_id"]).first()
@@ -498,7 +504,8 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         raise Conflict("生产任务当前状态不允许新增采购批次。")
     if group.compatibility_issues:
         raise Conflict("采购需求来源归属存在待核对项，不能新增批次。")
-    require_matching_etag(request, group)
+    if not group_version_checked:
+        require_matching_etag(request, group)
     source_lines = {str(line.pk): line for line in group.lines.select_for_update().order_by("id")}
     inputs = validated_data["lines"]
     ids = [str(item["purchase_group_line_id"]) for item in inputs]
@@ -516,6 +523,7 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
             raise Conflict(f"第{source.line_number}项历史来源待核对，不能创建批次。")
         if snapshot.get("purchase_required") is False:
             raise ValidationError({"lines": "所选材料已改为外供，请重新读取采购需求。"})
+        validate_source_scope(is_packaging_snapshot(snapshot), group.purchase_scope, source.line_number)
         if snapshot.get("section_type_snapshot") != "PROFILE":
             continue
         calculation = snapshot.get("calculation_snapshot") or {}

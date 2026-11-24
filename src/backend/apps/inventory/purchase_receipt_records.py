@@ -8,8 +8,8 @@ from apps.access_control.module_policy import has_permission
 from apps.procurement.source_access import purchase_order_access
 from apps.production_tasks.selectors import accessible_production_tasks
 
-from .models import MaterialInbound, MaterialInboundLine, MaterialTransfer, MaterialTransferLine, PURCHASE_INBOUND_SECTION_NAMES
-from .purchase_receiving_sections import SECTION_CATEGORIES, assigned_receiving_sections, receiving_lines_in_scope
+from .models import MaterialInbound, MaterialInboundLine, MaterialTransfer, MaterialTransferLine, PURCHASE_INBOUND_SECTION_NAMES, PurchaseInboundSection
+from .purchase_receiving_sections import SECTION_CATEGORIES, assigned_receiving_sections, receiving_lines_in_scope, with_receipt_section_history
 from .selectors import can_read_inventory_overview, inbound_product_summaries
 
 
@@ -17,7 +17,7 @@ RECEIPT_PERMISSIONS = ('inventory.receive_material', 'inventory.quality_confirm_
 RECEIPT_STATUSES = {'PENDING_QUALITY': '待质检', 'CONFIRMED': '已入库', 'RETURNED': '全部退货'}
 RECEIPT_SOURCES = {'PURCHASE': '采购收货', 'TRANSFER': '材料收发'}
 UNASSIGNED_SECTION = 'UNASSIGNED'
-SUMMARY_FIELDS = ('id', 'source', 'production_task_number', 'inbound_number', 'purchase_order_number', 'material_section', 'batch_number', 'inbound_date',
+SUMMARY_FIELDS = ('id', 'source', 'production_task_number', 'inbound_number', 'purchase_order_number', 'material_section', 'has_legacy_packaging', 'batch_number', 'inbound_date',
                   'received_by_name', 'quality_confirmed_by_name', 'quality_confirmed_at', 'line_count', 'record_status',
                   'can_quality_confirm', 'created_at')
 
@@ -50,7 +50,7 @@ def purchase_receipt_scope(request, allowed):
         scoped_lines = lines.filter(Q(pk__in=scoped_lines.values('pk')) | Q(inbound_id__in=quality_records.values('pk')))
 
     known = Q(pk__in=receiving_records.values('pk')) | Q(pk__in=quality_records.values('pk')) | Q(pk__in=confirmed_records.values('pk'))
-    records = MaterialInbound.objects.filter(known)
+    records = with_receipt_section_history(MaterialInbound.objects.filter(known))
     if categories is not None:
         records = records.filter(Exists(scoped_lines.filter(inbound_id=OuterRef('pk'))))
 
@@ -95,9 +95,17 @@ def transfer_receipt_scope(request, allowed):
             Exists(current.filter(pk__in=matching.values('pk'))) & ~Exists(current.exclude(pk__in=matching.values('pk'))),
             then=Value(section),
         ))
+    packaging = SECTION_CATEGORIES[PurchaseInboundSection.D]
+    metal_plastic = SECTION_CATEGORIES[PurchaseInboundSection.B]
+    # 旧的一般入库混合行保留原展示和明细；纯包材按现行分区展示。
+    legacy_mix = (Exists(current.filter(material_selection_snapshot__category_key__in=packaging))
+                  & Exists(current.filter(material_selection_snapshot__category_key__in=metal_plastic))
+                  & ~Exists(current.exclude(material_selection_snapshot__category_key__in=packaging | metal_plastic)))
+    sections.append(When(legacy_mix, then=Value(PurchaseInboundSection.B)))
     visible_count = visible.filter(transfer_id=OuterRef('pk')).order_by().values('transfer_id').annotate(count=Count('pk')).values('count')
     return records.select_related('operated_by_employee').annotate(
         material_section=Case(*sections, default=Value(''), output_field=CharField()),
+        has_legacy_packaging=legacy_mix,
         visible_line_count=Coalesce(Subquery(visible_count), 0),
     ), visible
 

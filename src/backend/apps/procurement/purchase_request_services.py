@@ -21,6 +21,7 @@ from .models import (
     Supplier,
 )
 from .services import PurchaseQuantityParseStatus, _is_purchasable_bom_section, _source_quantity
+from .purchase_scope import is_packaging_bom_line
 from .selectors import purchase_request_lines_with_allocated_quantity
 
 
@@ -94,7 +95,8 @@ def create_purchase_request(*, bom, actor_employee, request=None):
         .select_related("section")
         .order_by("section__line_number", "line_number", "id")
     )
-    source_lines = [line for line in source_lines if line.purchase_required and _is_purchasable_bom_section(line.section)]
+    source_lines = [line for line in source_lines if line.purchase_required
+                    and _is_purchasable_bom_section(line.section) and not is_packaging_bom_line(line)]
     if not source_lines:
         raise ValidationError({"bom": "BOM 没有可采购的物料明细，不能创建采购申请。"})
     parsed_lines = []
@@ -159,6 +161,8 @@ def update_purchase_request(*, purchase_request, line_values, actor_employee, re
         raise ValidationError({"lines": "采购申请包含不属于当前申请的明细。"})
     for values in line_values:
         line = existing[str(values["id"])]
+        if line.bom_line and is_packaging_bom_line(line.bom_line):
+            raise Conflict("包材请从包材采购入口办理。")
         if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
             raise Conflict('旧管材采购申请不能继续按单数量编辑，请从采购需求重新建立根米采购。')
         actual = Decimal(values["actual_request_quantity"])
@@ -197,6 +201,8 @@ def submit_purchase_request(*, purchase_request, actor_employee, request=None):
     if not lines:
         raise ValidationError({"lines": "采购申请没有可采购的物料。"})
     for line in lines:
+        if line.bom_line and is_packaging_bom_line(line.bom_line):
+            raise Conflict("包材请从包材采购入口办理。")
         if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
             raise Conflict('旧管材采购申请不能继续提交，请从采购需求重新建立根米采购。')
         if line.actual_request_quantity is None or line.actual_request_quantity <= 0:
@@ -243,6 +249,8 @@ def allocate_purchase_request_line(*, line, validated_data, actor_employee, requ
     line = PurchaseRequestLine.objects.select_for_update().select_related("purchase_request").get(pk=line.pk)
     purchase_request = PurchaseRequest.objects.select_for_update().get(pk=line.purchase_request_id)
     require_matching_etag(request, purchase_request)
+    if line.bom_line and is_packaging_bom_line(line.bom_line):
+        raise Conflict("包材请从包材采购入口办理。")
     if line.bom_line and line.bom_line.section.section_type == 'PROFILE':
         raise Conflict('旧管材采购申请不能继续分配，请从采购需求重新建立根米采购。')
     if purchase_request.status not in {

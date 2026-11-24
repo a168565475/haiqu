@@ -13,8 +13,10 @@ export async function fetchPurchaseTrackingCoverage(query: PurchaseTrackingQuery
   return (await apiClient.get<PurchaseTrackingPage<PurchaseTrackingCoverage>>(`${basePath}coverage/`, { params: query, signal })).data
 }
 
-export async function fetchPurchaseTrackingFilterOptions(signal?: AbortSignal): Promise<PurchaseTrackingFilterOptions> {
-  return (await apiClient.get<DataResponse<PurchaseTrackingFilterOptions>>(`${basePath}filter-options/`, { signal })).data.data
+export async function fetchPurchaseTrackingFilterOptions(signal?: AbortSignal, purchaseScope?: PurchaseTrackingQuery['purchase_scope']): Promise<PurchaseTrackingFilterOptions> {
+  return (await apiClient.get<DataResponse<PurchaseTrackingFilterOptions>>(`${basePath}filter-options/`, {
+    signal, ...(purchaseScope ? { params: { purchase_scope: purchaseScope } } : {}),
+  })).data.data
 }
 
 export async function fetchPurchaseTrackingPolicy(signal?: AbortSignal): Promise<PurchaseTrackingPolicy> {

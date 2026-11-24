@@ -16,10 +16,16 @@ from apps.wecom.notification_selectors import default_rule_payload, rule_payload
 from apps.wecom.notification_services import RULE_FIELDS, _lock_key, _validate_rule, update_rule
 
 
-def notification_plan():
-    saved = {row.event_code: row for row in NotificationRule.objects.all()}
+def notification_plan(event_codes=None):
+    requested = set(event_codes or ROLE_POLICIES)
+    unknown = requested - set(ROLE_POLICIES)
+    if unknown:
+        raise CommandError('未确认通知事件：' + '、'.join(sorted(unknown)))
+    saved = {row.event_code: row for row in NotificationRule.objects.filter(event_code__in=requested)}
     rows = []
     for code in ROLE_POLICIES:
+        if code not in requested:
+            continue
         event = get_event(code)
         before = rule_payload(saved[code]) if code in saved else None
         source = before or default_rule_payload(event)
@@ -46,6 +52,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--apply', action='store_true')
+        parser.add_argument('--event-code', action='append')
         parser.add_argument('--database-name')
         parser.add_argument('--expected-digest')
         parser.add_argument('--actor-username')
@@ -55,7 +62,7 @@ class Command(BaseCommand):
         if not options['apply']:
             with connection.cursor() as cursor:
                 cursor.execute('SET TRANSACTION READ ONLY')
-            self.stdout.write(json.dumps(notification_plan(), ensure_ascii=False, default=str))
+            self.stdout.write(json.dumps(notification_plan(options['event_code']), ensure_ascii=False, default=str))
             return
         if not enabled():
             raise CommandError('确认岗位策略闸门尚未启用，没有写入。')
@@ -64,9 +71,10 @@ class Command(BaseCommand):
         user = get_user_model().objects.filter(username=options['actor_username'], is_active=True).first()
         if user is None or not can_manage(user, 'access_control.manage_notifications'):
             raise CommandError('须为有效通知管理员，没有写入。')
-        for code in sorted(ROLE_POLICIES):
+        codes = options['event_code']
+        for code in sorted(set(codes or ROLE_POLICIES)):
             _lock_key('notification-rule:' + code)
-        plan = notification_plan()
+        plan = notification_plan(codes)
         if options['expected_digest'] != plan['digest']:
             raise CommandError('预览摘要已变化，重新审阅后再应用；没有写入。')
         for row in plan['rules']:

@@ -141,11 +141,26 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
     from .notification_role_policy import POLICY_SCOPE, enabled, matching_roles
     from .notification_objects import object_facts, target_for_roles
     policy_facts = None
+    event_code = event['event_code']
+    role_codes = rule.recipient_role_codes
     if rule.recipient_scope == POLICY_SCOPE:
         if not enabled():
             return []
-        policy_facts = object_facts(event['event_code'], object_id, context)
+        policy_facts = object_facts(event_code, object_id, context)
         if policy_facts is None:
+            return []
+    elif event_code == 'PRODUCTION_TASK_BOMS_CONFIRMED':
+        from apps.boms.notification_events import task_bom_purchase_scopes
+        if task_bom_purchase_scopes(context.get('bom_versions', ())) == {'PACKAGING'}:
+            role_codes = [code for code in role_codes if code != 'PURCHASING']
+    elif event_code in {'MATERIAL_RECEIPT_RECORDED', 'MATERIAL_INSPECTION_CONFIRMED'}:
+        from apps.inventory.models import MaterialInbound
+        if MaterialInbound.objects.filter(pk=object_id, purchase_order__purchase_group__purchase_scope='PACKAGING').exists():
+            # 包材按现岗与任务范围分流，旧的按角色广播规则无法表达这条边界。
+            return []
+    elif event_code == 'PURCHASE_ORDER_COMPLETED':
+        from apps.procurement.models import PurchaseOrder
+        if PurchaseOrder.objects.filter(pk=object_id, purchase_group__purchase_scope='PACKAGING').exists():
             return []
     now = timezone.now()
     workshop_ids = set()
@@ -153,7 +168,7 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
         workshop_ids = (plan_workshop_ids(object_id) if event["event_code"] == "PRODUCTION_PLAN_CREATED"
                         else {str(context["workshop_id"])} if context.get("workshop_id") else set())
     assignments = EmployeeRoleAssignment.objects.filter(
-        role_profile__role_code__in=rule.recipient_role_codes, role_profile__archived_at__isnull=True,
+        role_profile__role_code__in=role_codes, role_profile__archived_at__isnull=True,
         employee__status="ACTIVE", employee__archived_at__isnull=True, employee__user__is_active=True,
         effective_from__lte=now,
     ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).select_related("employee__user", "role_profile")
@@ -207,10 +222,11 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
 
 
 def _validated_context(event, context):
+    from apps.boms.notification_events import TASK_BOM_EVENTS
     if not isinstance(context, dict):
         raise ValidationError({"context": "业务事件上下文必须是对象。"})
     allowed = set(event["allowed_variables"]) | {"submitter_id", "workshop_id", "actor_employee_id", "actor_role_codes", "audit_id"}
-    if event["event_code"] == "PRODUCTION_TASK_BOMS_CONFIRMED":
+    if event["event_code"] in TASK_BOM_EVENTS:
         allowed.add("bom_versions")
     if set(context) - allowed:
         raise ValidationError({"context": "事件上下文包含未登记字段。"})
@@ -274,12 +290,15 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
             if existing.context.get('actor_employee_id') or existing.context.get('_request_hash') != legacy_hash:
                 raise Conflict("同一业务事件键已用于不同对象、版本或内容。")
         return existing
-    if event_code == "PRODUCTION_TASK_BOMS_CONFIRMED":
-        from apps.boms.notification_events import current_task_bom_snapshot, snapshot_version
+    from apps.boms.notification_events import TASK_BOM_EVENTS
+    if event_code in TASK_BOM_EVENTS:
+        from apps.boms.notification_events import PACKAGING_EVENT_CODE, current_task_bom_snapshot, snapshot_version, task_bom_purchase_scopes
         actual = current_task_bom_snapshot(object_id)
         if (actual is None or actual != context.get("bom_versions") or snapshot_version(actual) != str(object_version)
                 or context.get("product_count") != str(len(actual)) or object_type != "production_tasks.ProductionTask"):
             raise Conflict("任务最新BOM确认组合已变化，请刷新后重试。")
+        if event_code == PACKAGING_EVENT_CODE and 'PACKAGING' not in task_bom_purchase_scopes(actual):
+            raise Conflict("该任务BOM没有需要采购的包材。")
     from apps.samples.notification_events import SAMPLE_EVENTS, current_sample_object, sample_for_event
     if event_code in SAMPLE_EVENTS:
         obj = current_sample_object(event_code, object_id, object_version)

@@ -6,6 +6,7 @@ const routes: Record<string, [string, string?]> = {
   PRODUCTION_TASK_CONFIRMED: ['production-task-detail', 'taskId'],
   BOM_CONFIRMED: ['bom-preview', 'bomId'],
   PRODUCTION_TASK_BOMS_CONFIRMED: ['boms'],
+  PACKAGING_BOMS_CONFIRMED: ['packaging-purchase-create'],
   SUPPLIER_PURCHASE_SHEET_PUBLISHED: ['supplier-purchase-sheet-editor', 'id'],
   MATERIAL_RECEIPT_RECORDED: ['material-quality-confirmation'],
   MATERIAL_INSPECTION_CONFIRMED: ['purchase-order-detail', 'id'],
@@ -83,11 +84,12 @@ export function notificationRoute(eventCode: string, target: NotificationTarget)
     }
     const query = target.query
     const keys = Object.keys(query)
-    if (keys.length && (keys.some(key => !['tab', 'production_task_id', 'row_key', 'include_history'].includes(key))
+    if (keys.length && (keys.some(key => !['tab', 'production_task_id', 'row_key', 'include_history', 'purchase_scope'].includes(key))
       || (Object.hasOwn(query, 'tab') && !['arrival', 'coverage'].includes(query.tab || ''))
       || (Object.hasOwn(query, 'production_task_id') && (typeof query.production_task_id !== 'string' || !uuid.test(query.production_task_id)))
       || (Object.hasOwn(query, 'row_key') && (typeof query.row_key !== 'string' || !/^[a-zA-Z0-9:_-]{1,240}$/.test(query.row_key)))
-      || (Object.hasOwn(query, 'include_history') && query.include_history !== 'true'))) {
+      || (Object.hasOwn(query, 'include_history') && query.include_history !== 'true')
+      || (Object.hasOwn(query, 'purchase_scope') && !['PACKAGING', 'STANDARD', 'ALL'].includes(query.purchase_scope || '')))) {
       throw new Error('通知跳转参数无效。')
     }
     const { tab, ...pageQuery } = query
@@ -108,6 +110,12 @@ export function notificationRoute(eventCode: string, target: NotificationTarget)
   const keys = Object.keys(target.params)
   if (!parameter) {
     if (keys.length) throw new Error('通知跳转参数无效。')
+    if (eventCode === 'PACKAGING_BOMS_CONFIRMED' || (eventCode === 'PRODUCTION_TASK_BOMS_CONFIRMED' && allowed[0] === 'purchase-order-create')) {
+      return { name: allowed[0], params: {}, query: { production_task_id: target.object_id } }
+    }
+    if (eventCode === 'MATERIAL_RECEIPT_RECORDED' && allowed[0] === 'material-quality-confirmation') {
+      return { name: allowed[0], params: {}, query: { receipt: target.object_id } }
+    }
     // 只由此已登记事件构造现有记录页签；后端/消息输入不支持任意query。
     if (['SEMI_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_CONFIRMED'].includes(eventCode)) return { name: allowed[0], params: {}, query: { tab: 'records' } }
     return { name: allowed[0], params: {} }

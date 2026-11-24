@@ -168,8 +168,8 @@ def recipient_payload(recipient, user, *, permission_snapshots=None):
             recipient.event.event_code, recipient.event.object_id, recipient.event.object_version,
         ) is None:
             title, body = "通知已过期", "原记录或历史凭证已变化，请查看当前业务记录。"
-        if recipient.event.event_code == "PRODUCTION_TASK_BOMS_CONFIRMED":
-            from apps.boms.notification_events import bom_event_is_current
+        from apps.boms.notification_events import TASK_BOM_EVENTS, bom_event_is_current
+        if recipient.event.event_code in TASK_BOM_EVENTS:
             if not bom_event_is_current(recipient.event):
                 title, body = "通知已过期", "任务BOM版本或确认状态已变化，请从BOM列表查看当前资料。"
         from apps.samples.notification_events import SAMPLE_EVENTS, current_sample_object

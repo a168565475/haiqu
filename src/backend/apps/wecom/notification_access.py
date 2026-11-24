@@ -11,6 +11,7 @@ EVENT_OBJECT_PERMISSIONS = {
     "PRODUCTION_TASK_CONFIRMED": ("production_tasks.view_productiontask",),
     "BOM_CONFIRMED": ("boms.view_bom",),
     "PRODUCTION_TASK_BOMS_CONFIRMED": ("boms.view_bom",),
+    "PACKAGING_BOMS_CONFIRMED": ("procurement.manage_packagingpurchase",),
     "SUPPLIER_PURCHASE_SHEET_PUBLISHED": ("procurement.view_supplierpurchasesheet",),
     "MATERIAL_RECEIPT_RECORDED": ("inventory.quality_confirm_material",),
     "MATERIAL_INSPECTION_CONFIRMED": ("inventory.view_materialinbound", "procurement.view_purchaseorder"),

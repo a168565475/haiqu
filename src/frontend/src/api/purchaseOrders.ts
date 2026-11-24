@@ -203,6 +203,8 @@ export async function fetchSupplierPurchaseSheets(query: {
   page_size?: number
   purchase_order_id?: string
   purchase_group_id?: string
+  purchase_scope?: 'PACKAGING'
+  batch_session_id?: string
   status?: string
   supplier_id?: string
   q?: string

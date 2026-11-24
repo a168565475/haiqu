@@ -174,9 +174,18 @@ class PurchaseBatchType(models.TextChoices):
     SUPPLEMENT = "SUPPLEMENT", "补料采购"
 
 
+class PurchaseScope(models.TextChoices):
+    STANDARD = "STANDARD", "普通采购"
+    PACKAGING = "PACKAGING", "包材采购"
+
+
 class PurchaseGroup(ArchivableModel):
     """生产采购来源容器；保留真实入库进度与独立的手动完成记录。"""
     group_number = models.CharField(max_length=50, unique=True)
+    purchase_scope = models.CharField(
+        max_length=12, choices=PurchaseScope.choices,
+        default=PurchaseScope.STANDARD, db_default=PurchaseScope.STANDARD,
+    )
     production_task = models.ForeignKey(
         "production_tasks.ProductionTask", on_delete=models.PROTECT, related_name="purchase_groups",
     )
@@ -201,6 +210,7 @@ class PurchaseGroup(ArchivableModel):
     class Meta:
         db_table = "procurement_purchase_group"
         ordering = ["-created_at", "-id"]
+        permissions = [("manage_packagingpurchase", "办理包材采购")]
 
 
 class PurchaseGroupBomSource(TimeStampedModel):

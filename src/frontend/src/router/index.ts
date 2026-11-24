@@ -1624,6 +1624,55 @@ export const router = createRouter({
       },
     },
     {
+      path: '/packaging-purchases',
+      name: 'packaging-purchases',
+      component: PurchaseOrderListView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/new',
+      name: 'packaging-purchase-create',
+      component: PurchaseOrderFormView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 新建包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '选择 BOM' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/batch',
+      name: 'packaging-purchase-batch',
+      component: PurchaseOrderFormView,
+      beforeEnter: to => {
+        if (typeof to.query.batch_session_id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(to.query.batch_session_id)) return
+        if (!to.query.group_ids) return { name: 'packaging-purchase-create' }
+        return { name: 'packaging-purchase-batch', query: { ...to.query, batch_session_id: crypto.randomUUID() } }
+      },
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 填写包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '填写采购' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/packaging-purchases/:id',
+      name: 'packaging-purchase-detail',
+      component: PurchaseGroupDetailView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
+        headerTitle: '采购管理 / 包材采购详情',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '详情' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/purchase-tracking',
       name: 'purchase-tracking',
       component: PurchaseTrackingView,

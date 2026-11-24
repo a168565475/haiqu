@@ -9,7 +9,7 @@ import type { PurchaseGroup, PurchaseGroupFilterOptions, PurchaseGroupProgress }
 import { groupProductSummary, purchaseGroupBatchCount } from '@/views/procurement/purchaseGroupDisplay'
 import { confirmPurchaseGroupDeletion, purchaseGroupDeletionBlock } from '@/views/procurement/purchaseGroupDeletion'
 
-const props = defineProps<{ canAdd: boolean; canDelete?: boolean }>()
+const props = defineProps<{ canAdd: boolean; canDelete?: boolean; packaging?: boolean }>()
 const router = useRouter()
 const rows = ref<PurchaseGroup[]>([])
 const tasks = ref<PurchaseGroupFilterOptions['production_tasks']>([])
@@ -47,7 +47,10 @@ async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    const result = await fetchPurchaseGroups({ page: page.value, page_size: pageSize.value, ...(taskId.value ? { production_task_id: taskId.value } : {}) })
+    const result = await fetchPurchaseGroups(
+      { page: page.value, page_size: pageSize.value, ...(taskId.value ? { production_task_id: taskId.value } : {}) },
+      ...(props.packaging ? [true] as const : []),
+    )
     if (version !== requestVersion) return
     rows.value = result.data
     total.value = result.meta.total
@@ -63,11 +66,11 @@ async function load(): Promise<void> {
 function search(): void { page.value = 1; void load() }
 function handleRowAction(command: string, row: PurchaseGroup): void {
   if (command === 'view') {
-    void router.push({ name: 'purchase-group-detail', params: { id: row.id } })
+    void router.push({ name: props.packaging ? 'packaging-purchase-detail' : 'purchase-group-detail', params: { id: row.id } })
   } else if (command === 'remove') {
     void removeGroup(row)
   } else if (command === 'sheets') {
-    void router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: row.id } })
+    void router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: row.id, ...(props.packaging ? { purchase_scope: 'PACKAGING' } : {}) } })
   }
 }
 async function removeGroup(row: PurchaseGroup): Promise<void> {
@@ -76,12 +79,12 @@ async function removeGroup(row: PurchaseGroup): Promise<void> {
   deletingId.value = row.id
   deleteError.value = ''
   try {
-    const latest = await fetchVersionedPurchaseGroup(row.id)
+    const latest = await (props.packaging ? fetchVersionedPurchaseGroup(row.id, undefined, true) : fetchVersionedPurchaseGroup(row.id))
     if (version !== requestVersion) return
     rows.value = rows.value.map(item => item.id === row.id ? latest.data : item)
     await confirmPurchaseGroupDeletion(latest)
     if (version !== requestVersion || !props.canDelete) return
-    await deletePurchaseGroup(row.id, latest.etag)
+    await deletePurchaseGroup(row.id, latest.etag, ...(props.packaging ? [true] as const : []))
     if (version !== requestVersion) return
     ElMessage.success('采购需求及未确认草稿批次已删除。')
     if (page.value > 1 && rows.value.length === 1) page.value--
@@ -95,7 +98,7 @@ async function removeGroup(row: PurchaseGroup): Promise<void> {
 }
 async function loadOptions(): Promise<void> {
   optionsError.value = ''
-  try { tasks.value = (await fetchPurchaseGroupFilterOptions()).production_tasks }
+  try { tasks.value = (await fetchPurchaseGroupFilterOptions(...(props.packaging ? [true] as const : []))).production_tasks }
   catch { optionsError.value = '生产订单筛选选项加载失败。' }
 }
 onMounted(() => { void load(); void loadOptions() })
@@ -110,7 +113,7 @@ onBeforeUnmount(() => { requestVersion++ })
       </ElSelect>
       <ElButton @click="load">刷新</ElButton>
       <span>共 {{ total }} 条采购需求</span>
-      <ElButton v-if="canAdd" type="primary" @click="router.push({ name: 'purchase-order-create' })">新建采购需求</ElButton>
+      <ElButton v-if="canAdd" type="primary" @click="router.push({ name: packaging ? 'packaging-purchase-create' : 'purchase-order-create' })">{{ packaging ? '新建包材采购' : '新建采购需求' }}</ElButton>
     </div>
     <ElAlert v-if="optionsError" type="warning" :title="optionsError" :closable="false"><ElButton link @click="loadOptions">重试选项</ElButton></ElAlert>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" :closable="false"><ElButton link @click="load">重新加载</ElButton></ElAlert>
@@ -122,10 +125,10 @@ onBeforeUnmount(() => { requestVersion++ })
           <col style="width: 170px"><col style="width: 110px"><col style="width: 100px"><col style="width: 115px">
           <col style="width: 170px"><col style="width: 130px"><col style="width: 65px"><col style="width: 110px"><col style="width: 72px">
         </colgroup>
-        <thead><tr><th>采购需求</th><th>来源订单</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead>
+        <thead><tr><th>{{ packaging ? '生产任务单号' : '采购需求' }}</th><th>{{ packaging ? '采购需求' : '来源订单' }}</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead>
         <tbody><tr v-for="{ row, products, totalPercent, batchCount, hasConfirmedBatch, deletionBlock } in displayRows" :key="row.id">
-          <td><strong>{{ row.group_number }}</strong><small v-if="row.combined_into_group_id">已并入合并需求</small></td>
-          <td>{{ row.production_task_number_snapshot }}</td>
+          <td><strong>{{ packaging ? row.production_task_number_snapshot : row.group_number }}</strong><small v-if="row.combined_into_group_id">已并入合并需求</small></td>
+          <td>{{ packaging ? row.group_number : row.production_task_number_snapshot }}</td>
           <td class="product-values">{{ products.name }}</td>
           <td class="product-values">{{ products.specification }}</td>
           <td class="product-values">{{ products.color }}</td>

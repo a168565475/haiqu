@@ -12,6 +12,7 @@ const eventMenuKeys: Record<string, string> = {
   PRODUCTION_TASK_CONFIRMED: 'production-management',
   BOM_CONFIRMED: 'production-management',
   PRODUCTION_TASK_BOMS_CONFIRMED: 'production-management',
+  PACKAGING_BOMS_CONFIRMED: 'procurement-management',
   SUPPLIER_PURCHASE_SHEET_PUBLISHED: 'procurement-management',
   MATERIAL_RECEIPT_RECORDED: 'warehouse-management',
   MATERIAL_INSPECTION_CONFIRMED: 'warehouse-management',

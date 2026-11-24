@@ -9,9 +9,10 @@ def purchase_inbound_workflow_status(
     pending_quality_count: int,
     received_quantity: Decimal,
     return_status: str,
+    can_receive_submitted: bool = False,
 ) -> tuple[str, str]:
     """采购单在仓库入库链路中的当前状态，供采购列表与入库列表共用。"""
-    if order_status not in {"PURCHASING", "COMPLETED"}:
+    if order_status not in {"PURCHASING", "COMPLETED"} and not (order_status == "SUBMITTED" and can_receive_submitted):
         return "NOT_STARTED", "—"
     if return_status == "MISSING":
         return "RETURN_RECORD_MISSING", "退货记录待核对"

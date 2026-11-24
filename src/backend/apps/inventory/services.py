@@ -558,12 +558,12 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     list(PurchaseOrder.objects.select_for_update().filter(pk__in=order_ids).order_by("id"))
     locked_queryset = (
         PurchaseOrderLine.objects.select_for_update(of=("self",))
-        .select_related("purchase_order", "purchase_order__production_task", "supplier")
+        .select_related("purchase_order", "purchase_order__production_task", "purchase_order__purchase_group", "supplier")
         .filter(purchase_order_access(accessible_production_tasks(request).values_list("id", flat=True), request, "purchase_order__"),
                 pk__in=line_ids, purchase_order__archived_at__isnull=True)
         .order_by("id")
     )
-    from .purchase_receiving_sections import resolve_receiving_section, with_receiving_section
+    from .purchase_receiving_sections import can_start_receiving, resolve_receiving_section, with_receiving_section
     locked_lines = list(locked_queryset if sample_direct else with_receiving_section(locked_queryset))
     if len(locked_lines) != len(line_ids):
         raise ValidationError({"items": "部分采购明细不存在。"})
@@ -653,7 +653,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             and line_id in completed_return_line_ids
             and line_id not in open_return_line_ids
         )
-        if line.purchase_order.status != PurchaseOrderStatus.PURCHASING and not can_replenish_completed_return:
+        if not can_start_receiving(line.purchase_order) and not can_replenish_completed_return:
             raise Conflict(
                 f"采购单 {line.purchase_order.order_number} 必须处于采购中；已完成单仅允许补收已完成退货的数量。"
             )

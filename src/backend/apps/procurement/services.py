@@ -27,8 +27,10 @@ from apps.reference_data.models import Currency, ReferenceStatus
 from .models import (
     PurchaseOrder,
     PurchaseOrderLine,
+    PurchaseOrderSourceType,
     PurchaseOrderStatus,
     PurchaseQuantityParseStatus,
+    PurchaseScope,
     Supplier,
     SupplierCategory,
     SupplierPurchaseSheet,
@@ -42,6 +44,7 @@ from .selectors import (
     purchase_orders_by_product, purchase_orders_with_product_ids,
 )
 from .source_access import purchase_order_access
+from .purchase_scope import is_packaging_bom_line, is_packaging_material, packaging_order_filter, validate_source_scope
 from .set_pricing import apply_set_pricing, line_set_pricing, validate_set_members
 
 
@@ -568,7 +571,7 @@ def _hardware_quantity_blocker(product, bom, section, line, source):
     )
 
 
-def _bom_source_details(product, bom):
+def _bom_source_details(product, bom, purchase_scope=PurchaseScope.STANDARD):
     blockers = []
     source_lines = []
     if bom is None:
@@ -602,6 +605,8 @@ def _bom_source_details(product, bom):
                 continue
             for line in section.lines.all():
                 if not line.purchase_required:
+                    continue
+                if is_packaging_bom_line(line) != (purchase_scope == PurchaseScope.PACKAGING):
                     continue
                 source_line = _source_line(bom, section, line, product)
                 source_lines.append(source_line)
@@ -699,7 +704,7 @@ def _bom_option(product, bom, blockers, line_count, global_blockers):
     }
 
 
-def evaluate_purchase_source(task, bom_id=None):
+def evaluate_purchase_source(task, bom_id=None, *, purchase_scope=PurchaseScope.STANDARD):
     global_blockers = []
     if task.status not in PURCHASABLE_TASK_STATUSES:
         global_blockers.append(
@@ -713,11 +718,11 @@ def evaluate_purchase_source(task, bom_id=None):
 
     orders = getattr(task, "purchase_source_orders", None)
     if orders is None:
-        orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task))
-    existing_by_product = purchase_orders_by_product(orders)
+        orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task).exclude(packaging_order_filter()))
+    existing_by_product = purchase_orders_by_product(orders) if purchase_scope == PurchaseScope.STANDARD else {}
     from .models import PurchaseGroup
     existing_groups = {}
-    groups = PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True).prefetch_related(
+    groups = PurchaseGroup.objects.filter(production_task=task, archived_at__isnull=True, purchase_scope=purchase_scope).prefetch_related(
         "bom_sources", "combined_into_sources",
     )
     for group in groups:
@@ -749,7 +754,7 @@ def evaluate_purchase_source(task, bom_id=None):
     unavailable_blockers = []
     for product in products:
         latest_bom = _latest_bom_for_product(product)
-        bom_blockers, bom_lines = _bom_source_details(product, latest_bom)
+        bom_blockers, bom_lines = _bom_source_details(product, latest_bom, purchase_scope)
         existing = existing_by_product.get(product.pk)
         if existing is not None:
             bom_blockers.append(_blocker(
@@ -1113,6 +1118,17 @@ def _purchase_order_confirmation_errors(order, lines):
     return errors
 
 
+def _validate_production_order_scope(order, lines):
+    if order.source_type != PurchaseOrderSourceType.PRODUCTION:
+        return
+    scope = order.purchase_group.purchase_scope if order.purchase_group_id else PurchaseScope.STANDARD
+    for line in lines:
+        packaging = is_packaging_material(
+            line.material_selection_snapshot, line.section_type_snapshot, line.section_title_snapshot, line.category_snapshot,
+        )
+        validate_source_scope(packaging, scope, line.line_number)
+
+
 def _lock_purchase_task(order_id):
     from apps.samples.models import SampleRequest
     source = PurchaseOrder.objects.filter(pk=order_id).values('production_task_id', 'sample_procurement_request__material_request__sample_request_id').first()
@@ -1149,6 +1165,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         .filter(purchase_order=order)
         .order_by("line_number", "id")
     )
+    _validate_production_order_scope(order, lines)
     submitted_lines = validated_data["lines"]
     submitted_by_id = {str(item["id"]): item for item in submitted_lines}
     skipped_ids = {str(item) for item in validated_data.get("skipped_line_ids", [])}
@@ -1276,6 +1293,7 @@ def confirm_purchase_order(*, order_id, allowed_task_ids, actor_employee, reques
     lines = list(order.lines.all())
     if not lines:
         raise ValidationError({"lines": "采购单没有明细，不能确认。"})
+    _validate_production_order_scope(order, lines)
     lock_bom_line_material_identities([line.bom_line for line in lines if line.bom_line_id and line.raw_bar_length_m],
                                       extra_raw_material_ids=[line.calculation_snapshot.get('raw_material_id') for line in lines if line.calculation_snapshot])
     errors = _purchase_order_confirmation_errors(order, lines)

@@ -24,6 +24,7 @@ export interface PurchaseTrackingAction {
 }
 
 export interface PurchaseTrackingRow {
+  purchase_scope?: 'STANDARD' | 'PACKAGING'
   row_key: string
   production_task_id: string
   task_number: string
@@ -102,6 +103,7 @@ export interface PurchaseTrackingCoverage extends PurchaseTrackingRow {
 }
 
 export interface PurchaseTrackingQuery {
+  purchase_scope?: 'STANDARD' | 'PACKAGING' | 'ALL'
   production_task_id?: string
   risk?: PurchaseTrackingRiskCode
   include_history?: boolean

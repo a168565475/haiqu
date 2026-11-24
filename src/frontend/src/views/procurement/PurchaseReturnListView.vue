@@ -16,18 +16,27 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const isProcurementView = computed(() => route.name === 'purchase-return-records')
+const canHandlePackaging = computed(() => auth.user?.is_superuser === true || auth.hasPermission('procurement.manage_packagingpurchase'))
+const purchaseScope = computed<ReturnQuery['purchase_scope']>(() => {
+  if (!isProcurementView.value || route.query.from === 'inbound') return undefined
+  if (route.query.purchase_scope === 'PACKAGING') return 'PACKAGING'
+  return canHandlePackaging.value && !auth.user?.is_superuser && !auth.hasPermission('procurement.view_purchaseorder')
+    ? 'PACKAGING' : 'STANDARD'
+})
 const canView = computed(() => auth.user?.is_superuser === true
+  || canHandlePackaging.value
   || auth.hasPermission('procurement.view_purchaseorder')
   || auth.hasPermission('inventory.receive_material')
   || auth.hasPermission('inventory.quality_confirm_material'))
 const canAdvance = (row: PurchaseReturn) => {
   if (!isProcurementView.value) return false
+  if (row.purchase_scope === 'PACKAGING') return canHandlePackaging.value
   const permission = row.status === 'QUALITY_GENERATED' ? 'access_control.confirm_purchasereturn' : 'access_control.complete_purchasereturn'
   return auth.moduleCan(permission, 'procurement.submit_purchaseorder')
 }
 const purchaseOrderId = computed(() => typeof route.query.purchase_order_id === 'string' ? route.query.purchase_order_id : '')
 const returnFrom = computed(() => route.query.from === 'inbound' ? 'inbound' : route.query.from === 'orders' ? 'orders' : '')
-const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : '返回采购需求')
+const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : purchaseScope.value === 'PACKAGING' ? '返回包材采购' : '返回采购需求')
 const filters = reactive({ q: '', supplier: '', status: '' as ReturnOrderStatus | '' })
 const rows = ref<PurchaseReturn[]>([])
 const options = ref<ReturnOptions>({ suppliers: [] })
@@ -68,6 +77,7 @@ async function loadRows() {
   if (!canView.value || disposed) return
   const version = ++requestVersion
   const query: ReturnQuery = { q: filters.q.trim() || undefined, purchase_order_id: purchaseOrderId.value || undefined, supplier_id: filters.supplier || undefined, status: filters.status || undefined, page: page.value, page_size: pageSize.value }
+  if (purchaseScope.value) query.purchase_scope = purchaseScope.value
   loading.value = true; rowsError.value = ''
   try {
     const list = await fetchPurchaseReturns(query)
@@ -81,7 +91,10 @@ async function loadOptions() {
   if (!canView.value) return
   const version = ++optionsVersion
   optionsLoading.value = true; optionsError.value = ''
-  try { const data = await fetchReturnOptions(); if (!disposed && version === optionsVersion) options.value = data }
+  try {
+    const data = await (purchaseScope.value ? fetchReturnOptions(purchaseScope.value) : fetchReturnOptions())
+    if (!disposed && version === optionsVersion) options.value = data
+  }
   catch (error) { if (!disposed && version === optionsVersion) optionsError.value = message(error, '供应商筛选选项加载失败，请刷新重试。') }
   finally { if (!disposed && version === optionsVersion) optionsLoading.value = false }
 }
@@ -97,7 +110,7 @@ function handleSearchEnter(event: KeyboardEvent) {
   search()
 }
 function goBack() {
-  void router.push({ name: returnFrom.value === 'inbound' ? 'purchase-inbounds' : 'purchase-orders' })
+  void router.push({ name: returnFrom.value === 'inbound' ? 'purchase-inbounds' : purchaseScope.value === 'PACKAGING' ? 'packaging-purchases' : 'purchase-orders' })
 }
 function answerConfirmation(confirmed: boolean) {
   if (!resolveConfirmation || confirmationSubmitting.value) return
@@ -164,7 +177,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
       <section v-glass-spotlight class="erp-list-filter">
       <header class="page-head erp-list-heading"><h1>{{ purchaseOrderId ? '品质与退货明细' : '退货明细' }}</h1><span>共 {{ rowsReady ? total : '—' }} 条</span><p>{{ purchaseOrderId && rows[0] ? rows[0].order_number : '品质确认退货数量后生成退货单' }}</p></header>
       <form class="filters-row erp-list-filters" aria-label="退货查询" @submit.prevent="search">
-        <ElInput v-model="filters.q" class="return-search" aria-label="搜索退货记录" title="支持退货单号、采购单号、供应商名称" clearable maxlength="200" :disabled="!!busyId" placeholder="搜索退货单号、采购单号、供应商" @keydown.enter="handleSearchEnter" @clear="search">
+        <ElInput v-model="filters.q" class="return-search" aria-label="搜索退货记录" title="支持生产任务单号、退货单号、采购单号、供应商名称" clearable maxlength="200" :disabled="!!busyId" placeholder="搜索生产任务单号、退货单号、采购单号、供应商" @keydown.enter="handleSearchEnter" @clear="search">
           <template #suffix><button type="button" class="erp-list-search-button" aria-label="搜索退货列表" :disabled="!!busyId" @click="search"><ElIcon><Search /></ElIcon></button></template>
         </ElInput>
         <ElSelect v-model="filters.supplier" aria-label="供应商" clearable filterable :disabled="!!busyId" :loading="optionsLoading" placeholder="供应商：全部" @change="search"><ElOption v-for="supplier in options.suppliers" :key="supplier.id" :value="supplier.id" :label="supplier.supplier_name" /></ElSelect>
@@ -178,10 +191,10 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
         <div v-if="returnFrom" class="return-actions erp-list-toolbar"><ElButton class="erp-button-motion" @click="goBack">{{ backLabel }}</ElButton></div>
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="rows" row-key="id" row-class-name="return-row" class="return-table" height="100%" aria-label="退货明细表格">
+          <ElTableColumn label="生产任务单号" width="160" prop="production_task_number" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="退货单号" width="180" show-overflow-tooltip><template #default="{ row }"><strong class="return-number">{{ row.return_number }}</strong></template></ElTableColumn>
           <ElTableColumn label="采购单号" width="160" prop="order_number" show-overflow-tooltip><template #default="{ row }">{{ row.order_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="入库单号" width="160" prop="inbound_number" show-overflow-tooltip><template #default="{ row }">{{ row.inbound_number || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="生产任务单号" width="160" prop="production_task_number" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="品名" min-width="148">
             <template #default="{ row }">
               <template v-for="(line, index) in row.lines" :key="line.id">

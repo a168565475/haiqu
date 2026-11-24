@@ -13,6 +13,19 @@ def current_operations(request, default):
     return tuple(code for code in permissions if module_policy.has_permission(request, code))
 
 
+def packaging_purchase_tasks(request):
+    from apps.access_control import module_policy
+    from apps.production_tasks.models import ProductionTask
+    from .purchase_scope import PACKAGING_PERMISSION
+
+    tasks = ProductionTask.objects.filter(archived_at__isnull=True)
+    if request.user.is_superuser:
+        return tasks
+    if module_policy.has_permission(request, PACKAGING_PERMISSION):
+        return tasks.filter(followers=request.employee)
+    return tasks.none()
+
+
 def accessible_purchase_samples(request, permission=None):
     if not request or not getattr(request, "employee", None):
         return SampleRequest.objects.none()

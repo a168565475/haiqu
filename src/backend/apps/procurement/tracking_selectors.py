@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal, localcontext
 from uuid import UUID
 
-from django.db.models import Case, Count, DecimalField, F, OuterRef, Prefetch, Q, Subquery, Sum, When
+from django.db.models import Case, Count, DecimalField, Exists, F, OuterRef, Prefetch, Q, Subquery, Sum, When
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.catalog_selection import SECTION_CATEGORIES
@@ -19,7 +19,8 @@ from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, REFERENCE_MAPPING_MODELS
 from apps.products.models import RawMaterialInformation
 
-from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrderLine, SupplierPurchaseSheet
+from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrderLine, PurchaseScope, SupplierPurchaseSheet
+from .purchase_scope import is_packaging_bom_line, is_packaging_snapshot, packaging_bom_lines, packaging_order_filter
 from .catalog_materials import is_weight_purchase
 from .material_attribute_snapshot import build_material_attribute_snapshot
 from .services import _hardware_weight_data, _is_purchasable_bom_section, _source_quantity
@@ -124,7 +125,8 @@ def _identity(snapshot, materials):
 def _snapshot(line):
     return {'material_catalog_id': line.material_catalog_id, 'material_selection_snapshot': line.material_selection_snapshot,
         'calculation_snapshot': line.calculation_snapshot, 'raw_material_snapshot': line.raw_material_snapshot,
-        'source_unit_text': line.source_unit_text, 'section_type_snapshot': line.section_type_snapshot}
+        'source_unit_text': line.source_unit_text, 'section_type_snapshot': line.section_type_snapshot,
+        'section_title_snapshot': line.section_title_snapshot, 'category_snapshot': line.category_snapshot}
 
 
 def _classification(snapshot):
@@ -193,11 +195,13 @@ def _receipt_summaries(line_ids):
     return result
 
 
-def arrival_rows(*, task_ids=None, today=None, include_history=False):
+def arrival_rows(*, task_ids=None, today=None, include_history=False, purchase_scope=PurchaseScope.STANDARD):
     today = today or beijing_today()
     evaluated_at = datetime.now(BEIJING).isoformat()
     queryset = PurchaseOrderLine.objects.filter(purchase_order__source_type='PRODUCTION',
         purchase_order__production_task__isnull=False, purchase_order__status__in=VALID_PURCHASE_STATUSES)
+    packaging = packaging_order_filter('purchase_order__')
+    queryset = queryset.filter(packaging) if purchase_scope == PurchaseScope.PACKAGING else queryset.exclude(packaging)
     if task_ids is not None:
         queryset = queryset.filter(purchase_order__production_task_id__in=task_ids)
     if not include_history:
@@ -210,7 +214,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
         'purchase_order__archived_at', 'purchase_order__order_number', 'purchase_order__batch_number',
         'purchase_order__purchase_group_id', 'purchase_order__production_task_id',
         'purchase_order__production_task__id', 'purchase_order__production_task__task_number',
-        'purchase_order__production_task__archived_at').order_by('id').distinct())
+        'purchase_order__production_task__archived_at', 'section_title_snapshot', 'category_snapshot').order_by('id').distinct())
     materials = _materials([_snapshot(line) for line in lines])
     receipts = _receipt_summaries([line.pk for line in lines])
     root_ids = root_receipt_line_ids(lines)
@@ -224,6 +228,9 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
         for line in lines:
             order = line.purchase_order
             snapshot = _snapshot(line)
+            historical_packaging = purchase_scope == PurchaseScope.STANDARD and is_packaging_snapshot(snapshot)
+            if historical_packaging and not include_history:
+                continue
             identity, notes = _identity(snapshot, materials)
             ordered = decimal_value(line.actual_purchase_quantity)
             if ordered is None or ordered == 0:
@@ -288,7 +295,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
                 # 原数量列保留管材米数或五金个数，采购进度统一使用实收 KG。
                 received, accepted, pending, returned = received_weight, accepted_weight, pending_weight, returned_weight
             unreceived = max(ordered - received, Decimal('0')) if ordered is not None and received is not None else None
-            if root_receipt and accepted is not None:
+            if root_receipt and accepted is not None and ordered is not None:
                 unreceived = max(ordered - accepted - pending, Decimal('0'))
             is_pipe = _classification(snapshot)
             root_note = ''
@@ -298,7 +305,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
                 else:
                     root_note = '根数或每根重量依据不完整，根数待核对；已核实采购重量仍按 KG 显示' if is_weight else '根数或根长依据不完整，根数待核对；已核实米数仍按米显示'
                 notes.append(root_note)
-            history = bool(order.archived_at or order.status == 'COMPLETED')
+            history = bool(order.archived_at or order.status == 'COMPLETED' or historical_packaging)
             if history and not include_history and not return_pending:
                 continue
             contributions = line.calculation_snapshot.get('group_source_contributions', []) if isinstance(line.calculation_snapshot, dict) else []
@@ -310,7 +317,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
                 '根' if root_receipt else line.source_unit_text, order.purchase_group_id, line.source_bom_line_id_snapshot, str(line.pk), evaluated_at)
             statuses = publications.get((order.pk, line.supplier_id), [])
             publication = '已发布' if statuses and all(value == 'PUBLISHED' for value in statuses) else '待发布' if statuses else '未生成采购表'
-            row.update(source_reliable=not notes, verification_notes=notes, is_history=history,
+            row.update(purchase_scope=purchase_scope, source_reliable=not notes, verification_notes=notes, is_history=history,
                 purchase_order_id=str(order.pk), purchase_order_line_id=str(line.pk), purchase_order_no=order.order_number,
                 batch_number=order.batch_number, publication_status=publication, supplier_name=line.supplier_name_snapshot,
                 material_selection_snapshot=line.material_selection_snapshot if isinstance(line.material_selection_snapshot, dict) else {},
@@ -340,7 +347,8 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False):
             else:
                 row['action_blocked_reason'] = '单据或任务已归档，现有办理入口不可用'
             if return_pending and detail_accessible:
-                row['actions'].append({'kind': 'view_return', 'label': '查看退货', 'path': f'/purchase-return-records?purchase_order_id={order.pk}&from=orders'})
+                scope_query = '&purchase_scope=PACKAGING' if purchase_scope == PurchaseScope.PACKAGING else ''
+                row['actions'].append({'kind': 'view_return', 'label': '查看退货', 'path': f'/purchase-return-records?purchase_order_id={order.pk}&from=orders{scope_query}'})
             rows.append(row)
     return rows
 
@@ -365,7 +373,7 @@ def _bom_snapshot(line, bom, materials):
     snapshot = {'material_catalog_id': line.material_catalog_id, 'material_selection_snapshot': line.material_selection_snapshot,
         'calculation_snapshot': {'raw_material_id': str(material_id)} if material_id else {},
         'raw_material_snapshot': line.raw_material, 'section_type_snapshot': line.section.section_type,
-        'section_title_snapshot': line.section.title,
+        'section_title_snapshot': line.section.title, 'category_snapshot': line.category,
         'source_unit_text': 'KG' if is_weight else ('米' if line.section.section_type == 'PROFILE' else line.unit),
         'part_name_snapshot': line.part_name, 'material_snapshot': line.material, 'specification_snapshot': line.specification,
         'material_attributes_snapshot': build_material_attribute_snapshot(line, line.section)
@@ -433,7 +441,7 @@ def _coverage_category(snapshot):
     if selected_key:
         return selected_key if selected_key in SECTION_CATEGORIES.values() and (
             section_key is None or selected_key == section_key) else None
-    return section_key
+    return section_key or ('PACKAGING' if is_packaging_snapshot(snapshot) else None)
 
 
 def _coverage_details(task, bom, snapshot=None):
@@ -508,7 +516,7 @@ def _coverage_material_row(task, group, bom, snapshot, *, product_id, product_na
 
 
 def _combined_coverage_rows(task, group, products, boms, purchases_by_source, previous_lines, materials, schedules, evaluated_at,
-                            unknown_task, policy, now):
+                            unknown_task, policy, now, packaging):
     """一条合并物料只计算一次采购量，逐份 BOM 核对原始用量及其变更。"""
     members = {item.product_line_id_snapshot: item for item in group.bom_sources.all()}
     current = {}
@@ -521,9 +529,10 @@ def _combined_coverage_rows(task, group, products, boms, purchases_by_source, pr
         if bom:
             current[pk] = {str(line.component_identity): _bom_snapshot(line, bom, materials)
                 for section in bom.sections.all() if _is_purchasable_bom_section(section)
-                for line in section.lines.all() if line.purchase_required}
+                for line in section.lines.all() if line.purchase_required and is_packaging_bom_line(line) == packaging}
     frozen_components = defaultdict(set)
-    for source in group.lines.all():
+    source_lines = [line for line in group.lines.all() if is_packaging_snapshot(line.source_snapshot or {}) == packaging]
+    for source in source_lines:
         for item in source.source_snapshot.get('source_contributions', []):
             if item['source_snapshot'].get('purchase_required') is not False:
                 frozen_components[_uuid(item['product_line_id'])].add(item['component_identity'])
@@ -532,7 +541,7 @@ def _combined_coverage_rows(task, group, products, boms, purchases_by_source, pr
             product_notes[pk].append('当前BOM行集合与冻结采购需求不同，需核对增补或跨版本来源')
     rows = []
     history = bool(task.archived_at or task.status in TERMINAL_TASK_STATUSES)
-    for source in group.lines.all():
+    for source in source_lines:
         snapshot = source.source_snapshot
         if snapshot.get('purchase_required') is False:
             continue
@@ -602,11 +611,19 @@ def _combined_coverage_rows(task, group, products, boms, purchases_by_source, pr
     return rows
 
 
-def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False):
+def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False, purchase_scope=PurchaseScope.STANDARD):
     now = now or datetime.now(BEIJING)
     evaluated_at = now.isoformat()
     policy = get_tracking_policy()
+    packaging = purchase_scope == PurchaseScope.PACKAGING
     task_query = ProductionTask.objects.exclude(status__in=['DRAFT', 'PENDING_VALIDATION'])
+    if packaging:
+        source_lines = packaging_bom_lines(BomLine.objects.filter(
+            section__bom__production_task_id=OuterRef('pk'), section__bom__archived_at__isnull=True,
+        ))
+        existing_groups = PurchaseGroup.objects.filter(production_task_id=OuterRef('pk'),
+            purchase_scope=PurchaseScope.PACKAGING, archived_at__isnull=True)
+        task_query = task_query.filter(Exists(source_lines) | Exists(existing_groups))
     if task_ids is not None:
         task_query = task_query.filter(pk__in=task_ids)
     if not include_history:
@@ -622,7 +639,7 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
         .prefetch_related(Prefetch('sections', queryset=BomSection.objects.prefetch_related('lines')))}
     current_lines = [line for bom in boms.values() for section in bom.sections.all()
                      if _is_purchasable_bom_section(section) for line in section.lines.all() if line.purchase_required]
-    groups = list(PurchaseGroup.objects.filter(production_task_id__in=tasks, archived_at__isnull=True)
+    groups = list(PurchaseGroup.objects.filter(production_task_id__in=tasks, archived_at__isnull=True, purchase_scope=purchase_scope)
         .only('id', 'production_task_id', 'product_line_id_snapshot', 'compatibility_issues', 'manual_completed_at')
         .prefetch_related('bom_sources', Prefetch('lines', queryset=PurchaseGroupLine.objects.only('id', 'purchase_group_id',
             'source_bom_line_id_snapshot', 'product_line_id_snapshot', 'required_quantity', 'source_snapshot', 'compatibility_issues'))))
@@ -643,10 +660,14 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
     frozen_row_ids = {(product_id, identity): str(pk) for product_id, identity, pk in
                       BomLine.objects.filter(pk__in=revised_source_ids).values_list(
                           'section__bom__product_line_id', 'component_identity', 'pk')}
-    purchase_lines = list(PurchaseOrderLine.objects.filter(purchase_order__production_task_id__in=tasks,
+    purchase_scope_filter = packaging_order_filter('purchase_order__')
+    purchase_lines = list(PurchaseOrderLine.objects.filter(
+        purchase_scope_filter if packaging else ~purchase_scope_filter, purchase_order__production_task_id__in=tasks,
         purchase_order__source_type='PRODUCTION', purchase_order__archived_at__isnull=True,
         purchase_order__status__in=VALID_PURCHASE_STATUSES).select_related('purchase_order')
-        .only(*LINE_IDENTITY_FIELDS, 'purchase_order__production_task_id', 'purchase_order__purchase_group_id').order_by('id'))
+        .only(*LINE_IDENTITY_FIELDS, 'section_title_snapshot', 'category_snapshot',
+              'purchase_order__production_task_id', 'purchase_order__purchase_group_id').order_by('id'))
+    purchase_lines = [line for line in purchase_lines if is_packaging_snapshot(_snapshot(line)) == packaging]
     purchase_map = defaultdict(list)
     purchases_by_source = defaultdict(list)
     for line in purchase_lines:
@@ -694,14 +715,16 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
                 for section in bom.sections.all():
                     if _is_purchasable_bom_section(section):
                         for line in section.lines.all():
-                            if not line.purchase_required:
+                            if not line.purchase_required or is_packaging_bom_line(line) != packaging:
                                 external_ids.add(str(line.pk))
                                 continue
                             source_id = frozen_row_ids.get((product.pk, line.component_identity), str(line.pk))
                             current[source_id] = _bom_snapshot(line, bom, materials)
             source_lines = [line for line in group.lines.all()
-                            if not isinstance(line.source_snapshot, dict)
-                            or line.source_snapshot.get('purchase_required') is not False] if group else []
+                            if (not isinstance(line.source_snapshot, dict) or line.source_snapshot.get('purchase_required') is not False)
+                            and is_packaging_snapshot(line.source_snapshot or {}) == packaging] if group else []
+            if packaging and not current and not source_lines:
+                continue
             if bom and bom.status == 'VERIFIED' and external_ids and not current and not source_lines:
                 continue
             if not current:
@@ -763,7 +786,18 @@ def coverage_rows(*, task_ids=None, today=None, now=None, include_history=False)
         for group in combined_groups:
             rows.extend(_combined_coverage_rows(tasks[group.production_task_id], group, products_by_id, boms,
                 purchases_by_source, previous_lines, materials, schedules, evaluated_at, group.production_task_id in unresolved_product_tasks,
-                policy, now))
+                policy, now, packaging))
+    for row in rows:
+        row['purchase_scope'] = purchase_scope
+        if packaging:
+            row['row_key'] = 'packaging:' + row['row_key']
+            for action in row['actions']:
+                if action['kind'] == 'create_group':
+                    action['path'] = f"/packaging-purchases/new?production_task_id={row['production_task_id']}"
+                elif action['kind'] == 'create_batch':
+                    action['path'] = f"/packaging-purchases/batch?group_ids={row['purchase_group_id']}"
+                elif action['kind'] == 'view_group':
+                    action['path'] = f"/packaging-purchases/{row['purchase_group_id']}"
     return rows
 
 

@@ -21,7 +21,8 @@ import {
   fetchVersionedPurchaseOrder,
 } from '@/api/purchaseOrders'
 import { confirmPurchaseBatchPage, createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup, submitPurchaseSupplierBatch } from '@/api/purchaseGroups'
-import type { PurchaseBatchInput, PurchaseBatchPageConfirmationInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
+import { fetchPackagingPurchaseOptions, fetchPackagingPurchasePage, fetchPackagingPurchaseSources, preparePackagingPurchase, writePackagingPurchasePage } from '@/api/purchaseGroups'
+import type { PackagingPurchaseSource, PurchaseBatchInput, PurchaseBatchPageConfirmationInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
 import type { SupplierCategory } from '@/types/supplier'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -87,8 +88,17 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
-const canAdd = computed(() => isSuperuser.value || authStore.hasPermission('procurement.add_purchaseorder'))
-const isBatchMode = computed(() => route.name === 'purchase-batch-create')
+const isPackaging = computed(() => route.name === 'packaging-purchase-create' || route.name === 'packaging-purchase-batch')
+const canAdd = computed(() => isSuperuser.value || authStore.hasPermission(isPackaging.value ? 'procurement.manage_packagingpurchase' : 'procurement.add_purchaseorder'))
+const isBatchMode = computed(() => route.name === 'purchase-batch-create' || route.name === 'packaging-purchase-batch')
+const packagingSources = ref<PackagingPurchaseSource[]>([])
+let packagingNoticeApplied = false
+const selectedPackagingGroupIds = computed(() => [route.query.group_ids].flat().filter((id): id is string => typeof id === 'string'))
+const packagingGroups = ref<PurchaseGroup[]>([])
+const packagingGroupIds = computed(() => selectedPackagingGroupIds.value.length ? selectedPackagingGroupIds.value : packagingGroups.value.map(item => item.id))
+const packagingLineGroup = computed(() => new Map(packagingGroups.value.flatMap(item => item.progress.lines.map(line => [line.id, item] as const))))
+const packagingDraftGroup = computed(() => new Map(packagingGroups.value.flatMap(item => (item.batch_page?.draft_orders ?? []).map(order => [order.id, item] as const))))
+const isMultiTask = computed(() => packagingGroupIds.value.length > 1)
 const group = ref<PurchaseGroup | null>(null)
 const groupEtag = ref('')
 const batchSessionId = computed(() => typeof route.query.batch_session_id === 'string' ? route.query.batch_session_id : undefined)
@@ -103,19 +113,22 @@ const pendingSupplierBatch = ref<PendingSupplierBatch | null>(null)
 const lastSupplierBatch = ref<{ number: number; supplierName: string; lineCount: number } | null>(null)
 const finalBatchReview = ref<FinalBatchReview | null>(null)
 const savedSupplierOrders = computed(() => group.value?.batch_page?.draft_orders ?? [])
-const canReadSupplierSheets = computed(() => isSuperuser.value || authStore.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
+const packagingPageConfirmed = computed(() => isPackaging.value && !savedSupplierOrders.value.length &&
+  group.value?.batches.some(batch => batch.batch_session_id === batchSessionId.value && batch.status !== 'DRAFT'))
+const canReadSupplierSheets = computed(() => isSuperuser.value || (isPackaging.value
+  ? canAdd.value : authStore.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder')))
 const fulfilledSupplierLineIds = new Set<string>()
 const selectedLines = computed(() => isBatchMode.value
   ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line))
     && (line.set_pricing || !isExplicitZeroPrice(line.unit_price)))
   : lines.value)
 const confirmationLines = computed(() => isBatchMode.value ? selectedLines.value.filter(hasPurchasePrice) : selectedLines.value)
-const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value && !pendingSupplierBatch.value) : Boolean(source.value?.can_create))
-const canSubmitSupplierBatch = computed(() => isBatchMode.value && (isSuperuser.value || (
+const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && !group.value.combined_into_group_id && group.value.progress.status !== 'UNKNOWN' && !saving.value && !pendingSupplierBatch.value && !packagingPageConfirmed.value) : Boolean(source.value?.can_create))
+const canSubmitSupplierBatch = computed(() => isBatchMode.value && (isSuperuser.value || (isPackaging.value ? canAdd.value : (
   canAdd.value && authStore.hasPermission('procurement.submit_purchaseorder')
   && authStore.hasPermission('procurement.view_purchaseorder')
   && authStore.moduleCan('access_control.generate_purchasesheets', 'procurement.add_purchaseorder')
-)))
+))))
 
 const options = ref<PurchaseOrderOptions>({
   production_tasks: [], suppliers: [], currencies: [], default_currency_id: null,
@@ -125,7 +138,9 @@ const lines = ref<PurchaseLineDraft[]>([])
 // 表格只需观察行的增减和顺序，格内仍绑定原来的响应式明细。
 const gridRows = computed(() => markRaw(lines.value.slice()))
 const editingSetId = ref('')
-const setCandidates = computed(() => editingSetId.value ? lines.value.map(line => ({
+const setCandidates = computed(() => editingSetId.value ? lines.value.filter(line =>
+  !isPackaging.value || packagingLineGroup.value.get(line.purchase_group_line_id!) === packagingLineGroup.value.get(editingSetId.value),
+).map(line => ({
   ...line, quantityText: effectivePurchaseQuantity(line),
   eligible: isPositiveDecimal(effectivePurchaseQuantity(line)) && isPositiveDecimal(line.required_quantity || ''),
 })) : [])
@@ -248,7 +263,7 @@ const completeLineCount = computed(() => selectedLines.value.filter(isLineComple
 const isPreviewMode = computed(() => Boolean(source.value && !source.value.can_create && lines.value.length))
 const detailTableHeight = computed(() => detailFullscreen.value ? 'calc(100dvh - 108px)'
   : isSampleSource.value && !lines.value.some(line => isPipePurchaseLine(line)) && lines.value.length <= 4 ? `${40 + lines.value.length * 40}px` : '100%')
-const canContinueToDetails = computed(() => Boolean(selectedTaskId.value && (isSampleSource.value
+const canContinueToDetails = computed(() => isPackaging.value ? selectedBomIds.value.length > 0 : Boolean(selectedTaskId.value && (isSampleSource.value
   ? source.value?.can_create && lines.value.length
   : selectedBom.value?.existing_purchase_group_id || selectedBomSources.value.length && selectedBomSources.value.every(item => item.source_revision))))
 
@@ -259,14 +274,17 @@ function apiErrorMessage(error: unknown, fallback: string): string {
       data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string }
     }
   })?.response
-  const firstFieldError = response?.data?.error?.field_errors
-    ? Object.values(response.data.error.field_errors).flat()[0]
+  const fields = response?.data?.error?.field_errors
+  const taskNumber = fields?.production_task_number?.[0]
+  const firstFieldError = fields
+    ? Object.entries(fields).find(([field]) => field !== 'production_task_number')?.[1]?.[0]
     : ''
   if (response?.status === 401) return '登录状态已失效，请刷新页面或重新登录。'
   if (response?.status === 403) return '当前账号没有新建采购订单的权限。'
   if (response?.status === 412) return '采购需求已有更新，输入已保留。请重新读取采购需求版本后核对并重试。'
   if (response?.status === 409) return response.data?.error?.message || response.data?.detail || '采购来源已变化，请重新读取采购需求。'
-  return firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
+  const message = firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
+  return taskNumber ? `${taskNumber} · ${message}` : message
 }
 
 function showActionError(message: string): void {
@@ -317,7 +335,18 @@ async function loadOptions(): Promise<void> {
   loadError.value = ''
   try {
     let result: PurchaseOrderOptions
-    if (isDetailStep.value) {
+    if (isPackaging.value) {
+      if (!isBatchMode.value) {
+        packagingSources.value = await fetchPackagingPurchaseSources()
+        if (!packagingNoticeApplied && typeof route.query.production_task_id === 'string') {
+          const matches = packagingSources.value.filter(item => item.production_task_id === route.query.production_task_id)
+          if (matches.length <= 100) selectedBomIds.value = matches.map(item => item.bom_id)
+          packagingNoticeApplied = true
+        }
+        return
+      }
+      result = await fetchPackagingPurchaseOptions()
+    } else if (isDetailStep.value) {
       const [detailOptions, sourceOptionsResult] = await Promise.all([
         fetchPurchaseOrderOptions('detail'),
         fetchPurchaseOrderOptions('sources'),
@@ -987,13 +1016,20 @@ async function submitPendingSupplierBatch(): Promise<void> {
   if (!submission || saving.value) return
   saving.value = true
   try {
-    const result = await submitPurchaseSupplierBatch(submission.groupId, submission.payload, submission.groupEtag)
+    const result = isPackaging.value
+      ? await writePackagingPurchasePage('save', packagingGroupIds.value, batchSessionId.value!, submission.groupEtag, submission.payload)
+        .then(page => {
+          const display = packagingDisplayGroup(page.groups)
+          return { etag: page.etag, group: display, batchNumber: display.batch_page!.current_batch_number! }
+        })
+      : await submitPurchaseSupplierBatch(submission.groupId, submission.payload, submission.groupEtag)
+        .then(({ data, etag }) => ({ etag, group: data.group, batchNumber: data.batch_number }))
     if (pendingSupplierBatch.value !== submission) return
-    group.value = result.data.group
+    group.value = result.group
     groupEtag.value = result.etag
-    currentBatchNumber.value = result.data.batch_number
+    currentBatchNumber.value = result.batchNumber
     const submitted = new Set(submission.payload.lines.map(line => line.purchase_group_line_id))
-    const remaining = new Map(result.data.group.progress.lines.map(line => [line.id, line]))
+    const remaining = new Map(result.group.progress.lines.map(line => [line.id, line]))
     lines.value = lines.value.flatMap(line => {
       const id = line.purchase_group_line_id!
       if (!submitted.has(id)) return [line]
@@ -1008,7 +1044,7 @@ async function submitPendingSupplierBatch(): Promise<void> {
     refreshBulkSupplier()
     refreshBulkDeliveryDate()
     lastSupplierBatch.value = {
-      number: result.data.batch_number, supplierName: submission.supplierName, lineCount: submitted.size,
+      number: result.batchNumber, supplierName: submission.supplierName, lineCount: submitted.size,
     }
     pendingSupplierBatch.value = null
     batchConflict.value = ''
@@ -1033,7 +1069,15 @@ function saveDraft(): void {
 function confirmPurchase(): void {
   const currentGroup = group.value
   const sessionId = batchSessionId.value
-  if (!currentGroup || !sessionId || !savedSupplierOrders.value.length) {
+  if (isPackaging.value && (!currentGroup || !sessionId || (!savedSupplierOrders.value.length && !confirmationLines.value.length))) {
+    if (packagingPageConfirmed.value && sessionId) {
+      void router.push({ name: 'supplier-purchase-sheets', query: { purchase_scope: 'PACKAGING', batch_session_id: sessionId } })
+    } else {
+      showActionError('请至少填写一行采购数量和单价均大于 0 的包材。')
+    }
+    return
+  }
+  if (!currentGroup || !sessionId || (!isPackaging.value && !savedSupplierOrders.value.length)) {
     if (currentGroup && currentBatchNumber.value !== null && !confirmationLines.value.length && canReadSupplierSheets.value
       && currentGroup.batches.some(batch => batch.batch_number === currentBatchNumber.value && batch.status !== 'DRAFT')) {
       void router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: currentGroup.id } })
@@ -1072,14 +1116,18 @@ async function confirmSavedSupplierOrders(): Promise<void> {
   if (!review || saving.value) return
   saving.value = true
   try {
-    const result = await confirmPurchaseBatchPage(review.groupId, review.payload, review.etag)
+    const result = isPackaging.value
+      ? await writePackagingPurchasePage('confirm', packagingGroupIds.value, review.payload.batch_session_id, review.etag, review.payload.additional)
+        .then(page => ({ etag: page.etag, data: packagingDisplayGroup(page.groups) }))
+      : await confirmPurchaseBatchPage(review.groupId, review.payload, review.etag)
     if (finalBatchReview.value !== review) return
     group.value = result.data
     groupEtag.value = result.etag
     finalBatchReview.value = null
     lastSupplierBatch.value = null
     ElMessage.success('本批采购已确认。')
-    if (canReadSupplierSheets.value) await router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: review.groupId } })
+    if (isPackaging.value) await router.push({ name: 'supplier-purchase-sheets', query: { purchase_scope: 'PACKAGING', batch_session_id: review.payload.batch_session_id } })
+    else if (canReadSupplierSheets.value) await router.push({ name: 'supplier-purchase-sheets', query: { purchase_group_id: review.groupId } })
     else await router.push({ name: 'purchase-group-detail', params: { id: review.groupId } })
   } catch (error) {
     if (finalBatchReview.value === review) {
@@ -1131,13 +1179,17 @@ async function restoreTrackingSource(): Promise<void> {
   selectedTaskId.value = ''
   resetSource()
   sourceTypeFilter.value = 'PRODUCTION'
-  if (!taskId || !bomId) {
+  if (!taskId) {
     preselectionError.value = '采购跟踪来源信息不完整，请重新选择生产订单和产品 BOM。'
     return
   }
   const task = visibleSourceOptions.value.find(item => item.id === taskId && item.source_type === 'PRODUCTION')
   if (!task) {
     preselectionError.value = '关联生产订单不在当前可选范围，可能已变更状态或权限，请重新核对来源。'
+    return
+  }
+  if (!bomId) {
+    await selectTask(task)
     return
   }
   selectedTaskId.value = task.id
@@ -1167,10 +1219,21 @@ async function initializePage(): Promise<void> {
   if (!canAdd.value || loadError.value || requestId !== sourceRequestId || initialPath !== route.fullPath) return
   if (isBatchMode.value) await loadGroup()
   else if (isDetailStep.value) await restoreDetailSource()
-  else await restoreTrackingSource()
+  else if (!isPackaging.value) await restoreTrackingSource()
 }
 
 async function goToDetails(): Promise<void> {
+  if (isPackaging.value) {
+    if (saving.value || !canContinueToDetails.value) return
+    saving.value = true
+    try {
+      const groups = await preparePackagingPurchase(packagingSources.value.filter(item => selectedBomIds.value.includes(item.bom_id)))
+      await router.push({ name: 'packaging-purchase-batch', query: { group_ids: groups.map(item => item.id), batch_session_id: crypto.randomUUID() } })
+    } catch (error) {
+      showActionError(apiErrorMessage(error, '创建包材采购需求失败，请刷新来源后重试。'))
+    } finally { saving.value = false }
+    return
+  }
   if (!selectedTaskId.value) {
     showActionError('请先选择采购来源。')
     return
@@ -1210,6 +1273,12 @@ async function goToDetails(): Promise<void> {
 }
 
 function back(): void {
+  if (isPackaging.value) {
+    void router.push(packagingGroupIds.value.length === 1
+      ? { name: 'packaging-purchase-detail', params: { id: packagingGroupIds.value[0] } }
+      : { name: 'packaging-purchases' })
+    return
+  }
   void router.push(isBatchMode.value ? { name: 'purchase-group-detail', params: { id: route.params.groupId } } : { name: isDetailStep.value ? 'purchase-order-create' : 'purchase-orders' })
 }
 
@@ -1275,11 +1344,39 @@ function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
   }
 }
 
+function packagingDisplayGroup(groups: PurchaseGroup[]): PurchaseGroup {
+  packagingGroups.value = groups
+  const first = groups[0]!
+  if (groups.length === 1) return first
+  return {
+    ...first,
+    production_task_number_snapshot: groups.map(item => item.production_task_number_snapshot).join('、'),
+    combined_into_group_id: groups.find(item => item.combined_into_group_id)?.combined_into_group_id ?? null,
+    products: groups.flatMap(item => item.products ?? []),
+    progress: {
+      ...first.progress,
+      status: groups.some(item => item.progress.status === 'UNKNOWN') ? 'UNKNOWN' : first.progress.status,
+      lines: groups.flatMap(item => item.progress.lines),
+      external_supply_line_ids: groups.flatMap(item => item.progress.external_supply_line_ids ?? []),
+    },
+    batches: groups.flatMap(item => item.batches),
+    batch_page: {
+      current_batch_number: groups.find(item => item.batch_page?.current_batch_number)?.batch_page?.current_batch_number ?? null,
+      next_batch_number: first.batch_page!.next_batch_number,
+      submitted_line_ids: groups.flatMap(item => item.batch_page?.submitted_line_ids ?? []),
+      draft_orders: groups.flatMap(item => item.batch_page?.draft_orders ?? []),
+    },
+  }
+}
+
 async function loadGroup(preserveInput = false): Promise<void> {
   const current = ++sourceRequestId
   sourceLoading.value = true
   try {
-    const result = await fetchVersionedPurchaseGroup(String(route.params.groupId), batchSessionId.value)
+    const result = isPackaging.value
+      ? await fetchPackagingPurchasePage(packagingGroupIds.value, batchSessionId.value!)
+        .then(page => ({ etag: page.etag, data: packagingDisplayGroup(page.groups) }))
+      : await fetchVersionedPurchaseGroup(String(route.params.groupId), batchSessionId.value)
     if (current !== sourceRequestId) return
     group.value = result.data
     groupEtag.value = result.etag
@@ -1343,6 +1440,7 @@ watch(() => route.fullPath, () => {
   pendingSupplierBatch.value = null
   lastSupplierBatch.value = null
   fulfilledSupplierLineIds.clear()
+  packagingGroups.value = []
   group.value = null
   groupEtag.value = ''
   currentBatchNumber.value = null
@@ -1368,7 +1466,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
   <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
     <div v-if="!canAdd" class="state-page">
       <h1>无权新建采购需求</h1>
-      <p>请联系管理员开通“采购订单新增”权限后重试。</p>
+      <p>请联系管理员开通“{{ isPackaging ? '办理包材采购' : '采购订单新增' }}”权限后重试。</p>
       <ElButton @click="back">返回采购需求列表</ElButton>
     </div>
 
@@ -1376,16 +1474,16 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       <header class="page-heading">
         <div>
           
-          <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购需求' }}</h1>
-          <p v-if="!isBatchMode">{{ isDetailStep ? '填写供应商、采购交期、数量和单价' : '选择订单，勾选要一起采购的产品' }}</p>
+          <h1>{{ isPackaging ? (isBatchMode ? '填写包材采购' : '新建包材采购') : isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购需求' }}</h1>
+          <p v-if="!isBatchMode">{{ isPackaging ? '选择本次采购涉及的生产任务 BOM' : isDetailStep ? '填写供应商、采购交期、数量和单价' : '选择订单，勾选要一起采购的产品' }}</p>
           <strong v-else-if="group?.production_task_number_snapshot" class="production-task-number">{{ group.production_task_number_snapshot }}</strong>
-          <span v-if="isBatchMode && displayedBatchNumber">第 {{ displayedBatchNumber }} 批</span>
+          <span v-if="isBatchMode && displayedBatchNumber && !isMultiTask">第 {{ displayedBatchNumber }} 批</span>
         </div>
         <div class="page-action-panel">
           <div class="page-actions">
             <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回采购需求' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
             <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">{{ selectedBom?.existing_purchase_group_id ? '进入已有采购需求' : '下一步：填写明细' }}<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
-            <ElButton v-if="isDetailStep" type="primary" plain :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" @click="saveDraft">保存草稿</ElButton>
+            <ElButton v-if="isDetailStep && !isPackaging" type="primary" plain :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" @click="saveDraft">保存草稿</ElButton>
           </div>
         </div>
       </header>
@@ -1402,14 +1500,26 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         <ElButton link @click="back">查看采购需求已有批次</ElButton>
       </ElAlert>
       <ElAlert v-if="isBatchMode && group?.combined_into_group_id" type="info" title="后续批次请在合并采购需求中填写。" :closable="false">
-        <ElButton link @click="router.push({ name: 'purchase-group-detail', params: { id: group.combined_into_group_id } })">打开合并采购需求</ElButton>
+        <ElButton link @click="router.push({ name: isPackaging ? 'packaging-purchase-detail' : 'purchase-group-detail', params: { id: group.combined_into_group_id } })">打开合并采购需求</ElButton>
       </ElAlert>
       <div v-if="isBatchMode" class="batch-type-field">
         <span>批次类型</span><ElRadioGroup v-model="batchType" :disabled="saving" aria-label="批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
         <PurchaseGridCell><span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span></PurchaseGridCell>
       </div>
 
-      <section v-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
+      <section v-if="isPackaging && !isDetailStep" v-loading="optionsLoading" class="task-card">
+        <header><div><h2>采购来源</h2></div></header>
+        <div class="task-selector-row">
+          <ElSelect v-model="selectedBomIds" multiple filterable clearable class="task-source-filter"
+            data-testid="packaging-bom-select" aria-label="选择采购 BOM" placeholder="搜索生产任务单号、产品或 BOM"
+            no-data-text="没有可选的包材 BOM" :disabled="saving" :multiple-limit="100">
+            <ElOption v-for="item in packagingSources" :key="item.bom_id" :value="item.bom_id"
+              :label="`${item.task_number} · ${item.product_name} · ${item.bom_number}`" />
+          </ElSelect>
+          <ElButton :disabled="saving || optionsLoading" @click="loadOptions">刷新</ElButton>
+        </div>
+      </section>
+      <section v-else-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
         <header>
           <div><h2>采购来源</h2></div>
         </header>
@@ -1551,6 +1661,12 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
         </header>
         <ElTable v-loading="sourceLoading" :data="gridRows" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
+          <ElTableColumn v-if="isPackaging" label="生产任务单号" width="164" show-overflow-tooltip>
+            <template #default="{ row }"><strong>{{ packagingLineGroup.get(row.purchase_group_line_id)?.production_task_number_snapshot }}</strong></template>
+          </ElTableColumn>
+          <ElTableColumn v-if="isPackaging" label="产品 / BOM" width="230" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.product_name }} · {{ row.bom_number }}</template>
+          </ElTableColumn>
           <ElTableColumn prop="category" label="分类" width="106" show-overflow-tooltip />
           <ElTableColumn label="物料信息" width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong><small v-if="row.fabric_color">{{ row.fabric_color }}</small></div></template>
@@ -1638,7 +1754,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           <template #empty>
             <div class="detail-empty">
               <div>!</div>
-              <strong v-if="isBatchMode && lastSupplierBatch">当前列表已买足</strong>
+              <strong v-if="isBatchMode && (lastSupplierBatch || savedSupplierOrders.length)">当前列表已买足</strong>
               <template v-else>
                 <strong>{{ isSampleSource ? '暂无可采购的样品需求' : selectedTaskId ? selectedBomId ? '所选 BOM 暂无明细' : '请选择本次采购的产品 BOM' : '请先选择采购来源' }}</strong>
                 <p>{{ sourceError || '选择生产订单或打样单后加载对应采购需求' }}</p>
@@ -1666,11 +1782,11 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
               </ElDropdownMenu>
             </template>
           </ElDropdown>
-          <ElButton type="primary" :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
+          <ElButton type="primary" :loading="saving && !pendingSupplierBatch" :disabled="saving || !!pendingSupplierBatch" data-testid="purchase-next" @click="confirmPurchase">{{ packagingPageConfirmed ? '查看本批供应商采购表' : '下一步：确认采购' }}<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
       </section>
       <ElAlert v-if="isBatchMode && lastSupplierBatch" class="supplier-submit-result" type="success" :closable="false" show-icon
-        :title="`第 ${lastSupplierBatch.number} 批已保存 · ${lastSupplierBatch.supplierName} · ${lastSupplierBatch.lineCount} 项 · 待统一确认`" />
+        :title="`${isMultiTask ? '本页' : `第 ${lastSupplierBatch.number} 批`}已保存 · ${lastSupplierBatch.supplierName} · ${lastSupplierBatch.lineCount} 项 · 待统一确认`" />
     </template>
     <AppWindowDialog v-if="supplierBatchReview" :model-value="true" title="保存供应商采购" :width="1000"
       :min-width="290" :minimizable="false" :close-on-click-modal="false"
@@ -1682,10 +1798,11 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       <div class="supplier-review-scroll">
         <table class="supplier-review-table">
           <thead>
-            <tr><th scope="col">品名</th><th scope="col">规格</th><th scope="col">采购数量</th><th scope="col">单价</th><th scope="col">采购交期</th></tr>
+            <tr><th v-if="isPackaging" scope="col">生产任务单号</th><th scope="col">品名</th><th scope="col">规格</th><th scope="col">采购数量</th><th scope="col">单价</th><th scope="col">采购交期</th></tr>
           </thead>
           <tbody>
             <tr v-for="(row, index) in supplierBatchReview.lines" :key="row.purchase_group_line_id">
+              <td v-if="isPackaging">{{ packagingLineGroup.get(row.purchase_group_line_id!)?.production_task_number_snapshot }}</td>
               <td class="supplier-review-name">{{ materialTitle(row) }}</td>
               <td>{{ materialSpecificationValue(row) }}</td>
               <td class="supplier-review-quantity">{{ effectivePurchaseQuantity(row) }} {{ isWeightLine(row) ? 'kg' : row.source_unit_text }}</td>
@@ -1719,16 +1836,18 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       :min-width="290" :minimizable="false" :show-close="!saving && !finalBatchReview.uncertain"
       :close-on-click-modal="false" :close-on-press-escape="!saving && !finalBatchReview.uncertain"
       @update:model-value="value => { if (!value && !saving && !finalBatchReview?.uncertain) finalBatchReview = null }">
-      <div class="supplier-review-heading"><strong>第 {{ displayedBatchNumber }} 批</strong><span>确认后生成各供应商的采购表草稿</span></div>
+      <div class="supplier-review-heading"><strong>{{ isMultiTask ? '本页包材采购' : `第 ${displayedBatchNumber} 批` }}</strong><span>确认后生成各供应商的采购表草稿</span></div>
       <div class="supplier-review-scroll">
         <table class="supplier-review-table">
-          <thead><tr><th scope="col">采购单</th><th scope="col">供应商</th><th scope="col">明细</th><th scope="col">金额</th></tr></thead>
+          <thead><tr><th v-if="isPackaging" scope="col">生产任务单号</th><th scope="col">采购单</th><th scope="col">供应商</th><th scope="col">明细</th><th scope="col">金额</th></tr></thead>
           <tbody>
             <tr v-for="order in savedSupplierOrders" :key="order.id">
+              <td v-if="isPackaging">{{ packagingDraftGroup.get(order.id)?.production_task_number_snapshot }}</td>
               <td>{{ order.order_number }}</td><td>{{ order.suppliers.join('、') || '—' }}</td>
               <td class="supplier-review-quantity">{{ order.line_count }} 项</td><td>{{ formatMoney(order.total_amount) }}</td>
             </tr>
             <tr v-if="finalBatchReview.additionalSummary && finalBatchReview.payload.additional">
+              <td v-if="isPackaging">{{ [...new Set(finalBatchReview.payload.additional.lines.map(line => packagingLineGroup.get(line.purchase_group_line_id)?.production_task_number_snapshot))].join('、') }}</td>
               <td>本页新增填写</td><td>{{ finalBatchReview.additionalSummary.suppliers || '—' }}</td>
               <td class="supplier-review-quantity">{{ finalBatchReview.payload.additional.lines.length }} 项</td>
               <td>{{ formatMoney(finalBatchReview.additionalSummary.amount) }}</td>
@@ -1745,7 +1864,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
       </template>
     </AppWindowDialog>
     <PurchaseSetPricingDialog v-if="setSource" :key="editingSetId" :source="setSource" :lines="setCandidates"
-      :suppliers="options.suppliers" :default-quantity="orderSetQuantity(group)" @apply="saveSet" @close="editingSetId = ''" />
+      :suppliers="options.suppliers" :default-quantity="orderSetQuantity(isPackaging ? packagingLineGroup.get(editingSetId) ?? null : group)" @apply="saveSet" @close="editingSetId = ''" />
   </section>
 </template>
 

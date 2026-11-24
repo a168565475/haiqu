@@ -59,6 +59,9 @@ def presentation(code, permission, module):
     if code == "organizations.manage_organization":
         return {"resource": "organizations.organizationunit", "resource_name": "部门与组织",
                 "action": "special", "action_name": "管理部门与组织归属", "label": "部门与组织 · 管理部门与组织归属"}
+    if code == "procurement.manage_packagingpurchase":
+        return {"resource": "procurement.purchasegroup", "resource_name": "包材采购",
+                "action": "special", "action_name": "办理采购", "label": "包材采购 · 办理采购"}
     if module == "attendance":
         actions = {"attendance.view_attendance": ("view", "查看考勤"),
                    "attendance.sync_attendance": ("special", "同步考勤"),

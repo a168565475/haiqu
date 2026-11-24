@@ -7,9 +7,32 @@ from apps.access_control.selectors import effective_access
 from apps.customers.models import CustomerAccount, CustomerAssignment, CustomerDataAccessGrant
 from apps.organizations.models import Employee
 from apps.production_tasks.models import ProductionTask
+from .purchase_scope import PACKAGING_PERMISSION
 
 
 VIEW_PERMISSION = 'procurement.view_purchaseorder'
+
+
+def can_read_packaging_as_pmc(access):
+    role_ids = {role['id'] for role in access['roles'] if role['code'] == 'PMC'}
+    sources = access['actions'].get(VIEW_PERMISSION, {}).get('sources', [])
+    return any(source.get('role_id') in role_ids and source.get('scope') in {'MODULE', 'ALL'} for source in sources)
+
+
+def packaging_tracking_tasks(user, employee, access, *, manage=False):
+    tasks = ProductionTask.objects.filter(archived_at__isnull=True)
+    if not access['active']:
+        return tasks.none()
+    if access['is_superuser']:
+        return tasks
+    allowed = Q(pk__in=[])
+    if PACKAGING_PERMISSION in access['actions'] or any(
+            row['permission'] == PACKAGING_PERMISSION for row in access['legacy_sources']):
+        allowed |= Q(followers=employee)
+    if not manage and can_read_packaging_as_pmc(access) and (
+            getattr(settings, 'MODULE_ACCESS_ENABLED', False) or user.has_perm(VIEW_PERMISSION)):
+        return tasks
+    return tasks.filter(allowed).distinct()
 
 
 def _legacy_customers(user, employee, access):
@@ -87,12 +110,21 @@ def accessible_tracking_task_ids(request, permission=VIEW_PERMISSION):
     if employee is None:
         return ProductionTask.objects.none().values_list('pk', flat=True)
     access = effective_access(request.user)
+    if permission == PACKAGING_PERMISSION:
+        return packaging_tracking_tasks(request.user, employee, access, manage=True).order_by().values_list('pk', flat=True)
     return _task_queryset(request.user, employee, permission, access).order_by().values_list('pk', flat=True)
 
 
-def employee_can_view_task(employee, task_id):
+def accessible_packaging_tracking_task_ids(request):
+    return packaging_tracking_tasks(request.user, request.employee, effective_access(request.user)).order_by().values_list('pk', flat=True)
+
+
+def employee_can_view_task(employee, task_id, *, packaging=False):
     current = Employee.objects.select_related('user').filter(pk=getattr(employee, 'pk', None), status='ACTIVE',
         archived_at__isnull=True, user__is_active=True).first()
     if current is None:
         return False
-    return _task_queryset(current.user, current, VIEW_PERMISSION, effective_access(current.user)).filter(pk=task_id).exists()
+    access = effective_access(current.user)
+    tasks = (packaging_tracking_tasks(current.user, current, access) if packaging
+             else _task_queryset(current.user, current, VIEW_PERMISSION, access))
+    return tasks.filter(pk=task_id).exists()

@@ -17,7 +17,7 @@ from ..group_services import (
     complete_purchase_group, confirm_purchase_batch_page, create_purchase_batch, create_purchase_group,
     delete_purchase_group, submit_supplier_purchase_batch,
 )
-from ..models import PurchaseGroup
+from ..models import PurchaseGroup, PurchaseScope
 from .group_serializers import (
     PurchaseBatchCreateSerializer, PurchaseBatchPageConfirmSerializer, PurchaseGroupCreateSerializer, PurchaseGroupFilterOptionsSerializer,
     PurchaseGroupBatchPageQuerySerializer, PurchaseGroupCompleteSerializer, PurchaseGroupSerializer,
@@ -35,24 +35,18 @@ supplier_batch_response = inline_serializer(name="PurchaseSupplierBatchSubmitRes
 })
 
 
-class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class PurchaseGroupRecordViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    purchase_scope = PurchaseScope.STANDARD
     permission_classes = [IsAuthenticated, HasActiveEmployee, BusinessActionPermission]
-    action_permission_map = {
-        "list": "procurement.view_purchaseorder", "retrieve": "procurement.view_purchaseorder",
-        "filter_options": "procurement.view_purchaseorder",
-        "create": "procurement.add_purchaseorder", "batches": "procurement.add_purchaseorder",
-        "submit_supplier_batch": "procurement.submit_purchaseorder",
-        "confirm_batch_page": "procurement.submit_purchaseorder",
-        "complete": "procurement.submit_purchaseorder",
-        "destroy": "procurement.delete_purchaseorder",
-    }
     serializer_class = PurchaseGroupSerializer
 
     def _task_ids(self):
         return accessible_production_tasks(self.request).filter(archived_at__isnull=True).order_by().values_list("id", flat=True)
 
     def _accessible_groups(self):
-        return PurchaseGroup.objects.filter(production_task_id__in=self._task_ids(), archived_at__isnull=True)
+        return PurchaseGroup.objects.filter(
+            production_task_id__in=self._task_ids(), archived_at__isnull=True, purchase_scope=self.purchase_scope,
+        )
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
@@ -127,12 +121,25 @@ class PurchaseGroupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
         response["ETag"] = etag_for_instance(group)
         return response
 
+class PurchaseGroupViewSet(PurchaseGroupRecordViewSet):
+    action_permission_map = {
+        "list": "procurement.view_purchaseorder", "retrieve": "procurement.view_purchaseorder",
+        "filter_options": "procurement.view_purchaseorder",
+        "create": "procurement.add_purchaseorder", "batches": "procurement.add_purchaseorder",
+        "submit_supplier_batch": "procurement.submit_purchaseorder",
+        "confirm_batch_page": "procurement.submit_purchaseorder",
+        "complete": "procurement.submit_purchaseorder",
+        "destroy": "procurement.delete_purchaseorder",
+    }
+
     @extend_schema(request=PurchaseGroupCreateSerializer, responses={201: PurchaseGroupSerializer})
     def create(self, request, *args, **kwargs):
         serializer = PurchaseGroupCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        group = create_purchase_group(validated_data=serializer.validated_data, allowed_task_ids=self._task_ids(),
-                                      actor_employee=request.employee, request=request)
+        group = create_purchase_group(
+            validated_data=serializer.validated_data, allowed_task_ids=self._task_ids(),
+            actor_employee=request.employee, request=request, purchase_scope=self.purchase_scope,
+        )
         group = purchase_groups_with_context().get(pk=group.pk)
         response = Response({"data": PurchaseGroupSerializer(group).data}, status=status.HTTP_201_CREATED)
         response["ETag"] = etag_for_instance(group)

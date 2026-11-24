@@ -1145,11 +1145,14 @@ class PurchaseOrderApiTests(APITestCase):
                 self.assertEqual(row["quantity_parse_status"], status)
 
     def test_auxiliary_quantity_change_preserves_other_fabric_section_purchase_rules(self):
+        from ..models import PurchaseScope
+        from ..services import evaluate_purchase_source
+
         for index, title in enumerate(["面料类", "包材", "裁剪明细"]):
             with self.subTest(section_title=title):
                 task = self.make_task(f"AUX-OTHER-{index}")
                 product_line = self.make_product_line(task)
-                _, bom_line = self.make_bom(
+                bom, bom_line = self.make_bom(
                     product_line,
                     section_type=BomSectionType.FABRIC,
                     total_purchase_quantity="",
@@ -1163,16 +1166,20 @@ class PurchaseOrderApiTests(APITestCase):
                 source = self.get_source(task)
 
                 self.assertEqual(source.status_code, 200, source.data)
-                if title == "裁剪明细":
+                data = source.data["data"]
+                if title in {"包材", "裁剪明细"}:
                     self.assertEqual(source.data["data"]["lines"], [])
                     self.assertEqual(source.data["data"]["preview_lines"], [])
                     self.assertIn("BOM_EMPTY", [item["code"] for item in source.data["data"]["blockers"]])
-                else:
-                    self.assertTrue(source.data["data"]["can_create"], source.data)
-                    row = source.data["data"]["lines"][0]
-                    self.assertEqual(row["required_quantity"], "2.5000")
-                    self.assertEqual(row["source_quantity_field"], "purchase_consumption*order_quantity")
-                    self.assertEqual(row["quantity_parse_status"], "READY")
+                if title == "裁剪明细":
+                    continue
+                if title == "包材":
+                    data = evaluate_purchase_source(task, bom_id=bom.pk, purchase_scope=PurchaseScope.PACKAGING)
+                self.assertTrue(data["can_create"], data.get("blockers"))
+                row = data["lines"][0]
+                self.assertEqual(str(row["required_quantity"]), "2.5000")
+                self.assertEqual(row["source_quantity_field"], "purchase_consumption*order_quantity")
+                self.assertEqual(row["quantity_parse_status"], "READY")
 
     def test_long_invalid_derived_quantity_keeps_full_audit_text_and_can_be_saved(self):
         task = self.make_task("LONG-SOURCE")

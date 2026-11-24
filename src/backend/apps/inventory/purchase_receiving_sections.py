@@ -1,11 +1,13 @@
 """Classify purchase and receipt lines using the saved material identity."""
-from django.db.models import Case, CharField, F, Q, Value, When
+from django.db.models import Case, CharField, Exists, F, OuterRef, Q, Value, When
 from django.db.models.fields.json import KeyTextTransform
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.access_control.sales_policy import access_for
+from apps.procurement.models import PurchaseOrderStatus, PurchaseScope
+from apps.procurement.purchase_scope import packaging_order_filter
 
-from .models import PURCHASE_INBOUND_SECTION_NAMES, PurchaseInboundSection
+from .models import MaterialInboundLine, PURCHASE_INBOUND_SECTION_NAMES, PurchaseInboundSection
 
 RAW_SECTIONS = {
     "TUBE": ("管材", ("管材", "管材类", "型材", "型材明细")),
@@ -19,8 +21,9 @@ MATERIAL_SECTIONS = {key: label for key, (label, _) in RAW_SECTIONS.items()}
 OTHER_SECTION = "OTHER"
 SECTION_CATEGORIES = {
     PurchaseInboundSection.A: {"TUBE"},
-    PurchaseInboundSection.B: {"HARDWARE", "PLASTIC", "PACKAGING"},
+    PurchaseInboundSection.B: {"HARDWARE", "PLASTIC"},
     PurchaseInboundSection.C: {"FABRIC", "AUXILIARY"},
+    PurchaseInboundSection.D: {"PACKAGING"},
 }
 SECTION_BY_CATEGORY = {category: section for section, categories in SECTION_CATEGORIES.items() for category in categories}
 # Existing links and clients may still pass a single material category.
@@ -38,6 +41,27 @@ def with_receiving_section(queryset):
         default=Value(OTHER_SECTION),
         output_field=CharField(),
     ))
+
+
+def with_receipt_section_history(queryset):
+    packaging = with_receiving_section(MaterialInboundLine.objects.filter(inbound_id=OuterRef("pk")))
+    return queryset.annotate(has_legacy_packaging=Q(material_section=PurchaseInboundSection.B) & Exists(
+        packaging.filter(receiving_section="PACKAGING"),
+    ))
+
+
+def open_receiving_orders(prefix=""):
+    status = prefix + "status"
+    return Q(**{status: PurchaseOrderStatus.PURCHASING}) | (
+        Q(**{status: PurchaseOrderStatus.SUBMITTED}) & packaging_order_filter(prefix)
+    )
+
+
+def can_start_receiving(order):
+    return order.status == PurchaseOrderStatus.PURCHASING or (
+        order.status == PurchaseOrderStatus.SUBMITTED and order.purchase_group_id
+        and order.purchase_group.purchase_scope == PurchaseScope.PACKAGING
+    )
 
 
 def assigned_receiving_sections(request):

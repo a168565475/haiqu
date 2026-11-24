@@ -4,11 +4,25 @@
 只监听主记录，提交后才读取完整结果，避免逐材料保存时反复读取半成品。
 没有经过这些服务的批量维护和日期变化由 60 秒扫描兜底。
 """
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import partial
 
 from django.conf import settings
 from django.db import transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save
+
+
+_defer_supplier_tracking = ContextVar("defer_supplier_tracking", default=False)
+
+
+@contextmanager
+def defer_supplier_tracking():
+    token = _defer_supplier_tracking.set(True)
+    try:
+        yield
+    finally:
+        _defer_supplier_tracking.reset(token)
 
 
 def _enabled():
@@ -33,7 +47,10 @@ def refresh_tracking_after_commit(task_ids, *, using="default"):
 def _direct_task_changed(sender, instance, *, raw=False, using="default", **kwargs):
     if raw or not _enabled():
         return
-    task_id = instance.pk if sender._meta.label_lower == "production_tasks.productiontask" else instance.production_task_id
+    model = sender._meta.label_lower
+    if _defer_supplier_tracking.get() and model in ("procurement.purchasegroup", "procurement.purchaseorder"):
+        return
+    task_id = instance.pk if model == "production_tasks.productiontask" else instance.production_task_id
     refresh_tracking_after_commit([task_id], using=using)
 
 

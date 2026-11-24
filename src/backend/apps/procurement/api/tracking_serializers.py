@@ -1,9 +1,11 @@
 from rest_framework import serializers
 
+from ..models import PurchaseScope
 from ..tracking_rules import RISK_DEFINITIONS
 
 
 class TrackingFilterSerializer(serializers.Serializer):
+    purchase_scope = serializers.ChoiceField(choices=[*PurchaseScope.values, 'ALL'], required=False)
     production_task_id = serializers.UUIDField(required=False)
     risk = serializers.ChoiceField(choices=list(RISK_DEFINITIONS), required=False)
     include_history = serializers.BooleanField(default=False)
@@ -36,6 +38,7 @@ class TrackingActionSerializer(serializers.Serializer):
 
 
 class TrackingRowSerializer(serializers.Serializer):
+    purchase_scope = serializers.ChoiceField(choices=PurchaseScope.values)
     row_key = serializers.CharField()
     production_task_id = serializers.UUIDField()
     task_number = serializers.CharField()

@@ -9,10 +9,11 @@ from apps.production_tasks.models import ProductionTaskProduct
 
 from .catalog_materials import is_weight_purchase, purchase_catalog_selection
 from .multi_bom_sources import matches_combined_source
+from .purchase_scope import is_packaging_snapshot
 from .tracking_rules import decimal_value, root_count_value
 from .models import (
     PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus,
-    PurchaseReturnLine, PurchaseReturnStatus,
+    PurchaseReturnLine, PurchaseReturnStatus, PurchaseScope,
 )
 
 
@@ -169,6 +170,8 @@ def purchase_group_progress(group):
         if not isinstance(snapshot, dict):
             issues.append("MATERIAL_SNAPSHOT_INVALID")
             snapshot = {}
+        if group.purchase_scope == PurchaseScope.STANDARD and is_packaging_snapshot(snapshot):
+            continue
         if snapshot.get("purchase_required") is False:
             external_supply_line_ids.append(str(source.pk))
             continue

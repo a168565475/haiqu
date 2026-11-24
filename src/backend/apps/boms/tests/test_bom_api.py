@@ -895,6 +895,7 @@ class BomApiTests(APITestCase):
             item_number_snapshot=self.product.product_item.item_number,
             product_name_snapshot="同订单待建 BOM 产品",
             specification_snapshot=self.product.specification,
+            color_name_snapshot="藏青色",
             quantity=8,
             unit=self.product.unit,
             currency=self.currency,
@@ -925,6 +926,8 @@ class BomApiTests(APITestCase):
         candidates = after.data["data"]["production_task_products"]
         self.assertEqual([str(item["id"]) for item in candidates], [str(available_product_line.pk)])
         self.assertEqual(candidates[0]["existing_bom_count"], 0)
+        self.assertEqual(candidates[0]["color_name"], "藏青色")
+        self.assertEqual(candidates[0]["unit_name"], self.product.unit.unit_name)
         self.assertTrue(any(item["id"] == created.data["data"]["id"] for item in after.data["data"]["history_boms"]))
 
     def test_create_and_options_require_pmc_confirmed_task(self):

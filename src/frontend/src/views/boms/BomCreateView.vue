@@ -289,7 +289,10 @@ function differenceText(value: number | null) {
 }
 
 function taskOptionLabel(item: BomProductionTaskProduct) {
-  return `${item.task_number} · ${item.product_code || item.product_number} · ${item.product_name}`
+  const color = item.color_name || item.product_selection_snapshot?.color_name
+  const quantity = `${number(item.order_quantity)} ${productEntryUnitName(item)}`.trim()
+  return [item.task_number, item.product_name, color, quantity, item.task_status_display]
+    .filter(Boolean).join(' · ')
 }
 
 let taskSearchTimer: ReturnType<typeof setTimeout> | null = null

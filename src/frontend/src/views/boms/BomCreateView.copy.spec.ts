@@ -49,6 +49,29 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it('新建时按颜色区分同任务的同名产品，并显示带单位的数量和任务状态', async () => {
+  const product = {
+    task_number: 'QA-NEW-01', product_code: 'TEST-A', product_name: '测试产品A',
+    order_quantity: '2000.0000', unit_name: '套', task_status: 'READY',
+    task_status_display: '已接单', existing_bom_count: 0,
+  }
+  api.fetchBomOptions.mockResolvedValueOnce({
+    production_task_products: [
+      { ...product, id: 'task-black', color_name: '黑色' },
+      { ...product, id: 'task-navy', color_name: '藏青色' },
+    ],
+    history_boms: [],
+  })
+  page = mount(BomCreateView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
+
+  const choices = page.getComponent(ElSelect).findAllComponents(ElOption)
+  expect(choices.map(option => option.text())).toEqual([
+    'QA-NEW-01 · 测试产品A · 黑色 · 2,000 套 · 已接单',
+    'QA-NEW-01 · 测试产品A · 藏青色 · 2,000 套 · 已接单',
+  ])
+})
+
 it('用生产任务单、产品颜色数量和BOM状态区分来源，并在确认页显示同一选择', async () => {
   const select = await openCopy()
   const choices = select.findAllComponents(ElOption)

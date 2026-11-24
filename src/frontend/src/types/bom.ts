@@ -597,8 +597,10 @@ export interface BomProductionTaskProduct {
   product_number: string
   product_code: string
   product_name: string
+  color_name?: string
   specification: string
   order_quantity: string | number
+  unit_name?: string
   source_delivery_batch_line_id: string | null
   batch_quantity: string | number | null
   delivery_date: string

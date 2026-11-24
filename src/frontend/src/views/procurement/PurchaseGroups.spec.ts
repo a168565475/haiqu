@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import * as groupsApi from '@/api/purchaseGroups'
 import * as ordersApi from '@/api/purchaseOrders'
 import { fetchPurchaseOrderReadDetail } from '@/api/purchaseOrderReadDetail'
-import type { PurchaseGroup } from '@/types/purchaseGroup'
+import type { PackagingPurchaseSource, PurchaseGroup } from '@/types/purchaseGroup'
 import type { PurchaseOrderSource } from '@/types/purchaseOrder'
 import { createPageTab } from '@/utils/pageTabs'
 import PurchaseGroupList from '@/components/procurement/PurchaseGroupList.vue'
@@ -26,7 +26,8 @@ vi.mock('vue-router', () => ({
 }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 'u', is_superuser: false }, hasPermission: (permission: string) => state.permissions.includes(permission), moduleCan: (permission: string) => state.permissions.includes(permission) }) }))
 vi.mock('@/stores/pageTabs', () => ({ usePageTabsStore: () => ({ accountId: 'u', setTabTitle: vi.fn() }) }))
-vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), submitPurchaseSupplierBatch: vi.fn(), confirmPurchaseBatchPage: vi.fn(), completePurchaseGroup: vi.fn(), deletePurchaseGroup: vi.fn() }))
+vi.mock('@/api/purchaseGroups', () => ({ fetchPurchaseGroups: vi.fn(), fetchPurchaseGroupFilterOptions: vi.fn(), fetchVersionedPurchaseGroup: vi.fn(), createPurchaseGroup: vi.fn(), createPurchaseBatch: vi.fn(), submitPurchaseSupplierBatch: vi.fn(), confirmPurchaseBatchPage: vi.fn(), completePurchaseGroup: vi.fn(), deletePurchaseGroup: vi.fn(),
+  fetchPackagingPurchaseSources: vi.fn(), preparePackagingPurchase: vi.fn() }))
 vi.mock('@/api/purchaseOrderReadDetail', () => ({ fetchPurchaseOrderReadDetail: vi.fn() }))
 vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSource: vi.fn(), fetchSamplePurchaseOrderSource: vi.fn(), createPurchaseOrder: vi.fn(), fetchPurchaseOrders: vi.fn(), fetchPurchaseOrderFilterOptions: vi.fn(), fetchVersionedPurchaseOrder: vi.fn(), deletePurchaseOrder: vi.fn(), completePurchaseOrder: vi.fn(), fetchPurchaseOrderSupplierOptions: vi.fn(), updatePurchaseOrder: vi.fn(), confirmVersionedPurchaseOrder: vi.fn() }))
 
@@ -93,6 +94,27 @@ const mountCompletionPage = async (group = completableGroup(), permitted = true)
   await flushPromises()
   return wrapper.vm as any
 }
+
+it('局域网 HTTP 创建包材需求后仍能进入填写页', async () => {
+  vi.spyOn(globalThis.crypto, 'randomUUID')
+  Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true })
+  state.route.name = 'packaging-purchase-create'
+  state.permissions.push('procurement.manage_packagingpurchase')
+  const sources: PackagingPurchaseSource[] = ['one', 'two'].map(number => ({
+    production_task_id: `task-${number}`, task_number: `SC-${number}`, bom_id: `bom-${number}`,
+    bom_number: `BOM-${number}`, product_name: '椅子', product_color: '', source_revision: 'rev',
+  }))
+  vi.mocked(groupsApi.fetchPackagingPurchaseSources).mockResolvedValue(sources)
+  vi.mocked(groupsApi.preparePackagingPurchase).mockResolvedValue([groupFixture(), { ...groupFixture(), id: 'group-2' }])
+  const vm = await mountPage(PurchaseOrderFormView)
+  vm.selectedBomIds = sources.map(item => item.bom_id)
+  await vm.goToDetails()
+  expect(groupsApi.preparePackagingPurchase).toHaveBeenCalledWith(sources)
+  expect(state.push).toHaveBeenCalledWith({ name: 'packaging-purchase-batch', query: {
+    group_ids: ['group-1', 'group-2'],
+    batch_session_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+  } })
+})
 
 describe('同一生产任务合并采购', () => {
   async function openProducts() {

@@ -49,7 +49,7 @@ const secondaryIconKeys: Record<string, string[]> = {
 }
 
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
-  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts',
+  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
@@ -158,6 +158,16 @@ describe('全局悬停侧栏', () => {
     const expectedCount = Object.values(secondaryIconKeys).flat().length
     expect(renderedKeys).toHaveLength(expectedCount)
     expect(new Set(renderedKeys).size).toBe(expectedCount)
+  })
+
+  it('包材采购显示专用纸箱图标', async () => {
+    const { auth } = await setup()
+    auth.user = { ...auth.user!, permissions: [...auth.user!.permissions, 'procurement.manage_packagingpurchase'] }
+    await nextTick()
+    await group('procurement').trigger('focus')
+    const icon = panel().get('[data-menu-key="packaging-purchases"] svg')
+    expect(icon.get('title').text()).toBe('包材采购')
+    expect(icon.find('path.accent').exists()).toBe(true)
   })
 
   it('二级悬停复用一个背景，不改变当前路由或选中项', async () => {

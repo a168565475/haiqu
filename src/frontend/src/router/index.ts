@@ -4,6 +4,7 @@ import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
 import { canOpenPage } from './pageAccess'
 
 import { useAuthStore } from '@/stores/auth'
+import { createClientUuid } from '@/utils/clientUuid'
 import { approveRouteIdentity, hasStaleRouteIdentity, isCleanIdentityLanding } from '@/composables/useRouteIdentityBoundary'
 import LoginView from '@/views/LoginView.vue'
 
@@ -1652,7 +1653,7 @@ export const router = createRouter({
       beforeEnter: to => {
         if (typeof to.query.batch_session_id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(to.query.batch_session_id)) return
         if (!to.query.group_ids) return { name: 'packaging-purchase-create' }
-        return { name: 'packaging-purchase-batch', query: { ...to.query, batch_session_id: crypto.randomUUID() } }
+        return { name: 'packaging-purchase-batch', query: { ...to.query, batch_session_id: createClientUuid() } }
       },
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
@@ -1712,7 +1713,7 @@ export const router = createRouter({
       beforeEnter: (to) => {
         const sessionId = to.query.batch_session_id
         if (typeof sessionId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) return
-        return { name: 'purchase-batch-create', params: to.params, query: { ...to.query, batch_session_id: crypto.randomUUID() } }
+        return { name: 'purchase-batch-create', params: to.params, query: { ...to.query, batch_session_id: createClientUuid() } }
       },
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',

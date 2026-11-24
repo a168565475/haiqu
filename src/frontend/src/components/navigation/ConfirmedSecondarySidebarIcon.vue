@@ -203,6 +203,13 @@ const inboundIconTitles: Record<string, string> = {
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28);fill:var(--icon-accent,#c84e28)"><circle cx="12" cy="19" r="2.5"/></g>
     </g>
 
+    <g v-else-if="name === 'packaging-purchases'">
+      <title>包材采购</title>
+      <path d="M3 8l3-5h12l3 5v12H3Z" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M3 8h18m-14 8h4"/>
+      <path d="m10 3-1 5v4h6V8l-1-5" class="accent part" style="stroke:var(--icon-accent,#c84e28)"/>
+    </g>
+
     <g v-else-if="name === 'purchase-orders' || name === 'purchase-tracking' || name === 'purchase-alerts'">
       <title>{{ name === 'purchase-tracking' ? '采购跟踪' : name === 'purchase-alerts' ? '采购提醒' : '采购订单' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M6 9h16l-2 8H7L5 6H2"/><path d="M11 9V2h8v7"/></g>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
+import { createClientUuid } from '@/utils/clientUuid'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import PurchaseGridCell from './PurchaseGridCell.vue'
 import { pipeMeters, pipeRootsFromMeters, samplePipeSuggestedWeight } from '@/utils/pipeQuantities'
@@ -932,7 +933,7 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
     if (isBatchMode.value) {
       const content = batchContent(selection)
       const signature = JSON.stringify(content)
-      if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = crypto.randomUUID()
+      if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = createClientUuid()
       batchContentSignature = signature
       batchInput = { ...content, request_id: batchRequestId.value }
     }
@@ -992,7 +993,7 @@ async function confirmSupplierBatch(): Promise<void> {
     review.error = error
     return
   }
-  const payload = { ...batchContent(selection), request_id: crypto.randomUUID(), save_as_draft: true }
+  const payload = { ...batchContent(selection), request_id: createClientUuid(), save_as_draft: true }
   const edited = new Map(review.lines.map(line => [line.purchase_group_line_id, line]))
   for (const line of lines.value) {
     const draft = edited.get(line.purchase_group_line_id)
@@ -1093,7 +1094,7 @@ function confirmPurchase(): void {
     showActionError(error)
     return
   }
-  const additional = selection.length ? { ...batchContent(selection), request_id: crypto.randomUUID() } : undefined
+  const additional = selection.length ? { ...batchContent(selection), request_id: createClientUuid() } : undefined
   const supplierIds = new Set(selection.map(line => line.supplier_id))
   finalBatchReview.value = {
     groupId: currentGroup.id,
@@ -1226,11 +1227,16 @@ async function goToDetails(): Promise<void> {
   if (isPackaging.value) {
     if (saving.value || !canContinueToDetails.value) return
     saving.value = true
+    let groupsPrepared = false
     try {
+      const sessionId = createClientUuid()
       const groups = await preparePackagingPurchase(packagingSources.value.filter(item => selectedBomIds.value.includes(item.bom_id)))
-      await router.push({ name: 'packaging-purchase-batch', query: { group_ids: groups.map(item => item.id), batch_session_id: crypto.randomUUID() } })
+      groupsPrepared = true
+      await router.push({ name: 'packaging-purchase-batch', query: { group_ids: groups.map(item => item.id), batch_session_id: sessionId } })
     } catch (error) {
-      showActionError(apiErrorMessage(error, '创建包材采购需求失败，请刷新来源后重试。'))
+      showActionError(apiErrorMessage(error, groupsPrepared
+        ? '包材采购需求已就绪。请从包材采购列表继续填写。'
+        : '创建包材采购需求失败，请刷新来源后重试。'))
     } finally { saving.value = false }
     return
   }

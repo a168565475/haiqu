@@ -7,6 +7,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from apps.audit.models import AuditLog
 from apps.reference_data.models import ProductionUnit
 
 from .api.serializers import ProductSelectionSerializer
@@ -21,7 +22,46 @@ def _draft_error(field, message):
     raise ValidationError({"product_selection": {"draft": {field: message}}})
 
 
-def _resolve_draft(catalog_id, selected, existing_snapshot):
+def _only_added_catalog_colors(before, after):
+    if after.get("source") == "BOM_CONFIRMATION":
+        # 历史 BOM 审计记录新增值，产品维护审计记录变更前后的完整档案。
+        color, material = after.get("color"), after.get("material")
+        return (
+            bool(color) and "colors" in before and color not in before["colors"]
+            and (not material or material in before.get("materials", []))
+        )
+    if "colors" not in before or "colors" not in after:
+        return False
+    fields = (before.keys() | after.keys()) - {"colors", "updated_at"}
+    return (
+        all(before.get(field) == after.get(field) for field in fields)
+        and {(row["id"], row["value"]) for row in before["colors"]}
+        < {(row["id"], row["value"]) for row in after["colors"]}
+    )
+
+
+def _can_refresh_bom_catalog_version(product, version, color):
+    if version is None or version >= product.updated_at or not color:
+        return False
+    changes = AuditLog.objects.filter(
+        object_type="PRODUCT_CATALOG", object_id=product.pk, occurred_at__gt=version,
+    ).exclude(action="CREATED")
+    latest = version
+    for change in changes:
+        recorded_at = change.after_data.get("updated_at")
+        revision = parse_datetime(recorded_at) if recorded_at else None
+        if revision is not None and revision <= version:
+            continue
+        if not _only_added_catalog_colors(change.before_data, change.after_data):
+            return False
+        latest = max(latest, revision or change.occurred_at)
+    return (
+        latest >= product.updated_at
+        and product.colors.filter(value=color, archived_at__isnull=True).exists()
+    )
+
+
+def _resolve_draft(catalog_id, selected, existing_snapshot, *, allow_color_additions=False):
     """前序单据仅校验和固化输入；这里不创建或更新任何产品维护记录。"""
     draft = deepcopy(selected["draft"])
     sources = draft["sources"]
@@ -31,8 +71,10 @@ def _resolve_draft(catalog_id, selected, existing_snapshot):
         product = ProductCatalog.objects.select_related("name__category").filter(pk=catalog_id).first()
         if product is None or product.archived_at or product.name.archived_at or product.name.category.archived_at:
             _draft_error("name", "所选产品不存在或已停用，请重新选择。")
-        version = selected.get("catalog_version")
-        if not version or parse_datetime(version) != product.updated_at:
+        version = parse_datetime(selected["catalog_version"]) if selected.get("catalog_version") else None
+        if version != product.updated_at and (
+            not allow_color_additions or not _can_refresh_bom_catalog_version(product, version, draft["color_name"])
+        ):
             _draft_error("name", "产品信息已变化，请刷新后重新选择。")
     for field, id_field, model, label in (
         ("category_name", "category_id", ProductCatalogCategory, "类别"),
@@ -161,3 +203,21 @@ def resolve_product_selection(catalog_id, selection, *, existing_catalog_id=None
         "color_id": str(color.pk) if color else None, "color_name": color.value if color else "",
         "material": material, "thickness": thickness,
     }
+
+
+def resolve_bom_product_selection(catalog_id, selection, *, existing_catalog_id=None, existing_snapshot=None):
+    """核对 BOM 的成品草稿，必要时采用仅增加颜色后的档案版本。"""
+    same_catalog = str(catalog_id) == str(existing_catalog_id)
+    if selection is None and same_catalog and is_product_entry_snapshot(existing_snapshot):
+        selection = {"draft": existing_snapshot["entry_draft"]}
+        if existing_snapshot.get("catalog_version"):
+            selection["catalog_version"] = existing_snapshot["catalog_version"]
+    if selection is not None and "draft" in selection:
+        serializer = ProductSelectionSerializer(data=selection)
+        serializer.is_valid(raise_exception=True)
+        return _resolve_draft(
+            catalog_id, serializer.validated_data, existing_snapshot, allow_color_additions=same_catalog,
+        )
+    return resolve_product_selection(
+        catalog_id, selection, existing_catalog_id=existing_catalog_id, existing_snapshot=existing_snapshot,
+    )

@@ -19,7 +19,7 @@ from apps.sales_orders.models import SalesOrder, SalesOrderLine
 from apps.quotations.product_writeback import save_bom_product_information
 from apps.products.material_identity import lock_bom_line_material_identities
 from apps.products.lineage import resolve_production_task_product_lineage
-from apps.product_catalog.selection import is_product_entry_snapshot
+from apps.product_catalog.selection import is_product_entry_snapshot, resolve_bom_product_selection
 from apps.product_catalog.finalization import finalize_product_entry
 from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, validate_fabric_links, validate_used_components
 from .material_flow_calculations import CUTTING_QUANTITY_FIELDS, pipe_plan, MaterialFlowValueError
@@ -790,9 +790,7 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
     if new_product is not None:
         raise ValidationError({"new_product": "请使用逐项选填的产品信息；新产品仅在最终确认 BOM 时建档。"})
     if product_catalog_id or has_entry:
-        from apps.product_catalog.selection import resolve_product_selection
-
-        catalog, snapshot = resolve_product_selection(
+        catalog, snapshot = resolve_bom_product_selection(
             product_catalog_id, product_selection,
             existing_catalog_id=locked_bom.product_catalog_id,
             existing_snapshot=locked_bom.product_selection_snapshot,

@@ -18,6 +18,8 @@ import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { SupplierPurchaseSheet } from '@/types/purchaseOrder'
 
+type ApiError = { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } }
+
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -64,7 +66,7 @@ function money(value: string | null): string {
 }
 
 function apiErrorMessage(error: unknown, fallback: string): string {
-  const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
+  const response = (error as ApiError)?.response
   const fieldError = response?.data?.error?.field_errors ? Object.values(response.data.error.field_errors).flat()[0] : ''
   return fieldError || response?.data?.error?.message || response?.data?.detail || (error instanceof Error && !response ? error.message : '') || fallback
 }
@@ -186,6 +188,17 @@ async function confirmBatchPublish(): Promise<void> {
     await load()
   } catch (error) {
     publishError.value = apiErrorMessage(error, '批量发布失败，请检查采购表内容后重试。')
+    const fields = (error as ApiError)?.response?.data?.error?.field_errors
+    if (packaging.value && fields?.ids?.length) {
+      publishConfirmVisible.value = false
+      pendingPublishIds.value = []
+      await load()
+      ElMessage.warning({
+        message: loadError.value ? publishError.value : `${publishError.value}列表已刷新，请重新勾选草稿采购表。`,
+        showClose: true,
+        duration: 6000,
+      })
+    }
   } finally {
     publishing.value = false
   }

@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/purchaseOrders'
 import type { SupplierPurchaseSheet } from '@/types/purchaseOrder'
@@ -8,7 +8,11 @@ import PurchaseSheetTemplateSelectView from './PurchaseSheetTemplateSelectView.v
 
 const state = vi.hoisted(() => ({ query: {} as Record<string, string>, canGenerate: true }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: state.query, params: { id: 'order-1' } }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, moduleCan: (permission: string) => permission === 'access_control.generate_purchasesheets' ? state.canGenerate : true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
+  user: { is_superuser: false },
+  moduleCan: (permission: string) => permission === 'access_control.generate_purchasesheets' ? state.canGenerate : true,
+  hasPermission: (permission: string) => permission === 'procurement.manage_packagingpurchase',
+}) }))
 vi.mock('@/api/purchaseOrders', () => ({
   fetchSupplierPurchaseSheets: vi.fn(), batchDownloadSupplierPurchaseSheets: vi.fn(),
   batchPublishSupplierPurchaseSheets: vi.fn(), downloadSupplierPurchaseSheetXlsx: vi.fn(),
@@ -158,5 +162,46 @@ describe('供应商采购表只提供Excel导出', () => {
       expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
       expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:excel-export')
     } finally { wrapper.unmount() }
+  })
+
+  it('包材采购表已被发布时刷新列表，清空选择并提示重新勾选草稿', async () => {
+    state.query = { purchase_scope: 'PACKAGING', batch_session_id: 'batch-1' }
+    const staleDraft = rows[0]!
+    const remainingDraft = { ...staleDraft, id: 'remaining', sheet_number: 'CGDD-3' }
+    const published = { ...staleDraft, status: 'PUBLISHED', status_display: '已发布' }
+    vi.mocked(api.fetchSupplierPurchaseSheets)
+      .mockResolvedValueOnce({ data: [staleDraft, remainingDraft], meta: { total: 2 } } as never)
+      .mockResolvedValueOnce({ data: [published, remainingDraft], meta: { total: 2 } } as never)
+    const message = '只有草稿采购表可以批量发布：CGDD-1。'
+    vi.mocked(api.batchPublishSupplierPurchaseSheets).mockRejectedValueOnce({
+      response: { data: { error: { field_errors: { ids: [message] } } } },
+    })
+    const wrapper = await renderList()
+    try {
+      const table = wrapper.findComponent({ name: 'ElTable' })
+      const publish = wrapper.get('[data-testid="sheet-batch-publish"]')
+      table.vm.$emit('selection-change', [staleDraft, remainingDraft])
+      await flushPromises()
+      await publish.trigger('click')
+      const confirm = wrapper.findAll('button').find(button => button.text() === '确认发布')!
+      expect(confirm.attributes('disabled')).toBeUndefined()
+      await confirm.trigger('click')
+      await flushPromises()
+
+      expect(api.batchPublishSupplierPurchaseSheets).toHaveBeenCalledExactlyOnceWith(['draft', 'remaining'])
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenCalledTimes(2)
+      expect(api.fetchSupplierPurchaseSheets).toHaveBeenLastCalledWith(expect.objectContaining({ purchase_scope: 'PACKAGING', batch_session_id: 'batch-1' }))
+      expect(api.ensureDefaultPurchaseSheets).not.toHaveBeenCalled()
+      expect(wrapper.get('tbody tr').text()).toContain('已发布')
+      expect(publish.text()).toBe('批量发布（0）')
+      expect(document.body.querySelector('.el-message--warning')?.textContent).toContain(`${message}列表已刷新，请重新勾选草稿采购表。`)
+
+      table.vm.$emit('selection-change', [remainingDraft])
+      await flushPromises()
+      expect(publish.attributes('disabled')).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+      ElMessage.closeAll()
+    }
   })
 })

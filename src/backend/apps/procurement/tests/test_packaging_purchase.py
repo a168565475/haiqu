@@ -10,7 +10,7 @@ from apps.access_control.models import RoleActionGrant
 from apps.boms.models import BomLine, BomSection, BomSectionType
 from apps.organizations.models import EmployeeRoleAssignment, RoleProfile
 
-from ..models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, SupplierPurchaseSheet
+from ..models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier, SupplierCategory, SupplierPurchaseSheet
 from . import test_purchase_order_api as fixtures
 
 
@@ -26,6 +26,8 @@ class PackagingPurchaseTests(APITestCase):
 
     def setUp(self):
         fixtures.PurchaseOrderApiTests.setUp(self)
+        self.supplier.supplier_categories = [SupplierCategory.PACKAGING]
+        self.supplier.save(update_fields=["supplier_categories"])
         self.tasks = [self.make_task(f"PACK-{index}") for index in range(3)]
         for index, task in enumerate(self.tasks):
             product = self.make_product_line(task)
@@ -140,3 +142,28 @@ class PackagingPurchaseTests(APITestCase):
         self.assertEqual(sheets.status_code, 200, sheets.data)
         self.assertEqual(len(sheets.data["data"]), 2)
         self.assertTrue(all(row["purchase_scope"] == "PACKAGING" for row in sheets.data["data"]))
+
+    def test_packaging_supplier_options_and_writes_exclude_other_categories(self):
+        other = Supplier.objects.create(
+            supplier_number="GYS99001", supplier_name="普通五金供应商",
+            supplier_type=self.supplier.supplier_type, supplier_categories=[SupplierCategory.HARDWARE],
+        )
+        self.grant_packaging()
+        options = self.client.get(PACKAGING + "options/")
+        self.assertEqual(options.status_code, 200, options.data)
+        suppliers = options.data["data"]["suppliers"]
+        self.assertIn(str(self.supplier.pk), {item["id"] for item in suppliers})
+        self.assertTrue(all(SupplierCategory.PACKAGING in item["supplier_categories"] for item in suppliers))
+
+        group = self.prepare()[0]
+        query = {"group_ids": [group["id"]], "batch_session_id": str(uuid4())}
+        page = self.client.get(PACKAGING + "batch-page/", query)
+        batch = {"batch_type": "NORMAL", "request_id": str(uuid4()), "currency_id": str(self.cny.pk), "lines": [{
+            "purchase_group_line_id": group["progress"]["lines"][0]["id"],
+            "actual_purchase_quantity": "1", "unit_price": "2", "supplier_id": str(other.pk),
+            "delivery_date": timezone.localdate().isoformat(),
+        }]}
+        result = self.client.post(PACKAGING + "save-page/", {**query, "batch": batch}, format="json", HTTP_IF_MATCH=page["ETag"])
+        self.assertEqual(result.status_code, 400, result.data)
+        self.assertIn("包材类供应商", str(result.data))
+        self.assertFalse(PurchaseOrder.objects.exists())

@@ -72,6 +72,7 @@ const SupplierListView = () => import('@/views/procurement/SupplierListView.vue'
 const PurchaseOrderListView = () => import('@/views/procurement/PurchaseOrderListView.vue')
 const PurchaseTrackingView = () => import('@/views/procurement/PurchaseTrackingView.vue')
 const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFormView.vue')
+const PackagingPurchaseFormView = () => import('@/views/procurement/PackagingPurchaseFormView.vue')
 const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
 const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
 const PurchaseGroupDetailView = () => import('@/views/procurement/PurchaseGroupDetailView.vue')
@@ -1638,18 +1639,18 @@ export const router = createRouter({
     {
       path: '/packaging-purchases/new',
       name: 'packaging-purchase-create',
-      component: PurchaseOrderFormView,
+      component: PackagingPurchaseFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
-        headerTitle: '采购管理 / 新建包材采购',
-        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '选择 BOM' }],
+        headerTitle: '采购管理 / 填写包材采购',
+        breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '填写采购' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
     {
       path: '/packaging-purchases/batch',
       name: 'packaging-purchase-batch',
-      component: PurchaseOrderFormView,
+      component: PackagingPurchaseFormView,
       beforeEnter: to => {
         if (typeof to.query.batch_session_id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(to.query.batch_session_id)) return
         if (!to.query.group_ids) return { name: 'packaging-purchase-create' }

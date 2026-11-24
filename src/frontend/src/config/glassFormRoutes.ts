@@ -6,6 +6,7 @@ export const glassFormRouteNames = [
   'bom-create', 'bom-edit',
   'purchase-order-create', 'purchase-order-create-details', 'purchase-order-confirm',
   'purchase-batch-create',
+  'packaging-purchase-create', 'packaging-purchase-batch',
   'supplier-purchase-sheet-editor',
   'material-purchase-inbound', 'material-quality-confirmation',
   'internal-semi-receipt', 'assembly-finished-receipt',

@@ -29,7 +29,7 @@ from .group_selectors import (
     purchase_group_batch_numbers, purchase_group_completion_summary, purchase_group_deletion_summary,
     purchase_group_progress, purchase_groups_with_context,
 )
-from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, PurchaseScope, Supplier
+from .models import PurchaseGroup, PurchaseGroupBomSource, PurchaseGroupLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, PurchaseScope, Supplier, SupplierCategory
 from .multi_bom_sources import matches_combined_source, merge_purchase_snapshots, purchase_merge_key
 from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
 from .purchase_scope import is_packaging_snapshot, validate_source_scope
@@ -548,6 +548,10 @@ def create_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_e
         pk__in=supplier_ids, archived_at__isnull=True, is_disabled=False)}
     if {str(pk) for pk in supplier_ids} - set(suppliers):
         raise ValidationError({"lines": "采购明细包含不存在、禁用或归档的供应商。"})
+    if group.purchase_scope == PurchaseScope.PACKAGING and any(
+        SupplierCategory.PACKAGING not in supplier.supplier_categories for supplier in suppliers.values()
+    ):
+        raise ValidationError({"lines": "包材采购只能选择包材类供应商。"})
     batch_session_id = validated_data.get("batch_session_id")
     current_batch, next_batch = purchase_group_batch_numbers(group.pk, batch_session_id)
     order = PurchaseOrder.objects.create(

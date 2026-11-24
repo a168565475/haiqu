@@ -14,6 +14,9 @@ export function pageInstanceKey(
   if (customerReadRoutes.has(name) && typeof customerId === 'string' && customerId) {
     return `${context}:customer-read:${customerId}`
   }
+  if (name === 'packaging-purchase-create' || name === 'packaging-purchase-batch') {
+    return `${context}:${route.path}`
+  }
   // 这些页面自行处理查询参数，地址变化时保留筛选、页码或分配窗口。
   return `${context}:${name === 'inquiries' || name === 'access-management' || name === 'employee-list' || name === 'complaints' || name === 'finished-goods-inventory' ? route.path : route.fullPath}`
 }

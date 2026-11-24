@@ -74,6 +74,7 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
   'customers', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
+  'packaging-purchase-create', 'packaging-purchase-batch',
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',

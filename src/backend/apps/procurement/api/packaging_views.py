@@ -4,7 +4,7 @@ from rest_framework.response import Response
 
 from apps.boms.models import BomLine
 
-from ..models import PurchaseScope
+from ..models import PurchaseScope, SupplierCategory
 from ..packaging_purchase import get_packaging_page, packaging_page_etag, prepare_packaging_groups, process_packaging_page
 from ..purchase_scope import PACKAGING_PERMISSION, packaging_bom_lines
 from ..selectors import production_tasks_with_purchase_sources
@@ -68,7 +68,11 @@ class PackagingPurchaseGroupViewSet(PurchaseGroupRecordViewSet):
 
     @action(detail=False, methods=["get"])
     def options(self, request):
-        return Response({"data": purchase_form_options()})
+        options = purchase_form_options()
+        options["suppliers"] = [
+            supplier for supplier in options["suppliers"] if SupplierCategory.PACKAGING in supplier["supplier_categories"]
+        ]
+        return Response({"data": options})
 
     @extend_schema(request=PackagingPrepareSerializer, responses=group_response)
     @action(detail=False, methods=["post"])

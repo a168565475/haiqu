@@ -9,8 +9,9 @@ from apps.core.api.exceptions import Conflict
 from apps.production_tasks.models import ProductionTask
 
 from .group_selectors import purchase_groups_with_context
-from .group_services import _confirm_orders_with_default_sheets, create_purchase_batch, create_purchase_group
+from .group_services import _confirm_orders_with_default_sheets, _selected_group_sources, create_purchase_batch, create_purchase_group
 from .models import PurchaseGroup, PurchaseGroupLine, PurchaseOrder, PurchaseOrderStatus, PurchaseScope
+from .selectors import production_tasks_with_purchase_sources
 from .tracking_hooks import defer_supplier_tracking, refresh_tracking_after_commit
 
 
@@ -23,12 +24,16 @@ def _with_task_number(error, task_number):
     return error
 
 
-@transaction.atomic
-@defer_supplier_tracking()
-def prepare_packaging_groups(sources, allowed_tasks, request):
+def _sources_by_task(sources):
     by_task = defaultdict(list)
     for source in sources:
         by_task[source["production_task_id"]].append(source)
+    return by_task
+
+
+@transaction.atomic
+@defer_supplier_tracking()
+def _create_packaging_group_ids(by_task, allowed_tasks, request):
     tasks = list(allowed_tasks.filter(pk__in=by_task).order_by("pk").values_list("pk", "task_number"))
     if len(tasks) != len(by_task):
         raise NotFound("所选生产任务不存在或不在当前账号的跟进范围内。")
@@ -46,9 +51,36 @@ def prepare_packaging_groups(sources, allowed_tasks, request):
             raise _with_task_number(error, task_number)
         group_ids.append(group.pk)
     refresh_tracking_after_commit(by_task)
+    return group_ids
+
+
+def prepare_packaging_groups(sources, allowed_tasks, request):
+    group_ids = _create_packaging_group_ids(_sources_by_task(sources), allowed_tasks, request)
     return purchase_groups_with_context(PurchaseGroup.objects.filter(pk__in=group_ids)).order_by(
         "production_task_number_snapshot", "pk",
     )
+
+
+@transaction.atomic
+def prepare_packaging_page(*, allowed_groups, allowed_tasks, data, request):
+    by_task = _sources_by_task(data["sources"])
+    existing_task_ids = allowed_groups.filter(production_task_id__in=by_task).order_by().values("production_task_id")
+    group_ids = list(data["group_ids"])
+    for task in production_tasks_with_purchase_sources(allowed_tasks.filter(pk__in=existing_task_ids)):
+        revisions = {str(row["bom_id"]): row["source_revision"] for row in by_task[task.pk]}
+        try:
+            existing, _ = _selected_group_sources(task, revisions, PurchaseScope.PACKAGING)
+        except APIException as error:
+            raise _with_task_number(error, task.task_number)
+        if existing:
+            group_ids.append(existing.pk)
+            del by_task[task.pk]
+    if by_task:
+        group_ids.extend(_create_packaging_group_ids(by_task, allowed_tasks, request))
+    group_ids = list(dict.fromkeys(group_ids))
+    if len(group_ids) > 100:
+        raise ValidationError({"group_ids": "单次填写最多选择 100 个采购需求。"})
+    return get_packaging_page(allowed_groups, group_ids, data["batch_session_id"])
 
 
 def packaging_page_etag(groups):

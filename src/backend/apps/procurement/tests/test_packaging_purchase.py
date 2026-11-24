@@ -2,7 +2,9 @@ from datetime import timedelta
 from uuid import uuid4
 
 from django.contrib.auth.models import Group, Permission
+from django.db import connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
@@ -10,7 +12,7 @@ from apps.access_control.models import RoleActionGrant
 from apps.boms.models import BomLine, BomSection, BomSectionType
 from apps.organizations.models import EmployeeRoleAssignment, RoleProfile
 
-from ..models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier, SupplierCategory, SupplierPurchaseSheet
+from ..models import PurchaseGroup, PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, Supplier, SupplierCategory, SupplierPurchaseSheet
 from . import test_purchase_order_api as fixtures
 
 
@@ -91,6 +93,40 @@ class PackagingPurchaseTests(APITestCase):
         session.force_login(self.user)
         self.assertEqual(session.get(PACKAGING + "sources/").status_code, 200)
         self.assertEqual(session.post(PACKAGING + "prepare/", {"sources": []}, format="json").status_code, 403)
+
+    def test_preparing_a_task_returns_the_versioned_page_and_reuses_existing_demands(self):
+        self.grant_packaging()
+        sources = self.client.get(PACKAGING + "sources/").data["data"]
+        session = str(uuid4())
+        first = self.client.post(PACKAGING + "prepare/", {"sources": sources[:1], "batch_session_id": session}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertIn("ETag", first)
+        first_id = first.data["data"][0]["id"]
+        self.assertIsNone(first.data["data"][0]["batch_page"]["current_batch_number"])
+        self.assertEqual(first.data["data"][0]["batch_page"]["next_batch_number"], 1)
+        second = self.client.post(PACKAGING + "prepare/", {
+            "sources": sources[1:], "group_ids": [first_id], "batch_session_id": session,
+        }, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(len(second.data["data"]), 2)
+        ids = [group["id"] for group in second.data["data"]]
+        page = self.client.get(PACKAGING + "batch-page/", {"group_ids": ids, "batch_session_id": session})
+        self.assertEqual(second["ETag"], page["ETag"])
+        self.assertEqual(second.data, page.data)
+        current_sources = self.client.get(PACKAGING + "sources/").data["data"]
+        with CaptureQueriesContext(connection) as queries:
+            repeated = self.client.post(PACKAGING + "prepare/", {
+                "sources": current_sources, "batch_session_id": session,
+            }, format="json")
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(repeated.data, page.data)
+        self.assertFalse(any("FOR UPDATE" in query["sql"] for query in queries))
+        initial_groups = PurchaseGroup.objects.count()
+        forbidden = self.client.post(PACKAGING + "prepare/", {
+            "sources": sources[:1], "group_ids": [str(uuid4())], "batch_session_id": session,
+        }, format="json")
+        self.assertEqual(forbidden.status_code, 404, forbidden.data)
+        self.assertEqual(PurchaseGroup.objects.count(), initial_groups)
 
     def test_cross_task_drafts_resume_and_confirm_atomically(self):
         self.grant_packaging()

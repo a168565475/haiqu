@@ -10,7 +10,8 @@ import PackagingPurchaseFormView from './PackagingPurchaseFormView.vue'
 
 vi.mock('@/api/purchaseGroups', () => ({
   fetchPackagingPurchaseOptions: vi.fn(), fetchPackagingPurchaseSources: vi.fn(),
-  preparePackagingPurchase: vi.fn(), fetchPackagingPurchasePage: vi.fn(), writePackagingPurchasePage: vi.fn(),
+  preparePackagingPurchase: vi.fn(), preparePackagingPurchasePage: vi.fn(),
+  fetchPackagingPurchasePage: vi.fn(), writePackagingPurchasePage: vi.fn(),
 }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
   user: { is_superuser: false },
@@ -84,6 +85,10 @@ beforeEach(() => {
   })
   vi.mocked(api.preparePackagingPurchase).mockImplementation(async selected =>
     [...new Set(selected.map(source => source.production_task_id))].map(task => group(task)))
+  vi.mocked(api.preparePackagingPurchasePage).mockImplementation(async (selected, kept) => ({
+    groups: [...new Set([...kept.map(id => id.slice('group-'.length)), ...selected.map(source => source.production_task_id)])].map(task => group(task)),
+    etag: '"page-etag"',
+  }))
   vi.mocked(api.fetchPackagingPurchasePage).mockImplementation(async ids =>
     ({ groups: ids.map(id => group(id.slice('group-'.length))), etag: '"page-etag"' }))
 })
@@ -115,10 +120,15 @@ it('多选任务后仍然只有一张可填表，同任务两份 BOM 一起加�
   expect(page.get('h1').text()).toBe('填写包材采购')
   expect(page.findAll('[data-testid="packaging-material-table"]')).toHaveLength(1)
   expect(page.text()).toContain('选择生产任务单后即可填写包材')
-  expect(api.preparePackagingPurchase).not.toHaveBeenCalled()
+  expect(api.preparePackagingPurchasePage).not.toHaveBeenCalled()
 
+  let resolveFirstPage!: (page: { groups: PurchaseGroup[]; etag: string }) => void
+  vi.mocked(api.preparePackagingPurchasePage).mockReturnValueOnce(new Promise(resolve => { resolveFirstPage = resolve }))
   await choose(page, ['one'])
-  expect(api.preparePackagingPurchase).toHaveBeenLastCalledWith(sources.slice(0, 2))
+  expect(page.getComponent(ElSelect).props('modelValue')).toEqual(['one'])
+  expect(api.preparePackagingPurchasePage).toHaveBeenLastCalledWith(sources.slice(0, 2), [], expect.any(String))
+  resolveFirstPage({ groups: [group('one')], etag: '"first-etag"' })
+  await flushPromises()
   expect(page.findAll('[data-testid="packaging-material-table"]')).toHaveLength(1)
   const firstSession = router.currentRoute.value.query.batch_session_id
   const taskRow = (task: string) => page.get('[data-testid="packaging-material-table"]').findAll('tbody tr')
@@ -129,7 +139,9 @@ it('多选任务后仍然只有一张可填表，同任务两份 BOM 一起加�
   await firstQty().setValue('12')
 
   await choose(page, ['one', 'two'])
-  expect(api.preparePackagingPurchase).toHaveBeenLastCalledWith(sources.slice(2))
+  expect(api.preparePackagingPurchasePage).toHaveBeenLastCalledWith(sources.slice(2), ['group-one'], firstSession)
+  expect(api.fetchPackagingPurchasePage).not.toHaveBeenCalled()
+  expect(api.preparePackagingPurchase).not.toHaveBeenCalled()
   expect(page.findAll('[data-testid="packaging-material-table"]')).toHaveLength(1)
   expect(taskRow('two').text()).toContain('纸箱-two')
   const headings = page.get('[data-testid="packaging-material-table"]').findAll('thead th').map(cell => cell.text())
@@ -143,6 +155,21 @@ it('多选任务后仍然只有一张可填表，同任务两份 BOM 一起加�
   expect(router.currentRoute.value.query.batch_session_id).toBe(firstSession)
   expect(router.currentRoute.value.query.group_ids).toEqual(['group-one', 'group-two'])
   expect(page.text()).not.toContain('分类')
+})
+
+it('统一交期填到所有可编辑明细，单行仍可调整', async () => {
+  const { page } = await open('/packaging-purchases/batch?group_ids=group-one&group_ids=group-two&batch_session_id=' + session)
+  const bulk = page.get<HTMLInputElement>('input[aria-label="统一交期"]')
+  const dates = page.findAll<HTMLInputElement>('input[aria-label="采购交期"]')
+
+  await bulk.setValue('2026-12-16')
+  await flushPromises()
+  expect(dates.map(date => date.element.value)).toEqual(['2026-12-16', '2026-12-16'])
+
+  await dates[0]!.setValue('2026-12-17')
+  await flushPromises()
+  expect(dates.map(date => date.element.value)).toEqual(['2026-12-17', '2026-12-16'])
+  expect(bulk.element.value).toBe('')
 })
 
 it('续填时保留本批草稿和对应任务，满量行收起后仍可统一确认', async () => {

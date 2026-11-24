@@ -114,9 +114,13 @@ export async function fetchPackagingPurchaseOptions(): Promise<PurchaseOrderOpti
 
 export async function preparePackagingPurchase(sources: PackagingPurchaseSource[]): Promise<PurchaseGroup[]> {
   const { data } = await apiClient.post<DataResponse<PurchaseGroup[]>>(`${packagingPath}prepare/`, {
-    sources: sources.map(({ production_task_id, bom_id, source_revision }) => ({ production_task_id, bom_id, source_revision })),
+    sources: packagingSourceRows(sources),
   })
   return data.data
+}
+
+function packagingSourceRows(sources: PackagingPurchaseSource[]) {
+  return sources.map(({ production_task_id, bom_id, source_revision }) => ({ production_task_id, bom_id, source_revision }))
 }
 
 function versionedPackagingPage(response: AxiosResponse<DataResponse<PurchaseGroup[]>>) {
@@ -124,6 +128,12 @@ function versionedPackagingPage(response: AxiosResponse<DataResponse<PurchaseGro
     groups: response.data.data,
     etag: typeof response.headers?.etag === 'string' ? response.headers.etag : '',
   }
+}
+
+export async function preparePackagingPurchasePage(sources: PackagingPurchaseSource[], groupIds: string[], sessionId: string) {
+  return versionedPackagingPage(await apiClient.post<DataResponse<PurchaseGroup[]>>(`${packagingPath}prepare/`, {
+    sources: packagingSourceRows(sources), group_ids: groupIds, batch_session_id: sessionId,
+  }))
 }
 
 export async function fetchPackagingPurchasePage(groupIds: string[], sessionId: string) {

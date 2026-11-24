@@ -5,7 +5,9 @@ from rest_framework.response import Response
 from apps.boms.models import BomLine
 
 from ..models import PurchaseScope, SupplierCategory
-from ..packaging_purchase import get_packaging_page, packaging_page_etag, prepare_packaging_groups, process_packaging_page
+from ..packaging_purchase import (
+    get_packaging_page, packaging_page_etag, prepare_packaging_groups, prepare_packaging_page, process_packaging_page,
+)
 from ..purchase_scope import PACKAGING_PERMISSION, packaging_bom_lines
 from ..selectors import production_tasks_with_purchase_sources
 from ..services import PURCHASABLE_TASK_STATUSES, evaluate_purchase_source
@@ -79,7 +81,13 @@ class PackagingPurchaseGroupViewSet(PurchaseGroupRecordViewSet):
     def prepare(self, request):
         serializer = PackagingPrepareSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        groups = prepare_packaging_groups(serializer.validated_data["sources"], self._tasks(), request)
+        data = serializer.validated_data
+        if "batch_session_id" in data:
+            groups = prepare_packaging_page(
+                allowed_groups=self._accessible_groups(), allowed_tasks=self._tasks(), data=data, request=request,
+            )
+            return self._page_response(groups, data)
+        groups = prepare_packaging_groups(data["sources"], self._tasks(), request)
         return Response({"data": PurchaseGroupSerializer(groups, many=True).data})
 
     @extend_schema(parameters=[PackagingPageReadSerializer], responses=group_response)

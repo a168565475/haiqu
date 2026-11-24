@@ -9,7 +9,7 @@ import rightIcon from '@/assets/procurement/create-right.svg'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import {
   fetchPackagingPurchaseOptions, fetchPackagingPurchasePage, fetchPackagingPurchaseSources,
-  preparePackagingPurchase, writePackagingPurchasePage,
+  preparePackagingPurchasePage, writePackagingPurchasePage,
 } from '@/api/purchaseGroups'
 import { useAuthStore } from '@/stores/auth'
 import type { PackagingPurchaseSource, PurchaseBatchInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
@@ -53,6 +53,7 @@ const sessionId = ref('')
 const etag = ref('')
 const batchType = ref<PurchaseBatchType>('NORMAL')
 const busy = ref(false)
+const pendingTaskIds = ref<string[] | null>(null)
 const error = ref('')
 const review = ref<PurchaseReview | null>(null)
 let requestVersion = 0
@@ -171,6 +172,7 @@ function mergePage(page: { groups: PurchaseGroup[]; etag: string }, submitted: s
 async function loadPage(preserveInputs = false) {
   if (!canPurchase.value) return
   const version = ++requestVersion
+  pendingTaskIds.value = null
   const requestedGroups = queryIds()
   const existingSession = typeof route.query.batch_session_id === 'string' ? route.query.batch_session_id : ''
   const fromNotice = typeof route.query.production_task_id === 'string' ? route.query.production_task_id : ''
@@ -219,26 +221,33 @@ async function changeTasks(next: string[]) {
     ElMessage.warning('已保存供应商草稿的任务需保留在本批。')
     return
   }
-  const groupsToKeep = groups.value.filter(group => next.includes(group.production_task_id))
+  const keptGroupIds = groups.value.filter(group => next.includes(group.production_task_id)).map(group => group.id)
   const sourcesToPrepare = next.filter(id => !selectedTasks.value.includes(id))
     .flatMap(id => sourcesByTask.value.get(id) ?? [])
   const version = ++requestVersion
   error.value = ''
   busy.value = true
+  pendingTaskIds.value = next
   try {
-    const prepared = sourcesToPrepare.length ? await preparePackagingPurchase(sourcesToPrepare) : []
-    const ids = [...groupsToKeep, ...prepared].map(group => group.id)
-    const page = ids.length ? await fetchPackagingPurchasePage(ids, sessionId.value) : { groups: [], etag: '' }
+    let page = { groups: [] as PurchaseGroup[], etag: '' }
+    if (sourcesToPrepare.length) {
+      page = await preparePackagingPurchasePage(sourcesToPrepare, keptGroupIds, sessionId.value)
+    } else if (keptGroupIds.length) {
+      page = await fetchPackagingPurchasePage(keptGroupIds, sessionId.value)
+    }
     if (version !== requestVersion) return
     mergePage(page)
     await router.replace({
-      name: ids.length ? route.name : 'packaging-purchase-create',
-      query: ids.length ? { group_ids: groupIds.value, batch_session_id: sessionId.value } : {},
+      name: page.groups.length ? route.name : 'packaging-purchase-create',
+      query: page.groups.length ? { group_ids: groupIds.value, batch_session_id: sessionId.value } : {},
     })
   } catch (cause) {
     if (version === requestVersion) error.value = errorMessage(cause, '加载所选任务的包材明细失败。')
   } finally {
-    if (version === requestVersion) busy.value = false
+    if (version === requestVersion) {
+      pendingTaskIds.value = null
+      busy.value = false
+    }
   }
 }
 
@@ -359,7 +368,7 @@ async function submitReview() {
         <div class="detail-header-actions">
           <label class="bulk-field bulk-field--task">
             <span>生产任务单</span>
-            <ElSelect :model-value="selectedTasks" multiple filterable collapse-tags :max-collapse-tags="2" collapse-tags-tooltip
+            <ElSelect :model-value="pendingTaskIds ?? selectedTasks" multiple filterable collapse-tags :max-collapse-tags="2" collapse-tags-tooltip
               placeholder="选择生产任务单" aria-label="生产任务单" data-testid="packaging-task-select" :loading="busy"
               :disabled="busy || confirmed" @change="changeTasks">
               <ElOption v-for="task in taskOptions" :key="task.id" :label="task.number" :value="task.id"
@@ -376,7 +385,7 @@ async function submitReview() {
           <label class="bulk-field bulk-field--date">
             <span>统一交期</span>
             <ElDatePicker :model-value="commonDelivery" type="date" value-format="YYYY-MM-DD" aria-label="统一交期"
-              placeholder="选择后同步全部" :disabled="!canEdit || !editableRows.length" @change="bulkDelivery" />
+              placeholder="选择后同步全部" :disabled="!canEdit || !editableRows.length" @update:model-value="bulkDelivery" />
           </label>
         </div>
       </header>

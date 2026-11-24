@@ -10,15 +10,6 @@ class PackagingSourceSerializer(PurchaseGroupBomInputSerializer):
     product_name = serializers.CharField(read_only=True)
 
 
-class PackagingPrepareSerializer(serializers.Serializer):
-    sources = PackagingSourceSerializer(many=True, allow_empty=False, max_length=100)
-
-    def validate_sources(self, sources):
-        if len({row["bom_id"] for row in sources}) != len(sources):
-            raise serializers.ValidationError("同一份 BOM 不能重复选择。")
-        return sources
-
-
 class PackagingBatchSerializer(PurchaseBatchCreateSerializer):
     def validate_lines(self, lines):
         priced = []
@@ -61,3 +52,19 @@ class PackagingPageConfirmSerializer(PackagingPageQuerySerializer):
 
 class PackagingPageReadSerializer(PackagingPageQuerySerializer):
     group_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False, max_length=100, required=False, default=None)
+
+
+class PackagingPrepareSerializer(PackagingPageQuerySerializer):
+    sources = PackagingSourceSerializer(many=True, allow_empty=False, max_length=100)
+    group_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=100)
+    batch_session_id = serializers.UUIDField(required=False)
+
+    def validate_sources(self, sources):
+        if len({row["bom_id"] for row in sources}) != len(sources):
+            raise serializers.ValidationError("同一份 BOM 不能重复选择。")
+        return sources
+
+    def validate(self, attrs):
+        if attrs["group_ids"] and "batch_session_id" not in attrs:
+            raise serializers.ValidationError({"batch_session_id": "保留已有采购需求时，请提供本次填写批次。"})
+        return attrs

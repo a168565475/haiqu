@@ -7,6 +7,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -37,6 +38,7 @@ from ..services import (
     dispatch_context,
     update_factory,
 )
+from .print_pdf import PRINT_PDF_RESPONSES, PRINT_WAREHOUSE_PARAMETER, print_kind, print_pdf_response
 from .serializers import (
     ReconciliationWriteSerializer, RawReturnWriteSerializer, CompleteWriteSerializer,
     FactoryReadSerializer,
@@ -183,13 +185,14 @@ class OutsourcingOrderViewSet(viewsets.GenericViewSet):
     lookup_value_regex = '[0-9a-fA-F-]{36}'
     from ..warehouse_access import WarehouseActionReadPermission
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
-    warehouse_read_actions = {'retrieve', 'options', 'reconciliation', 'product_file'}
+    warehouse_read_actions = {'retrieve', 'options', 'reconciliation', 'product_file', 'print_pdf'}
     warehouse_read_permissions = ('outsourcing.confirm_dispatch_outsourcingorder',
                                  'outsourcing.confirm_return_outsourcingorder',
                                  'outsourcing.return_raw_outsourcingorder')
     action_permission_map = {
         "list": "outsourcing.view_outsourcingorder",
         "retrieve": "outsourcing.view_outsourcingorder",
+        "print_pdf": "outsourcing.view_outsourcingorder",
         "destroy": "outsourcing.delete_outsourcingorder",
         "cancel": "outsourcing.cancel_outsourcingorder",
         "revoke_dispatched": "outsourcing.cancel_outsourcingorder",
@@ -206,7 +209,7 @@ class OutsourcingOrderViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         include_detail_records = self.action in {
-            "retrieve", "cancel", "revoke_dispatched", "confirm_dispatch", "confirm_return",
+            "retrieve", "print_pdf", "cancel", "revoke_dispatched", "confirm_dispatch", "confirm_return",
         }
         from ..warehouse_access import warehouse_regular_orders, warehouse_stage
         queryset = (warehouse_regular_orders(self.request)
@@ -252,6 +255,13 @@ class OutsourcingOrderViewSet(viewsets.GenericViewSet):
         response = Response({"data": OutsourcingOrderDetailSerializer(order, context={"request": request}).data})
         response["ETag"] = etag_for_instance(order)
         return response
+
+    @extend_schema(responses=PRINT_PDF_RESPONSES, parameters=[PRINT_WAREHOUSE_PARAMETER])
+    @action(detail=True, methods=["get"], url_path="print-pdf")
+    def print_pdf(self, request, pk=None):
+        order = get_object_or_404(self.get_queryset(), pk=pk)
+        kind = print_kind(request)
+        return print_pdf_response(OutsourcingOrderDetailSerializer(order).data, kind=kind)
 
     @action(
         detail=True,

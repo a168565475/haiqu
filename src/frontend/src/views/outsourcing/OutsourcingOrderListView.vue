@@ -43,7 +43,7 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const actingOrderId = ref('')
-const printRequest = ref<{ row: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind } | null>(null)
+const printRequest = ref<{ row: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind; download: boolean } | null>(null)
 const warehouseAction = ref<{ row: UnifiedOutsourcingOrder; action: 'dispatch' | 'return' } | null>(null)
 const loadError = ref('')
 const accessDenied = ref(false)
@@ -172,9 +172,9 @@ function canPrintSpray(row: UnifiedOutsourcingOrder): boolean {
   return canPrintRow(row) && row.record_type === 'TUBE' && ['RAW_PIPE', 'PUBLIC_SEMI', 'TUBE_METAL'].includes(row.source_kind)
 }
 
-function openPrint(row: UnifiedOutsourcingOrder, kind: OutsourcingPrintKind): void {
+function openPrint(row: UnifiedOutsourcingOrder, kind: OutsourcingPrintKind, download = false): void {
   if (loading.value || accessDenied.value || printRequest.value || !canPrintRow(row) || (kind === 'spray' && !canPrintSpray(row))) return
-  printRequest.value = { row, kind }
+  printRequest.value = { row, kind, download }
 }
 
 function canRemoveRow(row: UnifiedOutsourcingOrder): boolean {
@@ -186,6 +186,8 @@ function handleRowCommand(command: string, row: UnifiedOutsourcingOrder): void {
   if (command === 'dispatch' || command === 'return') openWarehouseAction(row, command)
   if (command === 'print-processing') openPrint(row, 'processing')
   if (command === 'print-spray') openPrint(row, 'spray')
+  if (command === 'pdf-processing') openPrint(row, 'processing', true)
+  if (command === 'pdf-spray') openPrint(row, 'spray', true)
   if (command === 'remove' && canRemoveRow(row)) void removeRow(row)
 }
 
@@ -292,6 +294,8 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
                     <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" command="return" :disabled="loading || accessDenied || Boolean(warehouseAction)">外发入库</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintRow(row)" command="print-processing" :aria-label="`${row.order_number} 加工单打印`" :disabled="loading || Boolean(printRequest)">加工单打印</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintSpray(row)" command="print-spray" :aria-label="`${row.order_number} 管材喷塑打印`" :disabled="loading || Boolean(printRequest)">管材喷塑打印</ElDropdownItem>
+                    <ElDropdownItem v-if="canPrintRow(row)" command="pdf-processing" :aria-label="`${row.order_number} 下载加工单 PDF`" :disabled="loading || Boolean(printRequest)">下载加工单 PDF</ElDropdownItem>
+                    <ElDropdownItem v-if="canPrintSpray(row)" command="pdf-spray" :aria-label="`${row.order_number} 下载喷塑 PDF`" :disabled="loading || Boolean(printRequest)">下载喷塑 PDF</ElDropdownItem>
                     <ElDropdownItem v-if="canRemoveRow(row)" command="remove" :disabled="loading || Boolean(actingOrderId)" divided>{{ warehouseWorkspace ? '撤销并退料' : '删除' }}</ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
@@ -304,7 +308,7 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
       <footer class="outsourcing-pagination erp-list-footer"><span>{{ total === null ? '数量待读取' : `共 ${total} 条` }}</span><div v-if="total !== null" class="pagination"><ElSelect v-model="pageSize" class="page-size-picker" aria-label="每页条数" @change="page = 1; load()"><ElOption :value="20" label="20 条 / 页"/><ElOption :value="50" label="50 条 / 页"/></ElSelect><ElPagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" background @current-change="load" /></div><span v-else>页数 —</span></footer>
     </section>
     <ElResult v-if="!canViewOrders" icon="warning" :title="warehouseWorkspace ? '暂无委外管理操作权限' : '暂无委外加工查看权限'" />
-    <OutsourcingPrintDialog v-if="printRequest" :record="printRequest.row" :kind="printRequest.kind" :warehouse="warehouseWorkspace" @close="printRequest = null" />
+    <OutsourcingPrintDialog v-if="printRequest" :record="printRequest.row" :kind="printRequest.kind" :warehouse="warehouseWorkspace" :download-on-open="printRequest.download" @close="printRequest = null" />
     <WarehouseOutsourcingActionDialog v-if="warehouseAction" :key="`${warehouseAction.row.row_key}:${warehouseAction.action}`" :record="warehouseAction.row" :action="warehouseAction.action" @closed="warehouseAction = null" @updated="load" />
   </section>
 </template>

@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
 import { fetchOutsourcingOrder } from '@/api/outsourcing'
+import { fetchOutsourcingPrintPdf } from '@/api/outsourcingPrint'
 import { fetchTubeOrder } from '@/api/tubeOutsourcing'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import OutsourcingPrintDocument from './OutsourcingPrintDocument.vue'
@@ -9,10 +10,16 @@ import type { UnifiedOutsourcingOrder } from '@/types/unifiedOutsourcing'
 import type { OutsourcingPrintDocumentData, OutsourcingPrintKind } from '@/types/outsourcingPrint'
 import { buildRegularPrintDocument, buildTubePrintDocument } from '@/utils/outsourcingPrint'
 
-const props = defineProps<{ record: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind; warehouse?: boolean }>()
+const props = defineProps<{
+  record: UnifiedOutsourcingOrder
+  kind: OutsourcingPrintKind
+  warehouse?: boolean
+  downloadOnOpen?: boolean
+}>()
 const emit = defineEmits<{ close: [] }>()
 const printDocument = ref<OutsourcingPrintDocumentData | null>(null)
 const loading = ref(false)
+const downloading = ref(false)
 const error = ref('')
 let active = true
 
@@ -30,6 +37,33 @@ async function print(): Promise<void> {
     window.print()
   } catch {
     error.value = '无法打开打印窗口，请检查浏览器设置后重新打印。'
+  }
+}
+
+async function downloadPdf(): Promise<void> {
+  const printable = printDocument.value
+  if (!active || !printable || downloading.value) return
+  downloading.value = true
+  error.value = ''
+  try {
+    const file = await fetchOutsourcingPrintPdf(props.record, props.kind, props.warehouse)
+    if (!active) return
+    if (file.type !== 'application/pdf' || !file.size) {
+      error.value = 'PDF 下载失败，服务器没有返回有效的 PDF。'
+      return
+    }
+    const url = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${printable.orderNumber}_${props.kind === 'spray' ? '管材喷塑计划' : '委外加工单'}.pdf`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (failure) {
+    if (!active) return
+    const status = failure instanceof AxiosError ? failure.response?.status : undefined
+    error.value = status === 403 || status === 404 ? '当前账号无法下载这张外发单。' : 'PDF 下载失败，请重试。'
+  } finally {
+    downloading.value = false
   }
 }
 
@@ -61,7 +95,10 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
-  if (active && printDocument.value) await print()
+  if (active && printDocument.value) {
+    if (props.downloadOnOpen) await downloadPdf()
+    else await print()
+  }
 }
 
 onMounted(() => { void load() })
@@ -77,7 +114,12 @@ onDeactivated(close)
       <ElButton v-if="!printDocument" data-testid="print-retry" :disabled="loading" @click="load">重新读取</ElButton>
     </div>
     <div v-if="printDocument" class="outsourcing-print-paper"><OutsourcingPrintDocument :document="printDocument" /></div>
-    <template #footer><span class="outsourcing-print-hint">A4 纵向 · 每次一份</span><ElButton @click="close">关闭</ElButton><ElButton type="primary" :disabled="loading || !printDocument" @click="print">打印</ElButton></template>
+    <template #footer>
+      <span class="outsourcing-print-hint">A4 纵向 · 每次一份</span>
+      <ElButton @click="close">关闭</ElButton>
+      <ElButton data-testid="outsourcing-pdf-download" :loading="downloading" :disabled="loading || !printDocument" @click="downloadPdf">下载 PDF</ElButton>
+      <ElButton type="primary" :disabled="loading || !printDocument" @click="print">打印</ElButton>
+    </template>
   </AppWindowDialog>
 </template>
 

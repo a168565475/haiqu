@@ -25,6 +25,7 @@ from ..tube_receipt_selectors import (receipt_candidates, receipt_data, receipt_
                                      receipt_queryset, require_receipt_read_access)
 from ..tube_kinds import CUTTING_SOURCES, source_category, output_unit
 from ..warehouse_access import warehouse_read_permission, warehouse_stage, warehouse_tube_orders
+from .print_pdf import PRINT_KIND_PARAMETER, PRINT_PDF_RESPONSES, PRINT_WAREHOUSE_PARAMETER, print_kind, print_pdf_response
 from .tube_serializers import (TubeCancelWriteSerializer, TubeDispatchWriteSerializer,
     TubeOrderWriteSerializer, TubeSourceQuerySerializer, TubeReceiptCandidatesQuerySerializer,
     TubeReceiptWriteSerializer, TubeReceiptResponseSerializer, TubeReceiptPreviewResponseSerializer,
@@ -46,11 +47,11 @@ class TubeActionPermission(BasePermission):
 
 class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, TubeActionPermission]
-    warehouse_read_actions = {'retrieve', 'action_by_request', 'receipt_preview', 'receipt'}
+    warehouse_read_actions = {'retrieve', 'print_pdf', 'action_by_request', 'receipt_preview', 'receipt'}
     warehouse_read_permissions = (DISPATCH_PERMISSION, RETURN_PERMISSION)
     action_permission_map = {'options': VIEW_PERMISSION, 'source_context': (VIEW_PERMISSION, DISPATCH_PERMISSION), 'product_image': VIEW_PERMISSION,
                              'create': CREATE_PERMISSION, 'by_request': VIEW_PERMISSION,
-                             'retrieve': VIEW_PERMISSION, 'confirm_dispatch': DISPATCH_PERMISSION,
+                             'retrieve': VIEW_PERMISSION, 'print_pdf': VIEW_PERMISSION, 'confirm_dispatch': DISPATCH_PERMISSION,
                              'cancel': CANCEL_PERMISSION, 'action_by_request': VIEW_PERMISSION,
                              'receipt_candidates': RETURN_PERMISSION, 'receipt_preview': (VIEW_PERMISSION, RETURN_PERMISSION),
                              'confirm_receipt': RETURN_PERMISSION, 'receipt_by_request': RETURN_PERMISSION,
@@ -181,10 +182,24 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
         OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     def retrieve(self, request, pk=None):
+        order = self._get_detail_order(request, pk)
+        return self._detail_response(order, request)
+
+    @extend_schema(responses=PRINT_PDF_RESPONSES, parameters=[
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH),
+        PRINT_KIND_PARAMETER, PRINT_WAREHOUSE_PARAMETER])
+    @action(detail=True, methods=['get'], url_path='print-pdf')
+    def print_pdf(self, request, pk=None):
+        order = self._get_detail_order(request, pk)
+        kind = print_kind(request, spray_allowed=order.source_kind in {'RAW_PIPE', 'PUBLIC_SEMI', 'METAL'})
+        detail = saved_order_data(order, include_metal_basis=False)
+        return print_pdf_response(detail, kind=kind, tube=True)
+
+    def _get_detail_order(self, request, pk):
         pk = serializers.UUIDField().run_validation(pk)
         order = get_object_or_404(tube_order_queryset(), pk=pk)
         self._require_detail_access(request, order)
-        return self._detail_response(order, request)
+        return order
 
     def _require_detail_access(self, request, order):
         if warehouse_stage(request):

@@ -75,9 +75,9 @@ describe('普通外发单列表删除入口', () => {
     const wrapper = await createView({ ...row, direct_handoff: true, can_revoke_dispatched: false })
     await wrapper.find('[aria-label="WW-001 更多操作"]').trigger('click')
     await flushPromises()
-    await vi.waitFor(() => expect(document.querySelectorAll('.el-dropdown-menu__item')).toHaveLength(2))
+    await vi.waitFor(() => expect(document.querySelectorAll('.el-dropdown-menu__item')).toHaveLength(3))
     const menuItems = [...document.querySelectorAll('.el-dropdown-menu__item')]
-    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['查看详情', '加工单打印'])
+    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['查看详情', '加工单打印', '下载加工单 PDF'])
     menuItems[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     expect(api.push).toHaveBeenCalledExactlyOnceWith('/workshop/outsourcing/order-1')
@@ -203,11 +203,23 @@ describe('统一外发列表及来源入口', () => {
     expect(api.push).not.toHaveBeenCalled()
   })
 
+  it('下载菜单打开对应模板并直接进入下载流程', async () => {
+    const wrapper = await createView({ ...row, record_type: 'TUBE', source_kind: 'TUBE_METAL', detail_access: 'TUBE' })
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    const menuItem = '[aria-label="WW-001 下载喷塑 PDF"]'
+    await vi.waitFor(() => expect(document.querySelector(menuItem)).not.toBeNull())
+    document.querySelector(menuItem)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect((wrapper.vm as any).printRequest).toMatchObject({ kind: 'spray', download: true })
+    expect(api.push).not.toHaveBeenCalled()
+  })
+
   it('裁片和普通单只提供加工单打印，金工投影和重加工不调用不相容接口', async () => {
     const wrapper = await createView({ ...row, record_type: 'TUBE', source_kind: 'SEWING', detail_access: 'TUBE', craft: { name: '丝印' } })
     await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
     await vi.waitFor(() => expect(document.querySelector('[aria-label="WW-001 加工单打印"]')).not.toBeNull())
     expect(document.querySelector('[aria-label="WW-001 管材喷塑打印"]')).toBeNull()
+    expect(document.querySelector('[aria-label="WW-001 下载喷塑 PDF"]')).toBeNull()
     const vm = wrapper.vm as any
     vm.openPrint({ ...row, record_type: 'TUBE', source_kind: 'SEWING' }, 'spray')
     vm.openPrint({ ...row, record_type: 'REWORK' }, 'processing')

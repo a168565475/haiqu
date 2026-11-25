@@ -14,7 +14,7 @@ from apps.material_catalog.public_configuration import can_contribute
 from apps.procurement.pipe_purchase import pipe_meters
 
 
-def manual_request_snapshot(*, inbound_date, remark, items):
+def inbound_request_snapshot(*, inbound_date, remark, items):
     def encode(value):
         if isinstance(value, Decimal):
             return format(value.normalize(), "f")

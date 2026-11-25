@@ -629,6 +629,13 @@ class MaterialStockBalance(TimeStampedModel):
         ]
 
 
+PURCHASE_RETURN_WEIGHT_ONLY = Q(
+    quantity=0, direction="OUT", source_type="PURCHASE_RETURN",
+    snapshot__has_key="measurement_kind", snapshot__measurement_kind__isnull=False,
+    snapshot__measurement_kind="HARDWARE_WEIGHT", weight_quantity__isnull=False, weight_quantity__gt=0,
+)
+
+
 class MaterialStockMovement(TimeStampedModel):
     meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
     before_meter_quantity = models.DecimalField(max_digits=23, decimal_places=3, null=True, blank=True)
@@ -694,7 +701,8 @@ class MaterialStockMovement(TimeStampedModel):
             ),
             models.CheckConstraint(condition=Q(quantity__gt=0) | Q(quantity=0, direction="IN", source_type="MATERIAL_INBOUND",
                 snapshot__has_key="measurement_kind", snapshot__measurement_kind__isnull=False, snapshot__measurement_kind="HARDWARE_WEIGHT",
-                weight_quantity__isnull=False, weight_quantity__gt=0), name="inv_mat_movement_qty_positive"),
+                weight_quantity__isnull=False, weight_quantity__gt=0) | PURCHASE_RETURN_WEIGHT_ONLY,
+                name="inv_mat_movement_qty_positive"),
             models.CheckConstraint(
                 condition=Q(direction__in=MaterialStockDirection.values),
                 name="inv_mat_movement_direction_valid",
@@ -935,7 +943,7 @@ class PublicStockMovement(TimeStampedModel):
                                        stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"],
                                        snapshot__has_key="measurement_kind", snapshot__measurement_kind__isnull=False,
                                        snapshot__measurement_kind="HARDWARE_WEIGHT",
-                                       weight_quantity__isnull=False, weight_quantity__gt=0))
+                                       weight_quantity__isnull=False, weight_quantity__gt=0) | PURCHASE_RETURN_WEIGHT_ONLY)
                                    & Q(before_quantity__gte=0) & Q(after_quantity__gte=0)
                                    & (Q(stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"])
                                       | (Q(quantity=Floor(F("quantity"))) & Q(before_quantity=Floor(F("before_quantity")))

@@ -1,13 +1,17 @@
 """采购收货与质检只使用已保存的采购材料，不回读 BOM 重新定料。"""
 from decimal import Decimal
+from uuid import uuid4
 
+from django.contrib.auth.models import Permission
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.boms.models import BomLine
-from apps.procurement.models import PurchaseOrderLine
+from apps.procurement.models import PurchaseOrderLine, PurchaseReturn
 from apps.products.models import RawMaterialInformation
 from ..models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus, MaterialStockMovement
+from ..stock_services import debit_material_stock
 from . import test_inventory_api as inventory_fixture
 
 
@@ -80,7 +84,7 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.assertEqual(line.received_quantity, Decimal('105'))
         self.assertEqual(line.purchased_quantity_snapshot, Decimal('100'))
         self.assertEqual(line.remark, item['remark'])
-        self.assertFalse(MaterialStockMovement.objects.filter(source_line_id=line.pk).exists())
+        self.assertEqual(MaterialStockMovement.objects.get(source_line_id=line.pk).quantity, Decimal('105'))
 
         confirmed = self.confirm_quality(response)
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
@@ -96,6 +100,111 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.assertEqual(eligible.data['data'], [])
         self.assertEqual(self.receive(quantity='105', expected='100').status_code, 409)
         self.assertEqual(MaterialInbound.objects.count(), 1)
+
+    def test_receipt_list_keeps_each_record_and_reflects_partial_and_full_returns(self):
+        root = '/api/v1/material-inventory/purchase-receipt-records/'
+        first = self.receive(expected='10.5000')
+        second = self.receive(expected='6.2500')
+        pending_ids = []
+        for received, returned, result in [(first, '1.0000', 'CONFIRMED'), (second, '4.2500', 'RETURNED')]:
+            self.assertEqual(received.status_code, 201, received.data)
+            record = received.data['data']
+            pending_ids.append(str(record['id']))
+            filters = {'section': record['material_section'] or 'UNASSIGNED', 'q': record['inbound_number']}
+            listing = self.client.get(root, {**filters, 'status': 'PENDING_QUALITY'})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
+            self.assertTrue(listing.data['data'][0]['can_quality_confirm'])
+            confirmed = self.confirm_quality(received, return_quantity=returned)
+            self.assertEqual(confirmed.status_code, 200, confirmed.data)
+            if result == 'RETURNED':
+                payable = MaterialInbound.objects.get(pk=record['id']).purchase_payables.get()
+                self.assertEqual((payable.status, payable.amount), ('VOID', Decimal('0')))
+            listing = self.client.get(root, {**filters, 'status': result})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
+            self.assertFalse(listing.data['data'][0]['can_quality_confirm'])
+            detail = self.client.get(root + f"{record['id']}/")
+            self.assertEqual(detail.status_code, 200, detail.data)
+            self.assertEqual(detail.data['data']['status_display'], '已入库' if result == 'CONFIRMED' else '全部退货')
+            self.assertEqual(len(detail.data['data']['lines']), 1)
+        self.assertEqual(MaterialInbound.objects.filter(pk__in=pending_ids).count(), 2)
+
+    @override_settings(SALES_ACCESS_ENABLED=False)
+    def test_receipt_prices_before_quality_and_reduces_payable_after_return(self):
+        self.user.user_permissions.add(*Permission.objects.filter(
+            content_type__app_label="finance", codename__in=[
+                "view_purchasepayable", "change_purchasepayable", "confirm_purchasepayable",
+            ],
+        ))
+        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
+        receipt = self.receive()
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        inbound = MaterialInbound.objects.get(pk=receipt.data["data"]["id"])
+        self.assertEqual(inbound.status, MaterialInboundStatus.PENDING_QUALITY)
+        payable = inbound.purchase_payables.get()
+        line = payable.lines.get()
+        detail = f"/api/v1/finance/purchase-payables/{payable.pk}/"
+        current = self.client.get(detail)
+        self.assertEqual(current.status_code, 200, current.data)
+        priced = self.client.patch(detail + "pricing/", {
+            "tax_mode": "含税", "freight_mode": "含运费", "lines": [
+                {"line_id": str(line.pk), "unit_price": "2", "price_unit_text": line.source_unit_text_snapshot},
+            ],
+        }, format="json", HTTP_IF_MATCH=current["ETag"])
+        self.assertEqual(priced.status_code, 200, priced.data)
+        self.assertFalse(priced.data["data"]["can_confirm"])
+        self.assertEqual(priced.data["data"]["amount"], "8.50")
+        early = self.client.post(detail + "confirm/", {}, format="json", HTTP_IF_MATCH=priced["ETag"])
+        self.assertEqual(early.status_code, 409, early.data)
+
+        missing = self.confirm_quality(receipt, return_quantity="1.2500", quality_remark="   ")
+        self.assertEqual(missing.status_code, 400, missing.data)
+        self.assertIn("请填写退货原因", str(missing.data))
+        quality = self.confirm_quality(receipt, return_quantity="1.2500", quality_remark="外观破损")
+        self.assertEqual(quality.status_code, 200, quality.data)
+        payable.refresh_from_db()
+        line.refresh_from_db()
+        self.assertEqual((line.accepted_quantity, payable.amount, line.unit_price), (Decimal("3"), Decimal("6"), Decimal("2")))
+        refreshed = self.client.get(detail)
+        self.assertTrue(refreshed.data["data"]["can_confirm"])
+        final = self.client.post(detail + "confirm/", {}, format="json", HTTP_IF_MATCH=refreshed["ETag"])
+        self.assertEqual(final.status_code, 200, final.data)
+        self.assertEqual(final.data["data"]["status"], "WAITING_PAYMENT")
+
+    def test_quality_return_requires_stock_and_rolls_back_as_one_operation(self):
+        received = self.receive()
+        self.assertEqual(received.status_code, 201, received.data)
+        inbound = MaterialInbound.objects.get(pk=received.data['data']['id'])
+        line = inbound.lines.get()
+        debit_material_stock(raw_material=self.raw_material, unit=self.raw_material.unit, quantity=Decimal('4'),
+            source_type='MATERIAL_ISSUE', source_id=uuid4(), source_line_id=uuid4(), actor_employee=self.employee,
+            production_task=self.purchase_line.purchase_order.production_task, zone=line.zone)
+        rejected = self.confirm_quality(received, return_quantity='1.0000', quality_remark='外观破损')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        inbound.refresh_from_db()
+        self.assertEqual(inbound.status, MaterialInboundStatus.PENDING_QUALITY)
+        self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('4.2500'))
+        self.assertFalse(PurchaseReturn.objects.filter(inbound=inbound).exists())
+        credit = MaterialStockMovement.objects.select_related('balance').get(source_line_id=line.pk)
+        self.assertEqual(credit.balance.quantity, Decimal('0.2500'))
+
+    def test_old_pending_receipt_with_no_posting_credits_accepted_stock_once(self):
+        inbound = MaterialInbound.objects.create(inbound_number='OLD-PENDING-RECEIPT',
+            purchase_order=self.purchase_line.purchase_order, inbound_date=timezone.localdate(),
+            received_by_employee=self.employee, stock_mode='LEGACY')
+        line = MaterialInboundLine.objects.create(inbound=inbound, purchase_order_line=self.purchase_line,
+            zone_id=self.zone_id, raw_material_information=self.raw_material, received_quantity=Decimal('4.25'),
+            accepted_quantity=Decimal('4.25'), source_unit_text_snapshot=self.purchase_line.source_unit_text,
+            purchased_quantity_snapshot=self.purchase_line.actual_purchase_quantity)
+        quality = self.client.post(f'/api/v1/material-inventory/quality-batches/{inbound.pk}/confirm/', {
+            'items': [{'line_id': str(line.pk), 'expected_received_quantity': '4.25', 'return_quantity': '1.25',
+                       'quality_remark': '外观破损'}],
+        }, format='json')
+        self.assertEqual(quality.status_code, 200, quality.data)
+        movement = MaterialStockMovement.objects.get()
+        self.assertEqual((movement.direction, movement.quantity), ('IN', Decimal('3')))
+        self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('3'))
 
     def test_legacy_saved_material_number_works_without_bom(self):
         PurchaseOrderLine.objects.filter(pk=self.purchase_line.pk).update(
@@ -144,7 +253,8 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.assertEqual(second.status_code, 409, second.data)
         self.assertEqual(MaterialInbound.objects.count(), 1)
         self.assertEqual(MaterialInboundLine.objects.count(), 1)
-        self.assertFalse(MaterialStockMovement.objects.exists())
+        movement = MaterialStockMovement.objects.get()
+        self.assertEqual((movement.direction, movement.quantity), ('IN', Decimal('4.2500')))
 
     def test_quality_rejects_purchase_identity_conflict_even_when_all_returned(self):
         response = self.receive()
@@ -156,7 +266,9 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.assertEqual(confirmed.status_code, 409, confirmed.data)
         self.assertEqual(MaterialInbound.objects.get().status, MaterialInboundStatus.PENDING_QUALITY)
         self.assertEqual(MaterialInboundLine.objects.get().return_quantity, Decimal('0'))
-        self.assertFalse(MaterialStockMovement.objects.exists())
+        movement = MaterialStockMovement.objects.get()
+        self.assertEqual((movement.direction, movement.quantity), ('IN', Decimal('4.2500')))
+        self.assertFalse(PurchaseReturn.objects.exists())
 
     def test_stock_lookup_uses_saved_purchase_number_and_returns_none_when_missing(self):
         from ..stock_services import inbound_line_material
@@ -188,29 +300,3 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         self.purchase_line.calculation_snapshot = {'raw_material_id': str(other.pk)}
         line = MaterialInboundLine(purchase_order_line=self.purchase_line)
         self.assertIsNone(inbound_line_material(line))
-
-    def test_receipt_list_keeps_each_record_and_reflects_partial_and_full_returns(self):
-        root = '/api/v1/material-inventory/purchase-receipt-records/'
-        first = self.receive(expected='10.5000')
-        second = self.receive(expected='6.2500')
-        pending_ids = []
-        for received, returned, result in [(first, '1.0000', 'CONFIRMED'), (second, '4.2500', 'RETURNED')]:
-            self.assertEqual(received.status_code, 201, received.data)
-            record = received.data['data']
-            pending_ids.append(str(record['id']))
-            filters = {'section': record['material_section'] or 'UNASSIGNED', 'q': record['inbound_number']}
-            listing = self.client.get(root, {**filters, 'status': 'PENDING_QUALITY'})
-            self.assertEqual(listing.status_code, 200, listing.data)
-            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
-            self.assertTrue(listing.data['data'][0]['can_quality_confirm'])
-            confirmed = self.confirm_quality(received, return_quantity=returned)
-            self.assertEqual(confirmed.status_code, 200, confirmed.data)
-            listing = self.client.get(root, {**filters, 'status': result})
-            self.assertEqual(listing.status_code, 200, listing.data)
-            self.assertEqual([str(row['id']) for row in listing.data['data']], [str(record['id'])])
-            self.assertFalse(listing.data['data'][0]['can_quality_confirm'])
-            detail = self.client.get(root + f"{record['id']}/")
-            self.assertEqual(detail.status_code, 200, detail.data)
-            self.assertEqual(detail.data['data']['status_display'], '已入库' if result == 'CONFIRMED' else '全部退货')
-            self.assertEqual(len(detail.data['data']['lines']), 1)
-        self.assertEqual(MaterialInbound.objects.filter(pk__in=pending_ids).count(), 2)

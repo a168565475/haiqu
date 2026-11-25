@@ -175,8 +175,9 @@ class HardwareWeightFlowTests(APITestCase):
             self.assertIsNone(receipt.data["data"]["lines"][0]["received_piece_count"])
         else:
             self.assertEqual(Decimal(str(receipt.data["data"]["lines"][0]["received_piece_count"])), received_quantity)
-        self.assertFalse(PublicStockBalance.objects.exists())
-        self.assertFalse(MaterialStockBalance.objects.exists())
+        balance_class = PublicStockBalance if catalog else MaterialStockBalance
+        pending_balance = balance_class.objects.get()
+        self.assertEqual((pending_balance.quantity, pending_balance.weight_quantity), (received_quantity, Decimal("4.5")))
         quality_url = f"/api/v1/material-inventory/quality-batches/{receipt.data['data']['id']}/confirm/"
         quality_item = {"line_id": str(inbound.pk), "expected_received_quantity": "4.5",
             "return_weight_kg": "0.6", "quality_remark": "按冻结单重向下折算参考件数"}
@@ -202,7 +203,6 @@ class HardwareWeightFlowTests(APITestCase):
         repeated = create_payables_for_inbound(inbound_id=inbound.inbound_id, actor_employee=self.employee)
         self.assertEqual([row.pk for row in repeated], [payable.pk])
         self.assertEqual(PurchasePayableLine.objects.filter(payable=payable).count(), 1)
-        balance_class = PublicStockBalance if catalog else MaterialStockBalance
         self.balance = balance_class.objects.get()
         self.assertEqual((self.balance.quantity, self.balance.weight_quantity), (accepted_quantity, Decimal("3.9")))
         self.assertEqual(self.balance.unit_id, self.piece_unit.pk)
@@ -321,6 +321,9 @@ class HardwareWeightFlowTests(APITestCase):
             returned = PurchaseReturnLine.objects.get()
             self.assertEqual(returned.quantity, Decimal("0.0001"))
             self.assertEqual(returned.return_order.status, "QUALITY_GENERATED")
+            movement = PublicStockMovement.objects.get(source_line_id=returned.pk, source_type="PURCHASE_RETURN")
+            self.assertEqual((movement.quantity, movement.weight_quantity), (Decimal("0"), Decimal("0.0001")))
+            self.assertEqual(movement.balance.weight_quantity, Decimal("3.9649"))
             for status, expected_ids in (("NONE", []), ("QUALITY_GENERATED", [self.order_id]), ("MISSING", [])):
                 response = self.client.get("/api/v1/purchase-orders/", {"return_status": status})
                 self.assertEqual(response.status_code, 200, response.data)
@@ -349,7 +352,7 @@ class HardwareWeightFlowTests(APITestCase):
                 confirmed = self.client.post(
                     f"/api/v1/material-inventory/quality-batches/{receipt.data['data']['id']}/confirm/",
                     {"items": [{"line_id": str(inbound.pk), "expected_received_quantity": received,
-                        "return_weight_kg": returned}]}, format="json")
+                        "return_weight_kg": returned, "quality_remark": "部分不合格"}]}, format="json")
                 self.assertEqual(confirmed.status_code, 200, confirmed.data)
                 inbound.refresh_from_db()
                 accepted_weight = Decimal(received) - Decimal(returned)

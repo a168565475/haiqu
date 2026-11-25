@@ -87,11 +87,16 @@ def validate_catalog_inbound(line):
 
 
 @transaction.atomic
-def credit_catalog_inbound(*, line, actor_employee):
+def credit_catalog_inbound(*, line, actor_employee, on_receipt=False):
     from .public_stock_services import credit_public_stock
     from .models import MaterialInbound
     identity = validate_catalog_inbound(line)
-    if not MaterialInbound.objects.select_for_update().filter(pk=line.inbound_id, status="CONFIRMED").exists():
+    source = MaterialInbound.objects.select_for_update(of=("self",)).filter(pk=line.inbound_id)
+    if on_receipt:
+        source = source.filter(status="PENDING_QUALITY", purchase_order__source_type="PRODUCTION")
+    else:
+        source = source.filter(status="CONFIRMED")
+    if not source.exists():
         raise ValidationError({"items": "入库尚未确认，不能记入可用库存。"})
     purchase = line.purchase_order_line
     contributions = (purchase.calculation_snapshot or {}).get("group_source_contributions", []) if purchase else []

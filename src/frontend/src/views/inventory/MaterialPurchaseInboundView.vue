@@ -4,7 +4,7 @@ import { compactDecimal } from '@/utils/compactDecimal'
 import { pipeMeters, pipeRootError, pipeRootsFromMeters, pipeRootsFromWeight } from '@/utils/pipeQuantities'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { isCancel } from 'axios'
+import { isAxiosError, isCancel } from 'axios'
 import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { Calendar, Refresh, Tickets, WarningFilled } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -72,6 +72,7 @@ const trailingColumnWidths = [120, 118, 112, 178, 160, 144, 192, 100]
 const tableWidth = computed(() => receiptMaterialTableWidth(materialTables.value, [...leadingColumnWidths, ...trailingColumnWidths]))
 const receivingVersion = ref('')
 let sampleAttempt: { fingerprint: string; payload: SampleMaterialReceivingPayload } | null = null
+let receiptAttempt: { fingerprint: string; requestId: string } | null = null
 const selectedRows = computed(() => isSample.value ? rows.value : rows.value.filter((row) => row.included))
 const bulkCategories = computed(() => [...new Set(rows.value.map((row) => row.line.category?.trim() || '未分类'))])
 const bulkSelectedRows = computed(() => selectedRows.value.filter((row) => !bulk.category || (row.line.category?.trim() || '未分类') === bulk.category))
@@ -186,6 +187,10 @@ function apiMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
   const field = response?.data?.error?.field_errors ? Object.values(response.data.error.field_errors).flat()[0] : ''
   return field || response?.data?.error?.message || response?.data?.detail || fallback
+}
+function receiptResponseUncertain(error: unknown): boolean {
+  return isAxiosError(error) && (['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(error.code || '')
+    || error.response?.status === 502 || error.response?.status === 504)
 }
 function formatQuantity(value: string | number): string {
   const number = Number(value)
@@ -367,25 +372,42 @@ async function submitReceiving() {
         sampleAttempt = { fingerprint, payload: { ...content, client_request_id: createClientUuid() } }
       }
       await createSampleMaterialReceiving(sampleAttempt.payload, receivingVersion.value)
-    } else await createMaterialReceiving({
-      inbound_date: form.inboundDate, remark: form.remark,
-      ...(materialSection.value ? { material_section: materialSection.value } : {}),
-      items: selectedRows.value.map((row) => ({
-        purchase_order_line_id: row.line.id, zone_id: row.zoneId,
-        ...(isHardware(row.line) || isWeightPipe(row.line)
-          ? { received_weight_kg: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_weight_kg ?? row.line.remaining_quantity }
-          : isPipe(row.line)
-            ? { received_bar_count: receivedRoots(row), raw_bar_length_m: row.line.raw_bar_length_m, expected_remaining_quantity: row.line.remaining_quantity }
-            : { received_quantity: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_quantity }), remark: row.remark,
-      })),
-    })
+    } else {
+      const content = {
+        inbound_date: form.inboundDate, remark: form.remark,
+        ...(materialSection.value ? { material_section: materialSection.value } : {}),
+        items: selectedRows.value.map((row) => ({
+          purchase_order_line_id: row.line.id, zone_id: row.zoneId,
+          ...(isHardware(row.line) || isWeightPipe(row.line)
+            ? { received_weight_kg: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_weight_kg ?? row.line.remaining_quantity }
+            : isPipe(row.line)
+              ? { received_bar_count: receivedRoots(row), raw_bar_length_m: row.line.raw_bar_length_m, expected_remaining_quantity: row.line.remaining_quantity }
+              : { received_quantity: row.receivedQuantity, expected_remaining_quantity: row.line.remaining_quantity }), remark: row.remark,
+        })),
+      }
+      const fingerprint = JSON.stringify(content)
+      if (receiptAttempt?.fingerprint !== fingerprint) receiptAttempt = { fingerprint, requestId: createClientUuid() }
+      const payload = { ...content, client_request_id: receiptAttempt.requestId }
+      try {
+        await createMaterialReceiving(payload)
+      } catch (error) {
+        if (!receiptResponseUncertain(error)) throw error
+        owned.assertCurrent()
+        await createMaterialReceiving(payload)
+      }
+    }
     owned.assertCurrent()
     if (selectedPurchaseOrderId.value !== submittedOrderId) return
     receiptCreated.value = true
     historyRefreshKey.value += 1
   } catch (error) {
     if (isCancel(error) || !owned.isCurrent()) return
-    ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交收货失败，请核对入库记录后重试。'))
+    if (!isSample.value && receiptResponseUncertain(error)) {
+      historyRefreshKey.value += 1
+      ElMessage.warning('暂未收到收货结果，请先查看入库记录。')
+    } else {
+      ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交收货失败，请核对入库记录后重试。'))
+    }
     submitting.value = false
     return
   }
@@ -483,7 +505,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
         </div>
         <footer><span>{{ isSample ? '全部' : '已勾选' }} {{ selectedRows.length }} 项 · {{ isSample ? '按采购剩余数量全部入库' : '到货数量按采购剩余数量带入' }}</span><strong :class="{ complete: zoneReadyCount === selectedRows.length && selectedRows.length > 0 }">{{ selectedRows.length > 100 ? '每批最多提交 100 项' : '库区完成 ' + zoneReadyCount + '/' + selectedRows.length }}</strong></footer>
       </section>
-      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>{{ isSample ? '确认剩余采购材料已全部到齐后，按剩余采购量全部入库，无需品质确认。' : '提交后进入“待质检”，此时不增加可用库存；品质确认后按实收数量减退货数量入库。' }}</span></div>
+      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>{{ isSample ? '确认剩余采购材料已全部到齐后，按剩余采购量全部入库，无需品质确认。' : '提交收货后按实收计入可用库存并生成待核价应付，入库记录进入待质检。' }}</span></div>
       <section class="submit-bar">
         <label for="receiving-batch-remark">本批次备注（可选）</label><ElInput id="receiving-batch-remark" v-model="form.remark" placeholder="请输入备注信息…" :maxlength="3000" :disabled="locked" />
         <ElButton :disabled="locked || !rows.length" @click="saveDraft">保存草稿</ElButton>

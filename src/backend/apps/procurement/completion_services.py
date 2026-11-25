@@ -185,6 +185,7 @@ def generate_quality_returns(*, inbound, lines, actor_employee, request):
         if not supplier_id:
             raise ValidationError({"items": "退货明细缺少供应商，请先核对采购单。"})
         grouped.setdefault(supplier_id, []).append(line)
+    returned = []
     for supplier_id, supplier_lines in grouped.items():
         first = supplier_lines[0]
         return_order = PurchaseReturn.objects.create(
@@ -195,20 +196,21 @@ def generate_quality_returns(*, inbound, lines, actor_employee, request):
             supplier_name_snapshot=first.supplier_name_snapshot,
             generated_by_employee=actor_employee,
         )
-        PurchaseReturnLine.objects.bulk_create([
+        returned.extend(PurchaseReturnLine.objects.bulk_create([
             PurchaseReturnLine(
                 return_order=return_order,
                 inbound_line=line,
                 quantity=_inbound_quantity(line, 'return'),
             )
             for line in supplier_lines
-        ])
+        ]))
         write_audit_log(
             object_type="PURCHASE_RETURN", object_id=return_order.pk, action="QUALITY_GENERATED",
             context_type="PURCHASE_ORDER", context_id=return_order.purchase_order_id,
             actor_employee=actor_employee,
             after_data={"return_number": return_order.return_number, "line_count": len(supplier_lines)}, request=request,
         )
+    return returned
 
 
 @transaction.atomic

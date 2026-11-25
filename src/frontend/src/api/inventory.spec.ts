@@ -23,7 +23,7 @@ describe('材料采购入库 API', () => {
 
     await createMaterialReceiving(payload)
 
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/material-inventory/receivings/', payload)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/material-inventory/receivings/', payload, { timeout: 20000 })
   })
 
   it('品质确认接口完整传递到货快照和退货数量', async () => {

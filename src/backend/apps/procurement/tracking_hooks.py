@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from functools import partial
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import connections, transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save
 
 
@@ -26,10 +26,10 @@ def defer_supplier_tracking():
         _defer_supplier_tracking.reset(token)
 
 
-def wake_supplier_tracking_worker(task_id):
+def wake_supplier_tracking_worker(task_id, *, using="default"):
     if _enabled():
         # PostgreSQL delivers this signal only after the purchase transaction commits.
-        with connection.cursor() as cursor:
+        with connections[using].cursor() as cursor:
             cursor.execute("SELECT pg_notify(%s, %s)", [SUPPLIER_TRACKING_CHANNEL, str(task_id)])
 
 
@@ -68,25 +68,25 @@ def _return_changed(sender, instance, *, raw=False, using="default", **kwargs):
     refresh_tracking_after_commit([instance.purchase_order.production_task_id], using=using)
 
 
-def _refresh_inbound(inbound_id, task_id):
+def _queue_inbound_tracking(inbound_id, task_id, *, using):
     from apps.inventory.models import MaterialInboundLine
 
     # 同次到货允许引用不同采购批次，不能只看可空的主记录 purchase_order。
-    task_ids = set(MaterialInboundLine.objects.filter(inbound_id=inbound_id).values_list(
+    task_ids = set(MaterialInboundLine.objects.using(using).filter(inbound_id=inbound_id).values_list(
         "purchase_order_line__purchase_order__production_task_id", flat=True,
     ))
     if task_id:
         task_ids.add(task_id)
     task_ids.discard(None)
-    if task_ids:
-        _recompute(tuple(sorted(str(value) for value in task_ids)))
+    for value in sorted(str(task_id) for task_id in task_ids):
+        wake_supplier_tracking_worker(value, using=using)
 
 
 def _inbound_changed(sender, instance, *, raw=False, using="default", **kwargs):
     if raw or not _enabled():
         return
     task_id = instance.purchase_order.production_task_id if instance.purchase_order_id else None
-    transaction.on_commit(partial(_refresh_inbound, instance.pk, task_id), using=using, robust=True)
+    transaction.on_commit(partial(_queue_inbound_tracking, instance.pk, task_id, using=using), using=using, robust=True)
 
 
 def _followers_changed(sender, instance, action, reverse, pk_set, using="default", **kwargs):

@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.core.api.concurrency import etag_for_instance
+from apps.inventory.models import MaterialInboundStatus
 from apps.inventory.pipe_receipt_basis import is_root_receipt
 from .purchase_payable_models import PurchasePayable, PurchasePayableLine, PurchasePayableStatus
 
@@ -142,6 +143,8 @@ class PurchasePayableLineSerializer(serializers.ModelSerializer):
         return {"name": obj.price_confirmed_by_name}
 
     def get_blocked_reason(self, obj):
+        if obj.accepted_quantity == 0:
+            return None
         if obj.unit_price is None:
             return "待确认价格。"
         if obj.tax_mode is None or obj.freight_mode is None:
@@ -197,7 +200,8 @@ class PurchasePayableSerializer(serializers.ModelSerializer):
         return obj.status in {PurchasePayableStatus.WAITING_PRICE, PurchasePayableStatus.WAITING_FINANCE_CONFIRM}
 
     def get_can_confirm(self, obj):
-        return obj.status == PurchasePayableStatus.WAITING_FINANCE_CONFIRM
+        return (obj.status == PurchasePayableStatus.WAITING_FINANCE_CONFIRM
+                and obj.material_inbound.status == MaterialInboundStatus.CONFIRMED)
 
     def get_can_void(self, obj):
         return obj.status in {PurchasePayableStatus.WAITING_PRICE, PurchasePayableStatus.WAITING_FINANCE_CONFIRM}
@@ -209,10 +213,12 @@ class PurchasePayableSerializer(serializers.ModelSerializer):
         return {"id": str(employee.pk), "code": employee.employee_code, "name": employee.display_name}
 
     def get_price_complete(self, obj):
-        lines = list(obj.lines.all())
+        lines = [line for line in obj.lines.all() if line.accepted_quantity > 0]
         return bool(lines) and all(line.unit_price is not None and line.amount is not None for line in lines)
 
     def get_blocked_reason(self, obj):
+        if self.get_can_price(obj) and obj.material_inbound.status == MaterialInboundStatus.PENDING_QUALITY:
+            return "本批入库仍待质检，可先核价，品质确认后再确认应付。"
         if obj.status == PurchasePayableStatus.WAITING_PRICE:
             return "尚有明细待确认价格。"
         if obj.status == PurchasePayableStatus.WAITING_FINANCE_CONFIRM:

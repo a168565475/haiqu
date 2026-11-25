@@ -8,8 +8,8 @@ from rest_framework.generics import get_object_or_404
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.audit import write_audit_log
 from apps.core.daily_numbering import next_daily_business_number
-from apps.inventory.pipe_receipt_basis import is_root_receipt
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
+from apps.inventory.pipe_receipt_basis import allocated_order_kg, is_root_receipt
 from .exceptions import FinanceConflict
 from .purchase_payable_models import PurchasePayable, PurchasePayableLine, PurchasePayableStatus
 
@@ -20,7 +20,8 @@ MONEY_QUANTUM = Decimal("0.01")
 def payable_quantity(line):
     """取本批质检冻结的采购计价量，管材的结算公斤和实重分别保存。"""
     if is_root_receipt(line):
-        return Decimal(line.calculation_snapshot["settlement_weight_kg"])
+        frozen = line.calculation_snapshot.get("settlement_weight_kg")
+        return Decimal(frozen) if frozen is not None else allocated_order_kg(line.purchase_order_line, line.accepted_bar_count)
     unit = (line.source_unit_text_snapshot or "").strip().upper()
     if unit in {"KG", "千克"} and line.accepted_weight_kg is not None:
         return line.accepted_weight_kg
@@ -76,13 +77,14 @@ def _audit(payable, *, action, actor=None, before=None, request=None):
 
 
 @transaction.atomic
-def create_payables_for_inbound(*, inbound_id, actor_employee=None, request=None):
-    """在品质确认事务中生成采购应付来源；重复调用只返回既有结果。"""
+def create_payables_for_inbound(*, inbound_id, actor_employee=None, request=None, on_receipt=False):
+    """在采购收货或旧批次品质确认时生成应付来源。"""
     inbound = get_object_or_404(
         # 采购来源允许为空；只锁入库本表，避免 PostgreSQL 锁可空外连接时报错。
         MaterialInbound.objects.select_for_update(of=("self",)).select_related("purchase_order"), pk=inbound_id,
     )
-    if inbound.status != MaterialInboundStatus.CONFIRMED:
+    expected_status = MaterialInboundStatus.PENDING_QUALITY if on_receipt else MaterialInboundStatus.CONFIRMED
+    if inbound.status != expected_status:
         raise FinanceConflict("INBOUND_NOT_CONFIRMED", "只有已完成品质确认的采购入库才能生成应付来源。")
     if inbound.purchase_order_id is None:
         return []
@@ -95,7 +97,7 @@ def create_payables_for_inbound(*, inbound_id, actor_employee=None, request=None
     )
     grouped = {}
     for line in lines:
-        if payable_quantity(line) <= 0:
+        if not on_receipt and payable_quantity(line) <= 0:
             continue
         supplier = line.purchase_order_line.supplier
         if supplier is None:
@@ -115,7 +117,7 @@ def create_payables_for_inbound(*, inbound_id, actor_employee=None, request=None
             material_inbound=inbound,
             supplier=supplier,
             defaults={
-                "number": next_daily_business_number("PURCHASE_PAYABLE"),
+                "number": lambda: next_daily_business_number("PURCHASE_PAYABLE"),
                 "supplier_number_snapshot": supplier_number_snapshot,
                 "supplier_name_snapshot": supplier_name_snapshot,
                 "purchase_order_number_snapshot": inbound.purchase_order.order_number,
@@ -143,6 +145,50 @@ def create_payables_for_inbound(*, inbound_id, actor_employee=None, request=None
             _audit(payable, action="CREATE" if created else "SOURCE_APPEND", actor=actor_employee, request=request)
         result.append(payable)
     return result
+
+
+def _update_payable_amount(payable, lines):
+    if not lines or any(line.unit_price is None or line.amount is None for line in lines):
+        payable.status = PurchasePayableStatus.WAITING_PRICE
+        payable.amount = None
+    else:
+        payable.status = PurchasePayableStatus.WAITING_FINANCE_CONFIRM
+        payable.amount = sum((line.amount for line in lines), Decimal("0.00"))
+
+
+def reconcile_receipt_payables(*, inbound, actor_employee, request):
+    payables = (PurchasePayable.objects.select_for_update().filter(material_inbound=inbound)
+        .prefetch_related("lines__material_inbound_line__purchase_order_line").order_by("id"))
+    for payable in payables:
+        if payable.status == PurchasePayableStatus.VOID:
+            continue
+        if payable.status == PurchasePayableStatus.WAITING_PAYMENT:
+            raise FinanceConflict("PAYABLE_ALREADY_CONFIRMED", "该批应付已确认，请核对后再办理品质确认。")
+        before = _audit_snapshot(payable)
+        billable = []
+        for line in payable.lines.all():
+            source = line.material_inbound_line
+            line.accepted_quantity = payable_quantity(source)
+            line.accepted_weight_kg = source.accepted_weight_kg
+            line.accepted_bar_count = source.accepted_bar_count
+            if line.accepted_quantity > 0:
+                billable.append(line)
+                line.amount = line_amount(line.accepted_quantity, line.unit_price) if line.unit_price is not None else None
+            else:
+                line.amount = Decimal("0.00")
+            line.save(update_fields=["accepted_quantity", "accepted_weight_kg", "accepted_bar_count", "amount", "updated_at"])
+        fields = ["status", "amount", "updated_at"]
+        if billable:
+            _update_payable_amount(payable, billable)
+        else:
+            payable.status = PurchasePayableStatus.VOID
+            payable.amount = Decimal("0.00")
+            payable.voided_by_employee = actor_employee
+            payable.voided_at = timezone.now()
+            payable.void_reason = "本批质检后无可结算数量。"
+            fields.extend(["voided_by_employee", "voided_at", "void_reason"])
+        payable.save(update_fields=fields)
+        _audit(payable, action="QUALITY_RECONCILED", actor=actor_employee, before=before, request=request)
 
 
 @transaction.atomic
@@ -177,7 +223,7 @@ def update_payable_pricing(request, payable_id, data):
         line.save(update_fields=["unit_price", "price_unit_text", "price_source", "price_confirmed_by_name",
                                  "price_remark", "tax_mode", "freight_mode", "price_confirmed_at", "amount", "updated_at"])
 
-    current_lines = list(PurchasePayableLine.objects.filter(payable=payable).order_by("id"))
+    current_lines = list(PurchasePayableLine.objects.filter(payable=payable, accepted_quantity__gt=0).order_by("id"))
     tax_modes = {line.tax_mode for line in current_lines if line.tax_mode not in (None, "")}
     freight_modes = {line.freight_mode for line in current_lines if line.freight_mode not in (None, "")}
     payable.tax_mode = data.get("tax_mode") if "tax_mode" in data else (
@@ -186,12 +232,7 @@ def update_payable_pricing(request, payable_id, data):
     payable.freight_mode = data.get("freight_mode") if "freight_mode" in data else (
         freight_modes.pop() if len(freight_modes) == 1 and len(freight_modes) == len(current_lines) else None
     )
-    if any(line.unit_price is None or line.amount is None for line in current_lines):
-        payable.status = PurchasePayableStatus.WAITING_PRICE
-        payable.amount = None
-    else:
-        payable.status = PurchasePayableStatus.WAITING_FINANCE_CONFIRM
-        payable.amount = sum((line.amount for line in current_lines), Decimal("0.00"))
+    _update_payable_amount(payable, current_lines)
     payable.save(update_fields=["status", "amount", "tax_mode", "freight_mode", "updated_at"])
     _audit(payable, action="PRICE_UPDATE", actor=request.employee, before=before, request=request)
     return payable
@@ -201,9 +242,11 @@ def update_payable_pricing(request, payable_id, data):
 def confirm_payable(request, payable_id):
     payable = get_object_or_404(PurchasePayable.objects.select_for_update().prefetch_related("lines"), pk=payable_id)
     require_matching_etag(request, payable)
+    if payable.material_inbound.status != MaterialInboundStatus.CONFIRMED:
+        raise FinanceConflict("INBOUND_QUALITY_PENDING", "本批入库仍待质检，完成品质确认后才能确认应付。")
     if payable.status != PurchasePayableStatus.WAITING_FINANCE_CONFIRM:
         raise FinanceConflict("PAYABLE_NOT_READY", "应付单尚未完成核价，不能确认。")
-    lines = list(payable.lines.all())
+    lines = [line for line in payable.lines.all() if line.accepted_quantity > 0]
     if not lines or any(line.unit_price is None or line.amount is None for line in lines):
         raise FinanceConflict("PRICE_REQUIRED", "请先完成全部明细核价。")
     if not (payable.tax_mode or "").strip() or not (payable.freight_mode or "").strip():

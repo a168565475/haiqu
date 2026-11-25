@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { MaterialInbound, MaterialInboundLine } from '@/types/inventory'
 import { receiptMaterialAttributeColumnWidth, receiptMaterialLeadingColumnWidths, receiptMaterialTables, receiptMaterialTableWidth } from '@/utils/receiptMaterialTables'
 
-interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; returnWeightKg: string; quantityInputUnit: string; qualityRemark: string }
+interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; quantityInputUnit: string; qualityRemark: string }
 const auth = useAuthStore()
 const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
@@ -96,18 +96,10 @@ function partialReturnLeavesLessThanOneBar(row: QualityRow): boolean {
   return received !== null && returned !== null && barWeight !== null && returned > 0n
     && returned < received && received - returned < barWeight
 }
-function partialWeighedReturn(row: QualityRow): boolean {
-  return weighedProductionPipe(row.line) && returnRoots(row) !== ''
-    && Number(row.returnQuantity) > 0 && Number(row.returnQuantity) < row.line.received_bar_count
-}
 function validRow(row: QualityRow): boolean {
   if (isWeightPipe(row.line) && !/^\d{1,14}(?:\.\d{1,4})?$/.test(row.returnQuantity)) return false
   if (row.line.measurement_kind === 'PIPE' && !isWeightPipe(row.line) && returnRoots(row) === '') return false
   const returned = scaled(row.returnQuantity), received = scaled(receivedInput(row))
-  if (partialWeighedReturn(row)) {
-    const weight = scaled(row.returnWeightKg)
-    if (weight === null || weight <= 0n || weight >= (scaled(row.line.received_weight_kg!) ?? 0n)) return false
-  }
   if (hardwarePieces(row.line)) {
     const count = acceptedPieces(row), receivedCount = scaled(receivedPieces(row.line))
     if (count === null || receivedCount === null || receivedCount % 10000n !== 0n
@@ -221,7 +213,6 @@ async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
         : hasSavedQuantity && saved.quantityInputUnit === '根' ? savedQuantity : String(line.return_bar_count ?? 0)
       return { line, included: typeof saved.included === 'boolean' ? saved.included : true,
         quantityInputUnit: byRoots ? '根' : isWeightPipe(line) || isHardware(line) ? 'kg' : line.source_unit_text_snapshot,
-        returnWeightKg: oldWeightDraft ? savedQuantity : typeof saved.returnWeightKg === 'string' ? saved.returnWeightKg : '',
         returnQuantity: byRoots ? savedRoots
           : hasSavedQuantity ? line.measurement_kind === 'PIPE' && !isWeightPipe(line) && saved.quantityInputUnit === undefined ? pipeMeters(savedQuantity, line.raw_bar_length_m) : savedQuantity
           : isWeightPipe(line) || isHardware(line) ? String(line.return_weight_kg ?? 0) : line.return_quantity || '0.00',
@@ -242,7 +233,7 @@ function applyBulk() {
 function saveDraft() {
   if (!batch.value || locked.value) return
   try {
-    const raw = JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, returnWeightKg: row.returnWeightKg, quantityInputUnit: row.quantityInputUnit, qualityRemark: row.qualityRemark }])))
+    const raw = JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, quantityInputUnit: row.quantityInputUnit, qualityRemark: row.qualityRemark }])))
     owned.write(raw); draftRaw = raw
     ElMessage.success('质检草稿已保存在当前浏览器。')
   } catch { ElMessage.error('浏览器无法保存草稿，填写内容仍保留在页面中。') }
@@ -250,9 +241,7 @@ function saveDraft() {
 function qualityPayload(row: QualityRow) {
   const common = { line_id: row.line.id, expected_received_quantity: receivedInput(row), quality_remark: row.qualityRemark }
   if (weighedProductionPipe(row.line)) {
-    const weight = row.line.received_weight_kg
-    const returned = Number(row.returnQuantity) === 0 ? '0' : partialWeighedReturn(row) ? row.returnWeightKg : weight
-    return { ...common, expected_received_quantity: weight, return_bar_count: row.returnQuantity, return_weight_kg: returned }
+    return { ...common, expected_received_quantity: row.line.received_weight_kg, return_bar_count: row.returnQuantity }
   }
   if (isHardware(row.line) || isWeightPipe(row.line)) return { ...common, return_weight_kg: row.returnQuantity }
   if (row.line.measurement_kind === 'PIPE') return { ...common, return_bar_count: returnRoots(row) }
@@ -267,9 +256,9 @@ async function confirmInbound() {
   try {
     dialogOpen = true
     try {
-      await ElMessageBox.confirm(`确认本批次全部 ${payload.items.length} 项质检结果并入库？合格数量将计入库存，有退货的明细将自动生成退货单。`, '确认并入库', {
+      await ElMessageBox.confirm(`确认本批次全部 ${payload.items.length} 项质检结果？系统会根据质检结果更新库存和应付，有退货时生成退货单。`, '确认质检', {
         type: 'warning',
-        confirmButtonText: '确认并入库',
+        confirmButtonText: '确认质检',
         cancelButtonText: '取消',
         customClass: 'quality-confirm-dialog',
         confirmButtonClass: 'quality-confirm-dialog__confirm',
@@ -284,7 +273,7 @@ async function confirmInbound() {
     confirmed.value = true
     try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('入库已成功，但当前用户草稿已变化，已保留后写入内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('入库已成功，但当前用户草稿未能清除。') }
     if (disposed) return
-    ElMessage.success('品质确认完成，合格数量已计入库存，有退货的明细已生成退货单。')
+    ElMessage.success('品质确认完成，库存和采购应付已按质检结果更新。')
     try {
       if (recordId.value) await openReceiptRecords()
       else await router.push({ name: canViewInventory.value ? 'material-inventory' : 'purchase-inbounds' })
@@ -344,13 +333,12 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
                   <td class="supplier-cell">{{ row.line.supplier_name_snapshot || '—' }}</td>
                 </ElTooltip>
                 <td v-for="label in table.columns" :key="label">{{ attributes.get(label) ?? '—' }}</td>
-                <td class="quantity-cell" :title="weighedProductionPipe(row.line) ? '原收货登记 ' + formatQuantity(row.line.received_weight_kg!) + ' 公斤' : receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
+                <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
                 <td class="return-quantity-cell"><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${number} 项退货${isWeightPipe(row.line) || isHardware(row.line) ? '重量' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" maxlength="19" inputmode="decimal" :title="quantityInputTitle(row)"><template #append>{{ row.quantityInputUnit || '单位未识别' }}</template></ElInput>
-                  <ElInput v-if="partialWeighedReturn(row)" v-model="row.returnWeightKg" class="quantity-input partial-return-weight" :aria-label="`第 ${number} 项实退重量`" :disabled="locked" maxlength="19" inputmode="decimal" placeholder="实退重量"><template #append>kg</template></ElInput>
                 </td>
                 <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
                 <td class="muted">{{ row.line.warehouse_name }}</td><td class="muted">{{ row.line.zone_name }}</td>
-                <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${number} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="质检说明（可选）" /></td>
+                <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${number} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="有退货时填写原因" /></td>
                 <td><ElTag :type="!validRow(row) ? 'warning' : status(row) === '合格' ? 'success' : 'danger'" round>{{ status(row) }}</ElTag></td>
               </tr>
               <tr v-if="!table.rows.length"><td :colspan="leadingColumnWidths.length + trailingColumnWidths.length" class="table-empty">{{ loadError || (loading ? '正在加载…' : '暂无待质检明细') }}</td></tr>
@@ -360,7 +348,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
         </div>
         <footer><span>已勾选 {{ selectedRows.length }} 项 · {{ returnCount }} 项有退货</span><strong :class="{ complete: allComplete }">{{ allComplete ? `全部 ${rows.length} 项填写完整` : `已完成 ${completeCount} / ${rows.length} 项，请检查退货数量` }}</strong></footer>
       </section>
-      <footer class="submit-bar"><div class="submit-notice"><ElIcon><WarningFilled /></ElIcon><span>确认后合格数量计入库存；有退货的明细自动生成退货单，在仓库 → 退货明细中处理。</span></div><ElButton :disabled="locked || !batch" @click="saveDraft">保存质检草稿</ElButton><ElButton type="primary" :loading="confirming" :disabled="!canSubmit" @click="confirmInbound">确认并入库</ElButton></footer>
+      <footer class="submit-bar"><div class="submit-notice"><ElIcon><WarningFilled /></ElIcon><span>有退货时填写数量和原因。确认质检后生成退货单，并同步调整库存和应付。</span></div><ElButton :disabled="locked || !batch" @click="saveDraft">保存质检草稿</ElButton><ElButton type="primary" :loading="confirming" :disabled="!canSubmit" @click="confirmInbound">确认质检</ElButton></footer>
     </template>
   </section>
 </template>
@@ -414,7 +402,6 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .quality-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }
 .quality-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
 .quality-table .return-quantity-cell { padding: 4px 11px; }
-.partial-return-weight { margin-top: 4px; }
 .quantity-input :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; white-space: nowrap; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }

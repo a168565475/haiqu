@@ -1,5 +1,6 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import ElementPlus, { ElCheckbox, ElMessage } from 'element-plus'
+import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/inventory'
 import { router } from '@/router'
@@ -253,6 +254,28 @@ describe('采购收货和样品采购全部入库', () => {
     ])
     expect(api.createMaterialReceiving).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+
+  it('生产收货回执超时后用同一提交标识取回原单', async () => {
+    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, source_type: 'PRODUCTION' }] as never)
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [lines[1]], etag: '' } as never)
+    const receive = vi.mocked(api.createMaterialReceiving)
+    receive.mockRejectedValueOnce(new AxiosError('timeout', 'ECONNABORTED'))
+      .mockResolvedValueOnce({ ...receipt, status: 'PENDING_QUALITY' } as never)
+    const wrapper = mount(); await flushPromises()
+    try {
+      const vm = wrapper.vm as unknown as View
+      assignZone(vm)
+      vm.rows[0]!.receivedQuantity = '4'
+      expect(vm.readyToSubmit).toBe(true)
+      await vm.submitReceiving()
+      const [first, retry] = receive.mock.calls
+      expect(first?.[0]).toEqual(expect.objectContaining({ client_request_id: expect.any(String) }))
+      expect(retry?.[0]).toEqual(first?.[0])
+      expect(receive).toHaveBeenCalledTimes(2)
+      expect(vm.receiptCreated).toBe(true)
+      expect(ElMessage.error).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
   })
 
   it('网络失败后同内容重试复用请求标识，修改内容后使用新标识', async () => {

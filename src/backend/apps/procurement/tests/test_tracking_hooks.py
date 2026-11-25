@@ -7,8 +7,10 @@ from django.db.models.signals import post_save
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from psycopg import sql
 
+from apps.inventory.models import MaterialInbound
 from apps.production_tasks.models import ProductionTask
 
+from ..models import PurchaseOrder
 from ..tracking_hooks import SUPPLIER_TRACKING_CHANNEL, wake_supplier_tracking_worker
 from . import test_purchase_order_api as order_tests
 
@@ -53,6 +55,20 @@ class TrackingCommitHookTests(TestCase):
                 self.task.save(update_fields=["updated_at"])
                 recompute.assert_not_called()
             recompute.assert_called_once_with((str(self.task.pk),))
+
+    @override_settings(PURCHASE_TRACKING_ENABLED=True)
+    def test_purchase_receipt_wakes_worker_after_commit(self):
+        with override_settings(PURCHASE_TRACKING_ENABLED=False):
+            order = PurchaseOrder.objects.create(order_number="TRACK-HOOK-RECEIPT", production_task=self.task,
+                                                 created_by_employee=self.employee)
+        with patch("apps.procurement.tracking_hooks.wake_supplier_tracking_worker") as wake, \
+                patch("apps.procurement.tracking_hooks._recompute") as recompute:
+            with self.captureOnCommitCallbacks(execute=True):
+                MaterialInbound.objects.create(inbound_number="TRACK-HOOK-RECEIPT", purchase_order=order,
+                                               received_by_employee=self.employee)
+                wake.assert_not_called()
+            wake.assert_called_once_with(str(self.task.pk), using="default")
+            recompute.assert_not_called()
 
     @override_settings(PURCHASE_TRACKING_ENABLED=True)
     def test_inner_transaction_rollback_discards_refresh(self):

@@ -64,13 +64,12 @@ class PipeRootReceivingTests(APITestCase):
         self.line.suggested_purchase_weight_kg = Decimal("12.5760")
         self.line.calculation_snapshot = {**self.line.calculation_snapshot, "raw_bar_weight_kg": "2.5152"}
         self.line.save(update_fields=["raw_bar_weight_kg", "suggested_purchase_weight_kg", "calculation_snapshot"])
-        self.assertEqual(self.receive(6, 5).status_code, 400)
         self.assertEqual(self.receive(4, 5, received_weight_kg="10").status_code, 400)
         first = self.receive(4, 5)
         self.assertEqual(first.status_code, 201, first.data)
         self.assertEqual(first.data["data"]["total_received_quantity"], "4.0000")
         self.assertIsNone(first.data["data"]["total_received_weight_kg"])
-        self.assertEqual(self.receive(2, 1).status_code, 400)
+        self.assertEqual(self.receive(2, 5).status_code, 409)
         line = self.inspect(first, 0)
         self.assertEqual((line.accepted_bar_count, line.accepted_quantity, line.accepted_weight_kg), (4, 24, None))
         payable = PurchasePayableLine.objects.get(material_inbound_line=line)
@@ -99,6 +98,15 @@ class PipeRootReceivingTests(APITestCase):
         balance = PublicStockBalance.objects.get()
         self.assertEqual((balance.quantity, balance.meter_quantity, balance.weight_quantity), (5, 30, None))
         self.assertEqual(PublicStockMovement.objects.filter(weight_quantity__isnull=True).count(), 2)
+
+    def test_over_receipt_credits_every_accepted_root_to_public_stock(self):
+        batch = self.receive(6, 5, remark="供应商实到6根")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        self.assertEqual(PublicStockBalance.objects.get().quantity, 6)
+        line = self.inspect(batch, 0)
+        self.assertEqual(line.accepted_bar_count, 6)
+        balance = PublicStockBalance.objects.get()
+        self.assertEqual((balance.quantity, balance.meter_quantity), (6, 36))
 
     def test_quality_return_counts_only_accepted_roots(self):
         line = self.inspect(self.receive(5, 5), 1)
@@ -132,7 +140,7 @@ class PipeRootReceivingTests(APITestCase):
             settled.append(PurchasePayableLine.objects.get(material_inbound_line=line).accepted_quantity)
         self.assertEqual(settled, [Decimal("3.3333"), Decimal("3.3334"), Decimal("3.3333")])
 
-    def test_existing_weighed_delivery_keeps_kilogram_limit_for_its_purchase_line(self):
+    def test_existing_weighed_delivery_keeps_kilogram_receipt_basis_for_its_purchase_line(self):
         batch = MaterialInbound.objects.create(inbound_number="OLD-PIPE-KG", purchase_order=self.order,
             status="PENDING_QUALITY", received_by_employee=self.employee)
         MaterialInboundLine.objects.create(inbound=batch, purchase_order_line=self.line, zone=self.zone,

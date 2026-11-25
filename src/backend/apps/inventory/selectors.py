@@ -253,6 +253,12 @@ def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", ca
     )
 
 
+def stock_receipt_source_lines(movement_model):
+    posted = movement_model.objects.filter(source_type="MATERIAL_INBOUND", direction=MaterialStockDirection.IN,
+                                           source_line_id=OuterRef("pk"))
+    return MaterialInboundLine.objects.filter(Q(inbound__status=MaterialInboundStatus.CONFIRMED) | Q(Exists(posted)))
+
+
 def material_inventory_rows(
     *, keyword="", section_title="", warehouse_id="", zone_id="", location_id="", raw_category_names=(),
     attribute_fields=(),
@@ -264,9 +270,8 @@ def material_inventory_rows(
         balance_id=OuterRef('pk'), direction=MaterialStockDirection.IN,
     ).order_by().values('balance_id').annotate(total=Count('source_id', distinct=True), latest=Max('occurred_at'))
     if keyword:
-        matching_inbound = MaterialInboundLine.objects.filter(
+        matching_inbound = stock_receipt_source_lines(MaterialStockMovement).filter(
             raw_material_information_id=OuterRef("raw_material_id"),
-            inbound__status=MaterialInboundStatus.CONFIRMED,
             material_pinyin_search__icontains=keyword,
         )
         queryset = queryset.annotate(has_matching_inbound=Exists(matching_inbound)).filter(
@@ -278,9 +283,8 @@ def material_inventory_rows(
             | Q(has_matching_inbound=True)
         )
     if section_title:
-        matching_section = MaterialInboundLine.objects.filter(
+        matching_section = stock_receipt_source_lines(MaterialStockMovement).filter(
             raw_material_information_id=OuterRef("raw_material_id"),
-            inbound__status=MaterialInboundStatus.CONFIRMED,
             section_title_snapshot=section_title,
         )
         queryset = queryset.annotate(has_matching_section=Exists(matching_section)).filter(has_matching_section=True)

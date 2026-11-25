@@ -301,12 +301,14 @@ def _record(*, balance, quantity, direction, source, weight_quantity=None):
     ):
         # 只点根数后，剩余库存的实重未知；此前单据上的实重仍保留。
         balance.bar_weight_kg = None
-    elif before_weight is None and weight_quantity is not None and direction == MaterialStockDirection.IN:
+    elif before_weight is None and weight_quantity is not None and (
+        direction == MaterialStockDirection.IN or source["source_type"] == "PURCHASE_RETURN"
+    ):
         movement_weight = weight_quantity
     elif balance.bar_weight_kg is not None or before_weight is not None or weight_quantity is not None:
         if before_weight is None or not before_weight.is_finite() or before_weight < 0:
             _invalid("管材重量余额无效。", "PIPE_BALANCE_INVALID")
-        if direction == MaterialStockDirection.OUT:
+        if direction == MaterialStockDirection.OUT and weight_quantity is None:
             movement_weight = issued_pipe_weight(available_roots=before, available_weight_kg=before_weight,
                 issued_roots=quantity)
         else:
@@ -322,7 +324,8 @@ def _record(*, balance, quantity, direction, source, weight_quantity=None):
     return PublicStockMovement.objects.create(
         balance=balance, stock_kind_snapshot=balance.stock_kind, direction=direction, quantity=quantity,
         before_quantity=before, after_quantity=after,
-        meter_quantity=movement_meters, before_meter_quantity=before_meters, after_meter_quantity=after_meters,
+        meter_quantity=movement_meters if quantity else None,
+        before_meter_quantity=before_meters if quantity else None, after_meter_quantity=after_meters if quantity else None,
         weight_quantity=movement_weight, before_weight_quantity=before_weight, after_weight_quantity=after_weight,
         **source,
     )
@@ -369,18 +372,20 @@ def credit_public_stock(*, identity, zone, quantity, source_type, source_id, sou
 
 @transaction.atomic
 def debit_public_stock(*, balance_id, quantity, source_type, source_id, source_line_id,
-                       actor_employee, production_task=None, product_line=None, bom_line=None, snapshot=None):
+                       actor_employee, production_task=None, product_line=None, bom_line=None, snapshot=None, weight_quantity=None):
     from .public_stock_cutover import require_business_stock_write
     require_business_stock_write(source_type=source_type, direction="OUT")
     balance_id = _uuid(balance_id, "公共库存")
-    quantity = _quantity(quantity)
+    weight_only_return = source_type == "PURCHASE_RETURN" and weight_quantity is not None and weight_quantity > 0
+    quantity = _quantity(quantity, allow_zero=weight_only_return)
     source = _source(source_type=source_type, source_id=source_id, source_line_id=source_line_id,
                      actor_employee=actor_employee, production_task=production_task,
                      product_line=product_line, bom_line=bom_line, snapshot=snapshot)
     _lock_source(source, MaterialStockDirection.OUT)
     existing = _existing_event(source, MaterialStockDirection.OUT)
     if existing:
-        return _check_replay(existing, source=source, quantity=quantity, balance_id=balance_id)
+        return _check_replay(existing, source=source, quantity=quantity, balance_id=balance_id,
+                             check_weight=weight_quantity is not None, weight_quantity=weight_quantity)
     _validate_source_context(source)
     hint = PublicStockBalance.objects.filter(pk=balance_id).values("zone_id", "stock_kind", "quality", "raw_material_id", "unit_id").first()
     if hint is None:
@@ -401,7 +406,8 @@ def debit_public_stock(*, balance_id, quantity, source_type, source_id, source_l
     reserved = reserved_quantity_for_balance(balance)
     if reserved and quantity > max(balance.quantity - reserved, Decimal(0)):
         _invalid("本库区库存已被待发管材外发单预留，不能占用已预留数量。", "TUBE_OUTSOURCING_STOCK_RESERVED")
-    return _record(balance=balance, quantity=quantity, direction=MaterialStockDirection.OUT, source=source)
+    return _record(balance=balance, quantity=quantity, direction=MaterialStockDirection.OUT, source=source,
+                   weight_quantity=weight_quantity)
 
 
 def available_public_stock(*, identity, zone_id=None, quality=MaterialStockQuality.AVAILABLE):

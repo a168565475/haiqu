@@ -292,6 +292,7 @@ class MaterialInboundLineInputSerializer(serializers.Serializer):
 
 
 class MaterialInboundInputSerializer(serializers.Serializer):
+    client_request_id = serializers.UUIDField(required=False)
     material_section = serializers.ChoiceField(choices=RECEIVING_SELECTIONS, required=False)
     inbound_date = serializers.DateField(default=timezone.localdate)
     remark = serializers.CharField(
@@ -589,6 +590,13 @@ class MaterialQualityLineInputSerializer(serializers.Serializer):
         trim_whitespace=True,
         default="",
     )
+
+    def validate(self, attrs):
+        if (not attrs["quality_remark"] and any(attrs.get(field, 0) > 0 for field in (
+            "return_quantity", "return_piece_count", "return_bar_count", "return_weight_kg",
+        ))):
+            raise serializers.ValidationError({"quality_remark": "有退货数量时请填写退货原因。"})
+        return attrs
 
 
 class MaterialQualityConfirmationInputSerializer(serializers.Serializer):

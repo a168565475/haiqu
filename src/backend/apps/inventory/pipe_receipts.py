@@ -1,4 +1,4 @@
-"""根米收货和品质确认；不把未质检数量写成可用余额。"""
+"""管材收货及品质确认的根数、米数和结算重量。"""
 from apps.boms.material_flow_calculations import pipe_meters_text
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from rest_framework.exceptions import ValidationError
@@ -7,6 +7,7 @@ from apps.procurement.pipe_purchase import pipe_meters
 from apps.products.models import RawMaterialInformation
 from .hardware_receipts import hardware_receipt_values, is_hardware_weight, quality_hardware_quantities
 from .pipe_receipt_basis import is_root_receipt, root_receipt_values
+from .pipe_weight_quantities import issued_pipe_weight
 
 
 def estimated_receipt_roots(weight, bar_weight, *, round_down):
@@ -119,7 +120,7 @@ def receipt_pipe_values(item, purchase_line=None, material=None, *, by_roots=Fal
             'raw_material_information': material}
 
 
-def quality_pipe_quantities(line, item):
+def quality_pipe_quantities(line, item, *, production=False):
     if is_hardware_weight(line):
         return quality_hardware_quantities(line, item)
     if line.measurement_kind != 'PIPE':
@@ -133,6 +134,7 @@ def quality_pipe_quantities(line, item):
         raise ValidationError({"return_bar_count": "这批管材请直接填写退货根数。"})
     weight_mode = not by_roots and line.source_unit_text_snapshot in {"KG", "kg", "千克", "公斤"}
     if weight_mode:
+        roots = item.get("return_bar_count")
         try:
             weight = Decimal(str(item.get("return_weight_kg", item.get("return_quantity", "0"))))
             bar_weight = Decimal(str(line.bar_weight_kg))
@@ -143,9 +145,11 @@ def quality_pipe_quantities(line, item):
             raise ValidationError({"return_weight_kg": "退货重量不能为负且每根标准重量必须大于 0。"})
         if not received_weight.is_finite() or received_weight <= 0:
             raise ValidationError({"return_weight_kg": "到货重量缺失或无效，请核对原入库记录。"})
+        if production and roots and item.get("return_weight_kg") is None and item.get("return_quantity") is None:
+            weight = issued_pipe_weight(available_roots=line.received_bar_count, available_weight_kg=received_weight,
+                                        issued_roots=roots)
         if weight > received_weight:
             raise ValidationError({"return_weight_kg": "退货重量不能超过到货重量。"})
-        roots = item.get("return_bar_count")
         automatic_roots = roots is None
         if roots is None:
             if weight == 0:
@@ -168,7 +172,7 @@ def quality_pipe_quantities(line, item):
     if weight_mode:
         accepted_weight = received_weight - weight
         accepted_roots = line.received_bar_count - roots
-        if not automatic_roots and (weight == 0) != (roots == 0):
+        if (production or not automatic_roots) and (weight == 0) != (roots == 0):
             raise ValidationError({"return_bar_count": "退货重量和退货根数的零值不一致，请核对真实退货根数。"})
         if (accepted_weight == 0) != (accepted_roots == 0):
             raise ValidationError({"return_bar_count": "合格重量和合格根数不一致：还有重量时须保留合格根数，全退时须退回全部实收根数，请核对真实退货根数。"})

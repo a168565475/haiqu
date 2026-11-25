@@ -71,7 +71,10 @@ export async function fetchManualMaterialOptions(params: Record<string, unknown>
 export async function fetchMaterialReceipts(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<MaterialInbound[]>>(`${root}material-inventory/receipts/`, { params }); return data.data }
 export async function createMaterialReceipt(payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/receipts/`, payload); return data.data }
 export async function createMaterialBatchReceipt(payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/batch-receipts/`, payload); return data.data }
-export async function createMaterialReceiving(payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/receivings/`, payload); return data.data }
+export async function createMaterialReceiving(payload: Record<string, unknown>) {
+  const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/receivings/`, payload, { timeout: 20000 })
+  return data.data
+}
 export async function createSampleMaterialReceiving(payload: SampleMaterialReceivingPayload, etag: string) {
   const { data } = await apiClient.post<DataResponse<MaterialInbound>>(`${root}material-inventory/sample-receivings/`, payload, { headers: { 'If-Match': etag } })
   return data.data

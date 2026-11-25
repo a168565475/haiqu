@@ -131,8 +131,8 @@ describe('品质确认读取', () => {
     expect(submitted.items[0]).not.toHaveProperty('return_bar_count')
     confirm.mockRestore(); wrapper.unmount()
   })
-  it.each([['0', '0', '4'], ['4', '12', '0'], ['1', '2.75', '3']])(
-    '旧生产称重单收12公斤折4根，按根退%s根后按实重提交', async (returnedRoots, returnedKg, acceptedRoots) => {
+  it.each([['0', '4'], ['4', '0'], ['1', '3']])(
+    '旧生产称重单的品质页面只需填写退货根数 %s', async (returnedRoots, acceptedRoots) => {
       vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, source_type: 'PURCHASE',
         purchase_order_id: 'po-1', lines: [weighedProductionPipe] }] as never)
       const wrapper = mount(true); await flushPromises()
@@ -145,15 +145,7 @@ describe('品质确认读取', () => {
         expect(vm.canSubmit).toBe(false)
         await quantity.setValue(returnedRoots)
         const weightLabel = 'input[aria-label="第 1 项实退重量"]'
-        if (returnedRoots === '1') {
-          expect(vm.canSubmit).toBe(false)
-          const weight = wrapper.get(weightLabel)
-          for (const invalid of ['0', '12', '12.1']) {
-            await weight.setValue(invalid)
-            expect(vm.canSubmit).toBe(false)
-          }
-          await weight.setValue(returnedKg)
-        }
+        expect(wrapper.find(weightLabel).exists()).toBe(false)
         expect(vm.canSubmit).toBe(true)
         expect(wrapper.findAll('td.quantity-cell')[1]!.text()).toContain(acceptedRoots + ' 根')
         vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
@@ -166,8 +158,7 @@ describe('品质确认读取', () => {
         expect(submitted?.line_id).toBe(line.id)
         expect(Number(submitted?.expected_received_quantity)).toBe(12)
         expect(submitted?.return_bar_count).toBe(returnedRoots)
-        expect(submitted?.return_weight_kg).toEqual(expect.any(String))
-        expect(Number(submitted?.return_weight_kg)).toBe(Number(returnedKg))
+        expect(submitted).not.toHaveProperty('return_weight_kg')
       } finally { vi.restoreAllMocks(); wrapper.unmount() }
     })
   it('旧生产称重单恢复部分退货公斤草稿时要重新核对退货根数', async () => {
@@ -183,7 +174,7 @@ describe('品质确认读取', () => {
       const quantity = wrapper.get('input[aria-label="第 1 项退货数量"]')
       expect((quantity.element as HTMLInputElement).value).toBe('')
       await quantity.setValue('1')
-      expect((wrapper.get('input[aria-label="第 1 项实退重量"]').element as HTMLInputElement).value).toBe('2.75')
+      expect(wrapper.find('input[aria-label="第 1 项实退重量"]').exists()).toBe(false)
       expect(vm.rows[0]!.qualityRemark).toBe('退货待清点')
       expect(vm.canSubmit).toBe(true)
     } finally { wrapper.unmount() }

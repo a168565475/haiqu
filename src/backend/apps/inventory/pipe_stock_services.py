@@ -35,7 +35,7 @@ def _zone(zone_id):
 
 
 @transaction.atomic
-def credit_pipe_inbound(*, inbound_line_id, actor_employee):
+def credit_pipe_inbound(*, inbound_line_id, actor_employee, on_receipt=False):
     from .public_stock_mode import require_document_stock_mode
     from .public_stock_cutover import require_business_stock_write
     require_business_stock_write()
@@ -57,8 +57,9 @@ def credit_pipe_inbound(*, inbound_line_id, actor_employee):
             or material.archived_at is not None or material.item_type != "MATERIAL" or material.unit.unit_name != "根"
             or material.category.category_name != "管材"):
         raise pipe_error("MATERIAL_IDENTITY_UNRESOLVED", "入库原料身份已变化或不是以根计量的管材。")
-    if inbound.status != "CONFIRMED" or line.measurement_kind != "PIPE" or not line.raw_material_information_id:
-        raise pipe_error("PIPE_INBOUND_NOT_READY", "仅已质检确认的新口径管材入库可以记账。")
+    status = "PENDING_QUALITY" if on_receipt and hint.purchase_order_line_id and hint.purchase_order_line.purchase_order.source_type == "PRODUCTION" else "CONFIRMED"
+    if inbound.status != status or line.measurement_kind != "PIPE" or not line.raw_material_information_id:
+        raise pipe_error("PIPE_INBOUND_NOT_READY", "管材入库当前状态不能记账。")
     try:
         length = decimal_quantity(line.raw_bar_length_m, "raw_bar_length_m", places=3, max_digits=19)
         bars = positive_integer(line.accepted_bar_count, "accepted_bar_count")

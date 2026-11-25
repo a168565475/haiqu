@@ -48,8 +48,8 @@ function statusText(value: unknown) {
 }
 
 const detailTitle = computed(() => record.value ? `采购应付 ${record.value.number}` : '采购应付详情')
-const canEditPrice = computed(() => !!record.value && ['WAITING_PRICE', 'WAITING_FINANCE_CONFIRM'].includes(record.value.status) && can('change'))
-const canConfirm = computed(() => !!record.value && record.value.status === 'WAITING_FINANCE_CONFIRM' && can('confirm'))
+const canEditPrice = computed(() => !!record.value?.can_price && can('change'))
+const canConfirm = computed(() => !!record.value?.can_confirm && can('confirm'))
 const canVoid = computed(() => !!record.value && !['WAITING_PAYMENT', 'VOID'].includes(record.value.status) && can('void'))
 const supplierName = (item: PurchasePayable) => item.supplier_name || item.supplier_name_snapshot || item.supplier?.name || item.supplier_number || item.supplier_number_snapshot || '—'
 const purchaseOrderNumber = (item: PurchasePayable) => item.purchase_order_number || item.purchase_order_number_snapshot || '—'
@@ -58,6 +58,8 @@ const currencyCode = (item: PurchasePayable) => item.currency_code || item.curre
 const lineMaterial = (line: PurchasePayable['lines'][number]) => line.material || line.material_snapshot || '—'
 const lineSpecification = (line: PurchasePayable['lines'][number]) => line.specification || line.specification_snapshot || '—'
 const lineUnit = (line: PurchasePayable['lines'][number]) => line.accepted_unit || line.source_unit_text_snapshot || line.price_unit_text || '—'
+const hasSettlementQuantity = (line: PurchasePayable['lines'][number]) =>
+  Number(line.settlement_quantity ?? line.accepted_quantity) > 0
 const lineCurrency = (line: PurchasePayable['lines'][number]) => line.currency_code || line.currency_code_snapshot
 
 function message(error: unknown) {
@@ -137,15 +139,18 @@ async function openDetail(row: PurchasePayable) {
 }
 
 async function savePricing() {
-  if (!record.value || !canEditPrice.value || saving.value) return
-  if (form.lines.some(line => !line.unit_price || Number(line.unit_price) <= 0 || !line.price_unit_text)) {
+  const payable = record.value
+  if (!payable || !canEditPrice.value || saving.value) return
+  const positiveLineIds = new Set(payable.lines.filter(hasSettlementQuantity).map(line => line.line_id))
+  const lines = form.lines.filter(line => positiveLineIds.has(line.line_id))
+  if (lines.some(line => !line.unit_price || Number(line.unit_price) <= 0 || !line.price_unit_text)) {
     ElMessage.warning('请填写大于零的单价和计价单位。')
     return
   }
   saving.value = true
   try {
-    record.value = await updatePurchasePayablePricing(record.value.id, form, record.value.etag)
-    ElMessage.success('价格已保存，等待财务确认。')
+    record.value = await updatePurchasePayablePricing(payable.id, { ...form, lines }, payable.etag)
+    ElMessage.success('价格已保存。')
     await loadList()
   } catch (error) {
     ElMessage.error(message(error))
@@ -207,7 +212,7 @@ onMounted(() => { void loadList() })
     <div class="page-toolbar">
       <div>
         <h1>采购应付</h1>
-        <p>以已确认入库为来源，先补充采购价格，再由财务确认应付。</p>
+        <p>收货后可先核价，质检完成后由财务确认应付。</p>
       </div>
       <div class="toolbar-actions">
         <el-button @click="applyFilter(true)">重置</el-button>
@@ -257,12 +262,12 @@ onMounted(() => { void loadList() })
             <el-table-column label="合格入库" width="120"><template #default="{ row }">{{ row.receipt_bar_counts ? row.accepted_bar_count + ' 根' : row.accepted_weight_kg ?? '待确认' }}</template></el-table-column>
             <el-table-column label="单价" width="180">
               <template #default="{ row, $index }">
-                <template v-if="canEditPrice"><el-input v-model="form.lines[$index].unit_price" size="small" /><el-input v-model="form.lines[$index].price_unit_text" size="small" class="unit-input" /></template>
+                <template v-if="canEditPrice && hasSettlementQuantity(row)"><el-input v-model="form.lines[$index].unit_price" size="small" /><el-input v-model="form.lines[$index].price_unit_text" size="small" class="unit-input" /></template>
                 <template v-else>{{ row.unit_price || '待确认' }} {{ row.price_unit_text || row.price_unit || '' }}</template>
               </template>
             </el-table-column>
             <el-table-column label="金额" width="130"><template #default="{ row }">{{ formatAmount(row.amount, lineCurrency(row)) }}</template></el-table-column>
-            <el-table-column label="价格来源" min-width="130"><template #default="{ row, $index }"><el-input v-if="canEditPrice" v-model="form.lines[$index].price_source" size="small" placeholder="采购确认" /><span v-else>{{ row.price_source || '—' }}</span></template></el-table-column>
+            <el-table-column label="价格来源" min-width="130"><template #default="{ row, $index }"><el-input v-if="canEditPrice && hasSettlementQuantity(row)" v-model="form.lines[$index].price_source" size="small" placeholder="采购确认" /><span v-else>{{ row.price_source || '—' }}</span></template></el-table-column>
           </el-table>
           <div class="detail-note">
             <span>含税口径：</span>

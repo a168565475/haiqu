@@ -10,9 +10,9 @@ from .bom_inventory_sections import (
     LEGACY_FABRIC_CRAFT_CODES, LEGACY_RAW_FIELDS, RAW_SECTIONS, SEMI_SECTIONS,
     TUBE_PROCESSING_LABELS, semi_inventory_attributes,
 )
-from .models import MaterialInboundLine, MaterialStockMovement, PublicStockBalance, PublicStockMovement
+from .models import MaterialStockMovement, PublicStockBalance, PublicStockMovement
 from .public_stock_identity import validate_public_identity
-from .selectors import material_inventory_rows
+from .selectors import material_inventory_rows, stock_receipt_source_lines
 
 
 def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", warehouse_id="", zone_id="", location_id="", legacy=False, bom_section=""):
@@ -35,8 +35,8 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
             Q(stock_kind="CATALOG_RAW", identity_snapshot__material_selection_snapshot__category_key=bom_section)
             | Q(stock_kind="RAW_PIPE", raw_material__category__category_name__in=legacy_names))
     if keyword:
-        matching = MaterialInboundLine.objects.filter(raw_material_information_id=OuterRef("raw_material_id"),
-            inbound__status="CONFIRMED", material_pinyin_search__icontains=keyword)
+        matching = stock_receipt_source_lines(PublicStockMovement).filter(
+            raw_material_information_id=OuterRef("raw_material_id"), material_pinyin_search__icontains=keyword)
         balances = balances.annotate(inbound_match=Exists(matching)).filter(
             Q(raw_material__material_number__icontains=keyword)
             | Q(raw_material__category__category_name__icontains=keyword)
@@ -45,8 +45,8 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
             | Q(raw_material__material__icontains=keyword) | Q(inbound_match=True)
             | Q(identity_snapshot__material_selection_snapshot__display_name__icontains=keyword))
     if section_title:
-        matching = MaterialInboundLine.objects.filter(raw_material_information_id=OuterRef("raw_material_id"),
-            inbound__status="CONFIRMED", section_title_snapshot=section_title)
+        matching = stock_receipt_source_lines(PublicStockMovement).filter(
+            raw_material_information_id=OuterRef("raw_material_id"), section_title_snapshot=section_title)
         balances = balances.annotate(section_match=Exists(matching)).filter(
             Q(raw_material__category__category_name=section_title) | Q(section_match=True)
             | Q(identity_snapshot__material_selection_snapshot__category_key={

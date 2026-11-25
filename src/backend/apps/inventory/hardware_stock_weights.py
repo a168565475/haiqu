@@ -28,6 +28,14 @@ def piece_weight_change(*, before_quantity, before_weight, quantity, direction, 
         after_weight = (before_weight + weight_quantity
                         if before_weight is not None and weight_quantity is not None else None)
         return before_weight, weight_quantity, after_weight
+    if weight_quantity is not None:
+        weight = _number(weight_quantity, "weight_quantity", allow_zero=True)
+        _number(quantity, "quantity", whole=True, allow_zero=True)
+        if before_weight is None:
+            return None, weight, None
+        if weight > before_weight:
+            raise ValidationError({"weight_quantity": "原收货库区库存重量不足，请先核对领用或办理退料。"})
+        return before_weight, weight, before_weight - weight
     if before_weight is None:
         return None, None, None
     _number(quantity, "quantity", whole=True)

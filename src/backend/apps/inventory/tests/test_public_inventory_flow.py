@@ -59,13 +59,14 @@ class PublicInventoryFlowTests(APITestCase):
             source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee)
         return movement.balance, craft
 
-    def test_pending_receipt_freezes_identity_and_quality_posts_only_accepted(self):
+    def test_pending_receipt_posts_stock_and_quality_deducts_returned_roots(self):
         receipt = self.receive()
         self.assertEqual(receipt.status_code, 201, receipt.data)
         inbound = MaterialInbound.objects.get(pk=receipt.data["data"]["id"])
         self.assertEqual(inbound.stock_mode, "PUBLIC_V2")
         self.assertIn("public_stock_identity", inbound.lines.get().calculation_snapshot)
-        self.assertFalse(PublicStockBalance.objects.exists())
+        self.assertEqual(inbound.status, "PENDING_QUALITY")
+        self.assertEqual(PublicStockBalance.objects.get().quantity, 2)
         result = self.quality(receipt, returned=1)
         self.assertEqual(result.status_code, 200, result.data)
         balance = PublicStockBalance.objects.get()
@@ -91,19 +92,22 @@ class PublicInventoryFlowTests(APITestCase):
         self.assertEqual(Decimal(trace.data["data"][0]["actual_inbound_quantity"]), Decimal("12.20"))
         self.assertEqual(trace.data["data"][0]["unit"], "米")
 
-    def test_rejected_material_is_not_credited_or_deducted_when_return_completes(self):
+    def test_return_completion_does_not_deduct_stock_a_second_time(self):
         receipt = self.receive()
         self.assertEqual(self.quality(receipt, returned=1).status_code, 200)
         self.finish_return()
         self.assertEqual(PublicStockBalance.objects.get().quantity, 1)
-        self.assertEqual(PublicStockMovement.objects.count(), 1)
+        self.assertEqual(PublicStockMovement.objects.count(), 2)
+        returned = PublicStockMovement.objects.get(source_type="PURCHASE_RETURN")
+        self.assertEqual((returned.direction, returned.quantity), ("OUT", 1))
         self.assertEqual(PurchaseReturn.objects.get().status, "COMPLETED")
 
     def test_all_rejected_has_no_stock_and_replenishment_creates_new_public_receipt(self):
         receipt = self.receive()
         self.assertEqual(self.quality(receipt, returned=2).status_code, 200)
-        self.assertFalse(PublicStockBalance.objects.exists())
-        self.assertFalse(PublicStockMovement.objects.exists())
+        self.assertEqual(PublicStockBalance.objects.get().quantity, 0)
+        self.assertEqual(PublicStockMovement.objects.count(), 2)
+        self.assertEqual(MaterialInbound.objects.get().purchase_payables.get().status, "VOID")
         self.assertEqual(self.receive().status_code, 409)
         self.finish_return()
         replenished = self.receive()
@@ -118,7 +122,8 @@ class PublicInventoryFlowTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("PUBLIC_STOCK_LEGACY_DOCUMENT_BLOCKED", str(response.data))
         self.assertEqual(MaterialInbound.objects.get().status, "PENDING_QUALITY")
-        self.assertFalse(MaterialStockMovement.objects.exists())
+        movement = MaterialStockMovement.objects.get()
+        self.assertEqual((movement.direction, movement.quantity), ("IN", 2))
         self.assertFalse(PublicStockMovement.objects.exists())
 
     def test_public_pending_receipt_cannot_fall_back_to_legacy_when_disabled(self):
@@ -141,7 +146,8 @@ class PublicInventoryFlowTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(MaterialInbound.objects.get().status, "PENDING_QUALITY")
         self.assertFalse(PurchaseReturn.objects.exists())
-        self.assertFalse(PublicStockMovement.objects.exists())
+        self.assertEqual(PublicStockMovement.objects.count(), 1)
+        self.assertEqual(PublicStockBalance.objects.get().quantity, 2)
 
     def test_missing_frozen_identity_is_not_guessed_from_current_bom(self):
         receipt = self.receive()
@@ -151,7 +157,8 @@ class PublicInventoryFlowTests(APITestCase):
         response = self.quality(receipt)
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("PUBLIC_STOCK_IDENTITY_INCOMPLETE", str(response.data))
-        self.assertFalse(PublicStockBalance.objects.exists())
+        self.assertEqual(PublicStockBalance.objects.get().quantity, 2)
+        self.assertEqual(MaterialInbound.objects.get().status, "PENDING_QUALITY")
 
     def test_bom_changes_do_not_change_frozen_purchase_length(self):
         receipt = self.receive()

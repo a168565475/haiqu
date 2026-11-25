@@ -97,6 +97,13 @@ class PipeWeightReceiptTests(SimpleTestCase):
         self.assertEqual((line.return_bar_count, line.accepted_bar_count), (3, 0))
         self.assertEqual(line.accepted_weight_kg, 0)
 
+    def test_production_quality_uses_only_roots_and_derives_legacy_settlement_weight(self):
+        line = self.line(roots=4)
+        line.received_weight_kg = Decimal("12")
+        returned = quality_pipe_quantities(line, {"return_bar_count": 1}, production=True)
+        self.assertEqual((returned, line.return_bar_count, line.accepted_bar_count), (Decimal("6"), 1, 3))
+        self.assertEqual((line.return_weight_kg, line.accepted_weight_kg), (Decimal("3"), Decimal("9")))
+
     def test_zero_and_full_return_weight_must_match_real_roots(self):
         for weight, roots in (("0", 1), ("1", 0), ("3", 2), ("4.1", 1), ("4.1", 3)):
             with self.subTest(weight=weight, roots=roots), self.assertRaises(ValidationError):

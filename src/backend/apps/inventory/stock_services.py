@@ -177,14 +177,14 @@ def credit_material_stock(
     )
 
 
-def credit_confirmed_inbound_line(*, line, actor_employee):
+def credit_confirmed_inbound_line(*, line, actor_employee, on_receipt=False):
     if line.material_catalog_id:
         from .catalog_receipts import credit_catalog_inbound
-        return credit_catalog_inbound(line=line, actor_employee=actor_employee)
+        return credit_catalog_inbound(line=line, actor_employee=actor_employee, on_receipt=on_receipt)
     from .public_stock_mode import require_document_stock_mode
     if line.measurement_kind == 'PIPE':
         from .pipe_stock_services import credit_pipe_inbound
-        return credit_pipe_inbound(inbound_line_id=line.pk, actor_employee=actor_employee)
+        return credit_pipe_inbound(inbound_line_id=line.pk, actor_employee=actor_employee, on_receipt=on_receipt)
     if not MaterialStockMovement.objects.filter(source_type="MATERIAL_INBOUND", source_line_id=line.pk, direction="IN").exists():
         require_document_stock_mode(line.inbound)
     material, unit, zone = validate_inbound_stock_identity(line)
@@ -292,6 +292,7 @@ def inbound_batch_available_quantities(inbound_lines, *, lock_balances=False):
         lines = grouped_lines[(material_id, unit_id, zone_id)]
         balances = balances_by_key[(material_id, unit_id, zone_id)]
         available = {line.pk: Decimal("0") for line in lines}
+        inbound_ids_by_text = {str(line.pk): line.pk for line in lines}
         fifo_ids = [
             line.pk
             for line in sorted(
@@ -335,9 +336,14 @@ def inbound_batch_available_quantities(inbound_lines, *, lock_balances=False):
                 elif movement.source_type == "OUTSOURCING_RAW_RETURN":
                     # 退回未用原料恢复原批次，不能只增加总余额而丢掉批次可用量。
                     source_id = str(movement.snapshot.get("inbound_line_id", ""))
-                    restored_id = next((key for key in available if str(key) == source_id), None)
+                    restored_id = inbound_ids_by_text.get(source_id)
                     if restored_id is not None:
                         available[restored_id] += movement.quantity
+                continue
+            if movement.source_type == "PURCHASE_RETURN":
+                returned_id = inbound_ids_by_text.get(movement.snapshot.get("inbound_line_id"))
+                if returned_id is not None:
+                    available[returned_id] = max(Decimal("0"), available[returned_id] - movement.quantity)
                 continue
             selected_inbound_line_id = dispatch_sources.get(movement.source_line_id)
             if selected_inbound_line_id in available:

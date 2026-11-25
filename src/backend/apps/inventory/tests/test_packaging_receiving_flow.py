@@ -66,7 +66,7 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         grant = self.grant("inventory.receive_material", "MATERIAL")
         material_scope = MaterialSectionGrant.objects.create(grant=grant, sections=["HARDWARE"])
         first_line, second_line = self.first.lines.get(), self.second.lines.get()
-        body = {"material_section": "D", "items": [{
+        body = {"material_section": "D", "client_request_id": str(uuid4()), "items": [{
             "purchase_order_line_id": str(first_line.pk), "zone_id": str(self.zone.pk),
             "received_quantity": "240", "expected_remaining_quantity": "500",
         }]}
@@ -88,10 +88,16 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         self.assertEqual(inbound.material_section, "D")
         self.assertEqual(inbound.purchase_order_id, self.first.pk)
         replay = self.client.post(INVENTORY + "receivings/", body, format="json")
-        self.assertEqual(replay.status_code, 409, replay.data)
+        self.assertEqual(replay.status_code, 201, replay.data)
+        self.assertEqual(replay.data["data"]["id"], received.data["data"]["id"])
+        modified = {**body, "items": [{**body["items"][0], "received_quantity": "241"}]}
+        conflicting = self.client.post(INVENTORY + "receivings/", modified, format="json")
+        self.assertEqual(conflicting.status_code, 409, conflicting.data)
+        self.assertIn("同一提交标识", str(conflicting.data))
         self.assertEqual(MaterialInbound.objects.count(), 1)
-        self.assertFalse(inbound.purchase_payables.exists())
-        self.assertFalse(MaterialStockMovement.objects.exists())
+        self.assertEqual(inbound.status, 'PENDING_QUALITY')
+        self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('240'))
+        self.assertEqual(MaterialStockMovement.objects.get(source_id=inbound.pk, direction='IN').quantity, Decimal('240'))
         rows = self.section_rows()
         self.assertEqual(rows[str(self.first.pk)]["pending_quality_count"], 1)
         self.assertEqual(rows[str(self.second.pk)]["pending_quality_count"], 0)
@@ -110,7 +116,9 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         self.assertEqual(repeat_quality.status_code, 409, repeat_quality.data)
         line = inbound.lines.get()
         self.assertEqual((line.accepted_quantity, line.return_quantity), (Decimal("200"), Decimal("40")))
-        self.assertEqual(MaterialStockMovement.objects.get(source_line_id=line.pk).quantity, Decimal("200"))
+        credit = MaterialStockMovement.objects.select_related('balance').get(source_line_id=line.pk)
+        self.assertEqual(credit.balance.quantity, Decimal('200'))
+        self.assertEqual(MaterialStockMovement.objects.get(balance=credit.balance, source_type='PURCHASE_RETURN').quantity, Decimal('40'))
         payable = inbound.purchase_payables.get().lines.get()
         self.assertEqual(payable.accepted_quantity, Decimal("200"))
         self.assertFalse(MaterialInbound.objects.filter(lines__purchase_order_line=second_line).exists())

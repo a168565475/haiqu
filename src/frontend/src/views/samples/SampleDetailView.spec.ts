@@ -5,10 +5,10 @@ import SampleDetailView from './SampleDetailView.vue'
 import { createPinia } from 'pinia'
 import { apiClient } from '@/api/request'
 
-const api = vi.hoisted(() => ({ fetch: vi.fn(), pmc: vi.fn(), finance: vi.fn(), parameters: vi.fn(), file: vi.fn(), push: vi.fn(), permissions: null as string[] | null }))
+const api = vi.hoisted(() => ({ fetch: vi.fn(), pmc: vi.fn(), finance: vi.fn(), file: vi.fn(), push: vi.fn(), permissions: null as string[] | null }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sampleId: 'sample-1' } }), useRouter: () => ({ push: api.push }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1 }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: (permission: string) => api.permissions === null || api.permissions.includes(permission), moduleCan: (permission: string, legacy = permission) => api.permissions === null || api.permissions.includes(legacy) }) }))
-vi.mock('@/api/samples', async importOriginal => ({ ...await importOriginal<typeof import('@/api/samples')>(), fetchSample: api.fetch, approveSamplePmc: api.pmc, confirmSampleFinance: api.finance, uploadSampleParameters: api.parameters, fetchSampleBusinessFile: api.file, transitionSample: vi.fn() }))
+vi.mock('@/api/samples', async importOriginal => ({ ...await importOriginal<typeof import('@/api/samples')>(), fetchSample: api.fetch, approveSamplePmc: api.pmc, confirmSampleFinance: api.finance, transitionSample: vi.fn() }))
 
 function response(status = 'PMC_REVIEW') {
   return { etag: '"v3"', data: {
@@ -39,13 +39,12 @@ beforeEach(() => {
 afterEach(() => { mounted.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('打样详情的真实状态与操作边界', () => {
-  it('旧准备状态提供费用与物流入口，新材料状态不开放旧流程', async () => {
+  it('旧准备状态只提供费用入口，不再开放寄送入口；新材料状态不开放旧流程', async () => {
     api.fetch.mockResolvedValue(response('PREPARING'))
     const wrapper = await render()
     await wrapper.findAll('button').find(button => button.text() === '费用处理')!.trigger('click')
     expect(api.push).toHaveBeenCalledWith('/samples/sample-1/fees')
-    await wrapper.findAll('button').find(button => button.text() === '物流与反馈')!.trigger('click')
-    expect(api.push).toHaveBeenCalledWith('/samples/sample-1/fulfillment')
+    expect(wrapper.findAll('button').some(button => button.text() === '物流与反馈')).toBe(false)
     api.fetch.mockResolvedValue(response('MATERIALS_READY'))
     const material = await render()
     expect(material.findAll('button').some(button => ['费用处理', '物流与反馈'].includes(button.text()))).toBe(false)
@@ -54,10 +53,9 @@ describe('打样详情的真实状态与操作边界', () => {
     api.permissions = ['samples.view_samplerequest']
     api.fetch.mockResolvedValue(response('PREPARING'))
     expect((await render()).findAll('button').some(button => ['费用处理', '物流与反馈'].includes(button.text()))).toBe(false)
-    api.permissions.push('samples.add_sampleshipment')
+    api.permissions.push('samples.add_sampleshipment', 'samples.view_sampleshipment')
     expect((await render()).findAll('button').some(button => button.text() === '物流与反馈')).toBe(false)
-    api.permissions = ['samples.view_samplerequest', 'samples.ship_sample']
-    expect((await render()).findAll('button').some(button => button.text() === '物流与反馈')).toBe(false)
+    api.permissions = ['samples.view_samplerequest']
     const historical = response('FINISHED')
     api.fetch.mockResolvedValue({ ...historical, data: { ...historical.data, fee_records: [{ id: 'fee' }], shipments: [{ id: 'shipment' }] } })
     let wrapper = await render()

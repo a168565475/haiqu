@@ -69,7 +69,7 @@ describe('收发记录按保存快照逐行显示（模拟接口）', () => {
     expect(wrapper.findAll('th').map(item => item.text())).not.toContain('明细')
   })
 
-  it('管材根数、单位、原长、实际KG分别显示，缺失重量明确待核对，普通KG不伪装管材', async () => {
+  it('管材显示根数和原长，旧管材实重不展示，普通KG物料保留自己的单位', async () => {
     const tube = snapshot({ category_key: 'TUBE', template_key: 'TUBE', name: '方管', unit_id: 'root', unit_name: '根', attributes: { shape: '方管', section_size: '25×25' } })
     vi.mocked(api.fetchMaterialTransfers).mockResolvedValue([record([
       line({ material_selection_snapshot: tube, quantity: '2.0000', raw_bar_length_m: '6.0000', weight_quantity: '7.2512' }),
@@ -77,9 +77,10 @@ describe('收发记录按保存快照逐行显示（模拟接口）', () => {
       line({ line_key: 'line-3', quantity: '4.2500' }),
     ], { direction: 'OUT', direction_display: '出库' })])
     const wrapper = await render()
-    expect(cells(wrapper, 0)).toMatchObject({ 方向: '出库', 数量: '2', 单位: '根', '单根原长（m）': '6', '实际重量（kg）': '7.2512' })
-    expect(cells(wrapper, 1)['实际重量（kg）']).toBe('重量待核对')
-    expect(cells(wrapper, 2)).toMatchObject({ 数量: '4.25', 单位: 'KG', '单根原长（m）': '—', '实际重量（kg）': '—', 截面形状: '—' })
+    expect(cells(wrapper, 0)).toMatchObject({ 方向: '出库', 数量: '2', 单位: '根', '单根原长（m）': '6' })
+    expect(cells(wrapper, 1)).toMatchObject({ 数量: '3', 单位: '根' })
+    expect(wrapper.text()).not.toMatch(/实际重量|重量待核对|7\.2512/)
+    expect(cells(wrapper, 2)).toMatchObject({ 数量: '4.25', 单位: 'KG', '单根原长（m）': '—', 截面形状: '—' })
   })
 
   it('只有记录权限也能看完整面料色卡色号颜色，不请求当前目录或候选', async () => {

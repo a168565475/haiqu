@@ -9,10 +9,11 @@ from contextvars import ContextVar
 from functools import partial
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save
 
 
+SUPPLIER_TRACKING_CHANNEL = "procurement_supplier_tracking"
 _defer_supplier_tracking = ContextVar("defer_supplier_tracking", default=False)
 
 
@@ -23,6 +24,13 @@ def defer_supplier_tracking():
         yield
     finally:
         _defer_supplier_tracking.reset(token)
+
+
+def wake_supplier_tracking_worker(task_id):
+    if _enabled():
+        # PostgreSQL delivers this signal only after the purchase transaction commits.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_notify(%s, %s)", [SUPPLIER_TRACKING_CHANNEL, str(task_id)])
 
 
 def _enabled():

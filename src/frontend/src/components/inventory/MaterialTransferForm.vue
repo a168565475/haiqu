@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Calendar, CopyDocument, Delete, Plus } from '@element-plus/icons-vue'
 import { isCancel } from 'axios'
-import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogSummary, MaterialColorSelection, MaterialFieldDefinition, PublicMaterialOptions } from '@/types/materialCatalog'
+import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogSummary, MaterialColorSelection, MaterialFieldDefinition } from '@/types/materialCatalog'
 import type { MaterialReceivingOptions, MaterialTransferDirection, MaterialTransferPayload } from '@/types/inventory'
 import type { SampleMaterialCategory } from '@/types/sampleMaterial'
 import { createMaterialTransfer, fetchMaterialReceivingOptions } from '@/api/inventory'
-import { inboundCatalogOptions } from '@/components/products/materialSelection'
-import { fetchInboundMaterial, fetchInboundMaterialOptions, fetchInboundMaterials, fetchInboundPublicOptions } from '@/api/inventoryMaterialSources'
+import { fetchInboundMaterial, fetchInboundMaterialOptions, fetchInboundMaterials } from '@/api/inventoryMaterialSources'
+import { catalogOwnOptions } from '@/components/products/materialSelection'
 import { useAuthStore } from '@/stores/auth'
 import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
 import { createClientUuid } from '@/utils/clientUuid'
@@ -19,7 +19,7 @@ interface TransferRow {
   category: SampleMaterialCategory
   catalogId: string
   catalog?: MaterialCatalog
-  publicOptions?: PublicMaterialOptions
+  selectionOptions?: ReturnType<typeof catalogOwnOptions>
   color: MaterialColorSelection
   selectionVersion: number
   selectionLoading: boolean
@@ -30,7 +30,6 @@ interface TransferRow {
   zoneId: string
   quantity: string
   rawLength: string
-  weight: string
 }
 
 const CATEGORY_TO_CATALOG: Record<SampleMaterialCategory, string> = {
@@ -62,6 +61,20 @@ const FIELD_LABELS: Record<string, string> = {
   tube_size: '适配管材尺寸', layers: '层数', box_type: '箱子形状', bag_type: '袋型/封口方式',
   printing: '印刷版本', process: '加工做法/工艺版本',
 }
+const BOM_ATTRIBUTE_FIELDS: Partial<Record<SampleMaterialCategory, string[]>> = {
+  hardware: ['material', 'color', 'specification', 'flow_unit'],
+  plastic: ['material', 'color', 'specification'],
+  fabric: ['material', 'color', 'fabric_spec', 'width'],
+}
+const REQUIRED_ATTRIBUTES: Record<string, string[]> = {
+  TUBE: ['material', 'shape', 'section_size', 'thickness'],
+  FABRIC: ['material', 'fabric_spec', 'width', 'color'],
+}
+const IDENTITY_ATTRIBUTES: Record<string, string[]> = {
+  HARDWARE: ['specification', 'size', 'thread'], PLASTIC: ['specification', 'model', 'size'],
+  CARTON: ['size', 'model'], BAG: ['size', 'model'], PACKAGING_GENERAL: ['specification', 'model'],
+  TAPE: ['specification', 'width'], COTTON: ['specification', 'thickness', 'width'], AUXILIARY_GENERAL: ['specification'],
+}
 const auth = useAuthStore()
 const props = withDefaults(defineProps<{ initialDirection?: MaterialTransferDirection }>(), { initialDirection: 'IN' })
 const emit = defineEmits<{ saved: [record: { transfer_number: string }] }>()
@@ -73,7 +86,6 @@ const options = ref<MaterialReceivingOptions>({ warehouses: [], zones: [] })
 const catalogOptions = ref<{ categories: { key: string; label: string; templates: { key: string; fields: MaterialFieldDefinition[] }[] }[] }>({ categories: [] })
 const catalogs = reactive<Record<string, MaterialCatalogSummary[]>>({})
 const catalogDetails = reactive<Record<string, MaterialCatalog>>({})
-const publicOptionsCache = reactive<Record<string, PublicMaterialOptions>>({})
 const categoryLoading = reactive<Record<string, boolean>>({})
 const categoryRequests = new Map<string, Promise<void>>()
 let sourceVersion = 0
@@ -92,7 +104,7 @@ function requestId() {
   return createClientUuid()
 }
 function createRow(category: SampleMaterialCategory): TransferRow {
-  return { key: requestId(), category, catalogId: '', attributes: {}, color: {}, selectionVersion: 0, selectionLoading: false, selectionError: '', unitId: '', warehouseId: '', zoneId: '', quantity: '', rawLength: '', weight: '' }
+  return { key: requestId(), category, catalogId: '', attributes: {}, color: {}, selectionVersion: 0, selectionLoading: false, selectionError: '', unitId: '', warehouseId: '', zoneId: '', quantity: '', rawLength: '' }
 }
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -108,9 +120,22 @@ function templateFields(row: TransferRow) {
   const template = definition?.templates.find(item => item.key === row.catalog?.template_key)
   return template?.fields.filter(field => field.kind !== 'unit') || definition?.templates.flatMap(item => item.fields).filter(field => field.kind !== 'unit') || []
 }
+const displayedFieldsByRow = computed(() => new Map(rows.value.map(row => [
+  row.key,
+  selectionFields(row).filter(field => valuesFor(row, field.key).length
+    || row.attributes[field.key]
+    || (field.key === 'section_size' && !row.attributes.shape && valuesFor(row, 'shape').length)),
+])))
 const tableFields = computed(() => {
   const fields = new Map<string, MaterialFieldDefinition>()
-  rows.value.forEach(row => rowFields(row).forEach(field => fields.set(field.key, field)))
+  for (const displayedFields of displayedFieldsByRow.value.values()) {
+    for (const field of displayedFields) {
+      const existing = fields.get(field.key)
+      fields.set(field.key, existing && existing.label !== field.label
+        ? { ...field, label: FIELD_LABELS[field.key] || field.label }
+        : field)
+    }
+  }
   return [...fields.values()].sort((a, b) => {
     const ai = FIELD_ORDER.indexOf(a.key)
     const bi = FIELD_ORDER.indexOf(b.key)
@@ -135,6 +160,18 @@ const canSubmit = computed(() => canEdit.value && !loading.value && !submitting.
 function rowFields(row: TransferRow) {
   return templateFields(row).filter(field => field.key !== 'unit' && field.key !== 'length')
 }
+function selectionFields(row: TransferRow) {
+  if (!row.catalog) return []
+  const keys = BOM_ATTRIBUTE_FIELDS[row.category]
+  return rowFields(row).filter(field => (!keys || keys.includes(field.key))
+    && (row.category !== 'packaging' || !['layers', 'printing'].includes(field.key)))
+    .map(field => field.key === 'specification' && ['hardware', 'plastic'].includes(row.category)
+      ? { ...field, label: row.category === 'hardware' ? '型号规格' : '规格' }
+      : field)
+}
+function showsAttribute(row: TransferRow, key: string) {
+  return displayedFieldsByRow.value.get(row.key)?.some(field => field.key === key)
+}
 function hasField(row: TransferRow, key: string) {
   return !!row.catalog && rowFields(row).some(field => field.key === key)
 }
@@ -142,16 +179,13 @@ function validValue(value: string) {
   return !!value.trim() && !['/', '-', '—'].includes(value.trim())
 }
 function valuesFor(row: TransferRow, fieldKey: string) {
-  const values = row.publicOptions?.values || []
+  const values = row.selectionOptions?.values || []
   const shape = values.find(item => item.field_key === 'shape' && item.value === row.attributes.shape)
   return [...new Set(values.filter(item => item.scope === 'BASE' && item.field_key === fieldKey && validValue(item.value)
     && (fieldKey !== 'section_size' || (shape && item.parent_id === shape.id))).map(item => item.value))]
 }
 function colorRows(row: TransferRow) {
-  return (row.publicOptions?.values || []).filter(item => item.scope === 'BASE' && item.field_key === 'color' && validValue(item.value))
-}
-function productColorId(color: MaterialAttributeValue) {
-  return color.product_color_id === undefined ? color.id : color.product_color_id
+  return (row.selectionOptions?.values || []).filter(item => item.scope === 'BASE' && item.field_key === 'color' && validValue(item.value))
 }
 function colorLabel(color: MaterialAttributeValue) {
   return [color.color_card, color.color_code, color.color_name || color.value].filter(Boolean).join(' - ')
@@ -161,11 +195,11 @@ function chooseColor(row: TransferRow, id: string) {
   setColor(row, colorRows(row).find(item => item.id === id))
 }
 function setColor(row: TransferRow, color?: MaterialAttributeValue) {
-  row.color = color ? { product_color_id: productColorId(color), color_card: color.color_card || '', color_code: color.color_code || '', color_name: color.color_name || color.value } : {}
+  row.color = color ? { product_color_id: color.product_color_id ?? null, color_card: color.color_card || '', color_code: color.color_code || '', color_name: color.color_name || color.value } : {}
   row.attributes.color = color?.value || ''
 }
 function selectedColor(row: TransferRow) {
-  return colorRows(row).find(color => productColorId(color) === row.color.product_color_id
+  return colorRows(row).find(color => (color.product_color_id ?? null) === row.color.product_color_id
     && color.value === row.attributes.color && (color.color_card || '') === row.color.color_card
     && (color.color_code || '') === row.color.color_code && (color.color_name || color.value) === row.color.color_name)
 }
@@ -173,11 +207,11 @@ function zonesFor(row: TransferRow) {
   return options.value.zones.filter(zone => zone.warehouse === row.warehouseId)
 }
 function unitsFor(row: TransferRow) {
-  return (row.publicOptions?.units || []).filter(unit => validValue(unit.unit_name)
+  return (row.selectionOptions?.units || []).filter(unit => validValue(unit.unit_name)
     && (row.category !== 'tube' || unit.unit_name === '根'))
 }
 function setSingleValues(row: TransferRow) {
-  rowFields(row).forEach(field => {
+  selectionFields(row).forEach(field => {
     if (field.key === 'color' && row.category === 'fabric') {
       const colors = colorRows(row)
       if (colors.length === 1 && !row.attributes.color) setColor(row, colors[0])
@@ -199,25 +233,35 @@ function tubeLengthMillimeters(row: TransferRow) {
   if (!meters) return ''
   return (Number(meters) * 1000).toFixed(0)
 }
+function configurationError(row: TransferRow) {
+  if (!row.catalog || !row.selectionOptions || row.selectionLoading) return ''
+  const fields = selectionFields(row)
+  const template = row.catalog.template_key
+  const missing = (REQUIRED_ATTRIBUTES[template] || [])
+    .filter(key => (key !== 'section_size' || valuesFor(row, 'shape').includes(row.attributes.shape || '')) && !valuesFor(row, key).length)
+    .map(key => fields.find(field => field.key === key)?.label || FIELD_LABELS[key] || key)
+  const identityKeys = IDENTITY_ATTRIBUTES[template] || []
+  const choices = fields.filter(field => identityKeys.includes(field.key))
+  if (choices.length && !choices.some(field => valuesFor(row, field.key).length)
+    && !identityKeys.some(key => validValue(row.attributes[key] || '') && valuesFor(row, key).includes(row.attributes[key]!))) {
+    missing.push(choices.map(field => field.label || FIELD_LABELS[field.key] || field.key).join('或'))
+  }
+  if (!unitsFor(row).length) missing.push(row.category === 'tube' ? '单位「根」' : '单位')
+  return missing.length ? `请在原料管理为「${row.catalog.name}」配置${missing.join('、')}` : ''
+}
 function rowError(row: TransferRow) {
   if (row.selectionLoading) return '正在加载品名属性'
   if (row.selectionError) return row.selectionError
   if (!row.catalogId || !row.catalog) return '请选择品名'
   if (row.catalog.id !== row.catalogId || row.catalog.category_key !== catalogKey(row)) return '品名与当前分区不一致，请重选'
-  if (!row.publicOptions) return '品名属性未加载，请重新选择品名'
-  const fixed: Record<string, string[]> = {
-    TUBE: ['material', 'shape', 'section_size', 'thickness'],
-    FABRIC: ['material', 'fabric_spec', 'width', 'color'],
-  }
-  const identities: Record<string, string[]> = {
-    HARDWARE: ['specification', 'size', 'thread'], PLASTIC: ['specification', 'model', 'size'],
-    CARTON: ['size', 'model'], BAG: ['size', 'model'], PACKAGING_GENERAL: ['specification', 'model'],
-    TAPE: ['specification', 'width'], COTTON: ['specification', 'thickness', 'width'], AUXILIARY_GENERAL: ['specification'],
-  }
+  if (!row.selectionOptions) return '品名属性未加载，请重新选择品名'
+  const missingConfiguration = configurationError(row)
+  if (missingConfiguration) return missingConfiguration
   const template = row.catalog.template_key
-  if ((fixed[template] || []).some(key => !validValue(row.attributes[key] || ''))) return '请补全必要属性'
+  if ((REQUIRED_ATTRIBUTES[template] || []).some(key => !validValue(row.attributes[key] || ''))) return '请补全必要属性'
   if (row.category === 'tube' && !tubeLengthMeters(row)) return '请填写有效的单根长度（米）'
-  if (identities[template] && !identities[template]!.some(key => validValue(row.attributes[key] || ''))) return '请选择实际规格、尺寸或型号'
+  const identityKeys = IDENTITY_ATTRIBUTES[template]
+  if (identityKeys && !identityKeys.some(key => validValue(row.attributes[key] || ''))) return '请选择实际规格、尺寸或型号'
   for (const [key, value] of Object.entries(row.attributes)) {
     if (!value.trim()) continue
     if (key === 'length') continue
@@ -233,7 +277,6 @@ function rowError(row: TransferRow) {
   if (row.category === 'tube') {
     return pipeRootError(row.quantity)
       || (Number(pipeMeters(row.quantity, row.rawLength)) > 0 ? '' : '请填写有效的单根长度（米）')
-      || (direction.value === 'OUT' || (/^\d{1,14}(\.\d{1,4})?$/.test(row.weight) && Number(row.weight) > 0) ? '' : '请填写实际入库重量')
   }
   if (['根', '支', '套'].includes(unit.unit_name) && !Number.isInteger(Number(row.quantity))) return '根、支、套的数量须为整数'
   return /^\d{1,14}(\.\d{1,4})?$/.test(row.quantity) && Number(row.quantity) > 0 ? '' : '数量须大于 0，最多四位小数'
@@ -263,7 +306,7 @@ function payload(): MaterialTransferPayload {
       material_selection: selectionFor(row),
       zone_id: row.zoneId,
       ...(row.category === 'tube'
-        ? { raw_bar_count: row.quantity, raw_bar_length_m: tubeLengthMeters(row), ...(direction.value === 'IN' ? { weight_quantity: row.weight } : {}) }
+        ? { raw_bar_count: row.quantity, raw_bar_length_m: tubeLengthMeters(row) }
         : { quantity: row.quantity }),
     })),
   }
@@ -314,7 +357,7 @@ async function loadRowMaterial(row: TransferRow, value: string, preserveDraft = 
   const oldDefault = row.catalog?.base_warehouse_id
   row.catalogId = value
   row.catalog = undefined
-  row.publicOptions = undefined
+  row.selectionOptions = undefined
   row.selectionError = ''
   row.selectionLoading = !!value
   if (!preserveDraft) {
@@ -325,7 +368,6 @@ async function loadRowMaterial(row: TransferRow, value: string, preserveDraft = 
     row.zoneId = ''
     row.quantity = ''
     row.rawLength = ''
-    row.weight = ''
   }
   if (!value) return
   const current = () => generation === sourceVersion && row.selectionVersion === version
@@ -334,14 +376,9 @@ async function loadRowMaterial(row: TransferRow, value: string, preserveDraft = 
     const catalog = catalogDetails[value] || (await fetchInboundMaterial(value)).data
     if (!current()) return
     if (catalog.id !== value || catalog.category_key !== CATEGORY_TO_CATALOG[category]) throw new Error('品名与当前分区不一致，请重选')
-    const key = catalog.category_key + ':' + catalog.template_key
-    const publicData = publicOptionsCache[key] || await fetchInboundPublicOptions({ category_key: catalog.category_key, template_key: catalog.template_key, scope: 'BASE' })
-    if (!current()) return
-    if (publicData.category_key !== catalog.category_key || publicData.template_key !== catalog.template_key || publicData.scope !== 'BASE') throw new Error('属性与当前品名不一致，请刷新后重选')
     catalogDetails[value] = catalog
-    publicOptionsCache[key] = publicData
     row.catalog = catalog
-    row.publicOptions = inboundCatalogOptions(catalog, publicData)
+    row.selectionOptions = catalogOwnOptions(catalog, 'BASE')
     if (!preserveDraft) setSingleValues(row)
     const suggested = catalog.base_warehouse_id || ''
     const availableWarehouse = options.value.warehouses.some(item => item.id === suggested)
@@ -366,7 +403,9 @@ function attributeChanged(row: TransferRow, fieldKey: string) {
   if (draftDisabled.value) return
   if (fieldKey === 'shape') {
     const sectionValues = valuesFor(row, 'section_size')
-    if (row.attributes.section_size && !sectionValues.includes(row.attributes.section_size)) row.attributes.section_size = ''
+    if (!sectionValues.includes(row.attributes.section_size || '')) {
+      row.attributes.section_size = sectionValues.length === 1 ? sectionValues[0]! : ''
+    }
   }
 }
 function warehouseChanged(row: TransferRow) {
@@ -399,7 +438,7 @@ function copyRow(row: TransferRow) {
   const copy = createRow(row.category)
   copy.catalogId = row.catalogId
   copy.catalog = row.catalog ? clone(row.catalog) : undefined
-  copy.publicOptions = row.publicOptions ? clone(row.publicOptions) : undefined
+  copy.selectionOptions = row.selectionOptions ? clone(row.selectionOptions) : undefined
   copy.color = clone(row.color)
   copy.selectionError = row.selectionError
   copy.attributes = clone(row.attributes)
@@ -415,7 +454,7 @@ async function loadPageOptions() {
   loading.value = true
   sourceVersion += 1
   categoryRequests.clear()
-  for (const cache of [catalogs, catalogDetails, publicOptionsCache, categoryLoading]) Object.keys(cache).forEach(key => { delete cache[key] })
+  for (const cache of [catalogs, catalogDetails, categoryLoading]) Object.keys(cache).forEach(key => { delete cache[key] })
   rows.value.forEach(row => { row.selectionVersion += 1 })
   try {
     const [receiving, catalogsData] = await Promise.all([fetchMaterialReceivingOptions(), fetchInboundMaterialOptions()])
@@ -447,7 +486,6 @@ async function submit() {
     emit('saved', record)
     rows.value = [createRow(selectedCategory())]
     form.remark = ''
-    // 保存可能补录品名使用关联并改变目录版本，下次选择必须重新读取。
     submitted.items.forEach(item => { delete catalogDetails[item.material_catalog_id] })
   } catch (error) {
     submitError.value = apiMessage(error)
@@ -502,44 +540,47 @@ onBeforeUnmount(() => { sourceVersion += 1 })
         <ElButton :icon="Plus" :disabled="draftDisabled || rows.length >= 100" @click="addRow()">添加一行</ElButton>
       </div>
       <div class="erp-list-table-frame">
-      <div class="transfer-table-scroll">
       <ElTable height="100%" :data="rows" class="erp-table-editor material-transfer-table" border row-key="key" empty-text="暂无材料明细，请添加一行">
-        <ElTableColumn label="序号" width="52" align="center">
+        <ElTableColumn label="序号" width="64" align="center">
           <template #default="{ row }">{{ rows.findIndex(item => item.key === row.key) + 1 }}</template>
         </ElTableColumn>
-        <ElTableColumn label="品名" width="190">
+        <ElTableColumn label="品名" min-width="190">
           <template #default="{ row }">
             <ElSelect v-model="row.catalogId" :disabled="draftDisabled" filterable clearable placeholder="选择品名" :loading="categoryLoading[catalogKey(row)] || row.selectionLoading" @visible-change="(visible: boolean) => visible && loadCategory(row.category)" @change="(value: string) => chooseMaterial(row, value)">
               <ElOption v-for="item in (catalogs[catalogKey(row)] || [])" :key="item.id" :value="item.id" :label="item.name" />
             </ElSelect>
+            <small v-if="configurationError(row)" class="attribute-configuration-hint">{{ configurationError(row) }}</small>
           </template>
         </ElTableColumn>
         <ElTableColumn v-for="field in tableFields" :key="field.key" :label="field.label || FIELD_LABELS[field.key] || field.key" min-width="120">
           <template #default="{ row }">
-            <span v-if="!hasField(row, field.key)">—</span>
+            <span v-if="!showsAttribute(row, field.key)">—</span>
+            <span v-else-if="field.key === 'section_size' && !row.attributes.shape">请先选截面形状</span>
+            <span v-else-if="!valuesFor(row, field.key).length">{{ row.attributes[field.key] }}（待重选）</span>
             <ElSelect v-else-if="field.key === 'color' && row.category === 'fabric'" :model-value="selectedColor(row)?.id" :disabled="draftDisabled || row.selectionLoading" filterable clearable placeholder="色卡 / 色号 / 颜色" @update:model-value="(id: string) => chooseColor(row, id)">
               <ElOption v-for="color in colorRows(row)" :key="color.id" :value="color.id" :label="colorLabel(color)" />
             </ElSelect>
-            <ElSelect v-else v-model="row.attributes[field.key]" :disabled="draftDisabled || row.selectionLoading || (field.key === 'section_size' && !row.attributes.shape)" filterable clearable :placeholder="field.label || FIELD_LABELS[field.key]" @change="() => attributeChanged(row, field.key)">
+            <ElSelect v-else v-model="row.attributes[field.key]" :disabled="draftDisabled || row.selectionLoading" filterable clearable :placeholder="field.label || FIELD_LABELS[field.key]" @change="() => attributeChanged(row, field.key)">
               <ElOption v-for="value in valuesFor(row, field.key)" :key="value" :value="value" :label="value" />
             </ElSelect>
           </template>
         </ElTableColumn>
         <ElTableColumn label="单位" width="90">
           <template #default="{ row }">
-            <ElSelect v-model="row.unitId" :disabled="draftDisabled || row.selectionLoading || !row.catalog" filterable clearable placeholder="选择单位">
+            <ElSelect v-if="unitsFor(row).length" v-model="row.unitId" :disabled="draftDisabled || row.selectionLoading" filterable clearable placeholder="选择单位">
               <ElOption v-for="unit in unitsFor(row)" :key="unit.id" :value="unit.id" :label="unit.unit_name" />
             </ElSelect>
+            <span v-else>—</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="仓库" width="150">
+        <ElTableColumn label="仓库" min-width="150">
           <template #default="{ row }">
             <ElSelect v-model="row.warehouseId" :disabled="draftDisabled || row.selectionLoading || !row.catalog || Boolean(row.catalog?.base_warehouse_id)" placeholder="选择仓库" @change="warehouseChanged(row)">
               <ElOption v-for="warehouse in options.warehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" />
             </ElSelect>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="库区" width="120">
+        <ElTableColumn label="库区" min-width="140">
           <template #default="{ row }">
             <ElSelect v-model="row.zoneId" :disabled="draftDisabled || row.selectionLoading || !row.warehouseId" placeholder="选择库区">
               <ElOption v-for="zone in zonesFor(row)" :key="zone.id" :value="zone.id" :label="zone.zone_name" />
@@ -549,16 +590,10 @@ onBeforeUnmount(() => { sourceVersion += 1 })
         <ElTableColumn :label="direction === 'IN' ? '入库数量' : '出库数量'" width="105">
           <template #default="{ row }"><ElInput v-model="row.quantity" :disabled="draftDisabled || row.selectionLoading" inputmode="decimal" :aria-label="`第 ${rows.findIndex(item => item.key === row.key) + 1} 行数量`" :placeholder="row.category === 'tube' ? '根数' : '数量'" /></template>
         </ElTableColumn>
-        <ElTableColumn v-if="rows.some(row => row.category === 'tube')" label="管材重量（kg）" width="150">
-          <template #default="{ row }">
-            <ElInput v-if="row.category === 'tube' && direction === 'IN'" v-model="row.weight" :disabled="draftDisabled || row.selectionLoading" inputmode="decimal" :aria-label="`第 ${rows.findIndex(item => item.key === row.key) + 1} 行实际重量`" placeholder="实际重量" />
-            <span v-else-if="row.category === 'tube'">出库按库存分摊</span><span v-else>—</span>
-          </template>
-        </ElTableColumn>
         <ElTableColumn v-if="rows.some(row => row.category === 'tube')" label="单根长度（米）" width="130">
           <template #default="{ row }"><ElInput v-if="row.category === 'tube'" v-model="row.rawLength" :disabled="draftDisabled || row.selectionLoading" inputmode="decimal" :aria-label="`第 ${rows.findIndex(item => item.key === row.key) + 1} 行单根长度（米）`" placeholder="米 / 根" /><span v-else>—</span></template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="80" fixed="right" align="center">
+        <ElTableColumn label="操作" width="104" fixed="right" align="center">
           <template #default="{ row }">
             <div class="row-actions">
               <ElButton text type="primary" :icon="CopyDocument" aria-label="复制行" :disabled="draftDisabled || row.selectionLoading || rows.length >= 100" @click="copyRow(row)" />
@@ -567,7 +602,6 @@ onBeforeUnmount(() => { sourceVersion += 1 })
           </template>
         </ElTableColumn>
       </ElTable>
-      </div>
       </div>
     </section>
 
@@ -592,7 +626,6 @@ onBeforeUnmount(() => { sourceVersion += 1 })
 .filter-operator { width: 150px; }
 .filter-remark { width: 240px; }
 .table-shell { min-height: 0; flex: 1; overflow: hidden; }
-.transfer-table-scroll { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
 .material-transfer-table { min-height: 0; flex: 1; width: 100%; --el-table-border-color: var(--erp-table-border, var(--erp-color-border)); --el-table-header-bg-color: var(--erp-table-header-background, #f6f8fb); --el-table-row-hover-bg-color: var(--erp-table-hover, #f7fbff); --el-table-text-color: var(--erp-color-text-primary); --el-table-header-text-color: var(--erp-table-header-text, var(--erp-color-text-secondary)); }
 .material-transfer-table :deep(.el-table__header-wrapper th) { height: 38px; padding: 0 8px; font-weight: 500; white-space: nowrap; }
 .material-transfer-table :deep(.el-table__body-wrapper td) { height: 40px; padding: 4px 6px; white-space: nowrap; }
@@ -601,6 +634,7 @@ onBeforeUnmount(() => { sourceVersion += 1 })
 .material-transfer-table :deep(.el-input__wrapper), .material-transfer-table :deep(.el-select__wrapper) { min-height: 32px; padding: 1px 9px; box-shadow: 0 0 0 1px var(--erp-input-border, var(--erp-color-border)) inset; }
 .material-transfer-table :deep(.el-button.is-text) { padding: 4px; }
 .row-actions { display: inline-flex; align-items: center; gap: 2px; }
+.attribute-configuration-hint { display: block; margin-top: 4px; color: var(--erp-color-danger); white-space: normal; }
 .transfer-footer { display: flex; align-items: center; justify-content: flex-end; padding-top: 12px; }
 @media (max-width: 1280px) { .filter-remark { width: 200px; } }
 @media (max-width: 980px) { .filter-field { flex-basis: calc(33.333% - 8px); } .filter-remark { width: auto; } }

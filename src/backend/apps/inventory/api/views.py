@@ -1335,6 +1335,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             data["material_section_display"] = PURCHASE_INBOUND_SECTION_NAMES[section]
         return Response(data, headers={"ETag": etag_for_instance(order)})
 
+    @extend_schema(methods=["GET"], parameters=[OpenApiParameter("inbound_id", str, description="按入库单 ID 精确筛选")])
     @action(detail=False, methods=["get", "post"])
     def receipts(self, request):
         if request.method == "POST":
@@ -1347,16 +1348,16 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             )
             inbound = material_inbounds(MaterialInbound.objects.filter(pk=inbound.pk)).get()
             return Response({"data": MaterialInboundSerializer(inbound).data}, status=status.HTTP_201_CREATED)
-        queryset = material_inbounds(MaterialInbound.objects.filter(
-            Q(purchase_order__isnull=True)
-            | purchase_order_access(self._accessible_task_ids(request), request, "purchase_order__"),
-            status=MaterialInboundStatus.CONFIRMED,
-        ))
-        queryset = scoped_inventory_records(queryset, request, 'inventory.view_material_receipt', task_lookup='purchase_order__production_task')
+        from ..selectors import visible_confirmed_material_receipts
+
+        queryset = visible_confirmed_material_receipts(request)
+        inbound_id = self._optional_uuid(request, "inbound_id")
+        if inbound_id:
+            queryset = queryset.filter(pk=inbound_id)
         purchase_order_id = request.query_params.get("purchase_order_id", "").strip()
         if purchase_order_id:
             queryset = queryset.filter(lines__purchase_order_line__purchase_order_id=uuid_value(purchase_order_id, "purchase_order_id"))
-        return Response({"data": MaterialInboundSerializer(queryset.distinct()[:1000], many=True).data})
+        return Response({"data": MaterialInboundSerializer(material_inbounds(queryset).distinct()[:1000], many=True).data})
 
     @action(detail=False, methods=["post"], url_path="batch-receipts")
     def batch_receipts(self, request):

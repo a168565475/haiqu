@@ -196,6 +196,44 @@ describe('采购行内回车下填', () => {
   })
 
   const field = (row: number, column: number) => wrapper.get(`[data-grid-row="${row}"][data-grid-column="${column}"]`)
+
+  async function openSupplierDropdown(row: number) {
+    const select = field(row, 0)
+    await select.get('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    const popupId = select.get('[role="combobox"]').attributes('aria-controls')
+    const popup = document.getElementById(popupId!)
+    expect(popup).not.toBeNull()
+    const items = [...popup!.querySelectorAll('[role="option"]')].map(option => option.textContent?.trim())
+    await select.get('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    return items
+  }
+
+  it('行内下拉按各行的物料分类匹配供应商，与表头当前选择的分类无关', async () => {
+    page.lines[0]!.suggested_supplier_category = 'TUBE'
+    page.options.suppliers.push(
+      { id: 'tube', supplier_number: 'D', supplier_name: '管材供应商', supplier_categories: ['TUBE'] },
+      { id: 'tube-packaging', supplier_number: 'E', supplier_name: '管材包材供应商', supplier_categories: ['TUBE', 'PACKAGING'] },
+    )
+    await chooseCategory('包材')
+
+    expect(await openSupplierDropdown(0)).toEqual(['管材供应商', '管材包材供应商'])
+    expect(await openSupplierDropdown(1)).toEqual(['五金供应商', '五金包材供应商'])
+    expect(await openSupplierDropdown(2)).toEqual(['包材供应商', '五金包材供应商', '管材包材供应商'])
+    expect(page.lines.map(line => line.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+  })
+
+  it('已对应类别却无供应商时提示维护，未对应的旧材料仍可逐行选择', async () => {
+    page.lines[0]!.suggested_supplier_category = 'FABRIC'
+    page.lines[1]!.suggested_supplier_category = null
+    await flushPromises()
+
+    expect(field(0, 0).text()).toContain('五金包材供应商')
+    expect(field(0, 0).getComponent({ name: 'ElSelect' }).props('noDataText')).toContain('维护对应类别')
+    expect(await openSupplierDropdown(1)).toEqual(['五金供应商', '包材供应商', '五金包材供应商'])
+  })
+
   async function press(row: number, column: number, options: KeyboardEventInit = {}) {
     const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
     field(row, column).get('input').element.dispatchEvent(event)

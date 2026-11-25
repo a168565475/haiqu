@@ -8,7 +8,6 @@ from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient, APITestCase
 
 from apps.audit.models import AuditLog
@@ -33,7 +32,7 @@ from apps.quotations.models import (
 from apps.reference_data.models import ProductCategory, ProductColor, ProductItemType
 from apps.workflow.models import BusinessTask, SlaPolicy, SlaTrackingStatus, TaskStatus
 
-from ..models import SampleFeedback, SampleFeeRecord, SampleRequest, SampleRequestStatus, SampleShipmentEvent
+from ..models import SampleFeedback, SampleFeeRecord, SampleRequest, SampleRequestStatus, SampleShipment, SampleShipmentEvent
 
 
 @override_settings(FILE_VIRUS_SCAN_ENABLED=True)
@@ -1107,18 +1106,6 @@ class SampleApiTests(APITestCase):
         self.assertEqual(started.status_code, 200, started.data)
         return started
 
-    def create_shipment(self, prepared):
-        sample_id = prepared.data["data"]["id"]
-        item_id = prepared.data["data"]["items"][0]["id"]
-        response = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/shipments/",
-            {"items": [{"sample_item_id": item_id, "shipped_quantity": "1.0000"}]},
-            format="json",
-            HTTP_IF_MATCH=prepared.headers["ETag"],
-        )
-        self.assertEqual(response.status_code, 201, response.data)
-        return response
-
     def test_create_nested_items_generates_number_audit_and_timeline(self):
         response = self.create_sample()
         sample_request = SampleRequest.objects.get(pk=response.data["data"]["id"])
@@ -1566,7 +1553,7 @@ class SampleApiTests(APITestCase):
         self.assertEqual(fee.status_code, 201, fee.data)
         self.assertEqual(fee.data["data"]["verification_status"], "EVIDENCE_UPLOADED")
 
-    def test_unconfirmed_paid_fee_requires_explicit_warning_and_reason(self):
+    def test_paid_fee_evidence_can_be_recorded_with_shipping_closed(self):
         prepared = self.advance_to_preparing(self.create_sample())
         sample_id = prepared.data["data"]["id"]
         evidence_file = BusinessFile.objects.create(
@@ -1595,95 +1582,53 @@ class SampleApiTests(APITestCase):
             format="json",
             HTTP_IF_MATCH=linked.headers["ETag"],
         )
-        prepared_after_fee = self.client.get(f"/api/v1/sample-requests/{sample_id}/")
-        shipment = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/shipments/",
-            {
-                "items": [
-                    {
-                        "sample_item_id": prepared_after_fee.data["data"]["items"][0]["id"],
-                        "shipped_quantity": "1.0000",
-                    }
-                ]
-            },
-            format="json",
-            HTTP_IF_MATCH=prepared_after_fee.headers["ETag"],
-        )
-        ship_url = f"/api/v1/sample-shipments/{shipment.data['data']['id']}/ship/"
-        ship_payload = {
-            "address_id": str(self.address.pk),
-            "contact_id": str(self.contact.pk),
-            "carrier_code": "SF",
-            "tracking_number": "SF123456",
-        }
-        blocked = self.client.post(
-            ship_url,
-            ship_payload,
-            format="json",
-            HTTP_IF_MATCH=shipment.headers["ETag"],
-        )
-        shipped = self.client.post(
-            ship_url,
-            {
-                **ship_payload,
-                "fee_warning_acknowledged": True,
-                "fee_warning_reason": "客户已确认先寄样后核销费用",
-            },
-            format="json",
-            HTTP_IF_MATCH=shipment.headers["ETag"],
-        )
-
         self.assertEqual(fee.status_code, 201, fee.data)
-        self.assertEqual(shipment.status_code, 201, shipment.data)
-        self.assertEqual(blocked.status_code, 409, blocked.data)
-        self.assertEqual(shipped.status_code, 200, shipped.data)
-        self.assertTrue(shipped.data["data"]["fee_warning_acknowledged"])
+        self.assertEqual(fee.data["data"]["verification_status"], "EVIDENCE_UPLOADED")
+        self.assertEqual(self.client.post(f"/api/v1/sample-requests/{sample_id}/shipments/", {}, format="json").status_code, 405)
+        self.assertFalse(SampleShipment.objects.filter(sample_request_id=sample_id).exists())
 
-    def test_full_ship_deliver_feedback_complete_flow_finishes_sla(self):
-        SlaPolicy.objects.create(
-            policy_code="SAMPLE_STANDARD",
-            display_name="样品标准 SLA",
-            target_type="SAMPLE_REQUEST",
-            resolution_minutes=120,
-            is_enabled=True,
+    def test_shipment_actions_are_closed_and_historical_delivery_remains_readable(self):
+        created = self.create_sample()
+        sample = SampleRequest.objects.get(pk=created.data["data"]["id"])
+        sample.status = SampleRequestStatus.FEEDBACK_PENDING
+        sample.save(update_fields=["status", "updated_at"])
+        delivered_at = timezone.now() - timedelta(hours=1)
+        shipment = SampleShipment.objects.create(
+            sample_request=sample,
+            status="DELIVERED",
+            carrier_code="DHL",
+            tracking_number="HISTORICAL-DELIVERY",
+            shipped_at=delivered_at - timedelta(hours=2),
+            delivered_at=delivered_at,
         )
-        prepared = self.advance_to_preparing(self.create_sample())
-        sample_id = prepared.data["data"]["id"]
-        fee = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/fee-records/",
-            {
-                "fee_decision": "FREE",
-                "amount": "0",
-                "currency_code": "USD",
-                "verification_status": "NOT_REQUIRED",
-                "freight_bearer": "COMPANY",
-                "decision_reason": "SAM-03 免费样业务支持",
-                "free_confirmed_by_employee_id": str(self.employee.pk),
-            },
-            format="json",
-            HTTP_IF_MATCH=prepared.headers["ETag"],
+        SampleShipmentEvent.objects.create(
+            sample_shipment=shipment,
+            event_type="DELIVERED",
+            source="MANUAL",
+            event_identifier="HISTORICAL-DELIVERED",
+            occurred_at=delivered_at,
         )
-        current = self.client.get(f"/api/v1/sample-requests/{sample_id}/")
-        shipment = self.create_shipment(current)
-        ship = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/ship/",
-            {
-                "address_id": str(self.address.pk),
-                "contact_id": str(self.contact.pk),
-                "carrier_code": "DHL",
-                "tracking_number": "DHL123456",
-            },
-            format="json",
-            HTTP_IF_MATCH=shipment.headers["ETag"],
-        )
-        delivered = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/deliver/",
-            {"note": "客户签收"},
-            format="json",
-            HTTP_IF_MATCH=ship.headers["ETag"],
-        )
+        root = f"/api/v1/sample-requests/{sample.pk}/"
+        record = self.client.get(root + "shipments/")
+        self.assertEqual(record.status_code, 200, record.data)
+        self.assertEqual(record.data["data"][0]["tracking_number"], "HISTORICAL-DELIVERY")
+        detail = self.client.get(f"/api/v1/sample-shipments/{shipment.pk}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data["data"]["events"][0]["event_type"], "DELIVERED")
+        self.assertEqual(self.client.post(root + "shipments/", {}, format="json").status_code, 405)
+        for action in ("ship", "deliver", "progress", "exception"):
+            with self.subTest(action=action):
+                reply = self.client.post(f"/api/v1/sample-shipments/{shipment.pk}/{action}/", {}, format="json")
+                self.assertEqual(reply.status_code, 404)
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.status, "DELIVERED")
+        self.assertEqual(shipment.events.count(), 1)
+        self.assertEqual(sample.shipments.count(), 1)
+
+        detail = self.client.get(root)
+        self.assertEqual(detail.data["data"]["shipments"][0]["id"], str(shipment.pk))
         feedback = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/feedback/",
+            root + "feedback/",
             {
                 "customer_contact_id": str(self.contact.pk),
                 "feedback_type": "POSITIVE",
@@ -1691,200 +1636,12 @@ class SampleApiTests(APITestCase):
                 "occurred_at": timezone.now().isoformat(),
             },
             format="json",
-            HTTP_IF_MATCH=delivered.headers["Sample-Request-ETag"],
+            HTTP_IF_MATCH=detail.headers["ETag"],
         )
-        completed = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/complete/",
-            {},
-            format="json",
-            HTTP_IF_MATCH=feedback.headers["ETag"],
-        )
-
-        self.assertEqual(fee.status_code, 201, fee.data)
-        self.assertEqual(ship.status_code, 200, ship.data)
-        self.assertEqual(delivered.status_code, 200, delivered.data)
         self.assertEqual(feedback.status_code, 201, feedback.data)
-        self.assertEqual(completed.status_code, 200, completed.data)
-        self.assertEqual(completed.data["data"]["status"], SampleRequestStatus.CONFIRMED)
-        tracking = SampleRequest.objects.get(pk=sample_id).sla_links.get().sla_tracking
-        self.assertEqual(tracking.status, SlaTrackingStatus.MET)
-        sla_list = self.client.get("/api/v1/sla-trackings/?target_type=SAMPLE_REQUEST")
-        self.assertEqual(sla_list.status_code, 200, sla_list.data)
-        self.assertEqual(sla_list.data["data"][0]["source"]["id"], sample_id)
-
-    def test_update_shipment_material_progress_records_event_and_audit_trail(self):
-        prepared = self.advance_to_preparing(self.create_sample())
-        sample_id = prepared.data["data"]["id"]
-        fee = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/fee-records/",
-            {
-                "fee_decision": "FREE",
-                "amount": "0",
-                "currency_code": "USD",
-                "verification_status": "NOT_REQUIRED",
-                "freight_bearer": "COMPANY",
-                "decision_reason": "物料进度测试免费样",
-                "free_confirmed_by_employee_id": str(self.employee.pk),
-            },
-            format="json",
-            HTTP_IF_MATCH=prepared.headers["ETag"],
-        )
-        shipment = self.create_shipment(self.client.get(f"/api/v1/sample-requests/{sample_id}/"))
-        shipped = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/ship/",
-            {
-                "address_id": str(self.address.pk),
-                "contact_id": str(self.contact.pk),
-                "carrier_code": "DHL",
-                "tracking_number": "PROGRESS001",
-            },
-            format="json",
-            HTTP_IF_MATCH=shipment.headers["ETag"],
-        )
-        progress_url = f"/api/v1/sample-shipments/{shipment.data['data']['id']}/progress/"
-        missing_material_status = self.client.post(
-            progress_url,
-            {"occurred_at": timezone.now().isoformat(), "material_status": ""},
-            format="json",
-            HTTP_IF_MATCH=shipped.headers["ETag"],
-        )
-        progress_at = timezone.now() - timedelta(minutes=15)
-        progress = self.client.post(
-            progress_url,
-            {
-                "occurred_at": progress_at.isoformat(),
-                "material_status": "物料已到达转运中心，等待清关。",
-            },
-            format="json",
-            HTTP_IF_MATCH=shipped.headers["ETag"],
-        )
-
-        self.assertEqual(fee.status_code, 201, fee.data)
-        self.assertEqual(shipped.status_code, 200, shipped.data)
-        self.assertEqual(missing_material_status.status_code, 400, missing_material_status.data)
-        self.assertEqual(progress.status_code, 200, progress.data)
-        self.assertTrue(progress.headers["ETag"])
-        self.assertTrue(progress.headers["Sample-Request-ETag"])
-        progress_event = next(
-            event for event in progress.data["data"]["events"] if event["event_type"] == "PROGRESS"
-        )
-        self.assertEqual(progress_event["payload_snapshot"]["material_status"], "物料已到达转运中心，等待清关。")
-        self.assertEqual(parse_datetime(progress_event["occurred_at"]), progress_at)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                object_type="SAMPLE_REQUEST",
-                object_id=sample_id,
-                action="SHIPMENT_PROGRESS_UPDATED",
-            ).exists()
-        )
-        self.assertTrue(
-            CustomerTimelineEvent.objects.filter(
-                customer_account=self.customer,
-                source_id=sample_id,
-                event_type="SAMPLE_SHIPMENT_PROGRESS_UPDATED",
-            ).exists()
-        )
-
-    def test_sam04_delivery_event_feedback_task_and_formal_confirmation(self):
-        prepared = self.advance_to_preparing(self.create_sample(sample_type="TESTING"))
-        sample_id = prepared.data["data"]["id"]
-        fee = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/fee-records/",
-            {
-                "fee_decision": "FREE",
-                "amount": "0",
-                "currency_code": "USD",
-                "verification_status": "NOT_REQUIRED",
-                "freight_bearer": "COMPANY",
-                "decision_reason": "SAM-04 联调免费样",
-                "free_confirmed_by_employee_id": str(self.employee.pk),
-            },
-            format="json",
-            HTTP_IF_MATCH=prepared.headers["ETag"],
-        )
-        shipment = self.create_shipment(self.client.get(f"/api/v1/sample-requests/{sample_id}/"))
-        shipped = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/ship/",
-            {
-                "address_id": str(self.address.pk),
-                "contact_id": str(self.contact.pk),
-                "carrier_code": "DHL",
-                "tracking_number": "SAM04DHL001",
-            },
-            format="json",
-            HTTP_IF_MATCH=shipment.headers["ETag"],
-        )
-        delivered = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/deliver/",
-            {"note": "SAM-04 人工签收联调"},
-            format="json",
-            HTTP_IF_MATCH=shipped.headers["ETag"],
-        )
-        self.assertEqual(fee.status_code, 201, fee.data)
-        self.assertEqual(shipped.status_code, 200, shipped.data)
-        self.assertEqual(delivered.status_code, 200, delivered.data)
-        self.assertEqual(delivered.data["data"]["status"], "DELIVERED")
-        self.assertEqual(
-            SampleRequest.objects.get(pk=sample_id).status,
-            SampleRequestStatus.FEEDBACK_PENDING,
-        )
-        self.assertEqual(delivered.data["data"]["events"][0]["source"], "MANUAL")
-        self.assertEqual(SampleShipmentEvent.objects.filter(sample_shipment_id=shipment.data["data"]["id"]).count(), 2)
-        self.assertEqual(BusinessTask.objects.filter(automation_key__startswith="SAMPLE_DELIVERED_FEEDBACK:").count(), 1)
-        shipment_detail = self.client.get(f"/api/v1/sample-shipments/{shipment.data['data']['id']}/")
-        self.assertEqual(shipment_detail.status_code, 200, shipment_detail.data)
-        self.assertTrue(shipment_detail.headers["ETag"])
-        self.assertEqual(len(shipment_detail.data["data"]["events"]), 2)
-
-        duplicate_delivery = self.client.post(
-            f"/api/v1/sample-shipments/{shipment.data['data']['id']}/deliver/",
-            {"note": "重复事件"},
-            format="json",
-            HTTP_IF_MATCH=delivered.headers["ETag"],
-        )
-        self.assertEqual(duplicate_delivery.status_code, 409, duplicate_delivery.data)
-        self.assertEqual(BusinessTask.objects.filter(automation_key__startswith="SAMPLE_DELIVERED_FEEDBACK:").count(), 1)
-
-        invalid_feedback = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/feedback/",
-            {
-                "feedback_type": "NEGATIVE",
-                "feedback_content": "客户反馈未通过",
-                "occurred_at": timezone.now().isoformat(),
-            },
-            format="json",
-            HTTP_IF_MATCH=delivered.headers["Sample-Request-ETag"],
-        )
-        self.assertEqual(invalid_feedback.status_code, 400, invalid_feedback.data)
-
-        formal_feedback = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/feedback/",
-            {
-                "customer_contact_id": str(self.contact.pk),
-                "feedback_type": "POSITIVE",
-                "feedback_content": "客户确认产前样通过",
-                "occurred_at": timezone.now().isoformat(),
-                "confirmation_source": "CUSTOMER",
-                "source_object_version": 2,
-            },
-            format="json",
-            HTTP_IF_MATCH=delivered.headers["Sample-Request-ETag"],
-        )
-        self.assertEqual(formal_feedback.status_code, 201, formal_feedback.data)
-        self.assertEqual(formal_feedback.data["data"]["confirmation_result"], "PASSED")
-        self.assertEqual(formal_feedback.data["data"]["confirmation_source_display"], "客户确认")
-        self.assertEqual(
-            BusinessTask.objects.get(automation_key__startswith="SAMPLE_DELIVERED_FEEDBACK:").status,
-            TaskStatus.COMPLETED,
-        )
-
-        completed = self.client.post(
-            f"/api/v1/sample-requests/{sample_id}/complete/",
-            {},
-            format="json",
-            HTTP_IF_MATCH=formal_feedback.headers["ETag"],
-        )
-        self.assertEqual(completed.status_code, 200, completed.data)
+        confirmed = self.client.post(root + "complete/", {}, format="json", HTTP_IF_MATCH=feedback.headers["ETag"])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["data"]["status"], SampleRequestStatus.CONFIRMED)
 
     def test_submit_without_items_and_complete_without_feedback_are_rejected(self):
         empty = self.create_sample(items=[])

@@ -1,9 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchSample, fetchSampleShipment, createSampleFeedback } from '@/api/samples'
-import { fetchCustomerContacts } from '@/api/contacts'
-import { fetchCustomerEntities } from '@/api/customers'
+import { fetchSample, createSampleFeedback } from '@/api/samples'
 
 import SampleFulfillmentView from './SampleFulfillmentView.vue'
 import SampleFeedbackRequotationDialog from '@/components/samples/SampleFeedbackRequotationDialog.vue'
@@ -37,13 +35,9 @@ return { shipment, detail }
 
 vi.mock('@/api/samples', () => ({
   fetchSample: vi.fn().mockResolvedValue({ data: fixtures.detail, etag: '"sample-v1"' }),
-  fetchSampleShipment: vi.fn().mockResolvedValue({ data: fixtures.shipment, etag: '"shipment-v2"' }),
-  createSampleShipment: vi.fn(), shipSampleShipment: vi.fn(),
-    createSampleFeedback: vi.fn(), deliverSampleShipment: vi.fn(), markSampleShipmentException: vi.fn(), recordSampleShipmentProgress: vi.fn(), transitionSample: vi.fn(),
+  createSampleFeedback: vi.fn(), transitionSample: vi.fn(),
   fetchSampleFeedbackRequotationOptions: vi.fn(), createSampleFeedbackRequotation: vi.fn(),
 }))
-vi.mock('@/api/contacts', () => ({ fetchCustomerContacts: vi.fn().mockResolvedValue({ data: [] }) }))
-vi.mock('@/api/customers', () => ({ fetchCustomerEntities: vi.fn().mockResolvedValue([]), fetchEntityAddresses: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (permission: string) => access.allowed && permission !== access.denied, moduleCan: (permission: string, legacy = permission) => access.allowed && legacy !== access.denied }) }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sampleId: 'sample-1' } }), useRouter: () => ({ push: routerPush }) }))
 
@@ -51,9 +45,6 @@ describe('SampleFulfillmentView', () => {
   beforeEach(() => {
     vi.clearAllMocks(); access.allowed = true; access.denied = ''
     vi.mocked(fetchSample).mockResolvedValue({ data: structuredClone(fixtures.detail), etag: '"sample-v1"' })
-    vi.mocked(fetchSampleShipment).mockResolvedValue({ data: structuredClone(fixtures.shipment), etag: '"shipment-v2"' })
-    vi.mocked(fetchCustomerContacts).mockResolvedValue({ data: [] } as never)
-    vi.mocked(fetchCustomerEntities).mockResolvedValue([])
   })
   const feedback = {
     id: 'feedback-1', feedback_content: '客户要求调整靠背', confirmation_result: 'REJECTED',
@@ -95,26 +86,18 @@ describe('SampleFulfillmentView', () => {
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } }); await flushPromises()
     expect(wrapper.findAll('.check-list > div').find(row => row.text().includes('产前样已确认'))!.text()).toContain('不适用')
   })
-  it('只有新增权而无寄送查看权时，直接访问也不能创建后陷入读取错误', async () => {
-    access.denied = 'samples.view_sampleshipment'
-    vi.mocked(fetchSample).mockResolvedValueOnce({ data: { ...fixtures.detail, status: 'PREPARING', shipments: [] }, etag: '"v1"' })
-    const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } }); await flushPromises()
-    expect(wrapper.findAll('button').find(button => button.text() === '创建寄送记录')!.attributes('disabled')).toBeDefined()
-    expect(fetchSampleShipment).not.toHaveBeenCalled()
-  })
   it('闭环进度遵循原型，缺少订单状态时不显示已解除或阻塞中', async () => {
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } }); await flushPromises()
     expect(wrapper.findAll('.flow-step').map(item => item.text())).toEqual(['✓已寄出', '✓已签收', '3待反馈', '4客户确认', '5订单解除阻塞'])
     expect(wrapper.find('.order-panel').text()).toContain('待订单核验')
     expect(wrapper.find('.order-panel').text()).not.toContain('阻塞中')
   })
-  it('物流详情失败保留页面并提供重试，恢复后解除操作禁用', async () => {
-    vi.mocked(fetchSampleShipment).mockRejectedValueOnce(new Error('offline'))
+  it('样品加载失败提供重试，恢复后可记录反馈', async () => {
+    vi.mocked(fetchSample).mockRejectedValueOnce(new Error('offline'))
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } }); await flushPromises()
-    expect(wrapper.find('.fulfillment-error').exists()).toBe(true)
-    expect(wrapper.findAll('button').find(button => button.text() === '记录反馈')!.attributes('disabled')).toBeDefined()
-    await wrapper.get('.fulfillment-error button').trigger('click'); await flushPromises()
-    expect(wrapper.find('.fulfillment-error').exists()).toBe(false)
+    expect(wrapper.text()).toContain('样品物流页面加载失败')
+    await wrapper.findAll('button').find(button => button.text() === '重新加载')!.trigger('click'); await flushPromises()
+    expect(wrapper.text()).not.toContain('样品物流页面加载失败')
     expect(wrapper.findAll('button').find(button => button.text() === '记录反馈')!.attributes('disabled')).toBeUndefined()
   })
   it('非反馈阶段禁用记录入口，无权限时也不能操作', async () => {
@@ -144,7 +127,7 @@ describe('SampleFulfillmentView', () => {
     expect(feedbackDialog.props('modelValue')).toBe(true)
     expect(error).toHaveBeenCalled(); error.mockRestore()
   })
-  it('展示人工物流来源、真实反馈待办和订单模块待接入提示', async () => {
+  it('只读展示历史寄送记录、真实反馈待办和订单模块待接入提示', async () => {
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
@@ -152,8 +135,6 @@ describe('SampleFulfillmentView', () => {
     expect(wrapper.text()).toContain('人工录入')
     expect(wrapper.text()).toContain('客户已签收，尚未记录客户反馈')
     expect(wrapper.text()).toContain('订单模块待接入')
-    expect(wrapper.text()).toContain('承运商服务尚未接入')
-    expect(wrapper.text()).toContain('任务中心自动标记超时')
     expect(wrapper.text()).toContain('实际寄出')
     expect(wrapper.text()).toContain('收货地区')
     expect(wrapper.text()).toContain('实际签收')
@@ -162,35 +143,36 @@ describe('SampleFulfillmentView', () => {
     expect(wrapper.text()).not.toContain('预计送达')
     expect(wrapper.text()).not.toContain('预计签收')
     expect(wrapper.text()).not.toContain('有效时效')
+    for (const label of ['创建寄送记录', '确认已寄出', '更新最新进度', '手工签收', '记录异常']) {
+      expect(wrapper.findAll('button').some(button => button.text() === label)).toBe(false)
+    }
   })
 
-  it('待寄出且没有物流记录时提供创建寄送入口', async () => {
-    const { fetchSample } = await import('@/api/samples')
+  it('没有历史寄送记录时只显示空状态，不提供寄送入口', async () => {
     vi.mocked(fetchSample).mockResolvedValueOnce({
       data: {
         ...fixtures.detail,
-        status: 'PREPARING',
-        status_display: '待寄出',
+        status: 'FINISHED',
+        status_display: '流程已结束',
         current_fee: null,
         latest_shipment: null,
         shipments: [],
         items: [{ id: 'item-1', line_number: 1, source_inquiry_item: null, source_quotation_line: null, product_description_snapshot: '折叠椅样品', specification_snapshot: '', requested_quantity: '1.0000', unit_code: 'PCS', notes: '' }],
       },
-      etag: '"sample-preparing"',
+      etag: '"sample-finished"',
     })
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('创建寄送记录')
-    expect(wrapper.text()).toContain('暂未创建寄送记录，暂无物流信息。')
+    expect(wrapper.text()).not.toContain('创建寄送记录')
+    expect(wrapper.text()).toContain('暂无历史寄送记录。')
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('暂未维护')
     expect(wrapper.text()).not.toContain('等待运输事实')
   })
 
-  it('将物料进度按时间显示，并为运输中的物流提供更新入口', async () => {
-    const { fetchSample, fetchSampleShipment } = await import('@/api/samples')
+  it('历史物料进度按时间只读显示', async () => {
     const currentShipment = {
       ...fixtures.shipment,
       status: 'SHIPPED', status_display: '已寄出', delivered_at: null,
@@ -211,22 +193,15 @@ describe('SampleFulfillmentView', () => {
       },
       etag: '"sample-shipped"',
     })
-    vi.mocked(fetchSampleShipment).mockResolvedValueOnce({ data: currentShipment, etag: '"shipment-shipped"' })
     const wrapper = mount(SampleFulfillmentView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('更新最新进度')
+    expect(wrapper.text()).not.toContain('更新最新进度')
     expect(wrapper.text()).toContain('物料进度')
     expect(wrapper.text()).toContain('物料已到达转运中心')
     expect(wrapper.text()).toContain('物料已完成装车')
     expect(wrapper.findAll('.material-progress-timeline article')).toHaveLength(2)
     expect(wrapper.findAll('.material-progress-timeline article > span')).toHaveLength(2)
-    const manualDeliveryButton = wrapper.findAll('button').find((button) => button.text() === '手工签收')
-    const exceptionButton = wrapper.findAll('button').find((button) => button.text() === '记录异常')
-    expect(manualDeliveryButton).toBeDefined()
-    expect(exceptionButton).toBeDefined()
-    expect(manualDeliveryButton?.classes()).not.toContain('is-text')
-    expect(exceptionButton?.classes()).not.toContain('is-text')
   })
 })

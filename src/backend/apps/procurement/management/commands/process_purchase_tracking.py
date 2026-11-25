@@ -1,11 +1,14 @@
 """采购风险producer：只登记通知队列，企微投递仍由通知worker负责。"""
 import json
 import time
+from contextlib import closing
 
+from psycopg import sql
 from django.core.management.base import BaseCommand, CommandError
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from django.utils import timezone
 
+from apps.procurement.tracking_hooks import SUPPLIER_TRACKING_CHANNEL
 from apps.procurement.tracking_runner import recompute_tracking
 
 
@@ -26,18 +29,33 @@ class Command(BaseCommand):
             raise CommandError('只读预览不使用持续循环。')
         dry_run = options['dry_run'] or not (options['once'] or options['loop'])
         try:
-            while True:
-                if options['loop']:
-                    close_old_connections()
-                result = recompute_tracking(dry_run=dry_run)
-                result['finished_at'] = timezone.now().isoformat()
-                result['outcome'] = 'preview' if dry_run else 'success' if result['enabled'] else 'disabled'
-                self.stdout.write(json.dumps(result, ensure_ascii=False))
-                if not options['loop']:
-                    break
-                time.sleep(options['interval'])
+            if options['loop']:
+                self._watch(options['interval'])
+            else:
+                self._scan(dry_run=dry_run)
         except KeyboardInterrupt:
             self.stdout.write('采购风险扫描已停止。')
         finally:
             if options['loop']:
                 close_old_connections()
+
+    def _scan(self, *, task_ids=None, dry_run=False):
+        result = recompute_tracking(task_ids=task_ids, dry_run=dry_run)
+        result['finished_at'] = timezone.now().isoformat()
+        result['outcome'] = 'preview' if dry_run else 'success' if result['enabled'] else 'disabled'
+        self.stdout.write(json.dumps(result, ensure_ascii=False))
+
+    def _watch(self, interval):
+        with closing(connection.copy()) as listener:
+            with listener.cursor() as cursor:
+                cursor.execute(sql.SQL("LISTEN {}").format(sql.Identifier(SUPPLIER_TRACKING_CHANNEL)))
+            task_ids = None
+            while True:
+                close_old_connections()
+                self._scan(task_ids=task_ids)
+                if task_ids is None:
+                    next_full_scan = time.monotonic() + interval
+                # Keep the periodic full scan even when submissions keep arriving.
+                timeout = max(0, next_full_scan - time.monotonic())
+                notices = list(listener.connection.notifies(timeout=timeout, stop_after=1))
+                task_ids = sorted({notice.payload for notice in notices}) if notices and time.monotonic() < next_full_scan else None

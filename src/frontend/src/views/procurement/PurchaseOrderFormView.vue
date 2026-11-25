@@ -35,6 +35,7 @@ import type {
   PurchaseOrderProductionTaskOption,
   PurchaseOrderSource,
   PurchaseOrderSourceLine,
+  PurchaseOrderSupplierOption,
   PurchaseBatchType,
   PurchaseSetPricing,
 } from '@/types/purchaseOrder'
@@ -45,12 +46,11 @@ import { formatMoney } from './purchaseOrderDetailDisplay'
 import PurchaseSetPriceCell from './PurchaseSetPriceCell.vue'
 import PurchaseSetPricingDialog from './PurchaseSetPricingDialog.vue'
 import PurchaseQuantitySources from './PurchaseQuantitySources.vue'
-import { purchaseFabricColor } from './purchaseGroupDisplay'
 import { applySetPricing, isExplicitZeroPrice, orderSetQuantity, setPriceText, syncSetTerm, type SetPricingChange } from './purchaseSetPricing'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
   batch_source?: PurchaseGroupProgressLine
-  fabric_color?: string
+  material_color?: string
   set_pricing?: PurchaseSetPricing | null
   purchase_group_line_id?: string
   supplier_id: string | null
@@ -228,6 +228,7 @@ const existingGroupLinks = computed(() => {
   if (links.size || !existingSourceBlocker.value) return [...links.values()]
   return [{ id: 'existing', label: '进入已有采购需求', blocker: existingSourceBlocker.value }]
 })
+const sourceBlockerMessage = computed(() => [...new Set(source.value?.blockers.map(blocker => blocker.message))].join(' '))
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
 const selectedSupplierCount = computed(() => new Set(selectedLines.value.map((line) => line.supplier_id).filter(Boolean)).size)
@@ -244,6 +245,18 @@ const reviewedPurchaseTotal = computed(() => formatScaled(
   reviewedPurchaseLines.value.reduce((total, line) => total + (pricedAmount(line) ?? 0n), 0n),
 ))
 const supplierCategories = computed(() => [...new Set(lines.value.map((line) => line.category || '未分类'))])
+const suppliersByCategory = computed(() => {
+  const grouped = new Map<SupplierCategory, PurchaseOrderSupplierOption[]>()
+  for (const supplier of options.value.suppliers) {
+    for (const category of supplier.supplier_categories) {
+      const suppliers = grouped.get(category)
+      if (suppliers) suppliers.push(supplier)
+      else grouped.set(category, [supplier])
+    }
+  }
+  return grouped
+})
+const noMatchingSupplierText = '暂无匹配供应商，请在供应商信息中维护对应类别'
 const bulkSupplierLines = computed(() => {
   if (!bulkSupplierCategory.value) return []
   return bulkSupplierCategory.value === '__all__'
@@ -259,7 +272,7 @@ const bulkSupplierOptions = computed(() => {
 })
 const bulkSupplierEmptyText = computed(() => bulkSupplierLines.value.some((line) => !line.suggested_supplier_category)
   ? '当前物料分类尚未对应供应商类别，请逐行选择供应商'
-  : '暂无匹配供应商，请在供应商信息中维护对应类别')
+  : noMatchingSupplierText)
 const completeLineCount = computed(() => selectedLines.value.filter(isLineComplete).length)
 const isPreviewMode = computed(() => Boolean(source.value && !source.value.can_create && lines.value.length))
 const detailTableHeight = computed(() => detailFullscreen.value ? 'calc(100dvh - 108px)'
@@ -323,7 +336,7 @@ function applySource(result: PurchaseOrderSource, selectAvailable = false): void
     unit_price: '',
   }))
   sourceError.value = !result.can_create && !selectedBomIds.value.length
-    ? result.requires_bom_selection ? '本单暂无可新建采购需求的产品。' : result.blockers?.[0]?.message || '当前采购来源暂无可采购的明细。'
+    ? result.requires_bom_selection ? '本单暂无可新建采购需求的产品。' : sourceBlockerMessage.value || '当前采购来源暂无可采购的明细。'
     : ''
 }
 
@@ -531,6 +544,11 @@ function applyBulkSupplier(value: string | null): void {
 function onLineSupplierChange(line: PurchaseLineDraft) {
   syncSetTerm(lines.value, line, 'supplier_id')
   refreshBulkSupplier()
+}
+
+function lineSupplierOptions(line: PurchaseLineDraft): PurchaseOrderSupplierOption[] {
+  const category = line.suggested_supplier_category
+  return category ? suppliersByCategory.value.get(category) ?? [] : options.value.suppliers
 }
 
 function onLineDeliveryChange(line: PurchaseLineDraft) {
@@ -832,7 +850,7 @@ function validateDraft(selection = selectedLines.value, reviewLines?: PurchaseLi
     if (source.value?.existing_purchase_order_number) {
       return `该采购来源已存在采购单 ${source.value.existing_purchase_order_number}，不能重复创建。`
     }
-    return source.value?.blockers?.[0]?.message || '所选 BOM 尚未校验、明细为空或已失效，暂不能保存采购草稿。'
+    return sourceBlockerMessage.value || '所选 BOM 尚未校验、明细为空或已失效，暂不能保存采购草稿。'
   }
   }
   if (!lines.value.length && !allowEmpty) return '当前生产订单没有可保存的采购明细。'
@@ -1163,7 +1181,7 @@ async function restoreDetailSource(): Promise<void> {
       : await fetchPurchaseOrderSource(sourceId, bomId || undefined)
     applySource(result)
     if (!result.can_create || !lines.value.length) {
-      showActionError(result.blockers?.[0]?.message || '当前来源没有可填写的采购明细。')
+      showActionError(sourceBlockerMessage.value || '当前来源没有可填写的采购明细。')
     }
   } catch (error) {
     showActionError(apiErrorMessage(error, '所选采购来源已不存在或已发生变化，请返回重新选择。'))
@@ -1249,7 +1267,7 @@ async function goToDetails(): Promise<void> {
     return
   }
   if (!canContinueToDetails.value) {
-    showActionError(source.value?.blockers?.[0]?.message || sourceError.value || '当前来源没有可采购的明细。')
+    showActionError(sourceBlockerMessage.value || sourceError.value || '当前来源没有可采购的明细。')
     return
   }
   const sourceId = isSampleSource.value ? selectedTask.value?.source_id || '' : selectedTaskId.value
@@ -1321,7 +1339,9 @@ function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
   })
   const remaining = remainingForBatch(line, weightLine ? snapshot.suggested_purchase_weight_kg || line.required_quantity : line.required_quantity)
   return {
-    batch_source: line, fabric_color: purchaseFabricColor(snapshot),
+    batch_source: line,
+    material_color: materialAttributeFields(snapshot).filter(field => ['色卡', '颜色', '色号'].includes(field.label))
+      .map(field => field.value).join(' / '),
     purchase_group_line_id: line.id,
     material_catalog_id: snapshot.material_catalog_id, material_selection_snapshot: snapshot.material_selection_snapshot,
     bom_id: snapshot.bom_id || undefined, bom_line_id: snapshot.bom_line_id || undefined,
@@ -1469,7 +1489,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 </script>
 
 <template>
-  <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
+  <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep, 'is-batch-page': isBatchMode }" data-testid="purchase-order-form-page">
     <div v-if="!canAdd" class="state-page">
       <h1>无权新建采购需求</h1>
       <p>请联系管理员开通“{{ isPackaging ? '办理包材采购' : '采购订单新增' }}”权限后重试。</p>
@@ -1675,7 +1695,10 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
           </ElTableColumn>
           <ElTableColumn prop="category" label="分类" width="106" show-overflow-tooltip />
           <ElTableColumn label="物料信息" width="208">
-            <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong><small v-if="row.fabric_color">{{ row.fabric_color }}</small></div></template>
+            <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
+          </ElTableColumn>
+          <ElTableColumn v-if="isBatchMode" label="颜色" width="112" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.material_color || '—' }}</template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="材质" width="118" show-overflow-tooltip>
             <template #default="{ row }">{{ row.material || row.raw_material || '—' }}</template>
@@ -1711,9 +1734,10 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
               <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier"
                 @copy.capture="copyGridTerm($event, row, 'supplier_id')" @paste.capture="pasteGridTerm($event, row, 'supplier_id')"
                 @keydown.capture="handleGridNavigation($event, $index, 0)">
-                <ElSelect v-model="row.supplier_id" :persistent="false" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="onLineSupplierChange(row)">
+                <ElSelect v-model="row.supplier_id" :persistent="false" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'"
+                  :no-data-text="row.suggested_supplier_category ? noMatchingSupplierText : '暂无可用供应商'" popper-class="purchase-detail-popper" @change="onLineSupplierChange(row)">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
-                <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
+                  <ElOption v-for="supplier in lineSupplierOptions(row)" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
                 </ElSelect>
               </div>
             </template>
@@ -1956,6 +1980,9 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .task-selector-hint { display: grid; min-height: 150px; place-content: center; margin: 0; color: crm.$crm-text-muted; }
 .detail-card { flex: none; min-height: 220px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 14px; }
 .detail-card:not(.is-fullscreen) .purchase-lines { flex: none; }
+.is-batch-page .detail-card:not(.is-fullscreen) { flex: 1; min-height: 0; }
+.is-batch-page .detail-card:not(.is-fullscreen) .purchase-lines { flex: 1 1 0; }
+.is-batch-page .purchase-lines :deep(.el-scrollbar__wrap) { overscroll-behavior-y: contain; }
 .detail-card.is-fullscreen { position: fixed; z-index: 1900; inset: 0; height: 100dvh; width: 100%; border-radius: 0; }
 .detail-card > header { display: flex; flex: 0 0 auto; min-height: 52px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 8px 12px; gap: 10px; }
 .detail-card > header > div { display: flex; align-items: center; gap: 12px; }
@@ -2002,7 +2029,7 @@ onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown',
 .material-cell, .quantity-cell { display: flex; min-width: 0; }
 .material-cell { flex-direction: column; }
 .material-cell strong, .quantity-cell strong { font-weight: 500; font-size: 13px; }
-.material-cell small, .quantity-cell small { color: crm.$crm-text-secondary; font-size: 12px; line-height: 19px; }
+.quantity-cell small { color: crm.$crm-text-secondary; font-size: 12px; line-height: 19px; }
 .material-cell > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .material-detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: crm.$crm-text-secondary; font-size: 12px; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }

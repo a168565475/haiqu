@@ -45,16 +45,11 @@ function isTube(line: MaterialTransferLineRecord) {
   return line.material_selection_snapshot?.category_key === 'TUBE' || !!line.raw_bar_length_m
 }
 const hasTube = computed(() => lineRows.value.some(({ line }) => isTube(line)))
-const columnCount = computed(() => 10 + attributeKeys.value.length + (hasColorIdentity.value ? 2 : 0) + (hasTube.value ? 2 : 0))
-const tableWidth = computed(() => 1590 + attributeKeys.value.length * 150 + (hasColorIdentity.value ? 260 : 0) + (hasTube.value ? 300 : 0))
+const columnCount = computed(() => 10 + attributeKeys.value.length + (hasColorIdentity.value ? 2 : 0) + (hasTube.value ? 1 : 0))
+const tableWidth = computed(() => 1590 + attributeKeys.value.length * 150 + (hasColorIdentity.value ? 260 : 0) + (hasTube.value ? 150 : 0))
 function attributeValue(line: MaterialTransferLineRecord, key: string) {
   const snapshot = line.material_selection_snapshot
   return (key === 'color' ? snapshot?.color_name || snapshot?.attributes?.color : snapshot?.attributes?.[key]) || '—'
-}
-function weightValue(line: MaterialTransferLineRecord) {
-  if (!isTube(line)) return '—'
-  const value = formatQuantity(line.weight_quantity)
-  return value === '—' ? '重量待核对' : value
 }
 async function refresh() {
   if (!canView.value || loading.value) return
@@ -84,7 +79,7 @@ onMounted(() => { void refresh() })
               <col v-for="key in attributeKeys" :key="key" class="attribute-column">
               <template v-if="hasColorIdentity"><col class="color-column"><col class="color-column"></template>
               <col class="quantity-column"><col class="unit-column">
-              <template v-if="hasTube"><col class="attribute-column"><col class="attribute-column"></template>
+              <col v-if="hasTube" class="attribute-column">
               <col class="warehouse-column"><col class="zone-column"><col class="remark-column">
             </colgroup>
             <thead><tr>
@@ -92,7 +87,7 @@ onMounted(() => { void refresh() })
               <th v-for="key in attributeKeys" :key="key">{{ attributeLabels[key] || key }}</th>
               <template v-if="hasColorIdentity"><th>色卡</th><th>色号</th></template>
               <th class="num">数量</th><th>单位</th>
-              <template v-if="hasTube"><th class="num">单根原长（m）</th><th class="num">实际重量（kg）</th></template>
+              <th v-if="hasTube" class="num">单根原长（m）</th>
               <th>仓库</th><th>库区</th><th>备注</th>
             </tr></thead>
             <tbody>
@@ -104,7 +99,7 @@ onMounted(() => { void refresh() })
                 <td v-for="key in attributeKeys" :key="key" :title="attributeValue(row.line, key)">{{ attributeValue(row.line, key) }}</td>
                 <template v-if="hasColorIdentity"><td :title="row.line.material_selection_snapshot?.color_card">{{ row.line.material_selection_snapshot?.color_card || '—' }}</td><td :title="row.line.material_selection_snapshot?.color_code">{{ row.line.material_selection_snapshot?.color_code || '—' }}</td></template>
                 <td class="num">{{ formatQuantity(row.line.quantity) }}</td><td>{{ row.line.material_selection_snapshot?.unit_name || row.line.unit_name || '—' }}</td>
-                <template v-if="hasTube"><td class="num">{{ isTube(row.line) ? formatQuantity(row.line.raw_bar_length_m) : '—' }}</td><td class="num">{{ weightValue(row.line) }}</td></template>
+                <td v-if="hasTube" class="num">{{ isTube(row.line) ? formatQuantity(row.line.raw_bar_length_m) : '—' }}</td>
                 <td :title="row.line.warehouse_name">{{ row.line.warehouse_name || '—' }}</td><td :title="row.line.zone_name">{{ row.line.zone_name || '—' }}</td>
                 <td :title="row.record.remark">{{ row.record.remark || '—' }}</td>
               </tr>

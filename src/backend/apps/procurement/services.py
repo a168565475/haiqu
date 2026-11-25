@@ -555,19 +555,29 @@ def _latest_bom_for_product(product):
     return boms[0] if boms else None
 
 
-def _hardware_quantity_blocker(product, bom, section, line, source):
-    weight = _hardware_weight_data(line, bom)
-    if weight.get("weight_source"):
-        detail = "请核对按公斤填写的采购数量。"
-    elif weight["piece_status"] == PurchaseQuantityParseStatus.READY and weight["unit_status"] != PurchaseQuantityParseStatus.READY:
-        detail = "按公斤采购，请填写有效的单个材料重量（kg），以便从件数换算。"
+def _purchase_quantity_blocker(product, bom, section, line, source):
+    field = source["source_quantity_field"]
+    if field == "hardware_weight_kg":
+        weight = _hardware_weight_data(line, bom)
+        if weight.get("weight_source"):
+            detail = "请核对按公斤填写的采购数量。"
+        elif weight["piece_status"] == PurchaseQuantityParseStatus.READY and weight["unit_status"] != PurchaseQuantityParseStatus.READY:
+            detail = "按公斤采购，请填写有效的单个材料重量（kg），以便从件数换算。"
+        else:
+            detail = "按公斤采购，请核对五金用量、数量单位和计算出的总重量。"
+    elif section.section_type == BomSectionType.PROFILE:
+        detail = "请核对管材采购根数、原管长度和长料单重（kg/根）。"
+    elif field == "units_per_box":
+        detail = "请核对包材用量（多少成品用一份），以便计算采购数量。"
+    elif section.title.strip() == "面料类" and line.unit != "米":
+        detail = "面料采购用量须以米为单位。"
     else:
-        detail = "按公斤采购，请核对五金用量、数量单位和计算出的总重量。"
+        detail = "请核对 BOM 用量，以便计算采购数量。"
     name = (line.material_selection_snapshot or {}).get("name") or line.part_name or line.raw_material
     return _blocker(
         "BOM_PURCHASE_QUANTITY_INVALID", f"{section.title}第{line.line_number}行「{name}」：{detail}",
         product=product, bom=bom, bom_line_id=str(line.pk), line_number=line.line_number,
-        section_title=section.title, source_quantity_field=source["source_quantity_field"],
+        section_title=section.title, source_quantity_field=field,
     )
 
 
@@ -612,10 +622,7 @@ def _bom_source_details(product, bom, purchase_scope=PurchaseScope.STANDARD):
                 source_lines.append(source_line)
                 if line.material_catalog_id:
                     if source_line["quantity_parse_status"] != "READY":
-                        if source_line["source_quantity_field"] == "hardware_weight_kg":
-                            blockers.append(_hardware_quantity_blocker(product, bom, section, line, source_line))
-                        else:
-                            identity_errors.append({"bom_line_id": str(line.pk), "reason": "MATERIAL_QUANTITY_REQUIRED"})
+                        blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
                     continue
                 material, source_key = resolve_bom_line_raw_material(
                     line,
@@ -634,7 +641,7 @@ def _bom_source_details(product, bom, purchase_scope=PurchaseScope.STANDARD):
                     continue
                 if section.section_type == "PROFILE":
                     if source_line["quantity_parse_status"] != "READY":
-                        identity_errors.append({"bom_line_id": str(line.pk), "reason": "PIPE_PARAMETERS_REQUIRED"})
+                        blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
                     continue
                 source_unit = str(source_line["source_unit_text"] or "").strip()
                 valid_units = {
@@ -647,7 +654,7 @@ def _bom_source_details(product, bom, purchase_scope=PurchaseScope.STANDARD):
                     and is_hardware_weight_snapshot(source_line.get("calculation_snapshot"))
                 )
                 if hardware_weighted and source_line["quantity_parse_status"] != "READY":
-                    blockers.append(_hardware_quantity_blocker(product, bom, section, line, source_line))
+                    blockers.append(_purchase_quantity_blocker(product, bom, section, line, source_line))
                 if source_unit not in valid_units and not hardware_weighted:
                     identity_errors.append(
                         {

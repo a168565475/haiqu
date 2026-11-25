@@ -296,7 +296,10 @@ def _record(*, balance, quantity, direction, source, weight_quantity=None):
         before_weight, movement_weight, after_weight = piece_weight_change(
             before_quantity=before, before_weight=before_weight, quantity=quantity,
             direction=direction, weight_quantity=weight_quantity, quantity_unit=balance.identity_snapshot["unit_name"])
-    elif source.get("snapshot", {}).get("receipt_quantity_mode") == "ROOTS" and direction == MaterialStockDirection.IN:
+    elif source["snapshot"].get("receipt_quantity_mode") == "ROOTS" and (
+        direction == MaterialStockDirection.IN or source["source_type"] == "MATERIAL_TRANSFER"
+    ):
+        # 只点根数后，剩余库存的实重未知；此前单据上的实重仍保留。
         balance.bar_weight_kg = None
     elif before_weight is None and weight_quantity is not None and direction == MaterialStockDirection.IN:
         movement_weight = weight_quantity

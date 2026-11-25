@@ -73,7 +73,7 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
-  'customers', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
+  'customers', 'purchase-orders', 'purchase-batch-create', 'purchase-tracking', 'purchase-alerts', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
   'packaging-purchase-create', 'packaging-purchase-batch',
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
@@ -95,7 +95,7 @@ const contentScrollRoutes = [
   'workshop-outsourcing-rework-detail', 'workshop-outsourcing-detail', 'workshop-outsourcing-factory-detail',
   'warehouse-outsourcing-rework-detail', 'warehouse-outsourcing-detail',
   'purchase-order-detail', 'purchase-inbound-detail',
-  'purchase-group-detail', 'purchase-batch-create',
+  'purchase-group-detail',
 ]
 const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(route.name || '')))
 </script>

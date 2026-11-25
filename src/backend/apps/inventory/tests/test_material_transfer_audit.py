@@ -14,7 +14,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
 from apps.material_catalog.models import MaterialCatalog
 from apps.organizations.models import Employee
-from apps.reference_data.models import ProductionUnit, ProductColor
+from apps.reference_data.models import MaterialAttributePublicValue, ProductionUnit, ProductColor
 from ..models import MaterialTransfer, MaterialTransferLine, PublicStockBalance, PublicStockMovement, Warehouse, WarehouseZone
 
 
@@ -30,7 +30,13 @@ class TransferFixture:
         self.unit, _ = ProductionUnit.objects.get_or_create(unit_name="PCS", defaults={"unit_code": "TAPCS"})
         self.warehouse = Warehouse.objects.create(warehouse_number="TA1", warehouse_name="审核材料仓", warehouse_type="MATERIAL")
         self.zone = WarehouseZone.objects.create(warehouse=self.warehouse, zone_name="主库区")
-        self.catalog = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name="审核五金", base_warehouse=self.warehouse)
+        self.catalog = self.hardware_catalog("审核五金")
+
+    def hardware_catalog(self, name):
+        catalog = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name=name, base_warehouse=self.warehouse)
+        catalog.attribute_values.create(scope="BASE", field_key="specification", value="M8")
+        catalog.allowed_units.create(scope="BASE", unit=self.unit)
+        return catalog
 
     def item(self, *, catalog=None, quantity="2.0000", zone=None):
         catalog = catalog or self.catalog
@@ -49,6 +55,36 @@ class TransferFixture:
 
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True, MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=False)
 class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase):
+    def test_transfers_use_catalog_options_without_adding_shared_values_or_units(self):
+        MaterialAttributePublicValue.objects.create(category_key="HARDWARE", template_key="HARDWARE",
+            scope="BASE", field_key="specification", value="公共规格")
+        other = self.hardware_catalog("另一品名")
+        other.attribute_values.create(scope="BASE", field_key="specification", value="另一品名专用规格")
+        other_unit, _ = ProductionUnit.objects.get_or_create(unit_name="另一单位", defaults={"unit_code": "TAOTHER"})
+        other.allowed_units.create(scope="BASE", unit=other_unit)
+        master_version = self.catalog.updated_at
+        for direction in ("IN", "OUT"):
+            for field, value in (("specification", "公共规格"), ("specification", "另一品名专用规格"), ("unit_id", str(other_unit.pk))):
+                with self.subTest(direction=direction, field=field, value=value):
+                    item = self.item()
+                    selection = item["material_selection"]
+                    if field == "unit_id":
+                        selection[field] = value
+                    else:
+                        selection["attributes"][field] = value
+                    response = self.post(self.payload(item, direction=direction))
+                    self.assertEqual(response.status_code, 400, response.data)
+                    self.assertIn("品名", response.data["error"]["message"])
+            response = self.post(self.payload(self.item(), direction=direction))
+            self.assertEqual(response.status_code, 201, response.data)
+        self.catalog.refresh_from_db()
+        self.assertEqual(self.catalog.updated_at, master_version)
+        self.assertEqual(list(self.catalog.attribute_values.values_list("value", flat=True)), ["M8"])
+        self.assertEqual(list(self.catalog.allowed_units.values_list("unit_id", flat=True)), [self.unit.pk])
+        self.assertFalse(MaterialAttributePublicValue.objects.filter(field_key="specification", value="M8").exists())
+        self.assertEqual(MaterialTransferLine.objects.count(), 2)
+        self.assertEqual(PublicStockMovement.objects.count(), 2)
+
     def test_inbound_transfer_appears_in_shared_receipt_records_and_outbound_does_not(self):
         received = self.post(self.payload())
         self.assertEqual(received.status_code, 201, received.data)
@@ -106,11 +142,12 @@ class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase)
     def test_default_warehouse_cannot_be_replaced_by_another_material_warehouse(self):
         other = Warehouse.objects.create(warehouse_number="TA2", warehouse_name="另一材料仓", warehouse_type="MATERIAL")
         zone = WarehouseZone.objects.create(warehouse=other, zone_name="主库区")
+        options_before = list(self.catalog.attribute_values.values_list("pk", flat=True))
         response = self.post(self.payload(self.item(zone=zone)))
         self.assertEqual(response.status_code, 409, response.data)
         self.assertFalse(MaterialTransfer.objects.exists())
         self.assertFalse(PublicStockBalance.objects.exists())
-        self.assertFalse(self.catalog.attribute_values.exists())
+        self.assertEqual(list(self.catalog.attribute_values.values_list("pk", flat=True)), options_before)
 
     def test_missing_default_keeps_explicit_material_warehouse_selection(self):
         self.catalog.base_warehouse = None
@@ -147,6 +184,7 @@ class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase)
 
     def test_whole_unit_and_disabled_unit_are_rejected_without_writes(self):
         whole, _ = ProductionUnit.objects.get_or_create(unit_name="套", defaults={"unit_code": "TASET"})
+        self.catalog.allowed_units.create(scope="BASE", unit=whole)
         item = self.item(quantity="1.5")
         item["material_selection"]["unit_id"] = str(whole.pk)
         response = self.post(self.payload(item))
@@ -156,15 +194,19 @@ class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase)
         self.unit.save(update_fields=["status"])
         response = self.post(self.payload())
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("单位已停用或归档", response.data["error"]["message"])
+        self.assertIn("当前品名与属性组的有效单位", response.data["error"]["message"])
         self.assertFalse(MaterialTransfer.objects.exists())
 
     def test_same_color_name_with_distinct_color_cards_keeps_separate_stock(self):
         fabric = MaterialCatalog.objects.create(category_key="FABRIC", template_key="FABRIC", name="审核布料", base_warehouse=self.warehouse)
         meter, _ = ProductionUnit.objects.get_or_create(unit_name="米", defaults={"unit_code": "TAM"})
         colors = [ProductColor.objects.create(color_card="审核色卡", color_code=code, color_name="同名蓝") for code in ("A", "B")]
+        fabric.allowed_units.create(scope="BASE", unit=meter)
+        for field, value in (("material", "涤纶"), ("fabric_spec", "600D"), ("width", "150")):
+            fabric.attribute_values.create(scope="BASE", field_key=field, value=value)
         items = []
         for color in colors:
+            fabric.attribute_values.create(scope="BASE", field_key="color", value=color.color_name, product_color=color)
             item = self.item(catalog=fabric)
             item["material_selection"].update({"unit_id": str(meter.pk), "product_color_id": str(color.pk),
                 "color_card": color.color_card, "color_code": color.color_code, "color_name": color.color_name,
@@ -256,7 +298,7 @@ class MaterialTransferConcurrencyTests(TransferFixture, TransactionTestCase):
         return self.concurrent(*(call(payload) for payload in payloads))
 
     def test_reversed_batch_material_order_does_not_deadlock(self):
-        other = MaterialCatalog.objects.create(category_key="HARDWARE", template_key="HARDWARE", name="审核五金二", base_warehouse=self.warehouse)
+        other = self.hardware_catalog("审核五金二")
         self.assertEqual(self.post(self.payload(self.item(quantity="1"), self.item(catalog=other, quantity="1"))).status_code, 201)
         first, second = self.item(quantity="1"), self.item(catalog=other, quantity="1")
         results = self.simultaneous_catalog_requests(self.payload(first, second), self.payload(second, first))

@@ -2,22 +2,21 @@
 
 from copy import deepcopy
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.catalog_selection import SECTION_CATEGORIES, apply_catalog_selection
-from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 from apps.material_catalog.models import MaterialCatalog
-from apps.material_catalog.public_configuration import can_contribute
 from apps.procurement.pipe_purchase import pipe_meters
 
 from .catalog_stock_identity import build_catalog_stock_identity
 from .catalog_manual_receipts import lock_manual_request
+from .pipe_receipt_basis import ROOT_RECEIPT
 from .models import (
     MaterialStockQuality,
     MaterialTransfer,
@@ -50,7 +49,21 @@ def _json_value(value):
     return value
 
 
-def _resolve_catalog(item, *, request, versions, direction):
+def _record_tube_length(snapshot, raw_length, supplied_length):
+    # 实长由仓库按米填写；库存身份沿用单据快照中的毫米值。
+    millimeters = int(raw_length * 1000)
+    if supplied_length is not None:
+        try:
+            consistent = Decimal(supplied_length) == millimeters
+        except InvalidOperation:
+            consistent = False
+        if not consistent:
+            raise ValidationError({"raw_bar_length_m": "管材选料长度与填写的单根长度不一致。"})
+    snapshot["attributes"]["length"] = str(millimeters)
+    snapshot["display_name"] = " / ".join([snapshot["name"], *snapshot["attributes"].values(), snapshot["unit_name"]])
+
+
+def _resolve_catalog(item, *, request, versions):
     catalog_id = item["material_catalog_id"]
     catalog = MaterialCatalog.objects.select_for_update().filter(
         pk=catalog_id, archived_at__isnull=True,
@@ -61,6 +74,7 @@ def _resolve_catalog(item, *, request, versions, direction):
     if not title or catalog.category_key == "FABRIC_SEMI":
         raise ValidationError({"items": "材料收发只能选择基础原料。"})
     selection = deepcopy(item["material_selection"])
+    supplied_length = selection["attributes"].pop("length", None) if catalog.category_key == "TUBE" else None
     projection = type("SelectionProjection", (), {})()
     projection.section = type("SelectionSection", (), {"title": title, "section_type": "PROFILE" if catalog.category_key == "TUBE" else "GENERAL"})()
     projection.raw_values = {}
@@ -71,8 +85,8 @@ def _resolve_catalog(item, *, request, versions, direction):
         request=request,
         persist=True,
         versions=versions,
-        allow_public_creation=can_contribute(request),
-        prefer_catalog_options=True,
+        require_catalog_options=True,
+        require_tube_length=False,
         selection_permission="inventory.receive_material",
     )
     selected = deepcopy(projection.material_selection_snapshot)
@@ -80,23 +94,18 @@ def _resolve_catalog(item, *, request, versions, direction):
         raise ValidationError({"items": "材料收发只能选择原料，不能选择加工半成品。"})
     raw_length = item.get("raw_bar_length_m")
     raw_count = item.get("raw_bar_count")
-    weight = item.get("weight_quantity")
     if selected["category_key"] == "TUBE":
+        if item.get("weight_quantity") is not None:
+            raise ValidationError({"weight_quantity": "管材收发请按根登记，填写根数和单根长度即可。"})
         if selected["unit_name"] != "根":
             raise ValidationError({"items": "管材库存单位必须为根。"})
         if raw_count is None or raw_length is None:
             raise ValidationError({"items": "管材须填写根数和单根长度。"})
         pipe_meters(raw_count, raw_length, field="raw_bar_count")
+        _record_tube_length(selected, raw_length, supplied_length)
         quantity = Decimal(raw_count)
-        if direction == MaterialTransferDirection.IN:
-            try:
-                weight = decimal_quantity(weight, "weight_quantity", max_digits=22)
-            except MaterialFlowValueError as error:
-                raise ValidationError({"weight_quantity": "一般管材入库须填写实际重量 KG，且为最多 4 位小数的正数。"}) from error
-        elif weight is not None:
-            raise ValidationError({"weight_quantity": "一般出库重量按库存实际重量分摊，无需填写。"})
     else:
-        if raw_count is not None or raw_length is not None or weight is not None:
+        if raw_count is not None or raw_length is not None or item.get("weight_quantity") is not None:
             raise ValidationError({"items": "非管材不能填写根数、单根长度或管材重量。"})
         quantity = item.get("quantity")
         if quantity is None or quantity <= 0:
@@ -106,7 +115,6 @@ def _resolve_catalog(item, *, request, versions, direction):
     item["material_selection_snapshot"] = selected
     item["quantity"] = quantity
     item["raw_bar_length_m"] = raw_length if selected["category_key"] == "TUBE" else None
-    item["weight_quantity"] = weight
     item["base_warehouse_id"] = catalog.base_warehouse_id
     return selected
 
@@ -161,7 +169,7 @@ def create_material_transfer(*, client_request_id, direction, transfer_date, rem
     catalog_ids = {item["material_catalog_id"] for item in prepared}
     list(MaterialCatalog.objects.select_for_update().filter(pk__in=catalog_ids).order_by("id"))
     for item in prepared:
-        _resolve_catalog(item, request=request, versions=versions, direction=direction)
+        _resolve_catalog(item, request=request, versions=versions)
 
     zone_ids = sorted({item["zone_id"] for item in prepared}, key=str)
     lock_public_stock_locations(zone_ids)
@@ -197,7 +205,6 @@ def create_material_transfer(*, client_request_id, direction, transfer_date, rem
             zone=zones_by_id[item["zone_id"]],
             quantity=item["quantity"],
             raw_bar_length_m=item.get("raw_bar_length_m"),
-            weight_quantity=item.get("weight_quantity"),
         )
         created.append(line)
 
@@ -216,14 +223,13 @@ def create_material_transfer(*, client_request_id, direction, transfer_date, rem
             "material_selection_snapshot": selected,
             "warehouse": line.zone.warehouse.warehouse_name,
             "zone": line.zone.zone_name,
-            "weight_quantity": str(line.weight_quantity) if line.weight_quantity is not None else None,
+            **(ROOT_RECEIPT if selected["category_key"] == "TUBE" else {"weight_quantity": None}),
         }
         if direction == MaterialTransferDirection.IN:
             credit_public_stock(
                 identity=identity, zone=line.zone, quantity=line.quantity,
                 source_type="MATERIAL_TRANSFER", source_id=transfer.pk, source_line_id=line.line_key,
                 actor_employee=actor_employee, snapshot=snapshot,
-                weight_quantity=line.weight_quantity,
             )
         else:
             balance = PublicStockBalance.objects.filter(
@@ -237,8 +243,9 @@ def create_material_transfer(*, client_request_id, direction, transfer_date, rem
                 source_type="MATERIAL_TRANSFER", source_id=transfer.pk, source_line_id=line.line_key,
                 actor_employee=actor_employee, snapshot=snapshot,
             )
-            line.weight_quantity = movement.weight_quantity
-            line.save(update_fields=["weight_quantity", "updated_at"])
+            if movement.weight_quantity is not None:
+                line.weight_quantity = movement.weight_quantity
+                line.save(update_fields=["weight_quantity", "updated_at"])
 
     write_audit_log(
         object_type="MATERIAL_TRANSFER",

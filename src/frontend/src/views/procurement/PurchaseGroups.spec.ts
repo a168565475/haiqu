@@ -176,7 +176,7 @@ describe('同一生产任务合并采购', () => {
     }
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     const vm = await mountPage(PurchaseOrderFormView)
-    expect(vm.lines.map((line: any) => [line.fabric_color, line.actual_purchase_quantity])).toEqual([['红色 / R00', '500'], ['红色 / R01', '']])
+    expect(vm.lines.map((line: any) => [line.material_color, line.actual_purchase_quantity])).toEqual([['红色 / R00', '500'], ['红色 / R01', '']])
     expect(vm.batchRemainingQuantities.get(one!.id).primary).toBe('500')
     expect(vm.batchRemainingQuantities.get(two!.id).primary).toBe('待核对')
     vm.lines[0].actual_purchase_quantity = '480'

@@ -62,7 +62,7 @@ watch(sampleId, () => { filePreviewVisible.value = false; fileActions.reset() },
 const canInitiateMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.edit_sample_materials', undefined, sample.value)))
 const canConfirmMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.review_sample_materials', undefined, sample.value)))
 
-// 旧费用与寄送流程入口只按已有状态和权限开放；新材料状态不自动转入旧流程。
+// 旧费用入口只按已有状态和权限开放；寄送流程已下线，物流页只展示历史寄送与反馈。
 const canOpenFees = computed(() => Boolean(sample.value && authStore.moduleCan('samples.view_samplerequest', undefined, sample.value) && (
   sample.value.fee_records.length || sample.value.files?.some(file => file.file_role === 'FEE_EVIDENCE')
   || (['PENDING', 'PREPARING'].includes(sample.value.status) && authStore.moduleCan('samples.decide_sample_fee', undefined, sample.value))
@@ -70,8 +70,6 @@ const canOpenFees = computed(() => Boolean(sample.value && authStore.moduleCan('
 const canOpenFulfillment = computed(() => Boolean(sample.value && authStore.moduleCan('samples.view_samplerequest', undefined, sample.value)
   && (!sample.value.shipments.length || authStore.moduleCan('samples.view_sampleshipment', undefined, sample.value)) && (
     sample.value.shipments.length || sample.value.feedback.length
-    || (['PREPARING', 'SHIPPED'].includes(sample.value.status)
-      && authStore.moduleCan('samples.add_sampleshipment', undefined, sample.value) && authStore.moduleCan('samples.view_sampleshipment', undefined, sample.value))
     || (['DELIVERED', 'FEEDBACK_PENDING', 'CONFIRMED', 'COMPLETED'].includes(sample.value.status)
       && authStore.moduleCan('samples.add_samplefeedback', undefined, sample.value))
   )))

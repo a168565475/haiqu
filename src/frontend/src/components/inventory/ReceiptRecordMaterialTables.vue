@@ -90,6 +90,7 @@ const quantityWidths = computed(() => quantityHeadings.value.map((_, index) => t
 )))
 const tables = computed(() => receiptMaterialTables(rows.value).map(table => ({
   ...table,
+  quantityHeadings: props.receipt.source === 'TRANSFER' && table.key === 'TUBE' ? ['入库数量'] : quantityHeadings.value,
   attributeColumns: table.columns.map(label => ({
     label,
     minWidth: Math.min(280, textColumnWidth(
@@ -114,7 +115,7 @@ const tables = computed(() => receiptMaterialTables(rows.value).map(table => ({
           <ElTableColumn v-for="column in table.attributeColumns" :key="column.label" :label="column.label" :min-width="column.minWidth">
             <template #default="{ row }">{{ row.attributes.get(column.label) ?? '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-for="(label, index) in quantityHeadings" :key="label" :label="label"
+          <ElTableColumn v-for="(label, index) in table.quantityHeadings" :key="label" :label="label"
             :width="table.attributeColumns.length ? quantityWidths[index] : undefined"
             :min-width="table.attributeColumns.length ? undefined : quantityWidths[index]" align="right" class-name="receipt-quantity">
             <template #default="{ row }">{{ row.row.quantities[index] }}</template>

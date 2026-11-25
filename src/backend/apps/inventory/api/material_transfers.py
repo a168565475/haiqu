@@ -19,7 +19,9 @@ class MaterialTransferLineInputSerializer(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False)
     raw_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
     raw_bar_length_m = serializers.DecimalField(max_digits=19, decimal_places=3, min_value=Decimal("0.01"), required=False)
-    weight_quantity = serializers.DecimalField(max_digits=22, decimal_places=4, min_value=Decimal("0.0001"), required=False)
+    # 保留旧请求的字段，重试已成功的历史单据时仍能匹配原始提交内容。
+    weight_quantity = serializers.DecimalField(max_digits=22, decimal_places=4, min_value=Decimal("0.0001"), required=False,
+                                              write_only=True, help_text="仅兼容已提交的历史收发单重试。")
 
 
 class MaterialTransferInputSerializer(serializers.Serializer):

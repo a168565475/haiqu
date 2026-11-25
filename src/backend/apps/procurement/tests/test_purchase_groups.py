@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
+from django.db import connection
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
@@ -322,6 +323,34 @@ class PurchaseGroupApiTests(APITestCase):
             [(str(result.data["data"]["order_id"]), number) for result, number in [(first, 2), (second, 2), (third_batch, 3)]],
         )
         self.assertEqual(self.client.get(sheets_url, {"purchase_group_id": "invalid"}).status_code, 400)
+
+
+    @override_settings(PURCHASE_TRACKING_ENABLED=True)
+    def test_supplier_submit_wakes_tracking_once_and_retry_does_not_wake_it_again(self):
+        payload = self.batch_payload("20")
+        url = f"/api/v1/purchase-groups/{self.group_id}/submit-supplier-batch/"
+        etag = self.detail()["ETag"]
+        wakeups = []
+
+        def record_wakeup(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            if sql == "SELECT pg_notify(%s, %s)":
+                wakeups.append(params)
+            return result
+
+        with connection.execute_wrapper(record_wakeup), self.captureOnCommitCallbacks(execute=False) as callbacks:
+            first = self.client.post(url, payload, format="json", HTTP_IF_MATCH=etag)
+            self.assertEqual(first.status_code, 201, first.data)
+            retry = self.client.post(url, payload, format="json", HTTP_IF_MATCH=etag)
+            self.assertEqual(retry.status_code, 200, retry.data)
+
+        self.assertEqual(wakeups, [["procurement_supplier_tracking", str(self.task.pk)]])
+        self.assertEqual(callbacks, [])
+        self.assertTrue(SupplierPurchaseSheet.objects.filter(purchase_order_id=first.data["data"]["order_id"], status="DRAFT").exists())
+
+        with self.captureOnCommitCallbacks(execute=False) as regular_callbacks:
+            self.batch("10", confirm=False)
+        self.assertGreater(len(regular_callbacks), 0)
 
 
     def test_saved_supplier_orders_confirm_together_and_preserve_drafts_on_failure(self):

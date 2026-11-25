@@ -12,9 +12,9 @@ vi.mock('@/api/inventory', () => ({ createMaterialTransfer: vi.fn(), fetchMateri
 vi.mock('@/api/inventoryMaterialSources', () => ({ fetchInboundMaterialOptions: vi.fn(), fetchInboundMaterials: vi.fn(), fetchInboundMaterial: vi.fn(), fetchInboundPublicOptions: vi.fn() }))
 
 type Row = {
-  key: string; category: SampleMaterialCategory; catalogId: string; catalog?: MaterialCatalog; publicOptions?: PublicMaterialOptions
+  key: string; category: SampleMaterialCategory; catalogId: string; catalog?: MaterialCatalog
   color: MaterialColorSelection; attributes: Record<string, string>; unitId: string; warehouseId: string; zoneId: string
-  quantity: string; rawLength: string; weight: string; selectionLoading: boolean; selectionError: string
+  quantity: string; rawLength: string; selectionLoading: boolean; selectionError: string
 }
 type Vm = {
   rows: Row[]; form: { remark: string }; direction: string; sectionFilter: string
@@ -29,19 +29,18 @@ type Vm = {
 const categories: Record<string, SampleMaterialCategory> = { TUBE: 'tube', FABRIC: 'fabric', HARDWARE: 'hardware', PLASTIC: 'plastic', PACKAGING: 'packaging', AUXILIARY: 'accessory' }
 const templates = [
   ['TUBE', 'TUBE', 'material,shape,section_size,thickness,length,color'],
-  ['FABRIC', 'FABRIC', 'material,fabric_spec,width,color'],
-  ['HARDWARE', 'HARDWARE', 'material,color,specification,size,thread'],
-  ['PLASTIC', 'PLASTIC', 'material,color,specification,model,size'],
-  ['PACKAGING', 'CARTON', 'material,size,model,layers'],
-  ['PACKAGING', 'BAG', 'material,size,model,thickness'],
-  ['PACKAGING', 'PACKAGING_GENERAL', 'material,specification,model'],
-  ['AUXILIARY', 'TAPE', 'material,specification,width'],
-  ['AUXILIARY', 'COTTON', 'material,specification,thickness,width'],
-  ['AUXILIARY', 'AUXILIARY_GENERAL', 'material,specification'],
+  ['FABRIC', 'FABRIC', 'material,fabric_spec,width,color,gram_weight,finish'],
+  ['HARDWARE', 'HARDWARE', 'material,color,surface_finish,specification,size,thread,flow_unit'],
+  ['PLASTIC', 'PLASTIC', 'material,color,specification,model,size,tube_size'],
+  ['PACKAGING', 'CARTON', 'material,size,model,layers,box_type,color,printing'],
+  ['PACKAGING', 'BAG', 'material,size,model,thickness,bag_type,box_type,color,printing'],
+  ['PACKAGING', 'PACKAGING_GENERAL', 'material,specification,model,color,box_type'],
+  ['AUXILIARY', 'TAPE', 'material,color,specification,width,thickness'],
+  ['AUXILIARY', 'COTTON', 'material,color,specification,thickness,width,gram_weight'],
+  ['AUXILIARY', 'AUXILIARY_GENERAL', 'material,color,specification'],
 ] as const
 let definitions: MaterialCatalogOptions
 let details: Record<string, MaterialCatalog>
-let publicData: Record<string, PublicMaterialOptions>
 const wrappers: ReturnType<typeof mount>[] = []
 
 function deferred<T>() {
@@ -53,23 +52,25 @@ beforeEach(() => {
   vi.resetAllMocks()
   for (const method of ['error', 'warning', 'success'] as const) vi.spyOn(ElMessage, method).mockImplementation(() => ({ close: vi.fn() }))
   definitions = { categories: [], units: [], warehouses: [], spray_fields: [] }
-  details = {}; publicData = {}
+  details = {}
   for (const [category, template, keys] of templates) {
     let group = definitions.categories.find(item => item.key === category)
     if (!group) { group = { key: category, label: category, templates: [] }; definitions.categories.push(group) }
     const fields: MaterialFieldDefinition[] = keys.split(',').map(key => ({ key, label: key === 'length' ? '长度' : key, kind: 'text' }))
     group.templates.push({ key: template, label: template, supports_spray: false, fields })
-    details[template] = { id: template, name: template, category_key: category, template_key: template, updated_at: 'v1', spray_enabled: false, values: [], units: [], base_warehouse_id: 'w1', semi_warehouse_id: null }
-    publicData[template] = {
-      category_key: category, template_key: template, scope: 'BASE', fields: fields.map(field => ({ ...field, source: 'public', manage_url: '' })),
+    details[template] = {
+      id: template, name: template, category_key: category, template_key: template, updated_at: 'v1', spray_enabled: false, base_warehouse_id: 'w1', semi_warehouse_id: null,
       values: fields.map(field => ({ id: field.key, scope: 'BASE', field_key: field.key, value: field.key + '-value', parent_id: field.key === 'section_size' ? 'shape' : null })),
-      units: [{ id: category === 'TUBE' ? 'root' : 'kg', unit_name: category === 'TUBE' ? '根' : 'KG' }],
+      units: [{ id: 'binding', scope: 'BASE', unit_id: category === 'TUBE' ? 'root' : 'kg', unit_name: category === 'TUBE' ? '根' : 'KG' }],
     }
   }
   vi.mocked(sourceApi.fetchInboundMaterialOptions).mockImplementation(async () => definitions)
   vi.mocked(sourceApi.fetchInboundMaterials).mockImplementation(async query => ({ data: Object.values(details).filter(item => item.category_key === query.category), meta: { page: 1, page_size: 100, total: 1, total_pages: 1 } }))
   vi.mocked(sourceApi.fetchInboundMaterial).mockImplementation(async id => ({ data: details[id]! }))
-  vi.mocked(sourceApi.fetchInboundPublicOptions).mockImplementation(async query => publicData[query.template_key]!)
+  vi.mocked(sourceApi.fetchInboundPublicOptions).mockImplementation(async query => ({
+    ...query, fields: [], values: [{ id: 'public', scope: 'BASE', field_key: 'specification', value: '公共规格', parent_id: null }],
+    units: [{ id: 'public', unit_name: '公共单位' }],
+  } as PublicMaterialOptions))
   vi.mocked(api.fetchMaterialReceivingOptions).mockResolvedValue({ warehouses: [{ id: 'w1', warehouse_number: 'W1', warehouse_name: '材料仓', warehouse_type: 'MATERIAL' }, { id: 'w2', warehouse_number: 'W2', warehouse_name: '其他材料仓', warehouse_type: 'MATERIAL' }], zones: [{ id: 'z1', warehouse: 'w1', zone_name: '一区' }, { id: 'z2', warehouse: 'w2', zone_name: '二区' }] } as never)
   vi.mocked(api.createMaterialTransfer).mockResolvedValue({ transfer_number: 'TF001' } as never)
 })
@@ -83,51 +84,56 @@ async function choose(vm: Vm, template = 'HARDWARE') {
   vm.sectionChanged(categories[details[template]!.category_key]!)
   const row = vm.rows[0]!
   await vm.chooseMaterial(row, template)
-  row.quantity = '2'; row.rawLength = '6'; row.weight = '7.25'; vm.form.remark = '盘点'
+  row.quantity = '2'; row.rawLength = '6'; vm.form.remark = '盘点'
   await flushPromises()
   return row
 }
 
 describe('材料收发表格契约（真实组件、模拟请求边界）', () => {
-  it('同一模板只给所属品名显示专用单位及属性，同时保留旧公共候选', async () => {
+  it('同一模板只显示当前品名的属性和单位，切换品名后使用新选项', async () => {
     details.second = { ...details.HARDWARE!, id: 'second' }
     details.HARDWARE = { ...details.HARDWARE!,
       values: [{ id: 'local', scope: 'BASE', field_key: 'specification', value: '专属型号', parent_id: null }],
       units: [{ id: 'binding', scope: 'BASE', unit_id: 'private-unit', unit_name: '专用提' }] }
     const { vm } = await render()
     const row = await choose(vm)
-    expect(vm.unitsFor(row).map(unit => unit.unit_name)).toEqual(['专用提', 'KG'])
-    expect(vm.valuesFor(row, 'specification')).toEqual(['专属型号', 'specification-value'])
+    expect(vm.unitsFor(row).map(unit => unit.unit_name)).toEqual(['专用提'])
+    expect(vm.valuesFor(row, 'specification')).toEqual(['专属型号'])
     row.attributes.specification = '专属型号'; row.unitId = 'private-unit'
     await vm.submit()
     expect(vi.mocked(api.createMaterialTransfer).mock.calls[0]![0].items[0]!.material_selection).toMatchObject({ unit_id: 'private-unit', attributes: { specification: '专属型号' } })
     await vm.chooseMaterial(vm.rows[0]!, 'second')
     expect(vm.unitsFor(vm.rows[0]!).map(unit => unit.unit_name)).toEqual(['KG'])
     expect(vm.valuesFor(vm.rows[0]!, 'specification')).toEqual(['specification-value'])
+    expect(sourceApi.fetchInboundPublicOptions).not.toHaveBeenCalled()
   })
 
-  it('公共与品名内同一形状能够同时读取各自规格，选择私有颜色时不把档案行 ID 当作色卡 ID', async () => {
+  it('只读取品名所选形状下的规格，面料使用品名自己的色卡和色号', async () => {
     details.TUBE!.values = [
       { id: 'catalog-shape', scope: 'BASE', field_key: 'shape', value: 'shape-value', parent_id: null },
       { id: 'catalog-dim', scope: 'BASE', field_key: 'section_size', value: '本品规格', parent_id: 'catalog-shape' },
     ]
-    details.FABRIC!.values = [{ id: 'catalog-color', product_color_id: null, scope: 'BASE', field_key: 'color', value: '品名蓝', color_card: '本地卡', color_code: '01', parent_id: null }]
+    details.FABRIC!.values = details.FABRIC!.values.filter(item => item.field_key !== 'color').concat([
+      { id: 'catalog-color', scope: 'BASE', field_key: 'color', value: '品名蓝', color_card: '本地卡', color_code: '01', parent_id: null },
+    ])
     const { vm } = await render()
     const tube = await choose(vm,'TUBE')
-    expect(vm.valuesFor(tube, 'section_size')).toEqual(['本品规格', 'section_size-value'])
+    expect(vm.valuesFor(tube, 'section_size')).toEqual(['本品规格'])
     const fabric = await choose(vm,'FABRIC')
     vm.chooseColor(fabric, 'catalog-color')
     expect(vm.ready).toBe(true)
     await vm.submit()
     expect(vi.mocked(api.createMaterialTransfer).mock.calls[0]![0].items[0]!.material_selection).toMatchObject({ product_color_id: null, color_card: '本地卡', color_code: '01', attributes: { color: '品名蓝' } })
   })
-  it('公共候选和单位可在品名历史选项为空时选择，管材不混入其他单位', async () => {
-    publicData.TUBE!.units.push({ id: 'meter', unit_name: '米' })
+  it('品名缺配置时选项为空且不能提交，管材单位只显示品名已配置的根', async () => {
+    details.HARDWARE!.values = []; details.HARDWARE!.units = []
+    details.TUBE!.units.push({ id: 'meter-binding', scope: 'BASE', unit_id: 'meter', unit_name: '米' })
     const { vm } = await render()
     const row = await choose(vm)
-    expect(row.catalog!.units).toEqual([])
-    expect(row.unitId).toBe('kg'); expect(vm.ready).toBe(true)
-    expect(sourceApi.fetchInboundPublicOptions).toHaveBeenCalledWith({ category_key: 'HARDWARE', template_key: 'HARDWARE', scope: 'BASE' })
+    expect(vm.valuesFor(row, 'specification')).toEqual([]); expect(vm.unitsFor(row)).toEqual([])
+    expect(row.unitId).toBe(''); expect(vm.ready).toBe(false)
+    await vm.submit()
+    expect(api.createMaterialTransfer).not.toHaveBeenCalled()
     const tube = await choose(vm, 'TUBE')
     expect(vm.unitsFor(tube)).toEqual([{ id: 'root', unit_name: '根' }])
   })
@@ -146,8 +152,8 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     expect(vm.rows[0]!.catalog!.id).toBe('plastic-186')
   })
 
-  it('同名不同色卡保留独立颜色身份，复制保留身份且清空数量重量', async () => {
-    publicData.FABRIC!.values = publicData.FABRIC!.values.filter(item => item.field_key !== 'color').concat([
+  it('同名不同色卡保留独立颜色身份，复制保留身份且清空数量', async () => {
+    details.FABRIC!.values = details.FABRIC!.values.filter(item => item.field_key !== 'color').concat([
       { id: 'c1', product_color_id: 'c1', color_card: 'A', color_code: '01', color_name: '红', scope: 'BASE', field_key: 'color', value: '红', parent_id: null },
       { id: 'c2', product_color_id: 'c2', color_card: 'B', color_code: '02', color_name: '红', scope: 'BASE', field_key: 'color', value: '红', parent_id: null },
     ])
@@ -160,7 +166,7 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     await colors.find(item => item.props('value') === 'c2')!.trigger('click'); await flushPromises()
     vm.copyRow(row)
     const copy = vm.rows[1]!
-    expect(copy).toMatchObject({ catalogId: 'FABRIC', color: { product_color_id: 'c2', color_card: 'B', color_code: '02', color_name: '红' }, unitId: 'kg', warehouseId: 'w1', zoneId: 'z1', quantity: '', weight: '', rawLength: '6' })
+    expect(copy).toMatchObject({ catalogId: 'FABRIC', color: { product_color_id: 'c2', color_card: 'B', color_code: '02', color_name: '红' }, unitId: 'kg', warehouseId: 'w1', zoneId: 'z1', quantity: '', rawLength: '6' })
     copy.attributes.material = ''
     expect(row.attributes.material).toBe('material-value')
     vm.removeRow(copy); await vm.submit()
@@ -182,8 +188,70 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     expect(vm.rowError(row)).toBe('')
   })
 
-  it('清空选填属性时不提交空字符串，形状切换清除不匹配规格', async () => {
-    publicData.TUBE!.values.push({ id: 'shape2', scope: 'BASE', field_key: 'shape', value: '圆管', parent_id: null }, { id: 's2', scope: 'BASE', field_key: 'section_size', value: '20', parent_id: 'shape2' })
+  it.each([
+    ['TUBE', ['shape', 'section_size'], ['长度']],
+    ['HARDWARE', ['型号规格', 'flow_unit'], ['surface_finish', 'size', 'thread']],
+    ['PLASTIC', ['规格'], ['model', 'size', 'tube_size']],
+    ['FABRIC', ['fabric_spec', 'width'], ['gram_weight', 'finish']],
+    ['TAPE', ['specification', 'width'], ['gram_weight']],
+    ['COTTON', ['specification', 'gram_weight'], ['bag_type']],
+    ['AUXILIARY_GENERAL', ['specification'], ['width', 'thickness', 'gram_weight']],
+    ['CARTON', ['box_type', 'size', 'model'], ['layers', 'printing', 'bag_type']],
+    ['BAG', ['box_type', 'bag_type', 'model'], ['printing', 'layers']],
+    ['PACKAGING_GENERAL', ['box_type', 'specification', 'model'], ['size', 'layers', 'printing']],
+  ] as const)('%s 的属性列跟随 BOM，包材保留型号', async (template, shown, hidden) => {
+    const { vm, wrapper } = await render()
+    const row = await choose(vm, template)
+    const headers = wrapper.findAll('th').map(header => header.text())
+    expect(headers).toEqual(expect.arrayContaining([...shown]))
+    hidden.forEach(field => {
+      expect(headers).not.toContain(field)
+      expect(row.attributes).not.toHaveProperty(field)
+    })
+    if (row.category === 'packaging') {
+      await vm.submit()
+      expect(api.createMaterialTransfer).toHaveBeenCalledWith(expect.objectContaining({
+        items: [expect.objectContaining({ material_selection: expect.objectContaining({ attributes: expect.objectContaining({ model: 'model-value' }) }) })],
+      }))
+    }
+  })
+
+  it('混合包材时只给有候选的行显示下拉，整表无候选的可选属性隐藏', async () => {
+    details.BAG!.values = details.BAG!.values.filter(item => !['box_type', 'thickness', 'bag_type'].includes(item.field_key))
+    const { vm, wrapper } = await render()
+    await choose(vm, 'CARTON')
+    vm.addRow()
+    await vm.chooseMaterial(vm.rows[1]!, 'BAG')
+    await flushPromises()
+    const headers = wrapper.findAll('th').map(header => header.text())
+    expect(headers).not.toContain('bag_type')
+    expect(headers).not.toContain('thickness')
+    const [carton, bag] = wrapper.findAll('tbody tr')
+    const boxTypeColumn = headers.indexOf('box_type')
+    expect(boxTypeColumn).toBeGreaterThanOrEqual(0)
+    expect(carton!.findAll('td')[boxTypeColumn]!.find('.el-select').exists()).toBe(true)
+    expect(bag!.findAll('td')[boxTypeColumn]!.text()).toBe('—')
+  })
+
+  it.each([
+    ['TUBE', 'thickness', '厚度'],
+    ['HARDWARE', 'specification', '型号规格'],
+    ['FABRIC', 'color', '颜色'],
+  ] as const)('%s 缺少必填属性候选时在该行提示配置并阻止提交', async (template, key, label) => {
+    definitions.categories.flatMap(category => category.templates).find(item => item.key === template)!
+      .fields.find(field => field.key === key)!.label = label
+    details[template]!.values = details[template]!.values.filter(item => item.field_key !== key)
+    const { vm, wrapper } = await render()
+    await choose(vm, template)
+    const hint = `请在原料管理为「${details[template]!.name}」配置${label}`
+    expect(wrapper.get('tbody tr').text()).toContain(hint)
+    await vm.submit()
+    expect(ElMessage.warning).toHaveBeenCalledWith(expect.stringContaining(hint))
+    expect(api.createMaterialTransfer).not.toHaveBeenCalled()
+  })
+
+  it('清空选填属性时不提交空字符串，形状切换后带出唯一匹配规格', async () => {
+    details.TUBE!.values.push({ id: 'shape2', scope: 'BASE', field_key: 'shape', value: '圆管', parent_id: null }, { id: 's2', scope: 'BASE', field_key: 'section_size', value: '20', parent_id: 'shape2' })
     const { vm } = await render()
     const hardware = await choose(vm)
     hardware.attributes.color = ''
@@ -192,7 +260,7 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     const tube = await choose(vm, 'TUBE')
     tube.attributes.shape = 'shape-value'; tube.attributes.section_size = 'section_size-value'
     tube.attributes.shape = '圆管'; vm.attributeChanged(tube, 'shape')
-    expect(tube.attributes.section_size).toBe(''); expect(vm.valuesFor(tube, 'section_size')).toEqual(['20'])
+    expect(tube.attributes.section_size).toBe('20'); expect(vm.valuesFor(tube, 'section_size')).toEqual(['20'])
     tube.attributes.shape = ''; vm.attributeChanged(tube, 'shape'); expect(vm.valuesFor(tube, 'section_size')).toEqual([])
   })
 
@@ -235,23 +303,23 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     expect(row.catalogId).toBe('second'); expect(row.catalog!.id).toBe('second'); expect(row.warehouseId).toBe('w2')
   })
 
-  it('迟到的公共属性不会覆盖新选模板，失败行不能提交', async () => {
-    const slow = deferred<PublicMaterialOptions>()
-    const normal = vi.mocked(sourceApi.fetchInboundPublicOptions).getMockImplementation()!
-    vi.mocked(sourceApi.fetchInboundPublicOptions).mockImplementation(query => query.template_key === 'CARTON' ? slow.promise : normal(query))
+  it('切换包材后先前的请求不会覆盖新模板的属性，失败行不能提交', async () => {
+    const slow = deferred<{ data: MaterialCatalog }>()
+    const normal = vi.mocked(sourceApi.fetchInboundMaterial).getMockImplementation()!
+    vi.mocked(sourceApi.fetchInboundMaterial).mockImplementation(id => id === 'CARTON' ? slow.promise : normal(id))
     const { vm } = await render(); vm.sectionChanged('packaging'); const row = vm.rows[0]!
     const first = vm.chooseMaterial(row, 'CARTON'); await flushPromises()
-    await vm.chooseMaterial(row, 'BAG'); slow.resolve(publicData.CARTON!); await first
-    expect(row.catalog!.template_key).toBe('BAG'); expect(row.publicOptions!.template_key).toBe('BAG')
+    await vm.chooseMaterial(row, 'BAG'); slow.resolve({ data: details.CARTON! }); await first
+    expect(row.catalog!.template_key).toBe('BAG'); expect(vm.valuesFor(row, 'bag_type')).toEqual(['bag_type-value'])
     vi.mocked(sourceApi.fetchInboundMaterial).mockRejectedValueOnce(new Error('读取失败'))
     await vm.chooseMaterial(row, 'PACKAGING_GENERAL'); expect(vm.rowError(row)).toBe('读取失败'); expect(vm.ready).toBe(false)
   })
 
-  it('刷新重新读取目录、已选版本和公共候选，保留数量备注并更新默认仓', async () => {
+  it('刷新重新读取品名的版本和单位，保留数量备注并更新默认仓', async () => {
     const { vm } = await render(); const row = await choose(vm)
     const oldCount = vi.mocked(sourceApi.fetchInboundMaterials).mock.calls.length
     details.HARDWARE = { ...details.HARDWARE!, updated_at: 'v2', base_warehouse_id: 'w2' }
-    publicData.HARDWARE = { ...publicData.HARDWARE!, units: [{ id: 'kg', unit_name: 'KG' }, { id: 'piece', unit_name: '个' }] }
+    details.HARDWARE.units = [...details.HARDWARE.units, { id: 'piece-binding', scope: 'BASE', unit_id: 'piece', unit_name: '个' }]
     await vm.loadPageOptions()
     expect(sourceApi.fetchInboundMaterials).toHaveBeenCalledTimes(oldCount + 6)
     expect(row.catalog!.updated_at).toBe('v2'); expect(row.warehouseId).toBe('w2'); expect(row.zoneId).toBe('z2')

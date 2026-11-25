@@ -63,6 +63,19 @@ def scoped_inventory_records(queryset, request, permission, *, task_lookup, work
     return selected.distinct()
 
 
+def visible_confirmed_material_receipts(request):
+    from apps.procurement.source_access import purchase_order_access
+    from apps.production_tasks.selectors import accessible_production_tasks
+
+    permission = "inventory.view_material_receipt"
+    task_ids = accessible_production_tasks(request, permission=permission).order_by().values("pk")
+    queryset = MaterialInbound.objects.filter(
+        Q(purchase_order__isnull=True) | purchase_order_access(task_ids, request, "purchase_order__", permission=permission),
+        status=MaterialInboundStatus.CONFIRMED,
+    )
+    return scoped_inventory_records(queryset, request, permission, task_lookup="purchase_order__production_task")
+
+
 def scoped_finished_receipts(queryset, request, permission='inventory.view_finishedgoodsreceipt'):
     return scoped_inventory_records(queryset, request, permission,
         task_lookup='production_task_product__production_task',

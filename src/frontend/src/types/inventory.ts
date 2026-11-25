@@ -35,7 +35,6 @@ export interface MaterialTransferLinePayload {
   quantity?: string
   raw_bar_count?: string
   raw_bar_length_m?: string
-  weight_quantity?: string
 }
 export interface MaterialTransferPayload {
   client_request_id: string

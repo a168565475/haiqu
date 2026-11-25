@@ -1,11 +1,15 @@
+from contextlib import closing
 from unittest.mock import patch
+from uuid import uuid4
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models.signals import post_save
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
+from psycopg import sql
 
 from apps.production_tasks.models import ProductionTask
 
+from ..tracking_hooks import SUPPLIER_TRACKING_CHANNEL, wake_supplier_tracking_worker
 from . import test_purchase_order_api as order_tests
 
 
@@ -75,3 +79,22 @@ class TrackingCommitHookTests(TestCase):
                 self.employee.followed_production_tasks.clear()
             self.assertTrue(recompute.called)
             self.assertTrue(all(call.args[0] == (str(self.task.pk),) for call in recompute.call_args_list))
+
+
+@override_settings(PURCHASE_TRACKING_ENABLED=True)
+class TrackingWorkerWakeupTests(TransactionTestCase):
+    def test_postgres_wakeup_arrives_only_after_commit(self):
+        task_id = uuid4()
+        with closing(connection.copy()) as listener:
+            with listener.cursor() as cursor:
+                cursor.execute(sql.SQL("LISTEN {}").format(sql.Identifier(SUPPLIER_TRACKING_CHANNEL)))
+            with transaction.atomic():
+                wake_supplier_tracking_worker(task_id)
+                self.assertEqual(list(listener.connection.notifies(timeout=0.04)), [])
+            notifications = list(listener.connection.notifies(timeout=1, stop_after=1))
+            self.assertEqual([notice.payload for notice in notifications], [str(task_id)])
+
+            with transaction.atomic():
+                wake_supplier_tracking_worker(task_id)
+                transaction.set_rollback(True)
+            self.assertEqual(list(listener.connection.notifies(timeout=0.04)), [])

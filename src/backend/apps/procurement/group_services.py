@@ -35,6 +35,7 @@ from .pipe_purchase import pipe_source_snapshot, purchase_pipe_values
 from .purchase_scope import is_packaging_snapshot, validate_source_scope
 from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
 from .set_pricing import apply_set_pricing, material_calculation_snapshot, validate_set_members
+from .tracking_hooks import defer_supplier_tracking, wake_supplier_tracking_worker
 from .services import (
     PURCHASABLE_TASK_STATUSES, PurchaseSourceChanged, PurchaseSourceUnavailable, _money, evaluate_purchase_source,
     _validate_hardware_actual_weight, confirm_purchase_order, is_hardware_weight_snapshot, next_purchase_order_number, purchase_order_snapshot,
@@ -640,6 +641,7 @@ def _confirm_orders_with_default_sheets(order_ids, allowed_task_ids, actor_emplo
 
 
 @transaction.atomic
+@defer_supplier_tracking()
 def submit_supplier_purchase_batch(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
     order, created = create_purchase_batch(
         group_id=group_id, validated_data={**validated_data, "supplier_submission": True},
@@ -647,12 +649,14 @@ def submit_supplier_purchase_batch(*, group_id, validated_data, allowed_task_ids
     )
     if created and not validated_data.get("save_as_draft"):
         order, = _confirm_orders_with_default_sheets([order.pk], allowed_task_ids, actor_employee, request)
+        wake_supplier_tracking_worker(order.production_task_id)
     return order, purchase_groups_with_context().get(pk=group_id), created
 
 
 @transaction.atomic
+@defer_supplier_tracking()
 def confirm_purchase_batch_page(*, group_id, validated_data, allowed_task_ids, actor_employee, request):
-    _, group = _lock_group_for_batch(group_id, allowed_task_ids)
+    task, group = _lock_group_for_batch(group_id, allowed_task_ids)
     session_id = validated_data["batch_session_id"]
     additional = validated_data.get("additional")
     if additional:
@@ -681,4 +685,5 @@ def confirm_purchase_batch_page(*, group_id, validated_data, allowed_task_ids, a
         raise Conflict("本批暂无待确认采购，请先按供应商保存。")
     _confirm_orders_with_default_sheets(pending_ids, allowed_task_ids, actor_employee, request)
     group.save(update_fields=["updated_at"])
+    wake_supplier_tracking_worker(task.pk)
     return purchase_groups_with_context().get(pk=group_id)

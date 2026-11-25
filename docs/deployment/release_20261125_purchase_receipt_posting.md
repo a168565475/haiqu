@@ -28,3 +28,4 @@
 - 隔离 PostgreSQL 网络 `haiqu-receipt-release-20261125`，临时数据库容器 `haiqu-receipt-release-20261125-db`，一次性测试容器 `haiqu-receipt-release-20261125-test`。Django 负责创建和删除 `test_haiqu_receipt_release_20261125`。容器不暴露端口，媒体、缓存和邮件与业务环境隔离，结束按任务标签清理。
 - 服务器上传暂存 `/opt/haiqu-erp/incoming/20261125-purchase-receipt-posting`。发布上下文和审计回执分别位于 `/opt/haiqu-erp/releases/20261125-purchase-receipt-posting` 和 `/opt/haiqu-erp/deployment-logs/20261125-purchase-receipt-posting`，作为运行及审计证据保留。
 - 测试器已删除专用测试库。核验容器和网络标签及数据库连接后，执行 `docker stop`、`docker rm`、`docker network rm`，复查测试容器与隔离网络均已清理。
+- 代码和发布记录首次推送至 `ade1c467` 后，发布脚本按摘要删除三份服务器上传文件，复查上传目录已移除。Playwright 临时目录已移除。本机暂存目录的递归清理被自动审批以 `blocked by policy` 拒绝，复查该目录仍在。

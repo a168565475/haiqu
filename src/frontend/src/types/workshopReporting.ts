@@ -12,6 +12,7 @@ export interface BomDisplayOption {
   material: string
   specification: string
   label: string
+  display_label?: string
   source_type: 'METAL' | 'CUTTING'
   component_kind: '' | 'CUT_PIECE' | 'SEWN_PART'
   pieces_per_product: number | null
@@ -125,6 +126,7 @@ export interface WageSchemeLine {
   craft_id: string
   operation_id: string
   display_name: string
+  display_label?: string
   craft_name: string
   operation_name: string
   operation_number: string

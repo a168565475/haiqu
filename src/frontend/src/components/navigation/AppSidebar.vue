@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 import ConfirmedSidebarIcon from './ConfirmedSidebarIcon.vue'
 import ConfirmedSecondarySidebarIcon from './ConfirmedSecondarySidebarIcon.vue'
 import '@icon-park/vue-next/styles/index.css'
@@ -10,7 +10,6 @@ import { sidebarMenuItems as menuItems, settingsMenu, type MenuItem } from '@/co
 import { canOpenMenu } from '@/router/pageAccess'
 
 const route = useRoute()
-const router = useRouter()
 const authStore = useAuthStore()
 const activeMenu = computed(() => {
   return typeof route.meta.activeMenu === 'string' ? route.meta.activeMenu : ''
@@ -38,6 +37,7 @@ const navigation = ref<HTMLElement>()
 const flyout = ref<HTMLElement>()
 const displayedGroupKey = ref('')
 const panelOpen = ref(false)
+const panelPinned = ref(false)
 const displayedGroup = computed(() => visibleMenuItems.value.find(item => item.key === displayedGroupKey.value))
 const hoveredChildKey = ref('')
 const hoverPlateTop = ref(0)
@@ -84,7 +84,12 @@ function openGroup(key: string) {
   panelOpen.value = true
 }
 
+function previewGroup(key: string) {
+  if (!panelPinned.value) openGroup(key)
+}
+
 function scheduleOpen(key: string) {
+  if (panelPinned.value) return
   cancelTimers()
   // 短暂经过主栏时不闪出面板；只为最后停留的模块创建一次定时器。
   openTimer = setTimeout(() => openGroup(key), 100)
@@ -94,22 +99,22 @@ function closePanel() {
   cancelTimers()
   clearFlyoutHover()
   panelOpen.value = false
+  panelPinned.value = false
 }
 
-async function navigateToDefault(item: MenuItem) {
-  // item 的子菜单已按当前权限过滤；默认列表不可访问时仍提供其他可用入口。
-  const target = item.children?.find(child => child.key === item.defaultChildKey)
-  if (!target?.to) {
-    openGroup(item.key)
+function toggleGroup(key: string) {
+  if (panelPinned.value && displayedGroupKey.value === key) {
+    closePanel()
     return
   }
-  closePanel()
-  await router.push(target.to)
+  panelPinned.value = true
+  openGroup(key)
 }
 
 function scheduleClose() {
   cancelTimers()
   clearFlyoutHover()
+  if (panelPinned.value) return
   // 给从主栏移入面板的斜向移动留出余量。
   closeTimer = setTimeout(closePanel, 160)
 }
@@ -133,12 +138,20 @@ function handleFocusOut(event: FocusEvent) {
   if (!navigation.value?.contains(event.relatedTarget as Node | null)) closePanel()
 }
 
+function handleOutsidePointerDown(event: PointerEvent) {
+  if (panelPinned.value && !navigation.value?.contains(event.target as Node | null)) closePanel()
+}
+
 watch(() => route.fullPath, closePanel)
 watch(displayedGroup, group => {
   clearFlyoutHover()
   if (!group) closePanel()
 })
-onBeforeUnmount(cancelTimers)
+onMounted(() => document.addEventListener('pointerdown', handleOutsidePointerDown, true))
+onBeforeUnmount(() => {
+  cancelTimers()
+  document.removeEventListener('pointerdown', handleOutsidePointerDown, true)
+})
 
 const canViewSystemSettings = computed(() => systemSettings.some(entry => canOpenSystemSetting(authStore, entry.key)))
 const settingsActive = computed(() => activeMenu.value === 'settings')
@@ -154,8 +167,8 @@ const settingsActive = computed(() => activeMenu.value === 'settings')
             :class="{ 'is-active': isMenuActive(item), 'is-open': panelOpen && displayedGroupKey === item.key }"
             :data-menu-key="item.key" :aria-expanded="panelOpen && displayedGroupKey === item.key"
             aria-controls="erp-sidebar-flyout" :title="item.label"
-            @mouseenter="scheduleOpen(item.key)" @focus="openGroup(item.key)"
-            @click="navigateToDefault(item)" @keydown.right.prevent="focusGroup(item.key)">
+            @mouseenter="scheduleOpen(item.key)" @focus="previewGroup(item.key)"
+            @click="toggleGroup(item.key)" @keydown.right.prevent="focusGroup(item.key)">
             <span class="app-sidebar__menu-icon" data-primary-icon-wrapper aria-hidden="true">
               <ConfirmedSidebarIcon :name="item.key" />
             </span>
@@ -163,7 +176,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings')
           </button>
           <RouterLink v-else :to="item.to!" class="app-sidebar__menu-item"
             :class="{ 'is-active': isMenuActive(item) }" :data-menu-key="item.key"
-            :aria-current="isMenuActive(item) ? 'page' : undefined" @mouseenter="scheduleClose" @focus="closePanel">
+            :aria-current="isMenuActive(item) ? 'page' : undefined" @mouseenter="scheduleClose" @focus="closePanel" @click="closePanel">
             <span class="app-sidebar__menu-icon" data-primary-icon-wrapper aria-hidden="true">
               <ConfirmedSidebarIcon :name="item.key" />
             </span>
@@ -176,7 +189,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings')
     <div class="app-sidebar__footer" @mouseenter="scheduleClose">
       <RouterLink v-if="canViewSystemSettings" :to="{ name: 'system-settings' }" class="app-sidebar__footer-link"
         :class="{ 'is-active': settingsActive }" :aria-current="settingsActive ? 'page' : undefined"
-        data-menu-key="settings" title="系统配置" @focus="closePanel">
+        data-menu-key="settings" title="系统配置" @focus="closePanel" @click="closePanel">
         <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true">
           <ConfirmedSidebarIcon name="settings" />
         </span>
@@ -209,7 +222,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings')
             :class="{ 'is-active': activeMenu === child.key, 'is-disabled': !child.to }"
             :aria-current="activeMenu === child.key ? 'page' : undefined" :aria-disabled="child.to ? undefined : 'true'"
             :title="child.to ? child.label : `${child.label}（暂未开放）`" :data-menu-key="child.key"
-            @mouseenter="hoverFlyoutChild($event, child)">
+            @mouseenter="hoverFlyoutChild($event, child)" @click="child.to && closePanel()">
             <span class="app-sidebar__flyout-icon" aria-hidden="true">
               <ConfirmedSecondarySidebarIcon :name="child.key" />
             </span>

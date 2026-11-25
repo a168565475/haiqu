@@ -39,6 +39,20 @@ describe('手机领料数量和分配', () => {
     second.conversion_snapshot.raw_bar_length_m = '4.05'
     expect(selectedQuantityError('60', first, [first, second], { one: '60', two: '40' })).toBe('')
   })
+  it('金工按根填报时合计同一规格的库存，并将每行根数转为各自的加工支数', () => {
+    const first = { ...pipe, max_issue_quantity: '60', conversion_snapshot: {
+      ...pipe.conversion_snapshot!, public_identity: { identity_key: 'pool-1' },
+    } }
+    const second = { ...first, requirement_id: 'two', max_issue_quantity: '40',
+      conversion_snapshot: { ...first.conversion_snapshot, pieces_per_bar: 4 } }
+    const selected = { one: '6', two: '5' }
+    expect(() => buildIssueLines([first, second], selected, {}, true)).toThrow('合计申请数量')
+    second.conversion_snapshot.public_identity = { identity_key: 'pool-2' }
+    expect(buildIssueLines([first, second], selected, {}, true)).toEqual([
+      { requirement_id: 'one', requested_quantity: '36' },
+      { requirement_id: 'two', requested_quantity: '20' },
+    ])
+  })
   it('管材半成品可领单支，不套用原管整根规则；支/套必须整数', () => {
     const semi = { ...pipe, line_type: 'SEMI', max_issue_quantity: '12' } as MaterialRequirement
     expect(quantityError('5', semi)).toBe('')

@@ -69,6 +69,31 @@ function submitButton(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button').find(button => /提交领料申请|继续提交此申请|核对并继续提交/.test(button.text()))!
 }
 describe('领料申请两步保存恢复', () => {
+  it('金工原管在手机上按根显示和填写，由系统换算提交', async () => {
+    const pipe: MaterialRequirement = { ...requirement, section_code: 'PROFILE', material_name: '方管', unit: '支',
+      required_quantity: '60', order_remaining: '60', available_stock: '60', max_issue_quantity: '48',
+      conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' } }
+    vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [pipe] })
+    const wrapper = mount(IssuePage)
+    await flushPromises()
+    const input = wrapper.get<HTMLInputElement>('.request-field input')
+    expect(wrapper.get('.available').text()).toContain('8 根')
+    expect(wrapper.get('.request-unit').text()).toBe('根')
+    expect(input.attributes('inputmode')).toBe('numeric')
+    await input.setValue('1.5')
+    expect(wrapper.get('.request-field .van-field__error-message').text()).toContain('整根数')
+    await submitButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(api.createMaterialIssue).not.toHaveBeenCalled()
+    await input.setValue('3')
+    await submitButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(api.createMaterialIssue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      lines: [{ requirement_id: pipe.requirement_id, requested_quantity: '18' }],
+    }))
+    wrapper.unmount()
+  })
+
   it('提交前复核产品剩余，超出的面料按四位小数提示，返回保留输入，确认才保存并提交', async () => {
     const wrapper = await preparedPage()
     const input = wrapper.get<HTMLInputElement>('input[inputmode="decimal"]')
@@ -191,9 +216,16 @@ describe('领料申请两步保存恢复', () => {
   })
   it.each<{ name: string; overrides: Partial<MaterialRequirement>; value: string; error: string }>([
     { name: '四位小数精度', overrides: {}, value: '1.23456', error: '最多四位小数' },
-    { name: '管材整根倍数', overrides: { unit: '支', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 2, raw_bar_length_m: '6.00' } }, value: '3', error: '2 的正整数倍' },
+    { name: '装配车间管材整根倍数', overrides: { unit: '支', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 2, raw_bar_length_m: '6.00' } }, value: '3', error: '2 的正整数倍' },
     { name: '半成品整数', overrides: { line_type: 'SEMI', unit: '套' }, value: '1.5', error: '半成品数量必须为正整数' },
   ])('数字输入仍保留 $name 校验，不截断数值或创建申请', async ({ overrides, value, error }) => {
+    if (overrides.conversion_snapshot?.kind === 'PIPE') {
+      mocks.route.query.plan_category = 'ASSEMBLY'
+      const options = await api.fetchMaterialIssueOptions(ids.production_task_id)
+      vi.mocked(api.fetchMaterialIssueOptions).mockResolvedValue({
+        ...options, workshops: [{ id: ids.workshop_id, name: '装配车间' }],
+      })
+    }
     vi.mocked(api.fetchMaterialRequirements).mockResolvedValue({ source_revision_hash: '', blockers: [], items: [{ ...requirement, ...overrides }] })
     const wrapper = await preparedPage()
     const input = wrapper.get<HTMLInputElement>('.request-field input')

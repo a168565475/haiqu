@@ -41,7 +41,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
-  'procurement-management': ['purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
+  'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
@@ -278,7 +278,7 @@ describe('全局悬停侧栏', () => {
     expect(panel().get('[data-sidebar-hover-plate]').attributes('data-hover-menu-key')).toBe('')
   })
 
-  it('旧产品原料路由保留但菜单隐藏，独立权限默认进入新产品管理', async () => {
+  it('旧产品原料路由保留但菜单隐藏，独立权限可点二级菜单进入新产品管理', async () => {
     expect(applicationRouter.resolve('/product-catalog').name).toBe('product-catalog')
     expect(applicationRouter.resolve('/products').name).toBe('products')
     expect(applicationRouter.resolve('/raw-materials').name).toBe('raw-materials')
@@ -290,6 +290,8 @@ describe('全局悬停侧栏', () => {
     expect(panel().find('[data-menu-key="products"]').exists()).toBe(false)
     expect(panel().find('[data-menu-key="raw-materials"]').exists()).toBe(false)
     await group('product').trigger('click'); await flushPromises()
+    expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
+    await panel().get('[data-menu-key="product-catalog"]').trigger('click'); await flushPromises()
     expect(router.currentRoute.value.name).toBe('product-catalog')
   })
   it('管理员工作台分组隐藏主管与业务员版，保留生产入口', async () => {
@@ -397,39 +399,63 @@ describe('全局悬停侧栏', () => {
     ['procurement', 'purchase-orders'],
     ['workshop', 'workshop-scheduling'],
     ['warehouse', 'finished-goods-inventory'],
-  ])('点击%s一级菜单进入指定默认列表%s并收起浮层', async (menu, target) => {
+    ['finance', 'finance-accounts'],
+    ['employee', 'employee-list'],
+  ])('点击%s一级持续展开，选择二级%s才进入页面', async (menu, target) => {
     const { router } = await setup()
-    await group(menu).trigger('focus')
-    expect(panel().isVisible()).toBe(true)
     await group(menu).trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
+    expect(group(menu).attributes('aria-expanded')).toBe('true')
+    await wrapper.get('nav').trigger('mouseleave')
+    await advance(300)
+    expect(panel().isVisible()).toBe(true)
+    await panel().get(`[data-menu-key="${target}"]`).trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe(target)
     expect(panel().isVisible()).toBe(false)
     expect(group(menu).classes()).toContain('is-active')
   })
 
-  it('点击已在当前默认列表的一级入口也收起浮层', async () => {
+  it('当前页面对应的一级可展开，点击当前二级或再次点击一级会收起', async () => {
     const { router } = await setup()
     await router.push('/customers')
     await group('customer').trigger('focus')
     await group('customer').trigger('click')
+    expect(panel().isVisible()).toBe(true)
+    await panel().get('[data-menu-key="customers"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('customers')
     expect(panel().isVisible()).toBe(false)
+    await group('customer').trigger('click')
+    expect(panel().isVisible()).toBe(true)
+    await group('customer').trigger('click')
+    expect(panel().isVisible()).toBe(false)
   })
 
-  it('悬停延时未完成时点击，跳转后不会被旧计时器重新展开', async () => {
+  it('点击固定一组后，其他一级的悬停不切组，再点另一组才切换', async () => {
     const { router } = await setup()
     await group('customer').trigger('mouseenter')
     await advance(50)
-    await group('customer').trigger('click')
-    await flushPromises()
+    await group('workshop').trigger('click')
+    await group('customer').trigger('mouseenter')
     await advance(300)
-    expect(router.currentRoute.value.name).toBe('customers')
-    expect(group('customer').attributes('aria-expanded')).toBe('false')
+    expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
+    expect(panel().attributes('data-flyout-menu-key')).toBe('workshop-management')
+    await group('customer').trigger('click')
+    expect(panel().attributes('data-flyout-menu-key')).toBe('customer-management')
   })
 
-  it('默认列表无权限时不跳转，仍可展开其他已授权子菜单', async () => {
+  it('在导航外点击收起固定展开的二级菜单', async () => {
+    await setup()
+    await group('workshop').trigger('click')
+    expect(panel().isVisible()).toBe(true)
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(panel().isVisible()).toBe(false)
+  })
+
+  it('点击一级只展开有权限的二级菜单', async () => {
     const { auth, router } = await setup()
     auth.user = { ...auth.user!, username: 'operator', is_superuser: false,
       permissions: ['customers.view_customercomplaint'] }
@@ -494,12 +520,14 @@ describe('全局悬停侧栏', () => {
     expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
   })
 
-  it('仅有供应商权限仍可经采购默认入口进入原有采购页', async () => {
+  it('仅有供应商权限仍可选择采购二级进入原有采购页', async () => {
     const { auth, router } = await setup()
     auth.user = { ...auth.user!, username: 'supplier-reader', is_superuser: false,
       permissions: ['procurement.view_supplier'] }
     await nextTick()
     await group('procurement').trigger('click')
+    expect(group('procurement').attributes('aria-expanded')).toBe('true')
+    await panel().get('[data-menu-key="purchase-orders"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('purchase-orders')
     expect(group('procurement').attributes('aria-expanded')).toBe('false')

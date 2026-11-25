@@ -365,6 +365,7 @@ class WorkshopReportingApiTests(APITestCase):
             if item["id"] == str(self.metal_bom_line.pk)
         )
         self.assertEqual(selected_bom["label"], "前脚管-铁-20*1.0*500")
+        self.assertEqual(selected_bom["display_label"], "前脚管-铁-20*1.0*500-500mm")
         self.assertEqual(selected_bom["material"], "铁")
         self.assertEqual(
             sorted(item["label"] for item in context.data["data"]["bom_items"]),
@@ -386,6 +387,7 @@ class WorkshopReportingApiTests(APITestCase):
         self.assertEqual(created.data["data"]["operation_product_name"], self.craft.name)
         self.assertEqual(created.data["data"]["lines"][0]["operation_id"], str(other_operation.pk))
         self.assertEqual(created.data["data"]["lines"][0]["display_name"], "前脚管-铁-20*1.0*500")
+        self.assertEqual(created.data["data"]["lines"][0]["display_label"], "前脚管-铁-20*1.0*500-500mm")
         self.assertEqual(created.data["data"]["lines"][0]["required_quantity"], "200.0000")
 
     def test_metal_scheme_rejects_name_outside_verified_bom(self):

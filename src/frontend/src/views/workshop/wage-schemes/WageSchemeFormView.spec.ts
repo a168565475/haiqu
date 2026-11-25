@@ -70,7 +70,7 @@ function metalReportingContext(productIds: string[]) {
     ...context,
     bom_items: [{
       id: 'bom-line-1', component_identity: 'component-1', name: '前脚管', material: '铁', specification: '20*1.0*500',
-      label: '前脚管-铁-20*1.0*500', source_type: 'METAL', pieces_per_product: 2,
+      label: '前脚管-铁-20*1.0*500', display_label: '前脚管-铁-20*1.0*500-500mm', source_type: 'METAL', pieces_per_product: 2,
       component_kind: '', parts_per_product: null, pieces_per_part: null,
       unit: '支',
       cutting_sets_per_product: null, cutting_pieces_per_set: null,
@@ -403,7 +403,7 @@ describe('工价方案产品上下文切换', () => {
     const bomSelect = selectByTestId(wrapper, 'metal-bom-display-select')
     expect(bomSelect.exists()).toBe(true)
     expect(bomSelect.findAllComponents({ name: 'ElOption' }).map(option => option.props('label')))
-      .toEqual(['前脚管-铁-20*1.0*500'])
+      .toEqual(['前脚管-铁-20*1.0*500-500mm'])
     expect(bomSelect.props('placeholder')).toBe('选择部件、材质和规格')
   })
 

@@ -3,7 +3,6 @@ export interface MenuItem {
   label: string
   to?: { name: string }
   openInNewTab?: boolean
-  defaultChildKey?: string
   permission?: string
   anyPermissions?: string[]
   allPermissions?: string[]
@@ -23,7 +22,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'customer-management',
     label: '客户',
-    defaultChildKey: 'customers',
     children: [
       { key: 'customers', label: '客户列表', to: { name: 'customers' }, permission: 'customers.view_customeraccount' },
       { key: 'complaints', label: '客诉管理', to: { name: 'complaints' }, permission: 'customers.view_customercomplaint' },
@@ -37,7 +35,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'sample-management',
     label: '样品',
-    defaultChildKey: 'samples',
     children: [
       { key: 'samples', label: '打样申请', to: { name: 'samples' }, permission: 'samples.view_samplerequest' },
       { key: 'sample-library', label: '样品库', to: { name: 'sample-inventory' }, permission: 'samples.view_sampleinventoryline' },
@@ -46,7 +43,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'product-management',
     label: '产品',
-    defaultChildKey: 'product-catalog',
     children: [
       { key: 'product-catalog', label: '产品管理', to: { name: 'product-catalog' }, permission: 'product_catalog.view_productcatalog' },
       { key: 'material-catalog', label: '原料管理', to: { name: 'material-catalog' }, permission: 'material_catalog.view_materialcatalog' },
@@ -55,7 +51,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'production-management',
     label: '生产',
-    defaultChildKey: 'production-tasks',
     children: [
       { key: 'production-tasks', label: '生产订单', to: { name: 'production-tasks' }, permission: 'production_tasks.view_productiontask' },
       { key: 'boms', label: 'BOM 管理', to: { name: 'boms' }, permission: 'boms.view_bom' },
@@ -64,7 +59,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'procurement-management',
     label: '采购',
-    defaultChildKey: 'purchase-orders',
     children: [
       { key: 'purchase-orders', label: '采购需求', to: { name: 'purchase-orders' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.view_supplier'] },
       { key: 'packaging-purchases', label: '包材采购', to: { name: 'packaging-purchases' }, permission: 'procurement.manage_packagingpurchase' },
@@ -76,7 +70,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'workshop-management',
     label: '车间',
-    defaultChildKey: 'workshop-scheduling',
     children: [
       { key: 'workshop-scheduling', label: '计划排产', to: { name: 'workshop-scheduling' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-internal-plan', label: '内部计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
@@ -89,7 +82,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'warehouse-management',
     label: '仓库',
-    defaultChildKey: 'finished-goods-inventory',
     children: [
       { key: 'finished-goods-inventory', label: '成品库存', to: { name: 'finished-goods-inventory' }, permission: 'inventory.view_finishedgoodsreceipt' },
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
@@ -105,7 +97,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'finance-management',
     label: '财务',
-    defaultChildKey: 'finance-accounts',
     children: [
       { key: 'finance-accounts', label: '公司账户信息', to: { name: 'finance-accounts' }, permission: 'finance.view_financeaccount' },
       { key: 'finance-subjects', label: '会计科目', to: { name: 'finance-subjects' }, permission: 'finance.view_accountingsubject' },
@@ -117,7 +108,6 @@ export const sidebarMenuItems: MenuItem[] = [
   {
     key: 'employee-management',
     label: '行政',
-    defaultChildKey: 'employee-list',
     children: [
       { key: 'employee-list', label: '员工管理', to: { name: 'employee-list' } },
       { key: 'attendance', label: '考勤管理', to: { name: 'wecom-attendance' }, permission: 'attendance.view_attendance' },

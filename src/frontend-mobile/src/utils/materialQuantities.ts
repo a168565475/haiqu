@@ -1,5 +1,7 @@
 import type { IssueWriteLine, MaterialAttribute, MaterialIssueLine, MaterialIssueSourceKind, MaterialRequirement } from '@/types/materialIssue'
 
+type IssueQuantityRow = Pick<MaterialRequirement, 'line_type' | 'unit' | 'conversion_snapshot'>
+
 export function decimalUnits(value: unknown): bigint | null {
   const text = String(value ?? '').trim()
   if (!/^\d{1,14}(?:\.\d{1,4})?$/.test(text)) return null
@@ -17,10 +19,38 @@ export function unitsText(value: bigint): string {
 export function omittedQuantity(value: unknown): boolean {
   return String(value ?? '').trim() === '' || decimalUnits(value) === 0n
 }
-export function issueOrderOverages(rows: MaterialRequirement[], selected: Record<string, string>) {
+export function isRawIssuePipe(row: IssueQuantityRow) {
+  return row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE'
+}
+export function issueQuantityUnit(row: IssueQuantityRow, pipeInRoots: boolean) {
+  return pipeInRoots && isRawIssuePipe(row) ? '根' : row.unit
+}
+function issuePipeRootCount(value: unknown, row: IssueQuantityRow): string | null {
+  const pieces = decimalUnits(value)
+  const perRoot = pipeCuts(row) * 10000n
+  return pieces !== null && perRoot && pieces % perRoot === 0n ? String(pieces / perRoot) : null
+}
+function issueRequestedQuantity(value: string, row: IssueQuantityRow, pipeInRoots: boolean): string {
+  if (!pipeInRoots || !isRawIssuePipe(row)) return value
+  const roots = decimalUnits(value)
+  const cuts = pipeCuts(row)
+  if (roots === null || roots <= 0n || roots % 10000n || cuts <= 0n) return ''
+  const pieces = String(roots / 10000n * cuts)
+  return decimalUnits(pieces) === null ? '' : pieces
+}
+export function issueLineQuantityText(value: string | null | undefined, row: IssueQuantityRow, pipeInRoots: boolean, withUnit = false) {
+  if (value == null) return '—'
+  if (pipeInRoots && isRawIssuePipe(row)) {
+    const roots = issuePipeRootCount(value, row)
+    // 旧订单的参考数量可能含零支，保留来源单位以免把它误作整根。
+    return roots === null ? `${quantityText(value)} ${row.unit}` : withUnit ? `${roots} 根` : roots
+  }
+  return withUnit ? `${quantityText(value)} ${row.unit}` : quantityText(value)
+}
+export function issueOrderOverages(rows: MaterialRequirement[], selected: Record<string, string>, pipeInRoots = false) {
   const totals = new Map<string, { row: MaterialRequirement; requested: bigint; remaining: bigint }>()
   for (const row of rows) {
-    const requested = decimalUnits(selected[row.requirement_id])
+    const requested = decimalUnits(issueRequestedQuantity(selected[row.requirement_id] || '', row, pipeInRoots))
     if (!requested || row.product_order_remaining === null) continue
     // 旧半成品只有库存余额，公共半成品的不同工艺共享同一部位的订单需求。
     if (row.line_type === 'SEMI' && row.stock_mode !== 'PUBLIC_V2') continue
@@ -35,10 +65,11 @@ export function issueOrderOverages(rows: MaterialRequirement[], selected: Record
   return [...totals.values()].filter(item => item.requested > item.remaining).map(({ row, requested, remaining }) => {
     const part = row.conversion_snapshot?.public_bom_snapshot?.line?.part_name || row.conversion_snapshot?.part_name || row.part_names?.join('、')
     const name = [...new Set([row.material_name, part, row.specification, row.line_type === 'RAW' ? row.color : ''].filter(Boolean))].join(' · ')
-    return `${name}\n剩余需求 ${unitsText(remaining)} ${row.unit}，本次领 ${unitsText(requested)} ${row.unit}，超出 ${unitsText(requested - remaining)} ${row.unit}`
+    const quantity = (amount: bigint) => issueLineQuantityText(unitsText(amount), row, pipeInRoots, true)
+    return `${name}\n剩余需求 ${quantity(remaining)}，本次领 ${quantity(requested)}，超出 ${quantity(requested - remaining)}`
   })
 }
-function pipeCuts(row: MaterialRequirement): bigint {
+function pipeCuts(row: IssueQuantityRow): bigint {
   const value = row.conversion_snapshot?.pieces_per_bar
   return Number.isSafeInteger(value) && Number(value) > 0 ? BigInt(value!) : 0n
 }
@@ -59,15 +90,17 @@ export function pipePlan(value: string, row: MaterialRequirement) {
   const meters = bars * cents
   return { error: '', bars: String(bars), meters: `${meters / 100n}.${String(meters % 100n).padStart(2, '0')}` }
 }
-export function quantityError(value: string, row: MaterialRequirement, sourceKind: MaterialIssueSourceKind = 'STOCK'): string {
-  const amount = decimalUnits(value)
-  if (amount === null || amount <= 0n) return '请输入大于 0 的数量，最多四位小数。'
+export function quantityError(value: string, row: MaterialRequirement, sourceKind: MaterialIssueSourceKind = 'STOCK', pipeInRoots = false): string {
+  const amount = decimalUnits(issueRequestedQuantity(value, row, pipeInRoots))
+  if (amount === null || amount <= 0n) {
+    return pipeInRoots && isRawIssuePipe(row) ? '请填写有效的整根数。' : '请输入大于 0 的数量，最多四位小数。'
+  }
   const integerSemi = row.line_type === 'SEMI' && (['支', '套', '片'].includes(row.unit)
     || row.component_kind === 'CUT_PIECE' || row.component_kind === 'SEWN_PART'
     || ['SEMI_PIPE', 'SEMI_PIPE_PIECES', 'CUT_PIECE', 'SEWN_PART'].includes(row.conversion_snapshot?.kind || '')
     || row.conversion_snapshot?.integer_required === true)
   if (integerSemi && amount % 10000n) return '半成品数量必须为正整数。'
-  if (row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE') {
+  if (!pipeInRoots && isRawIssuePipe(row)) {
     const error = pipePlan(value, row).error
     if (error) return error
   }
@@ -78,36 +111,41 @@ export function quantityError(value: string, row: MaterialRequirement, sourceKin
   if (amount > maximum) return direct ? '申请数量超过当前裁剪直交余量。' : '申请数量超过当前可领上限。'
   return ''
 }
-export function selectedQuantityError(value: string, row: MaterialRequirement, rows: MaterialRequirement[], selected: Record<string, string>, sources: Record<string, MaterialIssueSourceKind> = {}): string {
+export function selectedQuantityError(value: string, row: MaterialRequirement, rows: MaterialRequirement[], selected: Record<string, string>,
+  sources: Record<string, MaterialIssueSourceKind> = {}, pipeInRoots = false): string {
   if (omittedQuantity(value)) return ''
   const source = sources[row.requirement_id] || 'STOCK'
-  const error = quantityError(value, row, source)
+  const error = quantityError(value, row, source, pipeInRoots)
   if (error || source === 'CUTTING_DIRECT' || !row.stock_item_id) return error
-  const isPipe = row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE'
+  const isPipe = isRawIssuePipe(row)
   const cuts = isPipe ? pipeCuts(row) : 1n
   const maximum = decimalUnits(row.max_issue_quantity)!
-  const total = rows.filter(item => item.line_type === row.line_type && item.stock_item_id === row.stock_item_id
+  const stockKey = (item: MaterialRequirement) => (pipeInRoots && isPipe && item.stock_mode === 'PUBLIC_V2'
+    ? item.conversion_snapshot?.public_identity?.identity_key : undefined) || item.stock_item_id
+  const key = stockKey(row)
+  const total = rows.filter(item => item.line_type === row.line_type && stockKey(item) === key
     && sources[item.requirement_id] !== 'CUTTING_DIRECT'
     && item.unit === row.unit && item.stock_mode === row.stock_mode
     && (!isPipe || item.conversion_snapshot?.raw_bar_length_m === row.conversion_snapshot?.raw_bar_length_m))
     .reduce((sum, item) => {
       const amount = decimalUnits(item.requirement_id === row.requirement_id ? value : selected[item.requirement_id])
-      const itemCuts = isPipe ? pipeCuts(item) : 1n
+      const itemCuts = isPipe && !pipeInRoots ? pipeCuts(item) : 1n
       return sum + (amount !== null && amount > 0n && itemCuts > 0n ? amount / itemCuts : 0n)
     }, 0n)
   return total > maximum / cuts ? '相同物料的合计申请数量超过扣除占用后的可用库存。' : ''
 }
-export function buildIssueLines(rows: MaterialRequirement[], selected: Record<string, string>, sources: Record<string, MaterialIssueSourceKind> = {}): IssueWriteLine[] {
+export function buildIssueLines(rows: MaterialRequirement[], selected: Record<string, string>,
+  sources: Record<string, MaterialIssueSourceKind> = {}, pipeInRoots = false): IssueWriteLine[] {
   return rows.flatMap((row) => {
     const value = selected[row.requirement_id]
     if (omittedQuantity(value)) return []
-    const error = selectedQuantityError(value!, row, rows, selected, sources)
+    const error = selectedQuantityError(value!, row, rows, selected, sources, pipeInRoots)
     if (error) throw new Error(`${row.material_name}：${error}`)
     if (sources[row.requirement_id] === 'CUTTING_DIRECT') {
       return [{ requirement_id: row.requirement_id, requested_quantity: value!.trim(), source_kind: 'CUTTING_DIRECT' }]
     }
     if (row.stock_mode === 'PUBLIC_V2' || row.line_type !== 'SEMI' || !row.semi_balance_allocations?.length) {
-      return [{ requirement_id: row.requirement_id, requested_quantity: value!.trim() }]
+      return [{ requirement_id: row.requirement_id, requested_quantity: issueRequestedQuantity(value!.trim(), row, pipeInRoots) }]
     }
     let remaining = decimalUnits(value)!
     const lines: IssueWriteLine[] = []
@@ -137,13 +175,15 @@ export function restoreIssueSources(lines: MaterialIssueLine[], rows: MaterialRe
   }
   return restored
 }
-export function restoreIssueQuantities(lines: MaterialIssueLine[], rows: MaterialRequirement[]): Record<string, string> {
+export function restoreIssueQuantities(lines: MaterialIssueLine[], rows: MaterialRequirement[], pipeInRoots = false): Record<string, string> {
   const restored: Record<string, string> = {}
   for (const line of lines) {
     const row = rows.find(item => item.requirement_id === line.requirement_id || (item.stock_mode !== 'PUBLIC_V2'
       && item.semi_balance_allocations?.some(allocation => allocation.balance_id === line.requirement_id)))
     if (!row) throw new Error('原申请有材料已不在当前可领范围。为避免丢失明细，已停止修改，请在 ERP 核对。')
-    const amount = decimalUnits(line.requested_quantity)
+    const requested = pipeInRoots && isRawIssuePipe(line)
+      ? issuePipeRootCount(line.requested_quantity, line) : line.requested_quantity
+    const amount = decimalUnits(requested)
     if (amount === null) throw new Error('原申请数量无效，请在 ERP 核对。')
     restored[row.requirement_id] = unitsText((decimalUnits(restored[row.requirement_id]) || 0n) + amount)
   }

@@ -32,6 +32,11 @@ const semi: MaterialRequirement = {
   completed_craft: '喷塑', warehouse_zone: '半成品仓 / 一楼',
 }
 const product: MaterialIssueProduct = { id: 'product-1', product_number: 'P001', product_name: '折叠椅', specification: '', color: '黑色', quantity: '100', unit: '套', image_file_id: null }
+const metalPipe: MaterialRequirement = {
+  ...semi, requirement_id: 'pipe', line_type: 'RAW', section_code: 'PROFILE', material_name: '方管', unit: '支',
+  required_quantity: '60', internal_issued_quantity: '6', pending_issue_quantity: '6', order_remaining: '48',
+  available_stock: '54', max_issue_quantity: '48', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' },
+}
 function detail(stockMode: 'PUBLIC_V2' | null = 'PUBLIC_V2') {
   return { id: 'issue-1', stock_mode: stockMode || undefined, issue_number: '领料-001', status: 'DRAFT', status_display: '草稿',
     production_task: { id: 'task-1', task_number: '生产001', customer_name: '客户' }, product,
@@ -43,8 +48,9 @@ function detail(stockMode: 'PUBLIC_V2' | null = 'PUBLIC_V2') {
 }
 const wrappers: ReturnType<typeof mount>[] = []
 const dialogStub = { template: '<section><slot/><slot name="footer"/></section>' }
-async function formView() {
-  const wrapper = mount(MaterialIssueFormView, { global: { plugins: [ElementPlus, createPinia()], stubs: { MaterialIssuePartitions: true } } })
+async function formView(renderPartitions = false) {
+  const wrapper = mount(MaterialIssueFormView, { global: { plugins: [ElementPlus, createPinia()],
+    stubs: { MaterialIssuePartitions: !renderPartitions, AppWindowDialog: dialogStub } } })
   wrappers.push(wrapper); await flushPromises(); return wrapper
 }
 async function detailView(value = detail()) {
@@ -233,6 +239,56 @@ describe('提交仓库审核时核对本产品剩余需求', () => {
   }
   afterEach(() => { ElMessageBox.close() })
 
+  it('金工原管显示按根可领，零碎根数不写入，整根由系统换算提交', async () => {
+    route.query.plan_category = 'METAL'
+    api.options.mockResolvedValue({ production_tasks: [{ id: 'task-1', task_number: '生产001', customer_name: '客户' }],
+      workshops: [{ id: 'workshop-1', name: '金工车间' }], recipients: [{ id: 'recipient-1', name: '领料人', workshop_id: 'workshop-1' }] })
+    api.requirements.mockResolvedValue({ items: [metalPipe], blockers: [] })
+    api.create.mockResolvedValue(saved)
+    api.submit.mockResolvedValue(saved)
+    const wrapper = await formView(true)
+    const vm = wrapper.vm as any
+    vm.form.recipient_workshop_employee_id = 'recipient-1'
+    vm.selected.pipe = '0'
+    await flushPromises()
+    const table = wrapper.get('[data-testid="raw-partition"]')
+    const headers = table.findAll('thead th').map(cell => cell.text())
+    const cells = table.get('tbody tr').findAll('td')
+    expect(cells[headers.indexOf('单位')]!.text()).toBe('根')
+    expect(cells[headers.indexOf('本次可领')]!.text()).toBe('8')
+    const input = table.get('input[aria-label="方管申请数量"]')
+    await input.setValue('1.5')
+    expect(table.get('.quantity-input').classes()).toContain('is-rule-error')
+    const warning = vi.spyOn(ElMessage, 'warning')
+    await clickForm(wrapper, '保存草稿')
+    expect(warning).toHaveBeenLastCalledWith(expect.stringContaining('整根数'))
+    expect(api.create).not.toHaveBeenCalled()
+    await input.setValue('9')
+    await clickForm(wrapper, '提交仓库审核')
+    expect(warning).toHaveBeenLastCalledWith(expect.stringContaining('超过当前可领上限'))
+    expect(api.create).not.toHaveBeenCalled()
+    await input.setValue('3')
+    await clickForm(wrapper, '提交仓库审核')
+    expect(api.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lines: [{ requirement_id: 'pipe', requested_quantity: '18' }] }))
+    expect(api.submit).toHaveBeenCalledExactlyOnceWith('issue-1', saved.etag)
+  })
+
+  it('金工旧草稿读取原单根数，保存时保留原单和待扣数量', async () => {
+    route.params = { issueId: 'issue-1' }
+    api.detail.mockResolvedValue({
+      data: { ...detail(), workshop: { id: 'workshop-1', name: '金工车间' },
+        lines: [{ ...metalPipe, id: 'line-1', requested_quantity: '12.0000', issued_quantity: null }] }, etag: '"original"',
+    })
+    api.requirements.mockResolvedValue({ items: [metalPipe], blockers: [] })
+    api.update.mockResolvedValue(saved)
+    const wrapper = await formView(true)
+    expect(wrapper.get<HTMLInputElement>('input[aria-label="方管申请数量"]').element.value).toBe('2')
+    await clickForm(wrapper, '保存草稿')
+    expect(api.update).toHaveBeenCalledExactlyOnceWith('issue-1', expect.objectContaining({
+      lines: [{ requirement_id: 'pipe', requested_quantity: '12' }],
+    }), '"original"')
+  })
+
   it.each([
     { requested: '1.2344', remaining: '1.2345' },
     { requested: '1.2345', remaining: '1.2345' },
@@ -332,6 +388,22 @@ describe('提交仓库审核时核对本产品剩余需求', () => {
 })
 
 describe('公共库存领料数量展示与实时预检', () => {
+  it('仓库审核金工管材时预检按整根显示', async () => {
+    const value = detail()
+    value.workshop.name = '金工车间'
+    value.status = 'PENDING_REVIEW'
+    Object.assign(value.lines[0]!, metalPipe, { requested_quantity: '12' })
+    api.preview.mockResolvedValue({ can_confirm: true, lines: [{ line_id: 'line-1',
+      available_stock: '54', order_remaining: '30', max_issue_quantity: '48', bar_count: '2' }] })
+    const wrapper = await detailView(value)
+    await wrapper.findAll('button').find(button => button.text() === '审核通过并出库')!.trigger('click')
+    await flushPromises()
+    const preview = wrapper.get('[data-testid="issue-live-preview"]')
+    expect(preview.text()).toContain('8 根')
+    expect(preview.text()).toContain('2 根')
+    expect(preview.text()).not.toContain('12 支')
+  })
+
   it('非片单位的裁片可从车间直交，显示行单位并原样提交数量', async () => {
     const direct = { ...semi, component_kind: 'CUT_PIECE' as const, unit: '件', available_stock: '0',
       max_issue_quantity: '0', direct_available_quantity: '20', source_kind: 'CUTTING_DIRECT' as const }

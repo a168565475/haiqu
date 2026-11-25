@@ -11,7 +11,7 @@ import {
   fetchMaterialRequirements, materialIssueProductImageUrl, submitMaterialIssue, updateMaterialIssue,
 } from '@/api/materialIssues'
 import MaterialIssuePartitions from '@/components/workshop/MaterialIssuePartitions.vue'
-import { issueOrderOverages, issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
+import { isRawIssuePipe, issueOrderOverages, issuePipeRootCount, issueRequestedQuantity, issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
 import type { MaterialIssueBatch } from '@/types/materialIssue'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
@@ -37,6 +37,7 @@ const selected = reactive<Record<string, string>>({})
 const allocations = reactive<Record<string, MaterialIssueBatch[]>>({})
 const originalTaskId = ref('')
 const loadedIssueId = ref('')
+const savedWorkshopName = ref('')
 function currentMinuteValue() {
   const now = new Date()
   now.setSeconds(0, 0)
@@ -57,10 +58,9 @@ const planCategoryLabels: Record<string, string> = {
   METAL: '金工计划', CUTTING: '裁剪计划', SEWING: '车缝计划', ASSEMBLY: '装配计划',
 }
 const planContextActive = computed(() => !editing.value && Boolean(planWorkshopNames[planCategory.value]))
-const isAssemblyIssue = computed(() => {
-  if (planCategory.value === 'ASSEMBLY') return true
-  return options.value.workshops.find((item) => item.id === form.workshop_id)?.name === '装配车间'
-})
+const workshopName = computed(() => savedWorkshopName.value || options.value.workshops.find(item => item.id === form.workshop_id)?.name)
+const isAssemblyIssue = computed(() => planCategory.value === 'ASSEMBLY' || workshopName.value === '装配车间')
+const pipeInRoots = computed(() => workshopName.value === '金工车间')
 
 const recipients = computed(() => options.value.recipients.filter((item) => !form.workshop_id || item.workshop_id === form.workshop_id))
 const selectedRows = computed(() => requirements.value.filter((item) => item.requirement_id in selected))
@@ -140,7 +140,7 @@ function validate(): string {
   if (!recordedRows.value.length) return '请至少填写一项大于 0 的领料数量。'
   if (blockers.value.some((item) => item.section_code !== 'SEMI') && recordedRows.value.some((item) => item.line_type === 'RAW')) return '当前 BOM 存在未解析原材料，请先处理页面提示；仅领取已回库半成品不受此项影响。'
   for (const item of recordedRows.value) {
-    const error = issueSelectedQuantityError(selected[item.requirement_id] || '', item, requirements.value, selected)
+    const error = issueSelectedQuantityError(selected[item.requirement_id] || '', item, requirements.value, selected, pipeInRoots.value)
     if (error) return `${item.material_name}：${error}`
   }
   return ''
@@ -148,7 +148,7 @@ function validate(): string {
 function payload() {
   const issueLines = recordedRows.value.flatMap((item) => {
     if (item.stock_mode === 'PUBLIC_V2' || item.line_type !== 'SEMI' || !item.semi_balance_allocations?.length) {
-      return [{ requirement_id: item.requirement_id, requested_quantity: selected[item.requirement_id],
+      return [{ requirement_id: item.requirement_id, requested_quantity: issueRequestedQuantity(selected[item.requirement_id] || '', item, pipeInRoots.value),
         ...(item.source_kind === 'CUTTING_DIRECT' ? { source_kind: 'CUTTING_DIRECT' } : {}) }]
     }
     let remaining = decimalUnits(selected[item.requirement_id]) || 0n
@@ -189,7 +189,7 @@ async function confirmOrderQuantities() {
   blockers.value = latestBlockers
   const message = validate()
   if (message) { ElMessage.warning(message); return false }
-  const overages = issueOrderOverages(items, selected)
+  const overages = issueOrderOverages(items, selected, pipeInRoots.value)
   if (!overages.length) return true
   try {
     await ElMessageBox.confirm(overages.join('\n\n'), '领料超出本产品需求', {
@@ -206,6 +206,11 @@ async function save(submit: boolean) {
   if (saving.value) return
   if (editing.value && !editLoadComplete.value) { ElMessage.warning('编辑数据尚未完整加载，请先重试。'); return }
   if (submit) { const message = validate(); if (message) { ElMessage.warning(message); return } }
+  else if (pipeInRoots.value && recordedRows.value.some(row =>
+    isRawIssuePipe(row) && !issueRequestedQuantity(selected[row.requirement_id] || '', row, true))) {
+    ElMessage.warning('管材请填写有效的整根数。')
+    return
+  }
   saving.value = true
   try {
     if (submit && !await confirmOrderQuantities()) return
@@ -246,6 +251,7 @@ async function loadEdit() {
     const result = await fetchMaterialIssue(issueId.value)
     if (!['DRAFT', 'RETURNED'].includes(result.data.status)) { ElMessage.warning('当前状态不允许修改。'); await router.replace({ name: 'material-issue-detail', params: { issueId: issueId.value } }); return }
     etag.value = result.etag
+    savedWorkshopName.value = result.data.workshop?.name || ''
     Object.assign(form, {
       production_task_id: result.data.production_task?.id || '', product_line_id: result.data.product?.id || '',
       workshop_id: result.data.workshop?.id || '', recipient_workshop_employee_id: result.data.recipient?.id || '',
@@ -262,11 +268,17 @@ async function loadEdit() {
       const key = matching?.requirement_id || line.requirement_id
       const requirement = requirements.value.find(item => item.requirement_id === key)
       if (requirement) requirement.source_kind = line.source_kind || line.conversion_snapshot?.source_kind || 'STOCK'
+      const requested = pipeInRoots.value && isRawIssuePipe(line)
+        ? issuePipeRootCount(line.requested_quantity, line) : line.requested_quantity
+      if (requested === null) {
+        loadError.value = `原领料单的${line.material_name}无法还原整根数，请核对原单。`
+        return
+      }
       const toScaled = (value: string) => {
         const [whole, fraction = ''] = String(value || '0').split('.')
         return BigInt(whole || '0') * 10000n + BigInt(fraction.padEnd(4, '0').slice(0, 4) || '0')
       }
-      const scaled = toScaled(restored.get(key) || '0') + toScaled(line.requested_quantity || '0')
+      const scaled = toScaled(restored.get(key) || '0') + toScaled(requested || '0')
       restored.set(key, `${scaled / 10000n}.${String(scaled % 10000n).padStart(4, '0')}`.replace(/\.?0+$/, '') || '0')
     }
     for (const [key, value] of restored) selected[key] = value
@@ -396,6 +408,7 @@ onMounted(initialize)
           :requirements="requirements"
           :selected="selected"
           :allocations="allocations"
+          :pipe-in-roots="pipeInRoots"
           :show-pipe-deduction-columns="!isAssemblyIssue"
         />
         <section v-else class="mi-surface mi-empty empty-requirements">请先从作业计划带入生产订单与产品。</section>

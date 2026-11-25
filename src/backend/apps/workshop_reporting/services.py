@@ -48,6 +48,14 @@ MAX_WORK_REPORT_AMOUNT = Decimal("9999999999999999999999.99")
 MAX_REQUIRED_QUANTITY = Decimal("99999999999999999999.9999")
 
 
+def _bom_part_label(name, material, specification):
+    return "-".join(part for part in (name, material, specification) if part)
+
+
+def _part_label_with_cutting_length(label, cutting_length_mm):
+    return f"{label}-{cutting_length_mm}mm" if cutting_length_mm else label
+
+
 def bom_options_for_product_line(product_line_id):
     bom = Bom.objects.filter(
         product_line_id=product_line_id,
@@ -78,12 +86,8 @@ def bom_options_for_product_line(product_line_id):
         # 不再混入候选，避免两种数量口径被同一个工价方案引用。
         if source_type == PlanCategory.CUTTING and line.component_kind not in {"CUT_PIECE", "SEWN_PART"}:
             continue
-        label_parts = [name]
-        if source_type == PlanCategory.METAL and material:
-            label_parts.append(material)
-        if specification:
-            label_parts.append(specification)
-        label = "-".join(label_parts)
+        metal = source_type == PlanCategory.METAL
+        label = _bom_part_label(name, material if metal else "", specification)
         parts_per_product = line.parts_per_product
         if line.component_kind == "CUT_PIECE" and line.parent_part_id:
             parts_per_product = line.parent_part.parts_per_product
@@ -94,6 +98,7 @@ def bom_options_for_product_line(product_line_id):
             "material": material,
             "specification": specification,
             "label": label,
+            "display_label": _part_label_with_cutting_length(label, line.cutting_length_mm) if metal else label,
             "source_type": source_type,
             "component_kind": line.component_kind,
             "pieces_per_product": line.pieces_per_product,
@@ -112,6 +117,37 @@ def metal_bom_options_for_product_line(product_line_id):
         item for item in bom_options_for_product_line(product_line_id)
         if item["source_type"] == PlanCategory.METAL
     ]
+
+
+def wage_scheme_line_display_labels(scheme, lines):
+    if scheme.workshop.name != METAL_WORKSHOP_NAME:
+        return {}
+    references = {
+        (line.bom_component_identity_snapshot, line.display_name_snapshot)
+        for line in lines if line.bom_component_identity_snapshot
+    }
+    if not references:
+        return {}
+    recorded_at = scheme.approved_at or scheme.updated_at
+    candidates = BomLine.objects.filter(
+        section__bom__product_line_id=scheme.product_line_id,
+        section__bom__created_at__lte=recorded_at,
+        section__section_type=BomSectionType.PROFILE,
+        component_identity__in={identity for identity, _ in references},
+    ).filter(
+        Q(section__bom__confirmed_at__lte=recorded_at)
+        | Q(section__bom__status=BomStatus.VERIFIED, section__bom__confirmed_at__isnull=True)
+    ).values_list("component_identity", "part_name", "material", "specification", "cutting_length_mm")
+    lengths = {}
+    for identity, name, material, specification, length in candidates:
+        label = _bom_part_label(name.strip(), material.strip(), specification.strip())
+        if (identity, label) in references:
+            lengths.setdefault((identity, label), set()).add(length)
+    # 工价未保存 BOM 版次，只有记录当时的同名部件长度唯一时才展示。
+    return {
+        key: _part_label_with_cutting_length(key[1], next(iter(values)))
+        for key, values in lengths.items() if len(values) == 1
+    }
 
 
 def _is_metal_craft_scope(crafts):

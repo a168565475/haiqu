@@ -204,7 +204,9 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
             :max-height="tableMaxHeight"
             empty-text="暂无工价明细"
           >
-            <ElTableColumn prop="display_name" label="名称 / 部位" min-width="150" show-overflow-tooltip />
+            <ElTableColumn prop="display_name" label="名称 / 部位" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.display_label || row.display_name }}</template>
+            </ElTableColumn>
             <ElTableColumn prop="operation_name" label="申报工序" min-width="100" show-overflow-tooltip />
             <ElTableColumn v-if="scheme.scope_craft?.plan_category === 'SEWING'" prop="counting_mode_display" label="计数方式" width="82" align="center" />
             <ElTableColumn prop="production_description" label="制作工序描述" min-width="170" show-overflow-tooltip>

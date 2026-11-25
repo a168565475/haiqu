@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from ..models import WageSchemeLineStatus, WageSchemeStatus, WorkCountingMode
+from ..services import wage_scheme_line_display_labels
 
 
 class MobileWageTargetQuerySerializer(serializers.Serializer):
@@ -131,11 +132,13 @@ def _estimated_scheme_total(lines):
         return str(total)
 
 
-def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
+def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_labels=True):
     line_metrics = line_metrics or {}
     lines = []
     events = []
     if detail:
+        scheme_lines = list(scheme.lines.all())
+        display_labels = wage_scheme_line_display_labels(scheme, scheme_lines) if include_display_labels else {}
         lines = [
             {
                 "id": str(line.pk),
@@ -144,6 +147,9 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
                 "craft_id": str(line.work_item.craft_id),
                 "operation_id": str(line.work_item.operation_id),
                 "display_name": line.display_name_snapshot,
+                "display_label": display_labels.get(
+                    (line.bom_component_identity_snapshot, line.display_name_snapshot), line.display_name_snapshot,
+                ),
                 "production_description": line.production_description,
                 "craft_name": line.craft_name_snapshot,
                 "operation_name": line.operation_name_snapshot,
@@ -169,7 +175,7 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
                 "status": line.status,
                 "note": line.note,
             }
-            for line in scheme.lines.all()
+            for line in scheme_lines
         ]
         events = [
             {

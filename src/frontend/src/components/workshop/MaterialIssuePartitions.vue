@@ -4,7 +4,7 @@ import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import type { MaterialRequirement, MaterialIssueBatch } from '@/types/materialIssue'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
-import { issuePipePlan, issueQuantityError, issueQuantityText } from '@/utils/materialIssueQuantities'
+import { isRawIssuePipe, issueLineQuantityText, issuePipePlan, issueQuantityError, issueQuantityText, issueQuantityUnit } from '@/utils/materialIssueQuantities'
 import { materialAttributeFields } from '@/utils/materialAttributes'
 
 const props = withDefaults(defineProps<{
@@ -12,8 +12,10 @@ const props = withDefaults(defineProps<{
   selected: Record<string, string>
   allocations: Record<string, MaterialIssueBatch[]>
   showPipeDeductionColumns?: boolean
+  pipeInRoots?: boolean
 }>(), {
   showPipeDeductionColumns: true,
+  pipeInRoots: false,
 })
 const picker = ref<'RAW' | 'SEMI'>('RAW')
 const visible = ref(false)
@@ -39,9 +41,10 @@ const candidates = computed(() => props.requirements.filter(r => r.line_type ===
     || (decimalUnits(String(r.direct_available_quantity ?? '0')) || 0n) > 0n)
   && (!processingStatus.value || processingStatusLabel(r) === processingStatus.value)
   && `${r.material_name} ${(r.part_names || []).join(' ')} ${r.conversion_snapshot?.part_name || ''} ${r.material || ''} ${r.specification} ${r.color}`.includes(search.value)))
-const pipeRows = computed(() => raw.value.filter(isPipe))
-const showPipeDeduction = computed(() => props.showPipeDeductionColumns && pipeRows.value.length > 0)
-const isPipe = (r: MaterialRequirement) => r.line_type === 'RAW' && r.conversion_snapshot?.kind === 'PIPE'
+const pipeRows = computed(() => raw.value.filter(isRawIssuePipe))
+const showPipeDeduction = computed(() => !props.pipeInRoots && props.showPipeDeductionColumns && pipeRows.value.length > 0)
+const rootPipe = (row: MaterialRequirement) => props.pipeInRoots && isRawIssuePipe(row)
+const rawQuantity = (row: MaterialRequirement, value: string) => issueLineQuantityText(value, row, props.pipeInRoots)
 const name = (r: MaterialRequirement) => r.conversion_snapshot?.part_name || r.material_name
 const partNames = (r: MaterialRequirement) => r.material_catalog_id && r.conversion_snapshot?.public_bom_snapshot?.line?.part_name
   ? r.conversion_snapshot.public_bom_snapshot.line.part_name : r.part_names?.length ? r.part_names.join('、') : (r.conversion_snapshot?.part_name || '—')
@@ -90,7 +93,7 @@ function quantityRuleError(row: MaterialRequirement) {
   if (!value) return ''
   const amount = decimalUnits(value)
   if (amount === 0n) return ''
-  return issueQuantityError(value, row)
+  return issueQuantityError(value, row, props.pipeInRoots)
 }
 function zoneNames(row: MaterialRequirement) {
   return [...new Set(row.warehouse_zones || [])]
@@ -105,23 +108,23 @@ function remainder(row: MaterialRequirement) {
 <template>
   <div class="issue-partitions">
     <section class="mi-surface partition" data-testid="raw-partition">
-      <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
+      <header><div><h2>原材料领料</h2><span v-if="pipeInRoots && pipeRows.length">管材按整根领取</span><span v-else-if="showPipeDeduction">管材按支申请，按整根扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
       <ElTable class="erp-table-editor scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
          <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="颜色" width="100"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
-        <ElTableColumn prop="unit" label="单位" width="70" align="center" />
-        <ElTableColumn label="本订单需求" width="110" align="center"><template #default="{ row }">{{ issueQuantityText(row.required_quantity) }}</template></ElTableColumn>
-        <ElTableColumn label="本订单已领取" width="120" align="center"><template #default="{ row }">{{ issueQuantityText(row.internal_issued_quantity) }}</template></ElTableColumn>
-        <ElTableColumn label="本订单已外发" width="120" align="center"><template #default="{ row }">{{ issueQuantityText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
-        <ElTableColumn label="本订单待审核" width="120" align="center"><template #default="{ row }">{{ row.pending_issue_quantity || '0' }}</template></ElTableColumn>
-        <ElTableColumn label="本次可领" width="110" align="center"><template #default="{ row }">{{ issueQuantityText(row.max_issue_quantity) }}</template></ElTableColumn>
+        <ElTableColumn label="单位" width="70" align="center"><template #default="{ row }">{{ issueQuantityUnit(row, pipeInRoots) }}</template></ElTableColumn>
+        <ElTableColumn label="本订单需求" width="110" align="center"><template #default="{ row }">{{ rawQuantity(row, row.required_quantity) }}</template></ElTableColumn>
+        <ElTableColumn label="本订单已领取" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.internal_issued_quantity) }}</template></ElTableColumn>
+        <ElTableColumn label="本订单已外发" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.outsourcing_issued_quantity) }}</template></ElTableColumn>
+        <ElTableColumn label="本订单待审核" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.pending_issue_quantity || '0') }}</template></ElTableColumn>
+        <ElTableColumn label="本次可领" width="110" align="center"><template #default="{ row }">{{ rawQuantity(row, row.max_issue_quantity) }}</template></ElTableColumn>
         <ElTableColumn label="库区" min-width="105" show-overflow-tooltip><template #default="{ row }">{{ zoneNames(row).join('、') || '—' }}</template></ElTableColumn>
-        <ElTableColumn label="申请数量" width="160" align="center"><template #default="{ row }"><ElTooltip :visible="Boolean(quantityRuleError(row))" placement="bottom" effect="light" popper-class="material-issue-rule-tooltip" :show-after="0" :hide-after="0" :teleported="true"><template #content><span role="alert">{{ quantityRuleError(row) }}</span></template><ElInput v-model="selected[row.requirement_id]" class="quantity-input" :class="{ 'is-rule-error': Boolean(quantityRuleError(row)) }" :aria-invalid="Boolean(quantityRuleError(row))" :aria-label="`${name(row)}申请数量`" /></ElTooltip></template></ElTableColumn>
-        <ElTableColumn v-if="showPipeDeduction" label="每根切割" width="110"><template #default="{ row }">{{ isPipe(row) ? `${row.conversion_snapshot?.pieces_per_bar} 支` : '—' }}</template></ElTableColumn>
-        <ElTableColumn v-if="showPipeDeduction" label="预计扣根数" width="115"><template #default="{ row }">{{ isPipe(row) ? `${plan(row).bars} 根` : '—' }}</template></ElTableColumn>
+        <ElTableColumn label="申请数量" width="160" align="center"><template #default="{ row }"><ElTooltip :visible="Boolean(quantityRuleError(row))" placement="bottom" effect="light" popper-class="material-issue-rule-tooltip" :show-after="0" :hide-after="0" :teleported="true"><template #content><span role="alert">{{ quantityRuleError(row) }}</span></template><ElInput v-model="selected[row.requirement_id]" class="quantity-input" :class="{ 'is-rule-error': Boolean(quantityRuleError(row)) }" :aria-invalid="Boolean(quantityRuleError(row))" :aria-label="`${name(row)}申请数量`" :inputmode="rootPipe(row) ? 'numeric' : undefined"><template v-if="rootPipe(row)" #suffix>根</template></ElInput></ElTooltip></template></ElTableColumn>
+        <ElTableColumn v-if="showPipeDeduction" label="每根切割" width="110"><template #default="{ row }">{{ isRawIssuePipe(row) ? `${row.conversion_snapshot?.pieces_per_bar} 支` : '—' }}</template></ElTableColumn>
+        <ElTableColumn v-if="showPipeDeduction" label="预计扣根数" width="115"><template #default="{ row }">{{ isRawIssuePipe(row) ? `${plan(row).bars} 根` : '—' }}</template></ElTableColumn>
         <ElTableColumn label="操作" width="72" fixed="right"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
       </ElTable>
       <div v-if="showPipeDeduction" class="partition-note"><b>换算规则</b>　申请支数 ÷ 每根切割支数 = 整根数。系统按相同物料和规格的合格库存自动分配。</div>
@@ -178,12 +181,12 @@ function remainder(row: MaterialRequirement) {
            <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="规格" min-width="165" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="颜色" width="90"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
-          <ElTableColumn prop="unit" label="单位" width="70" align="center" />
-          <ElTableColumn label="本订单需求" width="110" align="center"><template #default="{ row }">{{ issueQuantityText(row.required_quantity) }}</template></ElTableColumn>
-          <ElTableColumn label="本订单已领取" width="120" align="center"><template #default="{ row }">{{ issueQuantityText(row.internal_issued_quantity) }}</template></ElTableColumn>
-          <ElTableColumn label="本订单已外发" width="120" align="center"><template #default="{ row }">{{ issueQuantityText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
-          <ElTableColumn label="本订单待审核" width="120" align="center"><template #default="{ row }">{{ row.pending_issue_quantity || '0' }}</template></ElTableColumn>
-          <ElTableColumn label="本次可领" width="110" align="center"><template #default="{ row }">{{ issueQuantityText(row.max_issue_quantity) }}</template></ElTableColumn>
+          <ElTableColumn label="单位" width="70" align="center"><template #default="{ row }">{{ issueQuantityUnit(row, pipeInRoots) }}</template></ElTableColumn>
+          <ElTableColumn label="本订单需求" width="110" align="center"><template #default="{ row }">{{ rawQuantity(row, row.required_quantity) }}</template></ElTableColumn>
+          <ElTableColumn label="本订单已领取" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.internal_issued_quantity) }}</template></ElTableColumn>
+          <ElTableColumn label="本订单已外发" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.outsourcing_issued_quantity) }}</template></ElTableColumn>
+          <ElTableColumn label="本订单待审核" width="120" align="center"><template #default="{ row }">{{ rawQuantity(row, row.pending_issue_quantity || '0') }}</template></ElTableColumn>
+          <ElTableColumn label="本次可领" width="110" align="center"><template #default="{ row }">{{ rawQuantity(row, row.max_issue_quantity) }}</template></ElTableColumn>
         </template>
       </ElTable>
       </div>

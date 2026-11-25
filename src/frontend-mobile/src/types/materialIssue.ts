@@ -31,6 +31,7 @@ export interface MaterialRequirement {
     kind: string; pieces_per_bar?: number; raw_bar_length_m?: string; part_name?: string
     integer_required?: boolean; physical_issued_quantity?: string
     component_identity?: string; public_bom_snapshot?: { line?: { part_name?: string } }
+    public_identity?: { identity_key: string }
   }
   semi_balance_allocations?: { balance_id: string; max_issue_quantity: string }[]
 }

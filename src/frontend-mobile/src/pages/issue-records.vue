@@ -6,9 +6,9 @@ import WorkPage from '@/components/WorkPage.vue'
 import ProductionSectionTabs from '@/components/ProductionSectionTabs.vue'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
-import { materialAttributes, quantityText } from '@/utils/materialQuantities'
+import { isRawIssuePipe, issueLineQuantityText, materialAttributes, quantityText } from '@/utils/materialQuantities'
 import { fetchMaterialIssue, fetchMaterialIssues } from '@/api/materialIssues'
-import type { MaterialIssue, MaterialIssueStatus } from '@/types/materialIssue'
+import type { MaterialIssue, MaterialIssueLine, MaterialIssueStatus } from '@/types/materialIssue'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +16,10 @@ const auth = useAuthStore()
 const query = (key: string) => typeof route.query[key] === 'string' ? route.query[key] as string : ''
 const records = ref<MaterialIssue[]>([])
 const detail = ref<MaterialIssue | null>(null)
+const pipeInRoots = computed(() => detail.value?.workshop?.name === '金工车间')
+const rootPipe = (line: MaterialIssueLine) => pipeInRoots.value && isRawIssuePipe(line)
+const lineQuantity = (line: MaterialIssueLine, value: string | null | undefined, withUnit = false) =>
+  issueLineQuantityText(value, line, pipeInRoots.value, withUnit)
 const loading = ref(false)
 const loadError = ref('')
 const page = ref(1)
@@ -98,13 +102,13 @@ onBeforeUnmount(() => { active = false; generation += 1 })
         <article v-for="line in detail.lines" :key="line.id" class="section-card line-card">
           <p v-if="line.source_kind === 'CUTTING_DIRECT'" class="muted">领取来源：裁剪直交</p>
           <h3>{{ line.material_name }}</h3><p class="muted">{{ [line.specification, line.color, line.completed_craft].filter(Boolean).join(' · ') || '规格未记录' }}</p>
-          <div class="summary-grid line-quantities"><span>申请 <b>{{ quantityText(line.requested_quantity) }} {{ line.unit }}</b></span><span>已发料 <b>{{ quantityText(line.issued_quantity) }} {{ line.unit }}</b></span></div>
+          <div class="summary-grid line-quantities"><span>申请 <b>{{ lineQuantity(line, line.requested_quantity, true) }}</b></span><span>已发料 <b>{{ lineQuantity(line, line.issued_quantity, true) }}</b></span></div>
           <details class="line-details"><summary>材料与数量详情</summary>
             <p v-for="attribute in materialAttributes(line)" :key="attribute.key">{{ attribute.label }}：{{ attribute.value }}</p>
-            <p>需求 {{ quantityText(line.required_quantity) }} · 累计已领 {{ quantityText(line.internal_issued_quantity) }} · 已外发 {{ quantityText(line.outsourcing_issued_quantity) }} {{ line.unit }}</p>
-            <p>待审核 {{ quantityText(line.pending_issue_quantity) }} · 可领 {{ quantityText(line.max_issue_quantity) }} {{ line.unit }}</p>
-            <p v-if="line.bar_count || line.meters">实际折合 {{ quantityText(line.bar_count) }} 根／{{ quantityText(line.meters) }} 米</p>
-            <p v-for="allocation in line.public_stock_allocations || []" :key="allocation.id">{{ allocation.warehouse_zone }}：{{ quantityText(allocation.stock_quantity) }} {{ allocation.stock_unit }}<template v-if="allocation.meter_quantity !== null">／{{ quantityText(allocation.meter_quantity) }} 米</template></p>
+            <p>需求 {{ lineQuantity(line, line.required_quantity) }} · 累计已领 {{ lineQuantity(line, line.internal_issued_quantity) }} · 已外发 {{ lineQuantity(line, line.outsourcing_issued_quantity, true) }}</p>
+            <p>待审核 {{ lineQuantity(line, line.pending_issue_quantity) }} · 可领 {{ lineQuantity(line, line.max_issue_quantity, true) }}</p>
+            <p v-if="!rootPipe(line) && (line.bar_count || line.meters)">实际折合 {{ quantityText(line.bar_count) }} 根／{{ quantityText(line.meters) }} 米</p>
+            <p v-for="allocation in line.public_stock_allocations || []" :key="allocation.id">{{ allocation.warehouse_zone }}：{{ quantityText(allocation.stock_quantity) }} {{ allocation.stock_unit }}<template v-if="!rootPipe(line) && allocation.meter_quantity !== null">／{{ quantityText(allocation.meter_quantity) }} 米</template></p>
           </details>
         </article>
         <section class="section-card audit-card"><h3>处理记录</h3><p v-if="!detail.audit_events.length" class="muted">暂无处理记录</p><div v-for="event in detail.audit_events" :key="event.id" class="event-row"><b>{{ event.action_display }}</b><span>{{ event.actor.name }} · {{ dateText(event.created_at) }}</span><p v-if="event.reason">{{ event.reason }}</p></div></section>

@@ -9,7 +9,7 @@ import { confirmMaterialIssue, fetchMaterialIssue, materialIssueProductImageUrl,
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
-import { issueQuantityText } from '@/utils/materialIssueQuantities'
+import { isRawIssuePipe, issueLineQuantityText, issueQuantityText, issueQuantityUnit } from '@/utils/materialIssueQuantities'
 import { materialAttributeFields } from '@/utils/materialAttributes'
 import { router } from '@/router'
 import { canOpenPage } from '@/router/pageAccess'
@@ -40,6 +40,10 @@ const canEdit = computed(() => auth.user?.is_superuser === true || (
 ))
 const rawLines = computed(() => issue.value?.lines.filter((item) => item.line_type === 'RAW') || [])
 const semiLines = computed(() => issue.value?.lines.filter((item) => item.line_type === 'SEMI') || [])
+const pipeInRoots = computed(() => issue.value?.workshop?.name === '金工车间')
+const rootPipe = (row: MaterialIssueLine) => pipeInRoots.value && isRawIssuePipe(row)
+const lineQuantity = (row: MaterialIssueLine, value: string | null | undefined, withUnit = false) =>
+  issueLineQuantityText(value, row, pipeInRoots.value, withUnit)
 const isDirectLine = (line: Partial<MaterialIssueLine>) => (line.source_kind || line.conversion_snapshot?.source_kind) === 'CUTTING_DIRECT'
 const hasDirectLines = computed(() => semiLines.value.some(isDirectLine))
 const isIssued = computed(() => issue.value?.status === 'ISSUED')
@@ -63,12 +67,14 @@ const confirmationRows = computed(() => (issue.value?.lines || []).map(line => {
 }))
 const publicAllocations = computed(() => (issue.value?.lines || []).flatMap(line =>
   (line.public_stock_allocations || []).map(allocation => ({ ...allocation,
+    requested_quantity: rootPipe(line) ? allocation.stock_quantity : allocation.requested_quantity,
+    meter_quantity: rootPipe(line) ? null : allocation.meter_quantity,
     material_name: line.conversion_snapshot?.part_name || line.material_name,
     bom_attributes: attributeFields(line),
     material: materialValue(line),
     specification: specificationValue(line),
     color: line.line_type === 'SEMI' ? colorValue(line, true) : colorValue(line),
-    line_type: line.line_type, request_unit: line.unit,
+    line_type: line.line_type, request_unit: rootPipe(line) ? allocation.stock_unit : line.unit,
   }))))
 const canOpenMetalProcessing = computed(() => isIssued.value && issue.value?.workshop?.name === '金工车间'
   && rawLines.value.some(line => line.conversion_snapshot?.kind === 'PIPE')
@@ -191,7 +197,7 @@ onMounted(load)
         <section v-else-if="issue.status === 'PENDING_REVIEW' && conflictLine" class="error-banner">
           <div>
             <strong>无法出库：{{ conflictLine.material_name }}可用库存不足。</strong>
-            <p>本次申请 {{ numberText(conflictLine.requested_quantity) }} {{ conflictLine.unit }}，扣除其他占用后可领 {{ numberText(conflictLine.max_issue_quantity) }} {{ conflictLine.unit }}。整张领料单尚未扣库存。</p>
+            <p>本次申请 {{ lineQuantity(conflictLine, conflictLine.requested_quantity, true) }}，扣除其他占用后可领 {{ lineQuantity(conflictLine, conflictLine.max_issue_quantity, true) }}。整张领料单尚未扣库存。</p>
           </div>
           <ElButton link type="primary" @click="load">刷新库存</ElButton>
         </section>
@@ -229,23 +235,23 @@ onMounted(load)
             <ElTableColumn label="物料 / 部位" min-width="160"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
-            <ElTableColumn v-if="rawLines.some(r => r.conversion_snapshot?.kind === 'PIPE')" label="管材扣库换算" min-width="230"><template #default="{ row }"><span v-if="isDirectLine(row)">{{ numberText(row.requested_quantity) }} {{ row.unit }} · 裁剪车间直交，不扣库存</span><span v-else-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根</span><span v-else>—</span></template></ElTableColumn>
+            <ElTableColumn v-if="!pipeInRoots && rawLines.some(isRawIssuePipe)" label="管材扣库换算" min-width="230"><template #default="{ row }"><span v-if="isDirectLine(row)">{{ numberText(row.requested_quantity) }} {{ row.unit }} · 裁剪车间直交，不扣库存</span><span v-else-if="isRawIssuePipe(row)">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根</span><span v-else>—</span></template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="90" align="center"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
-            <ElTableColumn prop="unit" label="单位" width="76" align="center" />
-            <ElTableColumn label="本订单需求" min-width="110" align="center"><template #default="{ row }">{{ numberText(row.required_quantity) }}</template></ElTableColumn>
+            <ElTableColumn label="单位" width="76" align="center"><template #default="{ row }">{{ issueQuantityUnit(row, pipeInRoots) }}</template></ElTableColumn>
+            <ElTableColumn label="本订单需求" min-width="110" align="center"><template #default="{ row }">{{ lineQuantity(row, row.required_quantity) }}</template></ElTableColumn>
             <template v-if="isIssued">
-              <ElTableColumn label="本次实领" min-width="105" align="center"><template #default="{ row }">{{ numberText(row.issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="累计厂内已领" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.internal_issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="累计委外已发" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="BOM剩余参考" min-width="105" align="center"><template #default="{ row }">{{ numberText(row.order_remaining) }}</template></ElTableColumn>
+              <ElTableColumn label="本次实领" min-width="105" align="center"><template #default="{ row }">{{ lineQuantity(row, row.issued_quantity) }}</template></ElTableColumn>
+              <ElTableColumn label="累计厂内已领" min-width="120" align="center"><template #default="{ row }">{{ lineQuantity(row, row.internal_issued_quantity) }}</template></ElTableColumn>
+              <ElTableColumn label="累计委外已发" min-width="120" align="center"><template #default="{ row }">{{ lineQuantity(row, row.outsourcing_issued_quantity) }}</template></ElTableColumn>
+              <ElTableColumn label="BOM剩余参考" min-width="105" align="center"><template #default="{ row }">{{ lineQuantity(row, row.order_remaining) }}</template></ElTableColumn>
             </template>
             <template v-else>
-              <ElTableColumn label="厂内已领" min-width="100" align="center"><template #default="{ row }">{{ numberText(row.internal_issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="委外已发" min-width="100" align="center"><template #default="{ row }">{{ numberText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn v-if="isPublicIssue" label="本订单待审核" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.pending_issue_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="本次可领" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.max_issue_quantity) }}</span></template></ElTableColumn>
-              <ElTableColumn label="公共可用库存" min-width="120" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.available_stock) }}</span></template></ElTableColumn>
-              <ElTableColumn label="本次领取" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.requested_quantity) }}</span></template></ElTableColumn>
+              <ElTableColumn label="厂内已领" min-width="100" align="center"><template #default="{ row }">{{ lineQuantity(row, row.internal_issued_quantity) }}</template></ElTableColumn>
+              <ElTableColumn label="委外已发" min-width="100" align="center"><template #default="{ row }">{{ lineQuantity(row, row.outsourcing_issued_quantity) }}</template></ElTableColumn>
+              <ElTableColumn v-if="isPublicIssue" label="本订单待审核" min-width="120" align="center"><template #default="{ row }">{{ lineQuantity(row, row.pending_issue_quantity) }}</template></ElTableColumn>
+              <ElTableColumn label="本次可领" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ lineQuantity(row, row.max_issue_quantity) }}</span></template></ElTableColumn>
+              <ElTableColumn label="公共可用库存" min-width="120" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ lineQuantity(row, row.available_stock) }}</span></template></ElTableColumn>
+              <ElTableColumn label="本次领取" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ lineQuantity(row, row.requested_quantity) }}</span></template></ElTableColumn>
             </template>
           </ElTable>
         </section>
@@ -321,11 +327,11 @@ onMounted(load)
         <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="规格" min-width="220"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ row.line_type === 'SEMI' ? colorValue(row, true) : colorValue(row) }}</template></ElTableColumn>
-        <ElTableColumn label="申请数量" width="150"><template #default="{ row }">{{ numberText(row.requested_quantity) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="来源可用量" min-width="120"><template #default="{ row }">{{ numberText(isDirectLine(row) ? row.direct_available_quantity ?? row.max_issue_quantity : row.available_stock) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="本订单剩余" min-width="120"><template #default="{ row }">{{ numberText(row.order_remaining) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="本次可领" min-width="120"><template #default="{ row }">{{ numberText(row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="预计扣库" min-width="230"><template #default="{ row }"><span v-if="isDirectLine(row)">{{ numberText(row.requested_quantity) }} {{ row.unit }} · 裁剪车间直交，不扣库存</span><span v-else-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根</span><span v-else>{{ numberText(row.requested_quantity) }} {{ row.unit }} · {{ row.warehouse_zone || '合格公共库存' }}</span></template></ElTableColumn>
+        <ElTableColumn label="申请数量" width="150"><template #default="{ row }">{{ lineQuantity(row, row.requested_quantity, true) }}</template></ElTableColumn>
+        <ElTableColumn label="来源可用量" min-width="120"><template #default="{ row }">{{ lineQuantity(row, isDirectLine(row) ? row.direct_available_quantity ?? row.max_issue_quantity : row.available_stock, true) }}</template></ElTableColumn>
+        <ElTableColumn label="本订单剩余" min-width="120"><template #default="{ row }">{{ lineQuantity(row, row.order_remaining, true) }}</template></ElTableColumn>
+        <ElTableColumn label="本次可领" min-width="120"><template #default="{ row }">{{ lineQuantity(row, row.max_issue_quantity, true) }}</template></ElTableColumn>
+        <ElTableColumn label="预计扣库" min-width="230"><template #default="{ row }"><span v-if="isDirectLine(row)">{{ numberText(row.requested_quantity) }} {{ row.unit }} · 裁剪车间直交，不扣库存</span><span v-else-if="rootPipe(row)">{{ numberText(row.bar_count) }} 根</span><span v-else-if="isRawIssuePipe(row)">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根</span><span v-else>{{ numberText(row.requested_quantity) }} {{ row.unit }} · {{ row.warehouse_zone || '合格公共库存' }}</span></template></ElTableColumn>
       </ElTable>
       <template #footer><ElButton :disabled="acting" @click="confirmVisible = false">取消</ElButton><ElButton :disabled="acting" @click="openConfirmation">重新核对</ElButton><ElButton type="primary" :loading="acting" :disabled="acting || !previewReady || Boolean(previewError)" @click="confirmIssue">确认出库</ElButton></template>
     </AppWindowDialog>

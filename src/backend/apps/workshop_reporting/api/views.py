@@ -598,7 +598,7 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
         if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
         if craft_id: queryset = queryset.filter(scope_craft_id=craft_id)
         page = self.paginate_queryset(queryset.order_by("-effective_from", "-approved_at", "-id"))
-        return self.get_paginated_response([wage_scheme_data(item) for item in page])
+        return self.get_paginated_response([wage_scheme_data(item, include_display_labels=False) for item in page])
 
 
 class WorkReportViewSet(viewsets.GenericViewSet):

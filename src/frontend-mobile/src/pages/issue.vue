@@ -14,7 +14,10 @@ import WorkPage from '@/components/WorkPage.vue'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { createRequestId } from '@/utils/requestId'
-import { buildIssueLines, issueOrderOverages, materialAttributes, omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError } from '@/utils/materialQuantities'
+import {
+  buildIssueLines, isRawIssuePipe, issueLineQuantityText, issueOrderOverages, issueQuantityUnit, materialAttributes,
+  omittedQuantity, pipePlan, quantityText, restoreIssueQuantities, restoreIssueSources, selectedQuantityError,
+} from '@/utils/materialQuantities'
 import { createMaterialIssue, fetchMaterialIssue, fetchMaterialIssueOptions, fetchMaterialIssueProducts, fetchMaterialRequirements, submitMaterialIssue, updateMaterialIssue } from '@/api/materialIssues'
 import type { IssueWritePayload, MaterialIssue, MaterialIssueOptions, MaterialIssueProduct, MaterialIssueSourceKind, MaterialRequirement, MaterialRequirementResponse, VersionedIssue } from '@/types/materialIssue'
 
@@ -68,6 +71,10 @@ const taskNumber = computed(() => issue.value?.production_task?.task_number
   || options.value.production_tasks.find(item => item.id === context.production_task_id)?.task_number || '')
 const workshopName = computed(() => issue.value?.workshop?.name
   || options.value.workshops.find(item => item.id === context.workshop_id)?.name || '')
+const pipeInRoots = computed(() => workshopName.value === '金工车间')
+const rootPipe = (row: MaterialRequirement) => pipeInRoots.value && isRawIssuePipe(row)
+const lineQuantity = (row: MaterialRequirement, value: string | null | undefined, withUnit = false) =>
+  issueLineQuantityText(value, row, pipeInRoots.value, withUnit)
 const selectedCount = computed(() => requirements.value.filter(row => !omittedQuantity(selected[row.requirement_id])).length)
 const returnReason = computed(() => [...(issue.value?.audit_events || [])].reverse().find(event => event.action === 'RETURNED')?.reason)
 const currentDateTime = (value?: string | null) => {
@@ -96,7 +103,7 @@ function formatPickerOption(type: string, option: PickerOption) {
   const labels: Record<string, string> = { year: '年', month: '月', day: '日', hour: '时', minute: '分' }
   return { ...option, text: `${option.text}${labels[type] || ''}` }
 }
-const rowError = (row: MaterialRequirement) => selectedQuantityError(selected[row.requirement_id] || '', row, requirements.value, selected, sources)
+const rowError = (row: MaterialRequirement) => selectedQuantityError(selected[row.requirement_id] || '', row, requirements.value, selected, sources, pipeInRoots.value)
 const isDirect = (row: MaterialRequirement) => sources[row.requirement_id] === 'CUTTING_DIRECT'
 const canChooseDirect = (row: MaterialRequirement) => row.component_kind === 'CUT_PIECE' && row.direct_available_quantity != null
 function formatIssueQuantity(value: string, row: MaterialRequirement) {
@@ -122,7 +129,7 @@ function confirmRecipient({ selectedValues }: PickerConfirmEventParams) {
 function writePayload(): IssueWritePayload {
   if (!recipientId.value || !recipients.value.some(item => item.id === recipientId.value)) throw new Error('请选择当前车间有效的领料人。')
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(issueAt.value)) throw new Error('请填写领料时间。')
-  const lines = buildIssueLines(requirements.value, selected, sources)
+  const lines = buildIssueLines(requirements.value, selected, sources, pipeInRoots.value)
   if (!lines.length) throw new Error('请至少填写一项大于 0 的申请数量。')
   if (hasRawBlocker.value && requirements.value.some(row => row.line_type === 'RAW' && !omittedQuantity(selected[row.requirement_id]))) {
     throw new Error('当前原材料需求存在未解析项，请先在 ERP 处理提示；可用半成品仍可单独申请。')
@@ -142,7 +149,7 @@ async function checkedPayload(run: number) {
   requirements.value = latest.items
   blockers.value = latest.blockers
   const payload = writePayload()
-  const overages = issueOrderOverages(latest.items, selected)
+  const overages = issueOrderOverages(latest.items, selected, pipeInRoots.value)
   if (overages.length) {
     try {
       await showConfirmDialog({ title: '领料超出本产品需求', message: overages.join('\n\n'), messageAlign: 'left',
@@ -213,7 +220,7 @@ async function initialize() {
     if (!id && !loadedOptions.production_tasks.some(item => item.id === context.production_task_id)) throw new Error('生产单当前不可领料，请返回任务列表刷新。')
     requirements.value = data.items; blockers.value = data.blockers
     if (originalIssue) {
-      Object.assign(selected, restoreIssueQuantities(originalIssue.lines, data.items))
+      Object.assign(selected, restoreIssueQuantities(originalIssue.lines, data.items, pipeInRoots.value))
       Object.assign(sources, restoreIssueSources(originalIssue.lines, data.items))
     }
     if (!recipientId.value && recipients.value.length === 1) recipientId.value = recipients.value[0]!.id
@@ -359,23 +366,23 @@ onBeforeUnmount(() => { active = false; generation += 1; window.removeEventListe
               <VanButton size="small" :type="isDirect(row) ? 'primary' : 'default'" :aria-pressed="isDirect(row)" :disabled="fieldsLocked || !canChooseDirect(row)" @click="sources[row.requirement_id] = 'CUTTING_DIRECT'">裁剪直交</VanButton>
             </div>
             <div class="quantity-grid">
-              <span>需求 <b>{{ quantityText(row.required_quantity) }}</b></span><span>已领 <b>{{ quantityText(row.internal_issued_quantity) }}</b></span>
-              <span>待审核 <b>{{ quantityText(row.pending_issue_quantity) }}</b></span><span class="available">{{ isDirect(row) ? '可直交' : '本次可领' }} <b>{{ quantityText(isDirect(row) ? row.direct_available_quantity : row.max_issue_quantity) }} {{ row.unit }}</b></span>
+              <span>需求 <b>{{ lineQuantity(row, row.required_quantity) }}</b></span><span>已领 <b>{{ lineQuantity(row, row.internal_issued_quantity) }}</b></span>
+              <span>待审核 <b>{{ lineQuantity(row, row.pending_issue_quantity) }}</b></span><span class="available">{{ isDirect(row) ? '可直交' : '本次可领' }} <b>{{ lineQuantity(row, isDirect(row) ? row.direct_available_quantity : row.max_issue_quantity, true) }}</b></span>
             </div>
-            <VanField v-model="selected[row.requirement_id]" class="request-field" type="text" inputmode="decimal" label="本次申请" placeholder="请输入数量"
-              :formatter="value => formatIssueQuantity(value, row)" :disabled="fieldsLocked" :error-message="rowError(row)" :aria-label="`${row.material_name}本次申请数量，单位${row.unit}`">
-              <template #button><span class="request-unit">{{ row.unit }}</span></template>
+            <VanField v-model="selected[row.requirement_id]" class="request-field" type="text" :inputmode="rootPipe(row) ? 'numeric' : 'decimal'" label="本次申请" placeholder="请输入数量"
+              :formatter="value => formatIssueQuantity(value, row)" :disabled="fieldsLocked" :error-message="rowError(row)" :aria-label="`${row.material_name}本次申请数量，单位${issueQuantityUnit(row, pipeInRoots)}`">
+              <template #button><span class="request-unit">{{ issueQuantityUnit(row, pipeInRoots) }}</span></template>
             </VanField>
-            <p v-if="row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE' && !omittedQuantity(selected[row.requirement_id]) && !pipePlan(selected[row.requirement_id] || '', row).error" class="muted pipe-hint">
+            <p v-if="!pipeInRoots && isRawIssuePipe(row) && !omittedQuantity(selected[row.requirement_id]) && !pipePlan(selected[row.requirement_id] || '', row).error" class="muted pipe-hint">
               本次折合 {{ pipePlan(selected[row.requirement_id] || '', row).bars }} 根／{{ pipePlan(selected[row.requirement_id] || '', row).meters }} 米。
             </p>
             <details class="material-details">
               <summary>材料详情</summary>
               <p v-if="row.part_names?.length || row.conversion_snapshot?.part_name">部位：{{ row.part_names?.join('、') || row.conversion_snapshot?.part_name }}</p>
-              <p v-if="row.line_type === 'RAW' && row.conversion_snapshot?.kind === 'PIPE'">每根切 {{ row.conversion_snapshot.pieces_per_bar || '—' }} 支，原长 {{ row.conversion_snapshot.raw_bar_length_m || '—' }} 米。</p>
+              <p v-if="isRawIssuePipe(row)"><template v-if="!pipeInRoots">每根切 {{ row.conversion_snapshot?.pieces_per_bar || '—' }} 支，</template>原长 {{ row.conversion_snapshot?.raw_bar_length_m || '—' }} 米。</p>
               <p v-for="field in materialAttributes(row)" :key="field.key">{{ field.label }}：{{ field.value }}</p>
               <p v-if="isDirect(row)">由裁剪车间直接交给车缝，仓库库存不扣减。</p>
-              <p v-else>库存可用 {{ quantityText(row.available_stock) }} {{ row.unit }} · 已外发 {{ quantityText(row.outsourcing_issued_quantity) }} {{ row.unit }}</p>
+              <p v-else>库存可用 {{ lineQuantity(row, row.available_stock, true) }} · 已外发 {{ lineQuantity(row, row.outsourcing_issued_quantity, true) }}</p>
               <p v-if="!isDirect(row) && row.warehouse_zones?.length">库区：{{ row.warehouse_zones.join('、') }}</p>
             </details>
             <p v-for="message in row.validation_errors || []" :key="message" class="field-error">{{ message }}</p>

@@ -1,4 +1,4 @@
-"""一般管材实重入库契约；不访问数据库。"""
+"""一般材料收发按根以及旧称重入库的契约。"""
 from copy import deepcopy
 from decimal import Decimal
 from types import SimpleNamespace
@@ -20,19 +20,18 @@ class GeneralWeightReceiptContractTests(SimpleTestCase):
         self.saved = {'category_key': 'TUBE', 'processing_state': 'RAW', 'unit_name': '根',
                       'attributes': {}, 'name': '管材'}
         self.item = {'material_catalog_id': self.catalog_id, 'zone_id': uuid4(),
-                     'material_selection': {'processing_state': 'RAW'}, 'raw_bar_count': 3,
+                     'material_selection': {'processing_state': 'RAW', 'attributes': {}}, 'raw_bar_count': 3,
                      'raw_bar_length_m': Decimal('6'), 'weight_quantity': Decimal('7.1000')}
 
     def apply_selection(self, projection, *args, **kwargs):
         projection.material_selection_snapshot = deepcopy(self.saved)
         projection.specification = ''
 
-    def transfer_values(self, item, direction='IN'):
+    def transfer_values(self, item):
         with patch('apps.inventory.material_transfers.MaterialCatalog.objects') as catalogs, \
-                patch('apps.inventory.material_transfers.apply_catalog_selection', side_effect=self.apply_selection), \
-                patch('apps.inventory.material_transfers.can_contribute', return_value=False):
+                patch('apps.inventory.material_transfers.apply_catalog_selection', side_effect=self.apply_selection):
             catalogs.select_for_update.return_value.filter.return_value.first.return_value = SimpleNamespace(category_key='TUBE', base_warehouse_id=None)
-            _resolve_catalog(item, request=None, versions={}, direction=direction)
+            _resolve_catalog(item, request=None, versions={})
         return item
 
     def manual_values(self, item):
@@ -43,24 +42,23 @@ class GeneralWeightReceiptContractTests(SimpleTestCase):
             resolve_manual_catalog(item, request=None, versions={})
         return item
 
-    def test_general_inbound_keeps_real_roots_and_weight_without_standard_weight(self):
-        item = self.transfer_values(dict(self.item))
-        self.assertEqual(item['quantity'], Decimal('3'))
-        self.assertEqual(item['weight_quantity'], Decimal('7.1'))
-        self.assertNotIn('bar_weight_kg', item)
+    def test_general_transfer_accepts_roots_and_length_without_weight(self):
+        item = {key: value for key, value in self.item.items() if key != 'weight_quantity'}
+        result = self.transfer_values(item)
+        self.assertEqual(result['quantity'], Decimal('3'))
+        self.assertEqual(result['raw_bar_length_m'], Decimal('6'))
+        self.assertNotIn('weight_quantity', result)
+        self.assertNotIn('bar_weight_kg', result)
 
-    def test_general_inbound_requires_positive_finite_four_decimal_weight(self):
-        for weight in (None, '0', '-1', 'NaN', 'Infinity', '7.10001'):
-            with self.subTest(weight=weight), self.assertRaises(ValidationError):
-                self.transfer_values({**self.item, 'weight_quantity': weight})
+    def test_general_transfer_rejects_weight_from_new_requests(self):
+        with self.assertRaisesMessage(ValidationError, '管材收发请按根登记'):
+            self.transfer_values(dict(self.item))
 
-    def test_general_outbound_uses_server_weight_share(self):
-        item = dict(self.item)
-        item.pop('weight_quantity')
-        result = self.transfer_values(item, direction='OUT')
-        self.assertIsNone(result['weight_quantity'])
-        with self.assertRaises(ValidationError):
-            self.transfer_values(dict(self.item), direction='OUT')
+    def test_general_transfer_requires_roots_and_length(self):
+        for missing in ('raw_bar_count', 'raw_bar_length_m'):
+            item = {key: value for key, value in self.item.items() if key not in (missing, 'weight_quantity')}
+            with self.subTest(missing=missing), self.assertRaisesMessage(ValidationError, '须填写根数和单根长度'):
+                self.transfer_values(item)
 
     def test_non_pipe_rejects_extra_weight(self):
         self.saved.update(category_key='HARDWARE', unit_name='个')

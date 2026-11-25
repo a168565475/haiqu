@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
@@ -21,7 +21,7 @@ from apps.customers.models import (
 )
 from apps.files.models import BusinessFile
 from apps.inquiries.models import Inquiry, InquiryItem, InquiryStatus
-from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, OrganizationUnit, RoleProfile
 from apps.quotations.models import (
     Quotation,
     QuotationLine,
@@ -1451,6 +1451,16 @@ class SampleApiTests(APITestCase):
         self.other_user.user_permissions.set(
             Permission.objects.filter(content_type__app_label__in=["samples", "workflow"])
         )
+        group, _ = Group.objects.get_or_create(name="sample-test-factory-manager")
+        factory_manager, _ = RoleProfile.objects.get_or_create(
+            role_code="FACTORY_MANAGER",
+            defaults={"display_name": "厂长", "auth_group": group},
+        )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.other_employee,
+            role_profile=factory_manager,
+            effective_from=timezone.now() - timedelta(days=1),
+        )
         waiver = self.client.post(
             f"/api/v1/sample-requests/{sample_id}/fee-records/",
             {
@@ -1584,7 +1594,7 @@ class SampleApiTests(APITestCase):
         )
         self.assertEqual(fee.status_code, 201, fee.data)
         self.assertEqual(fee.data["data"]["verification_status"], "EVIDENCE_UPLOADED")
-        self.assertEqual(self.client.post(f"/api/v1/sample-requests/{sample_id}/shipments/", {}, format="json").status_code, 405)
+        self.assertEqual(self.client.post(f"/api/v1/sample-requests/{sample_id}/shipments/", {}, format="json").status_code, 403)
         self.assertFalse(SampleShipment.objects.filter(sample_request_id=sample_id).exists())
 
     def test_shipment_actions_are_closed_and_historical_delivery_remains_readable(self):
@@ -1598,6 +1608,8 @@ class SampleApiTests(APITestCase):
             status="DELIVERED",
             carrier_code="DHL",
             tracking_number="HISTORICAL-DELIVERY",
+            recipient_snapshot={"name": "历史收件人"},
+            address_snapshot={"address_line": "历史寄送地址"},
             shipped_at=delivered_at - timedelta(hours=2),
             delivered_at=delivered_at,
         )
@@ -1615,7 +1627,7 @@ class SampleApiTests(APITestCase):
         detail = self.client.get(f"/api/v1/sample-shipments/{shipment.pk}/")
         self.assertEqual(detail.status_code, 200, detail.data)
         self.assertEqual(detail.data["data"]["events"][0]["event_type"], "DELIVERED")
-        self.assertEqual(self.client.post(root + "shipments/", {}, format="json").status_code, 405)
+        self.assertEqual(self.client.post(root + "shipments/", {}, format="json").status_code, 403)
         for action in ("ship", "deliver", "progress", "exception"):
             with self.subTest(action=action):
                 reply = self.client.post(f"/api/v1/sample-shipments/{shipment.pk}/{action}/", {}, format="json")

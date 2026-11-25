@@ -10,8 +10,8 @@ vi.mock('@/api/outsourcingPrint', () => ({ fetchOutsourcingPrintPdf: api.pdf }))
 vi.mock('@/utils/outsourcingPrint', () => ({ buildTubePrintDocument: api.tubeDocument, buildRegularPrintDocument: api.regularDocument }))
 const wrappers: ReturnType<typeof mount>[] = []
 const record = { id: 'tube-1', record_type: 'TUBE', source_kind: 'TUBE_METAL', detail_access: 'TUBE' } as UnifiedOutsourcingOrder
-function create(kind: 'processing' | 'spray' = 'processing', row = record, warehouse = false, downloadOnOpen = false) {
-  const wrapper = mount(OutsourcingPrintDialog, { props: { record: row, kind, warehouse, downloadOnOpen }, global: { stubs: {
+function create(kind: 'processing' | 'spray' = 'processing', row = record, warehouse = false, previewOnly = false) {
+  const wrapper = mount(OutsourcingPrintDialog, { props: { record: row, kind, warehouse, previewOnly }, global: { stubs: {
     AppWindowDialog: { template: '<section><slot/><slot name="footer"/></section>' },
     OutsourcingPrintDocument: { props: ['document'], template: '<article>{{ document.title }}</article>' },
     ElButton: { template: '<button><slot/></button>' }, ElAlert: { props: ['title'], template: '<div>{{ title }}</div>' }, ElSkeleton: true,
@@ -70,7 +70,7 @@ describe('外发打印只读加载与失败恢复', () => {
     expect(window.print).toHaveBeenCalledTimes(1)
   })
 
-  it('从下载入口读取 PDF 并按单号命名，不打开系统打印', async () => {
+  it('下载菜单打开预览，点击弹窗里的按钮才保存 PDF', async () => {
     api.pdf.mockResolvedValue(new Blob(['%PDF-1.4'], { type: 'application/pdf' }))
     const createUrl = vi.fn(() => 'blob:outsourcing-pdf')
     const revokeUrl = vi.fn()
@@ -83,7 +83,13 @@ describe('外发打印只读加载与失败恢复', () => {
       clicked.push(this.download)
     })
     try {
-      create('spray', record, true, true)
+      const wrapper = create('spray', record, true, true)
+      await flushPromises()
+      expect(wrapper.text()).toContain('真实管材打印单')
+      expect(api.pdf).not.toHaveBeenCalled()
+      expect(clicked).toEqual([])
+      expect(window.print).not.toHaveBeenCalled()
+      await wrapper.get('[data-testid="outsourcing-pdf-download"]').trigger('click')
       await flushPromises()
       expect(api.pdf).toHaveBeenCalledExactlyOnceWith(record, 'spray', true)
       expect(clicked).toEqual(['WF-1_管材喷塑计划.pdf'])
@@ -101,9 +107,12 @@ describe('外发打印只读加载与失败恢复', () => {
     api.pdf.mockRejectedValue(new Error('offline'))
     const wrapper = create('processing', record, false, true)
     await flushPromises()
+    const download = wrapper.get('[data-testid="outsourcing-pdf-download"]')
+    await download.trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('PDF 下载失败')
     expect(wrapper.text()).toContain('真实管材打印单')
-    await wrapper.get('[data-testid="outsourcing-pdf-download"]').trigger('click')
+    await download.trigger('click')
     await flushPromises()
     expect(api.pdf).toHaveBeenCalledTimes(2)
     expect(window.print).not.toHaveBeenCalled()

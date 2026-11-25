@@ -203,14 +203,14 @@ describe('统一外发列表及来源入口', () => {
     expect(api.push).not.toHaveBeenCalled()
   })
 
-  it('下载菜单打开对应模板并直接进入下载流程', async () => {
+  it('下载菜单只打开对应模板的预览', async () => {
     const wrapper = await createView({ ...row, record_type: 'TUBE', source_kind: 'TUBE_METAL', detail_access: 'TUBE' })
     await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
     const menuItem = '[aria-label="WW-001 下载喷塑 PDF"]'
     await vi.waitFor(() => expect(document.querySelector(menuItem)).not.toBeNull())
     document.querySelector(menuItem)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
-    expect((wrapper.vm as any).printRequest).toMatchObject({ kind: 'spray', download: true })
+    expect((wrapper.vm as any).printRequest).toMatchObject({ kind: 'spray', previewOnly: true })
     expect(api.push).not.toHaveBeenCalled()
   })
 

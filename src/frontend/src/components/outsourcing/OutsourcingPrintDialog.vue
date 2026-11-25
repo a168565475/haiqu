@@ -14,7 +14,7 @@ const props = defineProps<{
   record: UnifiedOutsourcingOrder
   kind: OutsourcingPrintKind
   warehouse?: boolean
-  downloadOnOpen?: boolean
+  previewOnly?: boolean
 }>()
 const emit = defineEmits<{ close: [] }>()
 const printDocument = ref<OutsourcingPrintDocumentData | null>(null)
@@ -95,10 +95,7 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
-  if (active && printDocument.value) {
-    if (props.downloadOnOpen) await downloadPdf()
-    else await print()
-  }
+  if (active && printDocument.value && !props.previewOnly) await print()
 }
 
 onMounted(() => { void load() })

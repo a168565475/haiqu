@@ -6,7 +6,7 @@ import ConfigurationPage from './configuration.vue'
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn(), detail: vi.fn(), update: vi.fn(), remove: vi.fn(), permission: vi.fn(), push: vi.fn(), confirm: vi.fn(), success: vi.fn() }))
 vi.mock('@/api/workshopEmployees', () => ({ fetchWorkshopEmployees: mocks.list, fetchWorkshopEmployeeOptions: mocks.options, fetchWorkshopEmployee: mocks.detail, updateWorkshopEmployee: mocks.update, deleteWorkshopEmployee: mocks.remove }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: mocks.permission }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: mocks.permission, generation: 0 }) }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('vant', async original => ({ ...await original<typeof import('vant')>(), showConfirmDialog: mocks.confirm, showSuccessToast: mocks.success }))
 const employee = { id: 'worker-1', name: '员工甲', employee_name: '员工甲', employee_code: 'E001', employee: 'worker-1', employee_status: 'ACTIVE', employee_archived: false, workshop: 'metal', workshop_name: '金工车间', position: '操作工', department: '生产部', roles: '车间员工', role_workshop: null, role_workshop_name: null, is_supervisor: false, status: 'ACTIVE', status_display: '任职中', can_edit: true, created_at: '', updated_at: '' }
@@ -49,11 +49,68 @@ describe('手机车间员工配置', () => {
     mocks.permission.mockImplementation((code: string) => code === 'workshop_config.view_workshopemployee')
     view = await open()
     expect(view.findAll('button').some(item => item.text() === '编辑')).toBe(false)
+    expect(view.text()).not.toContain('批量设置')
     view.unmount(); wrapper = undefined
     mocks.permission.mockReturnValue(true)
     mocks.list.mockResolvedValue({ data: [{ ...employee, can_edit: false }], meta: { page: 1, total: 1, total_pages: 1 } })
     view = await open()
     expect(view.findAll('button').some(item => item.text() === '编辑')).toBe(false)
+    expect(view.text()).not.toContain('批量设置')
+  })
+  it('批量勾选本页可编辑员工，按各自车间保存填写项和各人版本', async () => {
+    const sewing = { id: 'sewing', name: '车缝车间', status: 'ACTIVE' }
+    const pending = { ...employee, id: 'worker-2', employee_name: '员工乙', workshop: null, position: '', role_workshop: sewing.id, role_workshop_name: sewing.name }
+    const readOnly = { ...employee, id: 'worker-3', employee_name: '员工丙', can_edit: false }
+    mocks.options.mockResolvedValue({ workshops: [workshop, sewing], editable_workshops: [workshop, sewing] })
+    mocks.list.mockResolvedValue({ data: [employee, pending, readOnly], meta: { page: 1, total: 3, total_pages: 1 } })
+    mocks.detail.mockResolvedValueOnce({ data: employee, etag: '"v1"' }).mockResolvedValueOnce({ data: pending, etag: '"v2"' })
+
+    const view = await open()
+    await click(view, '批量设置')
+    await click(view, '本页全选')
+    expect(view.find('[aria-label="选择员工丙"]').exists()).toBe(false)
+    expect(view.get<HTMLInputElement>('[aria-label="选择员工甲"]').element.checked).toBe(true)
+    expect(view.get<HTMLInputElement>('[aria-label="选择员工乙"]').element.checked).toBe(true)
+    await click(view, '设置所选（2 人）')
+    await view.get('[aria-label="批量是否主管"]').setValue('true')
+    await click(view, '保存设置')
+    expect(view.text()).toContain('所选员工中有人还未设置岗位')
+    expect(mocks.update).not.toHaveBeenCalled()
+
+    await view.get('input[placeholder="请填写共同岗位"]').setValue('  操作组长  ')
+    await click(view, '保存设置')
+    expect(mocks.update.mock.calls).toEqual([
+      ['worker-1', { position: '操作组长', is_supervisor: true }, '"v1"'],
+      ['worker-2', { workshop: 'sewing', position: '操作组长', is_supervisor: true }, '"v2"'],
+    ])
+    expect(mocks.success).toHaveBeenCalledWith('已完成 2 人的设置')
+    expect(view.text()).not.toContain('设置所选')
+  })
+  it('批量部分失败后列出员工姓名和原因，重试只保存未完成人员', async () => {
+    const second = { ...employee, id: 'worker-2', employee_name: '员工乙' }
+    mocks.list.mockResolvedValue({ data: [employee, second], meta: { page: 1, total: 2, total_pages: 1 } })
+    mocks.detail.mockResolvedValueOnce({ data: employee, etag: '"v1"' }).mockResolvedValueOnce({ data: second, etag: '"v2"' })
+    mocks.update.mockResolvedValueOnce({ data: employee }).mockRejectedValueOnce({ isAxiosError: true, response: { status: 412, data: { error: { message: '记录已更新' } } } })
+
+    const view = await open()
+    await click(view, '批量设置')
+    await view.get('[aria-label="选择员工甲"]').setValue(true)
+    await view.get('[aria-label="选择员工乙"]').setValue(true)
+    await click(view, '设置所选（2 人）')
+    await view.get('[aria-label="批量任职状态"]').setValue('LEFT')
+    await click(view, '保存设置')
+    expect(view.text()).toContain('已完成 1 人，1 人未完成')
+    expect(view.text()).toContain('员工乙 · 记录已更新')
+    expect(mocks.success).not.toHaveBeenCalled()
+    mocks.detail.mockResolvedValueOnce({ data: second, etag: '"v3"' })
+
+    await click(view, '重试未完成')
+    expect(mocks.update.mock.calls).toEqual([
+      ['worker-1', { status: 'LEFT' }, '"v1"'],
+      ['worker-2', { status: 'LEFT' }, '"v2"'],
+      ['worker-2', { status: 'LEFT' }, '"v3"'],
+    ])
+    expect(mocks.success).toHaveBeenCalledWith('已完成 1 人的设置')
   })
   it('编辑只保存四项车间字段和原 ETag，身份只读', async () => {
     const view = await open(); await click(view, '编辑')

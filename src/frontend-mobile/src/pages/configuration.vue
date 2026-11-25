@@ -15,6 +15,8 @@ import { deleteWorkshopEmployee, fetchWorkshopEmployee, fetchWorkshopEmployeeOpt
 import type { WorkshopEmployee, WorkshopEmployeeInput, WorkshopEmployeeOptions } from '@/types/workshopEmployees'
 import { errorMessage } from '@/utils/errors'
 
+type BatchResult = { succeeded: number; failed: { id: string; name: string; message: string }[] }
+
 const auth = useAuthStore()
 const canView = computed(() => auth.hasPermission('workshop_config.view_workshopemployee'))
 const canChange = computed(() => auth.hasPermission('workshop_config.change_workshopemployee'))
@@ -36,6 +38,12 @@ const etag = ref('')
 const editorError = ref('')
 const conflict = ref(false)
 const form = reactive<WorkshopEmployeeInput>({ workshop: '', position: '', is_supervisor: false, status: 'ACTIVE' })
+const batchMode = ref(false)
+const batchOpen = ref(false)
+const selected = ref(new Map<string, WorkshopEmployee>())
+const batchForm = reactive({ workshop: '', position: '', is_supervisor: null as boolean | null, status: '' as '' | WorkshopEmployeeInput['status'] })
+const batchError = ref('')
+const batchResult = ref<BatchResult>()
 const actionEmployee = ref<WorkshopEmployee | null>(null)
 const assignmentActions = computed(() => [
   { name: actionEmployee.value?.status === 'ACTIVE' ? '结束任职' : '恢复任职', value: 'status' as const },
@@ -48,6 +56,13 @@ let active = true
 const canEdit = (row: WorkshopEmployee) => canChange.value && row.can_edit
 const employeeName = (row: WorkshopEmployee) => row.employee_name || row.name
 const statusLabel = (row: WorkshopEmployee) => !row.workshop ? '未安排' : row.status === 'ACTIVE' ? '任职中' : '已离岗'
+const selectableRows = computed(() => rows.value.filter(canEdit))
+const selectedRows = computed(() => [...selected.value.values()])
+const batchNeedsPosition = computed(() => selectedRows.value.some(row => !row.position.trim()))
+const allPageSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(row => selected.value.has(row.id)))
+const batchWorkshops = computed(() => editableWorkshops.value.filter(workshop =>
+  selectedRows.value.every(row => !row.role_workshop || row.role_workshop === workshop.id),
+))
 
 function selectAssignmentAction(action: { value: 'status' | 'clear' }) {
   const row = actionEmployee.value
@@ -103,6 +118,96 @@ function changeViewMode(value: 'pending' | 'all') {
   viewMode.value = value
   page.value = 1
   void load()
+}
+
+function toggleBatchEmployee(row: WorkshopEmployee) {
+  batchResult.value = undefined
+  batchError.value = ''
+  if (selected.value.has(row.id)) selected.value.delete(row.id)
+  else selected.value.set(row.id, row)
+}
+
+function toggleBatchPage() {
+  batchResult.value = undefined
+  batchError.value = ''
+  const select = !allPageSelected.value
+  for (const row of selectableRows.value) {
+    if (select) selected.value.set(row.id, row)
+    else selected.value.delete(row.id)
+  }
+}
+
+function exitBatch() {
+  batchOpen.value = false
+  batchMode.value = false
+  selected.value.clear()
+  Object.assign(batchForm, { workshop: '', position: '', is_supervisor: null, status: '' })
+  batchResult.value = undefined
+  batchError.value = ''
+}
+
+function batchPatch(row: WorkshopEmployee, settings: Partial<WorkshopEmployeeInput>): Partial<WorkshopEmployeeInput> {
+  if (!canEdit(row)) throw new Error('该员工已不在可修改范围。')
+  const workshop = settings.workshop || row.workshop || row.role_workshop
+  if (!workshop || !editableWorkshops.value.some(item => item.id === workshop)) throw new Error('请选择有修改权限的启用车间。')
+  if (row.role_workshop && workshop !== row.role_workshop) throw new Error('车间已按角色对应，不能更换。')
+  const position = settings.position ?? row.position
+  if (!position.trim()) throw new Error('请填写岗位。')
+  const patch: Partial<WorkshopEmployeeInput> = {}
+  if (workshop !== row.workshop) patch.workshop = workshop
+  if (position !== row.position) patch.position = position
+  if (settings.is_supervisor !== undefined && settings.is_supervisor !== row.is_supervisor) patch.is_supervisor = settings.is_supervisor
+  if (settings.status && settings.status !== row.status) patch.status = settings.status
+  return patch
+}
+
+async function saveBatch() {
+  if (busy.value || !canChange.value || !selected.value.size) return
+  batchError.value = ''
+  const position = batchForm.position.trim()
+  const settings: Partial<WorkshopEmployeeInput> = {
+    ...(batchForm.workshop ? { workshop: batchForm.workshop } : {}),
+    ...(position ? { position } : {}),
+    ...(batchForm.is_supervisor === null ? {} : { is_supervisor: batchForm.is_supervisor }),
+    ...(batchForm.status ? { status: batchForm.status } : {}),
+  }
+  if (!Object.keys(settings).length) { batchError.value = '请至少填写一项设置。'; return }
+  const employees = selectedRows.value
+  if (!position && batchNeedsPosition.value) { batchError.value = '所选员工中有人还未设置岗位，请填写岗位。'; return }
+  if (settings.workshop && !batchWorkshops.value.some(item => item.id === settings.workshop)) {
+    batchError.value = '请选择适用于所选员工的车间。'
+    return
+  }
+  const generation = auth.generation
+  const current = () => active && auth.generation === generation
+  const result: BatchResult = { succeeded: 0, failed: [] }
+  batchResult.value = undefined
+  busy.value = true
+  try {
+    for (const row of employees) {
+      if (!current()) return
+      try {
+        const detail = await fetchWorkshopEmployee(row.id, lifetime.signal)
+        if (!current()) return
+        const patch = batchPatch(detail.data, settings)
+        if (Object.keys(patch).length) await updateWorkshopEmployee(row.id, patch, detail.etag)
+        if (!current()) return
+        selected.value.delete(row.id)
+        result.succeeded++
+      } catch (error) {
+        if (!current()) return
+        result.failed.push({ id: row.id, name: employeeName(row), message: errorMessage(error, '设置失败，请核对后重试') })
+      }
+    }
+    if (result.failed.length) batchResult.value = result
+    else { exitBatch(); showSuccessToast(`已完成 ${result.succeeded} 人的设置`) }
+    if (result.succeeded) await load(true)
+  } finally {
+    if (active) {
+      busy.value = false
+      if (auth.generation !== generation) exitBatch()
+    }
+  }
 }
 
 async function openEditor(row: WorkshopEmployee) {
@@ -199,7 +304,16 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
         <div class="employee-search"><VanSearch v-model="search" aria-label="搜索员工" placeholder="姓名、角色或岗位" @search="searchList" @clear="searchList" /><button class="action-link" :disabled="busy" @click="searchList">搜索</button></div>
         <label v-if="options.workshops.length > 1" class="workshop-filter"><span>车间</span><select v-model="workshop" aria-label="筛选车间" :disabled="busy || loading" @change="searchList"><option value="">授权车间</option><option v-for="item in options.workshops" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
       </section>
-      <div class="employee-list-heading"><h2>{{ viewMode === 'pending' ? '待设置岗位' : '车间员工' }} <span>{{ total }} 人</span></h2><button class="action-link" :disabled="loading || busy" @click="load(true)">刷新</button></div>
+      <div class="employee-list-heading">
+        <h2>{{ viewMode === 'pending' ? '待设置岗位' : '车间员工' }} <span>{{ total }} 人</span></h2>
+        <div class="employee-list-actions">
+          <button v-if="batchMode" type="button" class="action-link" :disabled="loading || busy || !selectableRows.length" @click="toggleBatchPage">{{ allPageSelected ? '取消本页全选' : '本页全选' }}</button>
+          <template v-else>
+            <button type="button" class="action-link" :disabled="loading || busy" @click="load(true)">刷新</button>
+            <VanButton v-if="selectableRows.length" type="primary" size="small" plain :disabled="loading || busy" @click="batchMode = true">批量设置</VanButton>
+          </template>
+        </div>
+      </div>
       <div v-if="message" class="error-panel" role="alert"><p>{{ message }}</p><VanButton size="small" plain :disabled="busy" @click="load(true)">重试</VanButton></div>
       <div v-if="loading" class="employee-loading" role="status"><VanLoading size="22">正在加载员工</VanLoading></div>
       <div v-else class="employee-list">
@@ -210,7 +324,10 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
             <p class="employee-role">角色：{{ row.roles || '未分配' }}</p>
             <p class="employee-meta"><span>{{ row.department || '未分配部门' }}</span><span>{{ row.is_supervisor ? '主管' : '非主管' }}</span></p>
           </div>
-          <div v-if="canEdit(row)" class="employee-actions">
+          <label v-if="batchMode && canEdit(row)" class="employee-selection">
+            <input type="checkbox" :aria-label="`选择${employeeName(row)}`" :checked="selected.has(row.id)" :disabled="busy" @change="toggleBatchEmployee(row)">
+          </label>
+          <div v-else-if="!batchMode && canEdit(row)" class="employee-actions">
             <VanButton size="small" :type="row.position ? 'default' : 'primary'" :plain="!!row.position" :disabled="busy" @click="openEditor(row)">{{ row.position ? '编辑' : '设置岗位' }}</VanButton>
             <button v-if="row.workshop" class="action-link" :disabled="busy" :aria-label="`${employeeName(row)}的更多操作`" @click="actionEmployee = row">更多</button>
           </div>
@@ -224,7 +341,37 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
       <nav v-if="totalPages > 1" class="employee-pagination" aria-label="员工分页"><VanButton size="small" :disabled="page <= 1 || loading || busy" @click="changePage(page - 1)">上一页</VanButton><span>{{ page }} / {{ totalPages }}</span><VanButton size="small" :disabled="page >= totalPages || loading || busy" @click="changePage(page + 1)">下一页</VanButton></nav>
     </template>
 
+    <template v-if="batchMode && canChange" #footer>
+      <div class="employee-batch-footer">
+        <VanButton plain :disabled="busy" @click="exitBatch">取消批量</VanButton>
+        <VanButton type="primary" :disabled="!selected.size || busy" @click="batchOpen = true">设置所选（{{ selected.size }} 人）</VanButton>
+      </div>
+    </template>
+
     <VanActionSheet :show="!!actionEmployee" :title="actionEmployee ? employeeName(actionEmployee) : ''" :actions="assignmentActions" cancel-text="取消" @update:show="value => { if (!value) actionEmployee = null }" @select="selectAssignmentAction" />
+
+    <VanPopup v-model:show="batchOpen" position="bottom" round class="employee-editor employee-batch-editor" :close-on-click-overlay="!busy" :closeable="!busy">
+      <h2>批量设置</h2>
+      <details class="employee-batch-preview">
+        <summary>已选 {{ selected.size }} 人</summary>
+        <p>{{ selectedRows.map(employeeName).join('、') }}</p>
+      </details>
+      <form class="employee-editor-form" @submit.prevent="saveBatch">
+        <VanField v-model="batchForm.position" label="岗位" :placeholder="batchNeedsPosition ? '请填写共同岗位' : '留空沿用原岗位'" maxlength="100" :disabled="busy" />
+        <label class="employee-select"><span>车间</span><select v-model="batchForm.workshop" aria-label="批量车间" :disabled="busy"><option value="">按各自车间</option><option v-for="item in batchWorkshops" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+        <label class="employee-select"><span>是否主管</span><select v-model="batchForm.is_supervisor" aria-label="批量是否主管" :disabled="busy"><option :value="null">沿用原设置</option><option :value="false">否</option><option :value="true">是</option></select></label>
+        <label class="employee-select"><span>任职状态</span><select v-model="batchForm.status" aria-label="批量任职状态" :disabled="busy"><option value="">沿用原状态</option><option value="ACTIVE">任职中</option><option value="LEFT">已离岗</option></select></label>
+        <p v-if="batchError" class="error-panel" role="alert">{{ batchError }}</p>
+        <div v-if="batchResult" class="error-panel" role="alert">
+          <p>已完成 {{ batchResult.succeeded }} 人，{{ batchResult.failed.length }} 人未完成。</p>
+          <ul class="employee-batch-errors"><li v-for="failure in batchResult.failed" :key="failure.id">{{ failure.name }} · {{ failure.message }}</li></ul>
+        </div>
+        <div class="employee-editor-actions">
+          <VanButton native-type="button" :disabled="busy" @click="batchOpen = false">返回选人</VanButton>
+          <VanButton native-type="submit" type="primary" :loading="busy" :disabled="!canChange || !selected.size">{{ batchResult ? '重试未完成' : '保存设置' }}</VanButton>
+        </div>
+      </form>
+    </VanPopup>
 
     <VanPopup v-model:show="editorOpen" position="bottom" round class="employee-editor" :close-on-click-overlay="!busy" :closeable="!busy" :lock-scroll="true">
       <h2>编辑车间安排</h2>
@@ -248,6 +395,7 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
 <style scoped>
 .employee-page { --employee-ink: #102a43; }
 .employee-page :deep(.work-content) { padding: 12px 12px 28px; }
+.employee-page.has-footer :deep(.work-content) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
 .employee-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px; padding: 3px; border-radius: 10px; background: #e5ebf3; }
 .employee-view-switch button { min-height: 44px; border: 0; border-radius: 7px; color: #465972; background: transparent; font-size: 14px; font-weight: 600; }
 .employee-view-switch button.active { color: #174db6; background: var(--mobile-surface); box-shadow: 0 2px 4px rgb(16 42 67 / 8%); }
@@ -263,6 +411,8 @@ select:focus-visible { outline: 3px solid var(--mobile-primary); outline-offset:
 .employee-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
 .employee-list-heading h2 { font-size: 14px; margin: 0; }
 .employee-list-heading h2 span { font-size: 13px; font-weight: 400; color: #51637b; margin-left: 5px; font-variant-numeric: tabular-nums; }
+.employee-list-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.employee-list-actions :deep(.van-button) { min-height: 44px; }
 .employee-loading { text-align: center; padding: 36px 0; }
 .employee-list { border: 1px solid var(--mobile-border); border-radius: 12px; background: var(--mobile-surface); }
 .employee-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 12px; }
@@ -281,6 +431,13 @@ select:focus-visible { outline: 3px solid var(--mobile-primary); outline-offset:
 .employee-actions { display: flex; flex-direction: column; align-items: stretch; align-self: center; min-width: 76px; }
 .employee-actions :deep(.van-button) { padding-inline: 10px; font-size: 13px; border-radius: 8px; }
 .employee-actions .action-link { font-size: 12px; font-weight: 400; }
+.employee-selection { display: grid; place-items: center; align-self: center; width: 44px; min-height: 44px; cursor: pointer; }
+.employee-selection input { width: 20px; height: 20px; accent-color: var(--mobile-primary); }
+.employee-batch-footer { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; }
+.employee-batch-preview { padding: 8px 12px; border-radius: 8px; background: var(--mobile-canvas); font-size: 14px; overflow-wrap: anywhere; }
+.employee-batch-preview summary { min-height: 32px; align-content: center; cursor: pointer; }
+.employee-batch-preview p, .employee-batch-errors { margin: 6px 0 0; }
+.employee-batch-errors { padding-inline-start: 20px; overflow-wrap: anywhere; }
 .employee-empty { display: grid; justify-items: center; padding: 36px 18px; text-align: center; }
 .employee-empty h3 { margin: 0 0 6px; font-size: 17px; }
 .employee-empty p { margin: 0 0 16px; color: var(--mobile-muted); font-size: 13px; }

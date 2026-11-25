@@ -3,7 +3,7 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
-  Paginated, PlanWageStatus, ReportingContext, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput, WorkReport, WorkReportDay, WorkReportTask,
+  Paginated, PlanWageStatus, ReportingContext, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput, WorkReport, WorkReportDay, WorkReportPlanCategory, WorkReportTask,
 } from '@/types/workshopReporting'
 
 const basePath = '/api/v1/workshop-reporting/'
@@ -76,7 +76,7 @@ export async function createWorkReport(payload: Record<string, unknown>): Promis
 export async function fetchWorkReport(id: string): Promise<Versioned<WorkReport>> {
   return versioned(await apiClient.get<DataResponse<WorkReport>>(`${basePath}work-reports/${encodeURIComponent(id)}/`))
 }
-export async function fetchWorkReports(params: { page?: number; page_size?: number; production_task_id?: string; schedule_product_id?: string; workshop_id?: string; craft_id?: string } = {}): Promise<Paginated<WorkReport>> {
+export async function fetchWorkReports(params: { page?: number; page_size?: number; production_task_id?: string; schedule_product_id?: string; workshop_id?: string; craft_id?: string; plan_category?: WorkReportPlanCategory } = {}): Promise<Paginated<WorkReport>> {
   const { data } = await apiClient.get<Paginated<WorkReport>>(`${basePath}work-reports/`, { params })
   return data
 }

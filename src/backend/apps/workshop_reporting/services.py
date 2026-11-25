@@ -119,7 +119,7 @@ def metal_bom_options_for_product_line(product_line_id):
     ]
 
 
-def wage_scheme_line_display_labels(scheme, lines):
+def wage_scheme_line_cutting_lengths(scheme, lines):
     if scheme.workshop.name != METAL_WORKSHOP_NAME:
         return {}
     references = {
@@ -144,9 +144,13 @@ def wage_scheme_line_display_labels(scheme, lines):
         if (identity, label) in references:
             lengths.setdefault((identity, label), set()).add(length)
     # 工价未保存 BOM 版次，只有记录当时的同名部件长度唯一时才展示。
+    return {key: next(iter(values)) for key, values in lengths.items() if len(values) == 1}
+
+
+def wage_scheme_line_display_labels(scheme, lines):
     return {
-        key: _part_label_with_cutting_length(key[1], next(iter(values)))
-        for key, values in lengths.items() if len(values) == 1
+        key: _part_label_with_cutting_length(key[1], length)
+        for key, length in wage_scheme_line_cutting_lengths(scheme, lines).items()
     }
 
 

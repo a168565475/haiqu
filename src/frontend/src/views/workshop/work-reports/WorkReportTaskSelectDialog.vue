@@ -1,33 +1,34 @@
 <script setup lang="ts">
 import ProtectedImage from '@/components/common/ProtectedImage.vue'
-import { Check, Picture, Search } from '@element-plus/icons-vue'
+import { Check, Picture, Scissor, Search } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { fetchWorkReportTasks } from '@/api/workshopReporting'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
-import type { WorkReportTask, WorkReportTaskProgress } from '@/types/workshopReporting'
+import type { WorkReportPlanCategory, WorkReportSelection, WorkReportTask, WorkReportTaskProgress } from '@/types/workshopReporting'
+import { workReportWorkshopChoices } from '@/utils/workReportWorkshopChoices'
 import WorkshopChoiceIcon from './WorkshopChoiceIcon.vue'
 
 const props = defineProps<{
   modelValue: boolean
   initialTask?: WorkReportTask | null
   initialWorkshopId?: string
+  initialPlanCategory?: WorkReportPlanCategory
   submitting?: boolean
   selectionError?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  select: [value: { productionTaskId: string; workshopId: string }]
+  select: [value: WorkReportSelection]
 }>()
 
 const visible = computed({
   get: () => props.modelValue,
   set: value => { if (!props.submitting) emit('update:modelValue', value) },
 })
-const workshopNames = ['金工车间', '车缝车间', '装配车间', '敲布孔'] as const
 const tasks = ref<WorkReportTask[]>([])
 const selectedTask = ref<WorkReportTask | null>(null)
-const selectedWorkshopId = ref('')
+const selectedChoiceKey = ref('')
 const draftQuery = ref('')
 const query = ref('')
 const page = ref(0)
@@ -41,15 +42,13 @@ let requestSequence = 0
 const taskOptions = computed(() => selectedTask.value && !tasks.value.some(item => item.id === selectedTask.value?.id)
   ? [selectedTask.value, ...tasks.value]
   : tasks.value)
-const workshopChoices = computed(() => workshopNames.map(name => ({
-  name,
-  workshop: selectedTask.value?.workshops.find(item => item.name === name),
-})))
+const workshopChoices = computed(() => workReportWorkshopChoices(selectedTask.value?.workshops || []))
+const selectedChoice = computed(() => workshopChoices.value.find(choice => choice.key === selectedChoiceKey.value))
 const canConfirm = computed(() => !loading.value && !loadError.value && !props.submitting
-  && Boolean(selectedTask.value?.workshops.some(item => item.id === selectedWorkshopId.value)))
+  && Boolean(selectedChoice.value))
 const taskCards = computed(() => taskOptions.value.map(task => {
   const workshop = task.id === selectedTask.value?.id
-    ? task.workshops.find(item => item.id === selectedWorkshopId.value) : undefined
+    ? task.workshops.find(item => item.id === selectedChoice.value?.workshopId) : undefined
   const stats = workshop || task
   const percentage = progressPercentage(stats.progress)
   return {
@@ -98,13 +97,15 @@ async function loadTasks(append = false, restoreSelection?: { taskId: string; wo
     tasks.value = [...merged.values()]
     if (restoreSelection) {
       selectedTask.value = restoredTask || null
-      selectedWorkshopId.value = restoredTask?.workshops.some(item => item.id === restoreSelection.workshopId)
-        ? restoreSelection.workshopId : ''
+      const saved = workshopChoices.value.find(choice =>
+        choice.workshopId === restoreSelection.workshopId && choice.planCategory === props.initialPlanCategory,
+      )
+      selectedChoiceKey.value = saved?.key || (workshopChoices.value.length === 1 ? workshopChoices.value[0]!.key : '')
     } else if (selectedTask.value) {
       const refreshedTask = result.data.find(item => item.id === selectedTask.value?.id)
       if (refreshedTask) {
         selectedTask.value = refreshedTask
-        if (!refreshedTask.workshops.some(item => item.id === selectedWorkshopId.value)) selectedWorkshopId.value = ''
+        if (!selectedChoice.value) selectedChoiceKey.value = workshopChoices.value.length === 1 ? workshopChoices.value[0]!.key : ''
       }
     }
     page.value = result.meta.page
@@ -113,7 +114,7 @@ async function loadTasks(append = false, restoreSelection?: { taskId: string; wo
     if (requestId !== requestSequence) return
     tasks.value = []
     selectedTask.value = null
-    selectedWorkshopId.value = ''
+    selectedChoiceKey.value = ''
     loadError.value = (error as { response?: { data?: { error?: { message?: string } } } })
       ?.response?.data?.error?.message || '生产任务单加载失败，请重试。'
   } finally {
@@ -124,7 +125,7 @@ async function loadTasks(append = false, restoreSelection?: { taskId: string; wo
 function searchTasks() {
   if (props.submitting) return
   selectedTask.value = null
-  selectedWorkshopId.value = ''
+  selectedChoiceKey.value = ''
   query.value = draftQuery.value.trim()
   void loadTasks()
 }
@@ -137,17 +138,21 @@ function clearSearch() {
 function selectTask(task: WorkReportTask) {
   if (loading.value || props.submitting || task.id === selectedTask.value?.id) return
   selectedTask.value = task
-  selectedWorkshopId.value = ''
+  selectedChoiceKey.value = workshopChoices.value.length === 1 ? workshopChoices.value[0]!.key : ''
 }
 
-function selectWorkshop(id?: string) {
-  if (loading.value || props.submitting || !id || !selectedTask.value?.workshops.some(item => item.id === id)) return
-  selectedWorkshopId.value = id
+function selectWorkshop(key: string) {
+  if (loading.value || props.submitting) return
+  selectedChoiceKey.value = key
 }
 
 function confirm() {
-  if (!canConfirm.value || !selectedTask.value) return
-  emit('select', { productionTaskId: selectedTask.value.id, workshopId: selectedWorkshopId.value })
+  const choice = selectedChoice.value
+  if (!canConfirm.value || !selectedTask.value || !choice) return
+  emit('select', {
+    productionTaskId: selectedTask.value.id, workshopId: choice.workshopId,
+    ...(choice.planCategory ? { planCategory: choice.planCategory } : {}),
+  })
 }
 
 watch(() => props.modelValue, (isVisible) => {
@@ -155,7 +160,7 @@ watch(() => props.modelValue, (isVisible) => {
   loading.value = false
   if (!isVisible) return
   selectedTask.value = null
-  selectedWorkshopId.value = ''
+  selectedChoiceKey.value = ''
   previewWorkshop.value = ''
   failedImageUrls.value = new Set()
   draftQuery.value = ''
@@ -204,13 +209,14 @@ onBeforeUnmount(() => { requestSequence += 1 })
         </div>
         <div v-if="page < totalPages" class="wr-task-more"><ElButton data-testid="work-report-task-more" link type="primary" :loading="loading" :disabled="loading || submitting" @click="loadTasks(true)">加载更多</ElButton></div>
       </div>
-      <section class="wr-workshop-section" aria-label="选择车间">
-        <div class="wr-workshop-section__heading"><strong>选择车间</strong><span>{{ selectedTask ? `已选任务 ${selectedTask.task_number}` : '请先选择生产任务单' }}</span></div>
+      <section v-if="workshopChoices.length > 1" class="wr-workshop-section" aria-label="选择车间">
+        <div class="wr-workshop-section__heading"><strong>选择车间</strong><span>已选任务 {{ selectedTask?.task_number }}</span></div>
         <div class="wr-workshop-grid">
-          <button v-for="choice in workshopChoices" :key="choice.name" type="button" class="wr-workshop-choice" data-testid="work-report-workshop-choice" :data-workshop-name="choice.name" :aria-pressed="Boolean(choice.workshop && selectedWorkshopId === choice.workshop.id)" :disabled="!choice.workshop || loading || submitting" :title="!choice.workshop ? selectedTask ? '当前不可查看' : '请先选择生产任务单' : choice.name" @click="selectWorkshop(choice.workshop?.id)" @mouseenter="previewWorkshop = choice.name" @mouseleave="previewWorkshop = ''" @focus="previewWorkshop = choice.name" @blur="previewWorkshop = ''">
-            <WorkshopChoiceIcon :name="choice.name" :active="Boolean(choice.workshop && !loading && !submitting && (selectedWorkshopId === choice.workshop.id || previewWorkshop === choice.name))" />
-            <span class="wr-workshop-choice__label">{{ choice.name }}<small v-if="selectedTask && !choice.workshop">当前不可查看</small></span>
-            <ElIcon v-if="choice.workshop && selectedWorkshopId === choice.workshop.id" class="wr-workshop-choice__check"><Check /></ElIcon>
+          <button v-for="choice in workshopChoices" :key="choice.key" type="button" class="wr-workshop-choice" data-testid="work-report-workshop-choice" :data-workshop-name="choice.name" :aria-pressed="selectedChoiceKey === choice.key" :disabled="loading || submitting" @click="selectWorkshop(choice.key)" @mouseenter="previewWorkshop = choice.key" @mouseleave="previewWorkshop = ''" @focus="previewWorkshop = choice.key" @blur="previewWorkshop = ''">
+            <ElIcon v-if="choice.planCategory === 'CUTTING'" :size="44" aria-hidden="true"><Scissor /></ElIcon>
+            <WorkshopChoiceIcon v-else :name="choice.name" :active="!loading && !submitting && (selectedChoiceKey === choice.key || previewWorkshop === choice.key)" />
+            <span class="wr-workshop-choice__label">{{ choice.name }}</span>
+            <ElIcon v-if="selectedChoiceKey === choice.key" class="wr-workshop-choice__check"><Check /></ElIcon>
           </button>
         </div>
       </section>
@@ -261,7 +267,7 @@ onBeforeUnmount(() => { requestSequence += 1 })
 .wr-workshop-section__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; line-height: 20px; }
 .wr-workshop-section__heading strong { font-size: 14px; font-weight: 600; }
 .wr-workshop-section__heading span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.wr-workshop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.wr-workshop-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 12px; }
 .wr-workshop-choice { position: relative; display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 88px; padding: 10px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); color: var(--erp-color-text-primary); font: inherit; cursor: pointer; transition: border-color 160ms, background-color 160ms; }
 .wr-workshop-choice:hover:not(:disabled), .wr-workshop-choice[aria-pressed="true"] { border-color: var(--erp-color-brand); background: color-mix(in srgb, var(--erp-color-brand) 6%, var(--erp-color-surface)); }
 .wr-workshop-choice:disabled { background: var(--erp-color-subtle); color: var(--erp-color-text-muted); cursor: not-allowed; }

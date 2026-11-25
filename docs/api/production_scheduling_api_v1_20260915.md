@@ -28,6 +28,7 @@
 | `GET production-schedules/task-files/{task_id}/{file_id}/` | 读取可访问任务的产品图片或其明确关联销售订单行图片，并校验归档、扫描策略和文件路径 | `view_productionschedule` |
 | `GET production-schedules/options/` | 查询工艺、计划分类和可访问客户 | `view_productionschedule` |
 | `GET production-schedule-items/` | 按四类计划查询产品行 | `view_productionschedule` |
+| `GET production-schedule-items/categories/` | 返回当前账号可切换的内部计划分类。车缝车间对应 `CUTTING` 和 `SEWING` | `view_productionschedule` |
 
 四类计划的 `category` 必须为 `METAL`、`CUTTING`、`SEWING` 或 `ASSEMBLY`。可使用 `schedule_id`、`schedule_product_id` 保留从主计划进入时的上下文。
 

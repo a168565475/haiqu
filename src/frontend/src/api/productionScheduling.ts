@@ -2,7 +2,7 @@ import type { AxiosResponse } from 'axios'
 
 import { apiClient } from './request'
 import type {
-  BatchCreatedSchedules, CompleteScheduleInput, CompleteScheduleResult, Paginated, ProductionSchedule, ScheduleBatchCreateInput, ScheduleCompletionPreview, ScheduleCreateInput, ScheduleItem, ScheduleOptions,
+  BatchCreatedSchedules, CompleteScheduleInput, CompleteScheduleResult, Paginated, PlanCategory, ProductionSchedule, ScheduleBatchCreateInput, ScheduleCompletionPreview, ScheduleCreateInput, ScheduleItem, ScheduleOptions,
   ScheduleTaskCandidate, ScheduleUpdateInput, VersionedSchedule,
 } from '@/types/productionScheduling'
 import type { DataResponse } from '@/types/referenceData'
@@ -81,6 +81,11 @@ export async function fetchTaskCandidate(id: string): Promise<ScheduleTaskCandid
 export async function fetchScheduleItems(params: Record<string, unknown>): Promise<Paginated<ScheduleItem>> {
   const { data } = await apiClient.get<Paginated<ScheduleItem>>('/api/v1/production-schedule-items/', { params })
   return data
+}
+
+export async function fetchSchedulePlanCategories(): Promise<PlanCategory[]> {
+  const { data } = await apiClient.get<DataResponse<PlanCategory[]>>('/api/v1/production-schedule-items/categories/')
+  return data.data
 }
 
 export function scheduleProductImageUrl(taskId: string, fileId: string): string {

@@ -30,7 +30,7 @@ vi.mock('@/stores/auth', () => ({
 const report = {
   id: 'report-1', report_number: 'BG-202609-000001', production_date: '2026-09-28',
   production_task: { id: 'task-1', task_number: 'HT26050', order_number: 'SO-202609-000076' },
-  product: { name: '六边形围炉桌', number: 'FLOW260917-P020' },
+  product: { name: '六边形围炉桌', number: 'FLOW260917-P020', code: 'HTC-001B' },
   product_line_id: 'line-1', schedule_product_id: 'schedule-product-1',
   workshop: { id: 'workshop-1', name: '金工车间' }, scope_craft: { id: 'craft-1', name: '管材加工' },
   scheme_id: 'scheme-1', scheme_version: 1, revision: 1, recorder: '业务员 A',
@@ -39,14 +39,14 @@ const report = {
   lines: [{
     id: 'line-1', line_number: 1, scheme_line_id: 'scheme-line-1', work_item_id: 'work-item-1',
     workshop_employee_id: 'employee-1', employee_name: '员工甲', production_line: null,
-    display_name: '下伸缩管-18*0.8*440', craft_name: '管材加工', operation_name: '管口冲员', unit_name: '',
+    display_name: '下伸缩管-18*0.8*440', cutting_length_mm: 440, craft_name: '管材加工', operation_name: '管口冲员', unit_name: '',
     quantity: '12', order_quantity_snapshot: 350,
     cumulative_quantity: '36', required_quantity: '1400', unit_price: '0.2', amount: '2.4',
   }],
 }
 const secondReport = { ...report, id: 'report-2', report_number: 'BG-202609-000002',
   recorder: '业务员 B', total_amount: '60', created_at: '2026-09-28T07:36:00Z',
-  product: { name: '靠背椅', number: 'CHAIR-001' },
+  product: { name: '靠背椅', number: 'CHAIR-001', code: 'CHAIR-CODE' },
   lines: [{ ...report.lines[0]!, id: 'line-2', employee_name: '员工乙', quantity: '300', amount: '60' }] }
 const recordsResponse = (data = [report, secondReport], page = 1, total = data.length) => ({
   data, meta: { page, page_size: 20, total, total_pages: Math.ceil(total / 20) },
@@ -109,7 +109,7 @@ it('按实际报工次数分页，只读取当前页且翻页立即清空旧明�
     expect(wrapper.find('.wr-report-group').exists()).toBe(false)
     finishPage(recordsResponse([secondReport], 2, 21))
     await flushPromises()
-    expect(wrapper.find('.wr-report-group').text()).toContain(secondReport.report_number)
+    expect(wrapper.find('.wr-report-group').text()).toContain(secondReport.product.code)
     wrapper.unmount()
 })
 
@@ -144,7 +144,13 @@ it('按任务和车间读取全部产品，不显示新增入口，每条保存�
   expect(wrapper.find('.wr-report-records__create').exists()).toBe(false)
   expect(wrapper.find('.wr-report-context').text()).toContain('全部产品')
   expect(wrapper.find('.wr-report-group__header').text()).toContain('六边形围炉桌')
-  expect(wrapper.find('.wr-report-group__header').text()).toContain('FLOW260917-P020')
+  expect(wrapper.find('.wr-report-group__header').text()).toMatch(/HTC-001B\s*生产日期：2026-09-28/)
+  expect(wrapper.find('.wr-report-group__header').text()).not.toContain(report.report_number)
+  expect(wrapper.get('.wr-report-list-panel').text()).toContain('生产任务单号')
+  expect(wrapper.get('.wr-report-list-panel').text()).toContain('HT26050')
+  expect(wrapper.get('.wr-report-list-panel').text()).not.toContain(report.report_number)
+  expect(wrapper.get('.wr-report-group').text()).toContain('切割长度')
+  expect(wrapper.get('.wr-report-group').text()).toContain('440 mm')
   await wrapper.find('.wr-report-group__header .el-button').trigger('click')
   expect(router.push).toHaveBeenCalledWith({ name: 'work-report-edit', params: { reportId: 'report-1' }, query: { production_task_id: 'task-1' } })
   wrapper.unmount()
@@ -160,6 +166,25 @@ it('选择任务后通过任务和车间路由进入，不附带任意排产产�
   expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ production_task_id: 'task-1', workshop_id: 'workshop-2' }))
   expect(api.context).not.toHaveBeenCalled()
   wrapper.unmount()
+})
+
+it('裁剪和车缝用同一车间 ID，但请求各自分类，也不显示金工切割长度列', async () => {
+  const sewing = { id: 'workshop-sewing', name: '车缝车间' }
+  route.query = { production_task_id: 'task-1', workshop_id: sewing.id, plan_category: 'CUTTING' }
+  api.tasks.mockResolvedValue({
+    data: [{ id: 'task-1', workshops: [sewing] }], meta: { page: 1, total: 1, total_pages: 1 },
+  })
+  api.records.mockResolvedValue(recordsResponse([{ ...report, workshop: sewing }]))
+  const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: sewing.id, plan_category: 'CUTTING' }))
+  expect(wrapper.get('.wr-report-group').text()).not.toContain('切割长度')
+  wrapper.getComponent(ElSelect).vm.$emit('change', `${sewing.id}:SEWING`)
+  await flushPromises()
+  expect(router.replace).toHaveBeenLastCalledWith({
+    name: 'work-report-days', query: { production_task_id: 'task-1', workshop_id: sewing.id, plan_category: 'SEWING' },
+  })
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: sewing.id, plan_category: 'SEWING' }))
 })
 
 it.each([

@@ -161,9 +161,13 @@ async function save() {
       ElMessage.success('报工已提交并立即生效。')
     }
     const returnToTask = isEdit.value && route.query.production_task_id === scheduleProduct.value.production_task_id
-    await router.push({ name: 'work-report-days', query: returnToTask
+    const planCategory = route.query.plan_category
+    const query = returnToTask
       ? { production_task_id: scheduleProduct.value.production_task_id, workshop_id: form.workshopId }
-      : { schedule_product_id: form.scheduleProductId, workshop_id: form.workshopId, craft_id: form.craftId } })
+      : { schedule_product_id: form.scheduleProductId, workshop_id: form.workshopId, craft_id: form.craftId }
+    await router.push({ name: 'work-report-days', query: {
+      ...query, ...(planCategory === 'CUTTING' || planCategory === 'SEWING' ? { plan_category: planCategory } : {}),
+    } })
   } catch (error) { ElMessage.error(errorText(error)) }
   finally { saving.value = false }
 }

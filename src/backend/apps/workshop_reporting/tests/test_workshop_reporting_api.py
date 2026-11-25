@@ -225,6 +225,12 @@ class WorkshopReportingApiTests(APITestCase):
         self.assertEqual(detail.data["data"]["production_task"]["task_number"], "HT-WG-001")
         self.assertEqual(detail.data["data"]["product"]["name"], "工价测试产品")
         self.assertEqual(detail.data["data"]["recorder"], "工价测试管理员")
+        reports = self.client.get("/api/v1/workshop-reporting/work-reports/", {
+            "schedule_product_id": str(self.schedule_product.pk),
+        })
+        self.assertEqual(reports.status_code, 200, reports.data)
+        self.assertEqual(reports.data["data"][0]["product"]["code"], "WG-CODE")
+        self.assertEqual(reports.data["data"][0]["lines"][0]["cutting_length_mm"], 500)
 
     def test_reporting_context_includes_readonly_production_order(self):
         response = self.client.get(

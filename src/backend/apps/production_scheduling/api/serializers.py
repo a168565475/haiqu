@@ -5,8 +5,13 @@ from rest_framework import serializers
 from apps.audit.models import AuditLog
 from apps.production_tasks.models import ProductionTaskStatus
 from apps.sales_orders.presentation import specification_display
+from apps.workshop_config.models import PlanCategory
 
 from ..models import ProductionSchedule, ProductionScheduleProduct
+
+
+class SchedulePlanCategoriesSerializer(serializers.Serializer):
+    data = serializers.ListField(child=serializers.ChoiceField(choices=PlanCategory.choices))
 
 
 class ScheduleProductWriteSerializer(serializers.Serializer):

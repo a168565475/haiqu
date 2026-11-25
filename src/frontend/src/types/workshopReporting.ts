@@ -212,6 +212,7 @@ export interface WorkReportLine {
   id: string; line_number: number; scheme_line_id: string; work_item_id: string
   workshop_employee_id: string; employee_name: string; production_line: number | null
   display_name: string; craft_name: string; operation_name: string; unit_name: string
+  cutting_length_mm?: number | null
   quantity: string; order_quantity_snapshot: number
   cumulative_quantity: string | null; required_quantity: string | null
   unit_price: string; amount: string
@@ -220,7 +221,7 @@ export interface WorkReport {
   can_delete?: boolean; etag?: string
   id: string; report_number: string; production_date: string
   production_task: { id: string; task_number: string; order_number: string }
-  product: { name: string; number: string }
+  product: { name: string; number: string; code?: string }
   product_line_id: string; schedule_product_id: string; workshop: ReportingOption
   scope_craft: ReportingOption
   scheme_id: string; scheme_version: number; revision: number; recorder: string; total_amount: string
@@ -238,6 +239,12 @@ export interface WorkReportTaskProgress {
 export interface WorkReportTaskWorkshop extends ReportingOption {
   reported_amount?: string
   progress?: WorkReportTaskProgress
+}
+export type WorkReportPlanCategory = 'CUTTING' | 'SEWING'
+export interface WorkReportSelection {
+  productionTaskId: string
+  workshopId: string
+  planCategory?: WorkReportPlanCategory
 }
 export interface WorkReportTask {
   id: string

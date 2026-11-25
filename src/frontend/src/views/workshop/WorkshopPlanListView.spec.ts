@@ -5,14 +5,14 @@ import ElementPlus, { ElDropdownItem } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WorkshopPlanListView from './WorkshopPlanListView.vue'
 
-const api = vi.hoisted(() => ({ items: vi.fn(), wages: vi.fn(), push: vi.fn() }))
+const api = vi.hoisted(() => ({ items: vi.fn(), categories: vi.fn(), wages: vi.fn(), push: vi.fn(), replace: vi.fn() }))
 const state = vi.hoisted(() => ({
   route: { name: 'workshop-metalworking-plan', query: {} },
   permissions: new Set<string>(),
 }))
-vi.mock('@/api/productionScheduling', () => ({ fetchScheduleItems: api.items }))
+vi.mock('@/api/productionScheduling', () => ({ fetchScheduleItems: api.items, fetchSchedulePlanCategories: api.categories }))
 vi.mock('@/api/workshopReporting', () => ({ fetchPlanWageStatuses: api.wages }))
-vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: api.push }) }))
+vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: false }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: (code: string) => state.permissions.has(code) }) }))
 
 const wrappers: ReturnType<typeof mount>[] = []
@@ -22,6 +22,7 @@ beforeEach(() => {
   state.route.name = 'workshop-metalworking-plan'
   state.permissions = new Set(['inventory.add_finishedgoodsreceipt', 'inventory.add_internalsemifinishedreceipt', 'inventory.view_internalsemifinishedreceipt'])
   api.wages.mockResolvedValue([])
+  api.categories.mockResolvedValue(['METAL', 'CUTTING', 'SEWING', 'ASSEMBLY'])
 })
 afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount())
@@ -121,6 +122,26 @@ describe('内部计划入库入口的订单状态', () => {
 })
 
 describe('内部作业计划报工记录入口', () => {
+  it('金工只显示金工，车缝主管在裁剪和车缝之间切换', async () => {
+    api.categories.mockResolvedValueOnce(['METAL'])
+    const metal = await createPlan('IN_PRODUCTION')
+    expect(metal.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['金工计划'])
+    state.route.name = 'workshop-cutting-plan'
+    api.categories.mockResolvedValueOnce(['CUTTING', 'SEWING'])
+    const sewing = await createPlan('IN_PRODUCTION')
+    expect(sewing.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['裁剪计划', '车缝计划'])
+    await sewing.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(api.push).toHaveBeenCalledWith({ name: 'workshop-sewing-plan', query: {} })
+  })
+
+  it('车缝主管从默认金工入口自动打开裁剪计划', async () => {
+    api.categories.mockResolvedValueOnce(['CUTTING', 'SEWING'])
+    const wrapper = mount(WorkshopPlanListView, { global: { plugins: [ElementPlus], stubs: { WageSchemeDetailDialog: true } } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(api.replace).toHaveBeenCalledWith({ name: 'workshop-cutting-plan', query: {} })
+    expect(api.items).not.toHaveBeenCalled()
+  })
   it('四个计划共用的操作菜单包含按排产产品查看报工记录的入口', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/views/workshop/WorkshopPlanListView.vue'),

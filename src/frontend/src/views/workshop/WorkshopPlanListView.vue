@@ -5,7 +5,7 @@ import { AxiosError, isCancel } from 'axios'
 import { ArrowDown, Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchScheduleItems } from '@/api/productionScheduling'
+import { fetchScheduleItems, fetchSchedulePlanCategories } from '@/api/productionScheduling'
 import { fetchPlanWageStatuses } from '@/api/workshopReporting'
 import { useAuthStore } from '@/stores/auth'
 import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
@@ -52,6 +52,8 @@ const planTabs = [
 ]
 const config = computed(() => configs[String(route.name)] || configs['workshop-metalworking-plan'])
 const activePlanName = computed(() => String(route.name || 'workshop-metalworking-plan'))
+const planCategories = ref<PlanCategory[] | null>(null)
+const availablePlanTabs = computed(() => planTabs.filter(tab => planCategories.value?.includes(configs[tab.routeName]!.category)))
 const rows = ref<ScheduleItem[]>([])
 const wageStatuses = ref<Record<string, PlanWageStatus>>({})
 const loading = ref(false)
@@ -79,6 +81,20 @@ async function load() {
   loading.value = true
   try {
     owned.assertCurrent()
+    if (planCategories.value === null) {
+      const categories = await fetchSchedulePlanCategories()
+      owned.assertCurrent()
+      if (current !== requestSequence) return
+      planCategories.value = categories
+    }
+    if (!planCategories.value.includes(config.value.category)) {
+      rows.value = []; total.value = 0; wageStatuses.value = {}; wageStatusError.value = ''; errorMessage.value = ''
+      const first = availablePlanTabs.value[0]
+      if (first && await router.replace({ name: first.routeName, query: route.query })) {
+        errorMessage.value = '无法打开已授权的内部计划，请重试。'
+      }
+      return
+    }
     const result = await fetchScheduleItems({ category: config.value.category, page: page.value, page_size: pageSize.value, search: search.value.trim() || undefined, date_from: dateRange.value[0] || undefined, date_to: dateRange.value[1] || undefined, schedule_id: route.query.schedule_id || undefined, schedule_product_id: route.query.schedule_product_id || undefined })
     owned.assertCurrent()
     if (current !== requestSequence) return
@@ -123,7 +139,7 @@ function receiptEntryBlockReason(row: ScheduleItem): string {
 }
 function receiptEntryDisabled(row: ScheduleItem) { return !!receiptEntryBlockReason(row) }
 function changePlan(name: string | number) {
-  const target = planTabs.find(item => item.routeName === String(name))
+  const target = availablePlanTabs.value.find(item => item.routeName === String(name))
   if (!target || target.routeName === activePlanName.value) return
   void router.push({ name: target.routeName, query: route.query })
 }
@@ -167,7 +183,10 @@ function openWorkReport(row: ScheduleItem) {
 }
 function openWorkReportRecords(row: ScheduleItem) {
   if (!wageStatuses.value[row.id]?.workshop_id) return
-  void router.push({ name: 'work-report-days', query: { schedule_product_id: row.id, workshop_id: wageStatuses.value[row.id]?.workshop_id || undefined, craft_id: wageStatuses.value[row.id]?.craft_id || undefined } })
+  const category = config.value.category
+  void router.push({ name: 'work-report-days', query: { schedule_product_id: row.id, workshop_id: wageStatuses.value[row.id]?.workshop_id || undefined, craft_id: wageStatuses.value[row.id]?.craft_id || undefined,
+    ...(category === 'CUTTING' || category === 'SEWING' ? { plan_category: category } : {}),
+  } })
 }
 function wageStatus(row: ScheduleItem) { return wageStatuses.value[row.id] }
 function wageStatusLabel(row: ScheduleItem) {
@@ -212,8 +231,8 @@ onMounted(() => { void load() })
     <ElAlert v-else-if="wageStatusError" type="warning" :title="wageStatusError" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
     </section>
     <section class="erp-list-data">
-    <ElTabs class="internal-plan-tabs erp-list-tabs" :model-value="activePlanName" @tab-change="changePlan">
-      <ElTabPane v-for="tab in planTabs" :key="tab.routeName" :name="tab.routeName" :label="tab.label" />
+    <ElTabs v-if="availablePlanTabs.length" class="internal-plan-tabs erp-list-tabs" :model-value="activePlanName" @tab-change="changePlan">
+      <ElTabPane v-for="tab in availablePlanTabs" :key="tab.routeName" :name="tab.routeName" :label="tab.label" />
     </ElTabs>
     <div class="schedule-table-card erp-list-table-frame"><ElTable height="100%" v-loading="loading" :data="rows" border row-key="id" empty-text="暂无符合条件的产品计划">
       <ElTableColumn label="生产任务单号" width="170"><template #default="{ row }"><span class="plan-text-cell">{{ row.task_number || '—' }}</span></template></ElTableColumn>

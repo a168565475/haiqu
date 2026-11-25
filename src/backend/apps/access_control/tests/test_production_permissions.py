@@ -323,6 +323,7 @@ class WorkshopBoundaryApiTests(ScopedActorMixin, APITestCase):
     def test_plan_category_and_object_use_the_operation_workshop(self):
         self.grant('production_scheduling.view_productionschedule', 'WORKSHOP', [self.metal])
         self.grant('production_scheduling.change_productionschedule', 'WORKSHOP', [self.sewing])
+        self.assertEqual(self.client.get('/api/v1/production-schedule-items/categories/').data['data'], ['METAL'])
         for category, count in (('METAL', 1), ('SEWING', 0)):
             response = self.client.get('/api/v1/production-schedule-items/', {'category': category})
             self.assertEqual(response.status_code, 200, response.data)
@@ -332,6 +333,14 @@ class WorkshopBoundaryApiTests(ScopedActorMixin, APITestCase):
         self.assertEqual(detail.status_code, 200, detail.data)
         self.assertEqual(detail.data['data']['audit_timeline'], [])
         self.assertEqual(self.client.patch(url, {}, format='json').status_code, 404)
+
+    def test_plan_switch_options_use_read_scope_even_when_workshop_has_no_plans(self):
+        code = 'production_scheduling.view_productionschedule'
+        self.grant(code, 'WORKSHOP', [self.sewing])
+        url = '/api/v1/production-schedule-items/categories/'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data'], ['CUTTING', 'SEWING'])
 
     def test_material_list_detail_submit_options_and_requirements_do_not_cross_workshop(self):
         from apps.material_issues.models import MaterialIssue

@@ -59,6 +59,26 @@ def schedules_with_context(queryset=None, request=None):
     ).prefetch_related(Prefetch("products", queryset=active_products, to_attr="active_products"), "production_task__followers")
 
 
+def schedule_plan_categories(request):
+    from apps.access_control.resource_scopes import has_legacy_permission, resource_ids
+    from apps.access_control.sales_policy import access_for
+    from apps.material_issues.scopes import PLAN_WORKSHOP_NAMES
+    from apps.workshop_config.models import PlanCategory, Workshop
+
+    code = "production_scheduling.view_productionschedule"
+    ids = resource_ids(request, code, "WORKSHOP", include_legacy=False)
+    if ids is None or request.user.has_perm("production_scheduling.view_all_productionschedule"):
+        return PlanCategory.values
+    names = set(Workshop.objects.filter(pk__in=ids).values_list("name", flat=True))
+    access = access_for(request)["actions"].get(code, {})
+    has_task_scope = "FOLLOWED" in access.get("scopes", []) or has_legacy_permission(request, code)
+    return [
+        category for category in PlanCategory.values
+        if PLAN_WORKSHOP_NAMES[category] in names
+        or (has_task_scope and schedule_items_for_category(request, category).exists())
+    ]
+
+
 def schedule_items_for_category(request, category):
     from apps.access_control.resource_scopes import resource_ids, has_legacy_permission
     from apps.access_control.role_policy import filter_task_scope

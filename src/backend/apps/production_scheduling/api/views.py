@@ -26,12 +26,12 @@ from apps.workshop_config.models import Craft, PlanCategory, RecordStatus
 
 from ..models import ProductionSchedule, ScheduleStatus
 from ..selectors import (
-    accessible_production_schedules, schedule_items_for_category, schedule_product_image, schedule_source_image_ids,
+    accessible_production_schedules, schedule_items_for_category, schedule_plan_categories, schedule_product_image, schedule_source_image_ids,
     schedules_with_context,
 )
 from ..services import create_schedule, create_schedule_batch, source_revision, update_schedule, void_schedule
 from .serializers import (
-    ScheduleBatchCreateSerializer, ScheduleCreateSerializer, ScheduleItemReadSerializer, ScheduleReadSerializer,
+    ScheduleBatchCreateSerializer, ScheduleCreateSerializer, ScheduleItemReadSerializer, SchedulePlanCategoriesSerializer, ScheduleReadSerializer,
     ScheduleUpdateSerializer, ScheduleVoidSerializer,
 )
 from .detail_serializers import ScheduleDetailSummaryResponseSerializer
@@ -506,7 +506,15 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
 class ProductionScheduleItemViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     serializer_class = ScheduleItemReadSerializer
     permission_classes = [HasActiveEmployee, BusinessActionPermission]
-    action_permission_map = {"list": "production_scheduling.view_productionschedule"}
+    action_permission_map = {
+        "list": "production_scheduling.view_productionschedule",
+        "categories": "production_scheduling.view_productionschedule",
+    }
+
+    @extend_schema(responses=SchedulePlanCategoriesSerializer)
+    @action(detail=False, methods=["get"])
+    def categories(self, request):
+        return Response(SchedulePlanCategoriesSerializer({"data": schedule_plan_categories(request)}).data)
 
     def list(self, request):
         category = request.query_params.get("category", "").strip().upper()

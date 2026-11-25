@@ -236,7 +236,7 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_
     }
 
 
-def work_report_data(report, *, detail=True, line_metrics=None, request=None):
+def work_report_data(report, *, detail=True, line_metrics=None, cutting_lengths=None, request=None):
     from apps.core.api.concurrency import etag_for_instance
     from ..report_history import can_delete_report
     line_metrics = line_metrics or {}
@@ -249,6 +249,9 @@ def work_report_data(report, *, detail=True, line_metrics=None, request=None):
                 "workshop_employee_id": str(line.workshop_employee_id) if line.workshop_employee_id else "",
                 "employee_name": line.employee_name_snapshot, "production_line": line.production_line,
                 "display_name": line.display_name_snapshot, "craft_name": line.craft_name_snapshot,
+                "cutting_length_mm": cutting_lengths.get((
+                    line.scheme_line.bom_component_identity_snapshot, line.display_name_snapshot,
+                )) if cutting_lengths else None,
                 "operation_name": line.operation_name_snapshot, "unit_name": line.unit_name_snapshot,
                 "quantity": str(line.quantity), "order_quantity_snapshot": line.order_quantity_snapshot,
                 "cumulative_quantity": line_metrics.get(line.pk, {}).get("cumulative_quantity"),
@@ -271,7 +274,11 @@ def work_report_data(report, *, detail=True, line_metrics=None, request=None):
             "task_number": report.task_number_snapshot,
             "order_number": report.order_number_snapshot,
         },
-        "product": {"name": report.product_name_snapshot, "number": report.product_number_snapshot},
+        "product": {
+            "name": report.product_name_snapshot,
+            "number": report.product_number_snapshot,
+            "code": report.product_line.product_code_snapshot,
+        },
         "product_line_id": str(report.product_line_id), "schedule_product_id": str(report.schedule_product_id),
         "workshop": {"id": str(report.workshop_id), "name": report.workshop.name},
         "scope_craft": {

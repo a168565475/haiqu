@@ -49,24 +49,35 @@ beforeEach(() => {
   api.tasks.mockResolvedValue(response([task, secondTask]))
 })
 
-it('任务以卡片选择，四车间只启用该任务授权项，变更任务必须重选车间', async () => {
+it('同一车缝车间提供裁剪和车缝两个选择，而单车间自动选定', async () => {
   const wrapper = mountDialog()
   await flushPromises()
   expect(wrapper.findAll('[data-testid="work-report-task-card"]')).toHaveLength(2)
   const workshops = wrapper.findAll('[data-testid="work-report-workshop-choice"]')
-  expect(workshops.map(item => item.attributes('data-workshop-name'))).toEqual(['金工车间', '车缝车间', '装配车间', '敲布孔'])
-  expect(workshops.every(item => item.attributes('disabled') !== undefined)).toBe(true)
+  expect(workshops).toHaveLength(0)
   expect(wrapper.find('[data-testid="work-report-task-confirm"]').attributes('disabled')).toBeDefined()
   await wrapper.get(cardSelector('task-1')).trigger('click')
   expect(wrapper.get(cardSelector('task-1')).attributes('aria-pressed')).toBe('true')
   expect(wrapper.get(workshopSelector('金工车间')).attributes('disabled')).toBeUndefined()
-  expect(wrapper.get(workshopSelector('装配车间')).attributes('disabled')).toBeDefined()
+  expect(wrapper.find(workshopSelector('敲布孔')).exists()).toBe(false)
+  expect(wrapper.get(workshopSelector('裁剪')).attributes('disabled')).toBeUndefined()
   await wrapper.get(workshopSelector('金工车间')).trigger('click')
   await wrapper.get('[data-testid="work-report-task-confirm"]').trigger('click')
   expect(wrapper.emitted('select')).toEqual([[{ productionTaskId: 'task-1', workshopId: 'workshop-1' }]])
   await wrapper.get(cardSelector('task-2')).trigger('click')
   expect(wrapper.get(workshopSelector('车缝车间')).attributes('aria-pressed')).toBe('false')
   expect(wrapper.get('[data-testid="work-report-task-confirm"]').attributes('disabled')).toBeDefined()
+  await wrapper.get(workshopSelector('裁剪')).trigger('click')
+  await wrapper.get('[data-testid="work-report-task-confirm"]').trigger('click')
+  expect(wrapper.emitted('select')?.at(-1)).toEqual([{ productionTaskId: 'task-2', workshopId: 'workshop-2', planCategory: 'CUTTING' }])
+
+  api.tasks.mockResolvedValueOnce(response([{ ...task, workshops: [task.workshops[0]] }]))
+  const metal = mountDialog()
+  await flushPromises()
+  await metal.get(cardSelector('task-1')).trigger('click')
+  expect(metal.find(workshopSelector('金工车间')).exists()).toBe(false)
+  await metal.get('[data-testid="work-report-task-confirm"]').trigger('click')
+  expect(metal.emitted('select')).toEqual([[{ productionTaskId: 'task-1', workshopId: 'workshop-1' }]])
 })
 
 it('卡片呈现真实图片、产品数和任务合计，选车间仅切换当前卡片的统计口径', async () => {
@@ -117,7 +128,7 @@ it('初始任务由最新响应更新金额和图片，已失权车间清除后�
   expect(first.text()).not.toContain('¥999')
   expect(first.get('img').attributes('src')).toBe('blob:server-image.png')
   expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/api/task-image/1/'), expect.objectContaining({ responseType: 'blob' }))
-  expect(wrapper.get(workshopSelector('金工车间')).attributes('disabled')).toBeDefined()
+  expect(wrapper.find(workshopSelector('金工车间')).exists()).toBe(false)
   expect(wrapper.get('[data-testid="work-report-task-confirm"]').attributes('disabled')).toBeDefined()
 })
 

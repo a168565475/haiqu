@@ -36,7 +36,7 @@ from ..models import (
 from ..mobile_wage_options import mobile_wage_change_targets, mobile_wage_form, mobile_wage_target_data, mobile_wage_targets
 from ..selectors import (
     accessible_wage_schemes, accessible_work_reports, allowed_workshop_ids, search_wage_schemes,
-    wage_scheme_line_metrics, wage_schemes_with_context, work_report_cumulative_quantities,
+    wage_scheme_line_metrics, wage_schemes_with_context, work_report_cumulative_quantities, work_report_cutting_lengths,
     work_report_selection_sources, work_report_task_cards, work_report_task_products, work_report_tasks,
     work_reports_with_context,
 )
@@ -642,6 +642,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             queryset = queryset.filter(Exists(category_link))
         page = list(self.paginate_queryset(queryset.order_by("-production_date", "-created_at", "-id")))
         cumulative = work_report_cumulative_quantities(queryset)
+        cutting_lengths = work_report_cutting_lengths(page) if plan_category in ("", PlanCategory.METAL) else {}
         payload = []
         for report in page:
             line_metrics = {
@@ -650,7 +651,9 @@ class WorkReportViewSet(viewsets.GenericViewSet):
                 ))}
                 for line in report.lines.all()
             }
-            payload.append(work_report_data(report, line_metrics=line_metrics, request=request))
+            payload.append(work_report_data(
+                report, line_metrics=line_metrics, cutting_lengths=cutting_lengths.get(report.scheme_id), request=request,
+            ))
         return self.get_paginated_response(payload)
 
     @transaction.atomic

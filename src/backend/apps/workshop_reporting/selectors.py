@@ -1,3 +1,4 @@
+from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from django.db.models import Prefetch, Q, Sum
@@ -295,6 +296,23 @@ def work_reports_with_context(queryset=None):
         "lines__scheme_line",
         "lines__work_item__operation",
     )
+
+
+def work_report_cutting_lengths(reports):
+    from apps.workshop_config.constants import METAL_WORKSHOP_NAME
+    from .services import wage_scheme_line_cutting_lengths
+
+    schemes = {}
+    lines_by_scheme = defaultdict(list)
+    for report in reports:
+        if report.workshop.name != METAL_WORKSHOP_NAME:
+            continue
+        schemes[report.scheme_id] = report.scheme
+        lines_by_scheme[report.scheme_id].extend(line.scheme_line for line in report.lines.all())
+    return {
+        scheme_id: wage_scheme_line_cutting_lengths(scheme, lines_by_scheme[scheme_id])
+        for scheme_id, scheme in schemes.items()
+    }
 
 
 def work_report_cumulative_quantities(reports):

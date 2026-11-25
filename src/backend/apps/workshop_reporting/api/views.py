@@ -30,9 +30,10 @@ from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordSt
 from apps.workshop_config.selectors import active_employees
 
 from ..models import (
-    WageScheme, WageSchemeLineStatus, WageSchemeStatus, WorkReport, WorkReportLine,
+    WageScheme, WageSchemeAction, WageSchemeEvent, WageSchemeLineStatus, WageSchemeStatus, WorkReport, WorkReportLine,
     WorkshopPlanExecution, WorkshopPlanStatus,
 )
+from ..mobile_wage_options import mobile_wage_change_targets, mobile_wage_form, mobile_wage_target_data, mobile_wage_targets
 from ..selectors import (
     accessible_wage_schemes, accessible_work_reports, allowed_workshop_ids, search_wage_schemes,
     wage_scheme_line_metrics, wage_schemes_with_context, work_report_cumulative_quantities,
@@ -46,8 +47,9 @@ from ..services import (
     update_work_report, bom_options_for_product_line, wage_scheme_progress,
 )
 from .serializers import (
+    MobileWageFormQuerySerializer, MobileWageTargetQuerySerializer,
     WorkReportDeleteSerializer,
-    CommentSerializer, WageSchemeApprovalSerializer, WageSchemeWriteSerializer, WorkReportUpdateSerializer,
+    CommentSerializer, WageSchemeApprovalSerializer, WageSchemeListFilterSerializer, WageSchemeWriteSerializer, WorkReportUpdateSerializer,
     WorkReportWriteSerializer,
     wage_scheme_data, work_report_data,
 )
@@ -421,6 +423,7 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
         "partial_update": "workshop_reporting.change_wagescheme", "submit": "workshop_reporting.submit_wagescheme",
         "change": "workshop_reporting.change_wagescheme",
         "approve": "workshop_reporting.approve_wagescheme", "return_scheme": "workshop_reporting.approve_wagescheme",
+        "mobile_targets": "workshop_reporting.view_wagescheme", "mobile_form": "workshop_reporting.view_wagescheme",
     }
 
     def get_queryset(self):
@@ -428,8 +431,38 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
             return WageScheme.objects.none()
         return wage_schemes_with_context(accessible_wage_schemes(self.request))
 
+    @extend_schema(parameters=[MobileWageTargetQuerySerializer], responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"], url_path="mobile-targets")
+    def mobile_targets(self, request):
+        query = MobileWageTargetQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        task_number = query.validated_data["task_number"]
+        links = mobile_wage_targets(request, task_number)
+        if task_number:
+            return Response({"data": mobile_wage_target_data(request, links)})
+        page = self.paginate_queryset(links)
+        return self.get_paginated_response(mobile_wage_target_data(request, page))
+
+    @extend_schema(parameters=[MobileWageFormQuerySerializer], responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"], url_path="mobile-form")
+    def mobile_form(self, request):
+        query = MobileWageFormQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response({"data": mobile_wage_form(request, **query.validated_data)})
+
+    @extend_schema(parameters=[WageSchemeListFilterSerializer])
     def list(self, request):
+        filters = WageSchemeListFilterSerializer(data=request.query_params)
+        filters.is_valid(raise_exception=True)
         queryset = search_wage_schemes(self.get_queryset(), request.query_params.get("search", "").strip())
+        submitted_by_me = filters.validated_data["submitted_by_me"]
+        if submitted_by_me:
+            submitted = WageSchemeEvent.objects.filter(
+                scheme_id=OuterRef("pk"), actor_employee_id=request.employee.pk, action=WageSchemeAction.SUBMITTED,
+            )
+            queryset = queryset.filter(Exists(submitted))
+        if task_number := filters.validated_data["task_number"]:
+            queryset = queryset.filter(product_line__production_task__task_number__iexact=task_number)
         status_value = request.query_params.get("status", "").strip().upper()
         if status_value:
             if status_value not in WageSchemeStatus.values:
@@ -458,7 +491,12 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
         if ordering not in {"updated_at", "-updated_at", "created_at", "-created_at", "scheme_number", "-scheme_number", "effective_from", "-effective_from"}:
             raise ValidationError({"ordering": "排序参数不正确。"})
         page = self.paginate_queryset(queryset.order_by(ordering, "-id"))
-        return self.get_paginated_response([wage_scheme_data(item, detail=False) for item in page])
+        data = [wage_scheme_data(item, detail=False) for item in page]
+        if submitted_by_me:
+            change_targets = mobile_wage_change_targets(request, page)
+            for record in data:
+                record["change_target"] = change_targets.get(record["id"])
+        return self.get_paginated_response(data)
 
     def retrieve(self, request, pk=None):
         scheme = get_object_or_404(self.get_queryset(), pk=pk)

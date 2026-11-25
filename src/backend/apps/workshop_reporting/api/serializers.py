@@ -6,6 +6,19 @@ from rest_framework import serializers
 from ..models import WageSchemeLineStatus, WageSchemeStatus, WorkCountingMode
 
 
+class MobileWageTargetQuerySerializer(serializers.Serializer):
+    task_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
+
+
+class WageSchemeListFilterSerializer(MobileWageTargetQuerySerializer):
+    submitted_by_me = serializers.BooleanField(required=False, default=False)
+
+
+class MobileWageFormQuerySerializer(serializers.Serializer):
+    schedule_product_id = serializers.UUIDField()
+    craft_id = serializers.UUIDField()
+
+
 class WageSchemeLineWriteSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
     work_item_id = serializers.UUIDField(required=False)

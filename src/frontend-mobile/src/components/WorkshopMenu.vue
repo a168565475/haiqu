@@ -5,8 +5,9 @@ import { Icon as VanIcon, Popup as VanPopup } from 'vant'
 import 'vant/es/icon/style'
 import 'vant/es/popup/style'
 import { useAuthStore } from '@/stores/auth'
+import { canEnterWageSchemes } from '@/utils/wageSchemes'
 
-defineProps<{ active: 'issue' | 'report' | 'receipt' | 'configuration' }>()
+defineProps<{ active: 'issue' | 'wages' | 'report' | 'receipt' | 'configuration' }>()
 const router = useRouter()
 const auth = useAuthStore()
 const expanded = ref(false)
@@ -14,6 +15,8 @@ const trigger = ref<HTMLButtonElement>()
 const drawer = ref<HTMLElement>()
 const entries = computed(() => [
   { key: 'issue', title: '生产领料', icon: 'logistics', path: '/' },
+  ...(canEnterWageSchemes(auth.hasPermission)
+    ? [{ key: 'wages', title: '工价方案', icon: 'balance-list-o', path: '/wage-schemes' }] : []),
   { key: 'report', title: '生产报工', icon: 'records-o', path: '/production-report' },
   { key: 'receipt', title: '生产入库', icon: 'goods-collect-o', path: '/production-receipt' },
   ...(auth.hasPermission('workshop_config.view_workshopemployee')

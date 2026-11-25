@@ -36,7 +36,7 @@ const multipleOperations: ReportingScheme = {
 }
 let wrapper: VueWrapper | undefined
 async function openPage(params: Record<string, string> = query) {
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>领料列表</div>' } }, { path: '/production-report', component: { template: '<div>报工计划列表</div>' } }, { path: '/report', component: ReportView }, { path: '/report-records', component: { template: '<div>记录</div>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div>领料列表</div>' } }, { path: '/production-report', component: { template: '<div>报工计划列表</div>' } }, { path: '/report', component: ReportView }, { path: '/report-records', component: { template: '<div>记录</div>' } }, { path: '/wage-schemes', component: { template: '<div>报工资料</div>' } }] })
   await router.push({ path: '/report', query: params })
   await router.isReady()
   wrapper = mount({ template: '<router-view />' }, { global: { plugins: [router], components: { VanButton: Button, VanCell: Cell, VanDatePicker: DatePicker, VanEmpty: Empty, VanField: Field, VanIcon: Icon, VanLoading: Loading, VanPopup: Popup, VanRadio: Radio, VanRadioGroup: RadioGroup, VanSearch: Search } } })
@@ -460,15 +460,25 @@ describe('手机报工页面', () => {
     expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ confirm_plan_completion: true }))
   })
   it('今天没有适用工价时仍可改选历史日期并重新取得方案', async () => {
-    api.scheme.mockRejectedValueOnce(new Error('当前日期没有适用的已批准工价方案'))
+    api.scheme.mockRejectedValueOnce(new Error('该生产日期没有适用的已批准工价方案。'))
     const view = await openPage()
-    expect(view.text()).toContain('当前日期没有适用的已批准工价方案')
+    expect(view.text()).toContain('该生产日期没有适用的已批准工价方案。')
     expect(view.find('#report-production-date').exists()).toBe(true)
     expect(view.findAll('.report-entry')).toHaveLength(0)
     await chooseDate(view, '2026-10-01')
     expect(api.scheme).toHaveBeenLastCalledWith(query, 'product', '2026-10-01', expect.any(AbortSignal))
     expect(view.findAll('.report-entry')).toHaveLength(1)
-    expect(view.text()).not.toContain('当前日期没有适用的已批准工价方案')
+    expect(view.text()).not.toContain('该生产日期没有适用的已批准工价方案。')
+  })
+  it('缺工价时从报工带任务和工艺去填写报工资料', async () => {
+    api.scheme.mockRejectedValueOnce(new Error('该生产日期没有适用的已批准工价方案。'))
+    const view = await openPage()
+    expect(view.get('.error-panel').text()).not.toContain('重新加载')
+    await clickButton(view, '去填写报工资料')
+    expect(view.vm.$route.path).toBe('/wage-schemes')
+    expect(view.vm.$route.query).toEqual({
+      task_number: 'SC-TEST', schedule_product_id: query.schedule_product_id, craft_id: query.craft_id,
+    })
   })
   it('取消日期草稿或确认原日期均不修改明细，不重新请求工价', async () => {
     const view = await openPage()

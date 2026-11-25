@@ -2,20 +2,21 @@ from apps.workshop_config.tests.factories import production_employee
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from threading import Barrier
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.db import IntegrityError, close_old_connections, connections, transaction
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
+from apps.access_control.models import RoleActionGrant, RoleGrantResource
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType, BomStatus
 from apps.customers.models import CustomerAccount, CustomerAssignment
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.products.models import ProductInformation
 from apps.production_scheduling.models import (
     ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft, ScheduleStatus,
@@ -242,6 +243,98 @@ class WorkshopReportingApiTests(APITestCase):
         )
         self.assertEqual(listed["order_number"], "WG-ORDER-001")
         self.assertEqual(listed["product_code"], self.product_line.product_code_snapshot)
+
+    def test_mobile_wage_form_previews_quantities_and_shows_pending_after_submission(self):
+        ProductionSchedule.objects.filter(pk=self.schedule.pk).update(created_at=datetime(2026, 1, 23, 16, 30, tzinfo=UTC))
+        base = "/api/v1/workshop-reporting/wage-schemes/"
+        query = {"task_number": self.task.task_number.lower()}
+        pending = self.client.get(base + "mobile-targets/", {"page_size": 1})
+        self.assertEqual(pending.status_code, 200, pending.data)
+        self.assertEqual(pending.data["meta"]["total"], 1)
+        self.assertEqual(pending.data["data"][0]["schedule_date"], "2026-01-24")
+        self.assertIsNone(pending.data["data"][0]["scheme"])
+        self.assertEqual(self.client.get(base + "mobile-targets/", {"task_number": "HT-WG"}).data["data"], [])
+        targets = self.client.get(base + "mobile-targets/", query)
+        self.assertEqual(targets.status_code, 200, targets.data)
+        target, = targets.data["data"]
+        self.assertEqual(target["task_number"], self.task.task_number)
+        self.assertEqual(target["schedule_date"], "2026-01-24")
+        self.assertEqual(target["product_line_id"], str(self.product_line.pk))
+        self.assertIsNone(target["scheme"])
+
+        form = self.client.get(base + "mobile-form/", {
+            "schedule_product_id": target["schedule_product_id"], "craft_id": target["craft_id"],
+        })
+        self.assertEqual(form.status_code, 200, form.data)
+        self.assertEqual(form.data["data"]["operations"][0]["id"], str(self.operation.pk))
+        part, = form.data["data"]["bom_options"]
+        self.assertEqual(part["id"], str(self.metal_bom_line.pk))
+        self.assertEqual(part["required_quantity"], "200.0000")
+        self.assertFalse(form.data["data"]["requires_product_name"])
+
+        created = self.client.post(base, self.scheme_payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        scheme_id = created.data["data"]["id"]
+        draft = self.client.get(base + "mobile-targets/", query).data["data"][0]["scheme"]
+        self.assertEqual(draft["id"], scheme_id)
+        self.assertTrue(draft["can_edit"])
+        self.assertEqual(self.client.get(base + "mobile-targets/").data["data"][0]["scheme"], draft)
+
+        submitted = self.client.post(
+            f"{base}{scheme_id}/submit/", {}, format="json", HTTP_IF_MATCH=created["ETag"],
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        target, = self.client.get(base + "mobile-targets/", query).data["data"]
+        self.assertEqual(target["scheme"]["id"], scheme_id)
+        self.assertEqual(target["scheme"]["status"], WageSchemeStatus.PENDING_APPROVAL)
+        self.assertFalse(target["scheme"]["can_edit"])
+        self.assertEqual(self.client.get(base + "mobile-targets/").data["data"], [])
+
+    @override_settings(MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
+    def test_mobile_wage_targets_require_both_create_and_submit_in_the_same_workshop(self):
+        other_workshop, _ = Workshop.objects.get_or_create(name="装配车间")
+        other_craft = Craft.objects.create(
+            craft_type=CraftType.INTERNAL, workshop=other_workshop, name="工价权限测试装配", plan_category=PlanCategory.ASSEMBLY,
+        )
+        ProductionScheduleProductCraft.objects.create(
+            schedule_product=self.schedule_product, craft=other_craft, craft_type_snapshot=CraftType.INTERNAL,
+            craft_name_snapshot=other_craft.name, plan_category=PlanCategory.ASSEMBLY,
+        )
+        user = get_user_model().objects.create_user(username="mobile-wage-supervisor")
+        employee = Employee.objects.create(user=user, employee_code="MOBILE-WAGE", display_name="工价测试班组长")
+        group = Group.objects.create(name="工价测试班组长")
+        role = RoleProfile.objects.create(role_code="MOBILE_WAGE", display_name="工价测试班组长", auth_group=group)
+        EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role, effective_from=timezone.now())
+        for code, workshops in {
+            "view_wagescheme": [self.workshop, other_workshop],
+            "add_wagescheme": [self.workshop, other_workshop],
+            "submit_wagescheme": [self.workshop],
+        }.items():
+            permission = Permission.objects.get(content_type__app_label="workshop_reporting", codename=code)
+            group.permissions.add(permission)
+            grant = RoleActionGrant.objects.create(role=role, permission=permission, scope="WORKSHOP")
+            for workshop in workshops:
+                RoleGrantResource.objects.create(grant=grant, workshop=workshop)
+        self.client.force_authenticate(user)
+        base = "/api/v1/workshop-reporting/wage-schemes/"
+        response = self.client.get(base + "mobile-targets/", {"task_number": self.task.task_number})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([item["craft_id"] for item in response.data["data"]], [str(self.craft.pk)])
+        listed = self.client.get(base + "mobile-targets/")
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual([item["craft_id"] for item in listed.data["data"]], [str(self.craft.pk)])
+        forbidden = self.client.get(base + "mobile-form/", {
+            "schedule_product_id": str(self.schedule_product.pk), "craft_id": str(other_craft.pk),
+        })
+        self.assertEqual(forbidden.status_code, 404, forbidden.data)
+        created = self.client.post(base, self.scheme_payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(self.client.get(base + "mobile-targets/").data["data"], [])
+        submitted = self.client.post(
+            f"{base}{created.data['data']['id']}/submit/", {}, format="json", HTTP_IF_MATCH=created["ETag"],
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data["data"]["status"], WageSchemeStatus.PENDING_APPROVAL)
 
     def test_metal_context_uses_all_craft_operations_and_verified_bom_parts(self):
         other_operation = Operation.objects.create(

@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { NavBar as VanNavBar, Icon as VanIcon } from 'vant'
 import 'vant/es/nav-bar/style'
 import WorkshopMenu from '@/components/WorkshopMenu.vue'
-defineProps<{ title: string; subtitle?: string; backTo?: string; home?: boolean; section?: 'issue' | 'report' | 'receipt' | 'configuration' }>()
+defineProps<{ title: string; subtitle?: string; backTo?: string; home?: boolean; section?: 'issue' | 'wages' | 'report' | 'receipt' | 'configuration' }>()
 const router = useRouter()
 </script>
 

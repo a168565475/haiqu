@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { createRequestId } from '@/utils/requestId'
 import { loadReportEmployees, saveReportEmployees } from '@/utils/reportEmployeeMemory'
+import { canEnterWageSchemes } from '@/utils/wageSchemes'
 import {
   estimatedLineAmount, needsCompletionConfirmation, prepareReportAttempt, quantityText,
   remainingQuantity, reportingScope, shanghaiToday, uncertainSubmission,
@@ -46,6 +47,12 @@ let requestSequence = 0
 let controller: AbortController | null = null
 
 const product = computed(() => context.value?.schedule_product)
+const missingWage = computed(() => loadError.value === '该生产日期没有适用的已批准工价方案。')
+const wageFormLink = computed(() => {
+  if (!scope.value || !product.value?.task_number || !canEnterWageSchemes(auth.hasPermission)) return null
+  const { schedule_product_id, craft_id } = scope.value
+  return { path: '/wage-schemes', query: { task_number: product.value.task_number, schedule_product_id, craft_id } }
+})
 const workshop = computed(() => context.value?.workshops.find(item => item.id === scope.value?.workshop_id))
 const craft = computed(() => context.value?.crafts.find(item => item.id === scope.value?.craft_id))
 const assembly = computed(() => workshop.value?.name === '装配车间')
@@ -320,7 +327,9 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
         <div v-if="loading" class="report-loading" role="status"><van-loading size="26">正在读取报工信息…</van-loading></div>
         <section v-if="loadError" class="error-panel" role="alert">
           <p>{{ loadError }}</p>
-          <van-button v-if="scope" block :disabled="locked || loading" @click="loadData(true)">重新加载</van-button>
+          <van-button v-if="missingWage && wageFormLink" type="primary" block :disabled="locked || loading" @click="router.push(wageFormLink)">去填写报工资料</van-button>
+          <p v-else-if="missingWage">请联系有权限的班组长填写报工资料。</p>
+          <van-button v-else-if="scope" block :disabled="locked || loading" @click="loadData(true)">重新加载</van-button>
           <van-button v-else block @click="router.push('/production-report')">返回生产报工</van-button>
         </section>
 

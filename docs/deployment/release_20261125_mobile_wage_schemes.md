@@ -7,4 +7,4 @@
 - 手机端 47 项定向测试、类型检查及生产构建通过。隔离 PostgreSQL 的 4 项工价 API 用例通过，覆盖送审、岗位范围、本人查询和变更版本。Django 检查及迁移漂移检查通过。OpenAPI 校验 0 错误，690 条生成警告。
 - 候选及上线后的迁移计划为空。运行清单核对了 58 项手机资源、601 项继承的桌面资源和 3 个后端更新文件。数据库、缓存及文件扫描服务沿用原容器，通知进程与后端同镜像，内存限制 512 MiB。服务器数据库核验使用只读事务。
 - 公网健康接口返回 200，工价页面及相关静态资源摘要匹配，3 个工价接口的匿名请求返回 401。后台浏览器验证手机登录页。审批与提交的写入检查使用隔离用例。
-- 运行上下文与审计记录分别保留在 `/opt/haiqu-erp/releases/20261125-mobile-wage-schemes` 和 `/opt/haiqu-erp/deployment-logs/20261125-mobile-wage-schemes`。本次本机暂存、独占测试容器和服务器 incoming 按登记路径清理，服务器审计另记录清理结果。
+- 运行上下文与审计记录分别保留在 `/opt/haiqu-erp/releases/20261125-mobile-wage-schemes` 和 `/opt/haiqu-erp/deployment-logs/20261125-mobile-wage-schemes`。服务器 incoming 的三个文件与目录已按摘要清理。隔离测试库、容器和网络已清理并复查。本机暂存目录 `.tmp/release-20261125-mobile-wage-schemes` 的递归清理被自动审批以 `blocked by policy` 拒绝，复查仍保留。

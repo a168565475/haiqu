@@ -1,5 +1,5 @@
 import { flushPromises, mount, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElMessage } from 'element-plus'
+import ElementPlus, { ElMessage, ElSelect } from 'element-plus'
 import { AxiosError, CanceledError } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -85,11 +85,20 @@ async function mountPage(value = structuredClone(order), warehouse = true, props
     TubeOutsourcingDetailTable: !renderTables,
     TubeOutsourcingPlanRecords: { name: 'TubeOutsourcingPlanRecords', props: ['order', 'warehouse', 'blocked', 'busy', 'pending', 'writeBlocked', 'message', 'refreshRequired', 'requestConflict'], template: '<section><slot name="dispatch-action"/><slot name="receipt-action"/></section>' },
     ElButton: { props: ['disabled', 'loading'], template: '<button :disabled="disabled || loading"><slot/></button>' },
+    ElDropdown: { name: 'ElDropdown', template: '<div><slot/></div>' },
     ElAlert: { name: 'ElAlert', props: ['title'], template: '<div role="alert">{{ title }}</div>' },
     AppWindowDialog: { props: ['modelValue', 'title', 'width'], template: '<section v-if="modelValue" :aria-label="title" :data-width="width"><slot/><slot name="footer"/></section>' },
   } } })
   wrappers.push(wrapper); await flushPromises()
   return { wrapper, vm: wrapper.vm as unknown as ViewModel }
+}
+async function selectTubeStockSource(wrapper: ReturnType<typeof shallowMount>) {
+  wrapper.getComponent({ name: 'ElDropdown' }).vm.$emit('command', 'PUBLIC_SEMI')
+  await flushPromises()
+  const zone = wrapper.getComponent(ElSelect)
+  zone.vm.$emit('update:modelValue', 'zone-1')
+  zone.vm.$emit('change', 'zone-1')
+  await flushPromises()
 }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.clear(); resetIdentity()
@@ -331,15 +340,20 @@ describe('委外总单分次收发', () => {
     expect(warehouse.wrapper.text()).not.toContain('计划加工金额')
   })
   it('列表直接打开材料发出，沿用总单厂家单价但不提供编辑或金额展示', async () => {
-    const value = structuredClone(order); value.source_kind = 'METAL'; value.zone_id = null
+    const value = structuredClone(order)
     value.lines[0]!.quantity = '2700'
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(sourceContext), source_kind: 'METAL', rows: sourceContext.rows.map(row => ({ ...row, max_quantity: '99999999999999' })) })
     const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
     expect(wrapper.find('.plan-detail').exists()).toBe(false)
     expect(wrapper.get('[aria-label="材料发出"]').attributes('data-width')).toBe('1800')
+    expect(wrapper.text()).toContain('金工车间直发')
+    expect(wrapper.text()).toContain('更换来源')
+    expect(wrapper.find('[aria-label="实际来源库区"]').exists()).toBe(false)
+    expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-1', source_kind: 'METAL', plan_id: 'plan-1' })
     const headers = wrapper.findAll('.plan-entry-table th').map(item => item.text())
-    expect(headers).toEqual(['部位', '材质', '规格', '形状', '厚度 mm', '喷塑颜色', '切割长度 mm', '需要外发（支）', '累计已发', '累计入库', '本次外发（支）', '加工厂'])
+    expect(headers).toEqual(['部位', '材质', '规格', '形状', '厚度 mm', '喷塑颜色', '切割长度 mm', '需要外发（支）', '累计已发', '累计入库', '本单剩余可发（支）', '本次外发（支）', '加工厂'])
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.findAll('td')[headers.indexOf('需要外发（支）')]!.text()).toBe('2,700')
+    expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.findAll('td')[headers.indexOf('本单剩余可发（支）')]!.text()).toBe('1,500')
     expect(wrapper.text()).not.toContain('本次可外发'); expect(wrapper.text()).not.toContain('99,999,999,999,999')
     expect(wrapper.find('[aria-label="横管加工厂"]').exists()).toBe(false)
     expect(wrapper.find('[aria-label="横管加工单价"]').exists()).toBe(false)
@@ -347,7 +361,7 @@ describe('委外总单分次收发', () => {
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('Φ22')
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('400')
     vm.entries[0]!.quantity = '1500'; await vm.submit()
-    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ source_kind: 'METAL', zone_id: null, lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(wrapper.emitted('closed')).toHaveLength(1)
   })
   it.each([
@@ -642,15 +656,17 @@ describe('委外总单分次收发', () => {
     const value = structuredClone(order); value.lines[0]!.quantity = '2700'
     const { vm } = await mountPage(value)
     await vm.open('DISPATCH'); vm.entries[0]!.quantity = '1500'; await vm.submit()
-    expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: 'plan-1', source_kind: 'PUBLIC_SEMI' }))
+    expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: 'plan-1', source_kind: 'METAL' }))
     expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(localStorage.getItem(key)).toBeNull()
   })
   it.each(['METAL', 'SEWING', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'] as const)('%s按总单数量减累计已发限制本次外发', async sourceKind => {
     const value = structuredClone(order); value.source_kind = sourceKind; value.lines[0]!.quantity = '1500'
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(sourceContext), source_kind: sourceKind })
-    const { vm } = await mountPage(value)
-    await vm.open('DISPATCH'); vm.entries[0]!.quantity = '301'; await vm.submit()
+    const { wrapper, vm } = await mountPage(value)
+    await vm.open('DISPATCH')
+    if (sourceKind === 'PUBLIC_SEMI') await selectTubeStockSource(wrapper)
+    vm.entries[0]!.quantity = '301'; await vm.submit()
     expect(api.dispatchTubePlan).not.toHaveBeenCalled()
     expect(vm.message).toContain(`最多可发 300 ${sourceKind === 'SEWING' || sourceKind === 'PUBLIC_CUTTING' ? '套' : '支'}`)
     vm.entries[0]!.quantity = '300'; await vm.submit()
@@ -662,9 +678,35 @@ describe('委外总单分次收发', () => {
     expect(api.dispatchTubePlan).not.toHaveBeenCalled(); expect(vm.message).toContain('最多可发 0 支')
   })
   it('发货仍受当前实际库存约束，不把计划额度当库存', async () => {
-    const { vm } = await mountPage()
-    await vm.open('DISPATCH'); vm.entries[0]!.quantity = '2401'; await vm.submit()
-    expect(api.dispatchTubePlan).not.toHaveBeenCalled(); expect(vm.message).toContain('最多可发2400')
+    const value = structuredClone(order); value.lines[0]!.quantity = '4000'
+    const { wrapper, vm } = await mountPage(value)
+    await vm.open('DISPATCH')
+    vm.entries[0]!.quantity = '2401'
+    wrapper.getComponent({ name: 'ElDropdown' }).vm.$emit('command', 'PUBLIC_SEMI')
+    await flushPromises()
+    const zone = wrapper.getComponent(ElSelect)
+    expect(zone.props('modelValue')).toBe('')
+    expect(api.fetchTubeSource).toHaveBeenCalledTimes(1)
+    zone.vm.$emit('update:modelValue', 'zone-1')
+    zone.vm.$emit('change', 'zone-1')
+    await flushPromises()
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith(expect.objectContaining({ source_kind: 'PUBLIC_SEMI', zone_id: 'zone-1' }))
+    expect(wrapper.text()).toContain('当前库区可用（支）')
+    expect(vm.entries[0]!.quantity).toBe('2401')
+    await vm.submit()
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+    expect(wrapper.get('.plan-entry-table tbody tr [role="alert"]').text()).toContain('当前库区可用 2,400 支')
+    vm.entries[0]!.quantity = '2400'; await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ source_kind: 'PUBLIC_SEMI', zone_id: 'zone-1' }), 'v1')
+  })
+  it('金工直发的空数和超量在本次外发的部件行提示', async () => {
+    const value = structuredClone(order); value.lines[0]!.quantity = '1500'
+    const { wrapper, vm } = await mountPage(value)
+    await vm.open('DISPATCH'); await vm.submit()
+    expect(wrapper.get('.plan-entry-table tbody tr [role="alert"]').text()).toContain('请在「本次外发」填写实际发出的支数')
+    vm.entries[0]!.quantity = '301'; await vm.submit()
+    expect(wrapper.get('.plan-entry-table tbody tr [role="alert"]').text()).toContain('横管：本次最多可发 300 支')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
   })
   it('按总单独立入库，支持部分部件且数量可超过累计实发和目标', async () => {
     const { vm } = await mountPage()

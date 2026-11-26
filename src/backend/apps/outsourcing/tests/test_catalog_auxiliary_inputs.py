@@ -115,21 +115,25 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
     def test_no_external_auxiliary_allows_empty_orders_and_rejects_injected_material(self):
         self.report((200, 300))
         stock = self.opening(100)
-        self.auxiliary.raw_values = {}
-        self.auxiliary.save(update_fields=['raw_values'])
+        non_external = ({}, {'purchase_required': True})
+        material = self.entered('12.5')
+        for flags in non_external:
+            with self.subTest(operation='create', flags=flags):
+                self.auxiliary.raw_values = flags
+                self.auxiliary.save(update_fields=['raw_values'])
+                for response in (self.plan(materials=[material], expected=400), self.pending_order('12.5', expected=400)):
+                    self.assertIn('materials', response.data['error']['field_errors'])
         self.assertEqual(self.context()['material_rows'], [])
         plan = self.plan(materials=[])
         self.assertEqual(plan['planned_materials'], [])
         pending = self.pending_order(None)
         self.assertFalse(TubeOutsourcingOrder.objects.get(pk=pending['id']).materials.exists())
-        for flags in ({}, {'purchase_required': True}):
-            with self.subTest(flags=flags):
+        for flags in non_external:
+            with self.subTest(operation='dispatch', flags=flags):
                 self.auxiliary.raw_values = flags
                 self.auxiliary.save(update_fields=['raw_values'])
-                material = self.entered('12.5')
-                for response in (self.plan(materials=[material], expected=400), self.pending_order('12.5', expected=400),
-                                 self.dispatch(plan, 10, materials=[material], expected=400)):
-                    self.assertIn('materials', response.data['error']['field_errors'])
+                response = self.dispatch(plan, 10, materials=[material], expected=400)
+                self.assertIn('materials', response.data['error']['field_errors'])
         self.assertEqual(TubeOutsourcingOrder.objects.count(), 2)
         self.assertFalse(PublicStockMovement.objects.filter(source_type=MOVEMENT_SOURCE).exists())
         stock.refresh_from_db()

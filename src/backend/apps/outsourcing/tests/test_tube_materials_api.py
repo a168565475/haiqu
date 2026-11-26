@@ -75,9 +75,14 @@ class TubeMaterialFixture(TubeReceiptFixture):
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class TubeMaterialsApiTests(TubeMaterialFixture, APITestCase):
+    def test_tube_hardware_candidate_is_visible_with_either_purchase_flag(self):
+        for purchase_required in (True, False):
+            with self.subTest(purchase_required=purchase_required):
+                self.hardware.raw_values = {**self.hardware.raw_values, 'purchase_required': purchase_required}
+                self.hardware.save(update_fields=['raw_values'])
+                self.assertIn(str(self.hardware.pk), {row['bom_line_id'] for row in self.context()['material_rows']})
+
     def test_source_materials_keep_original_units_and_are_read_only(self):
-        self.hardware.raw_values = {**self.hardware.raw_values, 'purchase_required': True}
-        self.hardware.save(update_fields=['raw_values'])
         before = (TubeOutsourcingOrder.objects.count(), OrderMaterialRequirement.objects.count(),
                   MaterialStockMovement.objects.count(), AuditLog.objects.count())
         context = self.context()

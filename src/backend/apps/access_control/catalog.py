@@ -16,7 +16,7 @@ FULL_DATA_CODES = (
 )
 
 PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet', 'procurement.manage_packagingpurchase',
-    'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview',
+    'outsourcing.manage_cutpieceprinting', 'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview',
     'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense',
     'production_task_imports.import_production_task'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
 
@@ -51,8 +51,8 @@ def module_for(code):
 
 def scopes_for(code):
     from .resource_scopes import configured, scope_kind
-    from .role_policy import FOLLOWED_TASK_PERMISSIONS, PACKAGING_PERMISSION, STATEMENT_OWN_PERMISSIONS
-    if code == PACKAGING_PERMISSION:
+    from .role_policy import CUT_PIECE_PRINTING, FOLLOWED_TASK_PERMISSIONS, PACKAGING_PERMISSION, STATEMENT_OWN_PERMISSIONS
+    if code in {PACKAGING_PERMISSION, CUT_PIECE_PRINTING}:
         return ('FOLLOWED',)
     if code in STATEMENT_OWN_PERMISSIONS:
         return ('MODULE', 'OWN')

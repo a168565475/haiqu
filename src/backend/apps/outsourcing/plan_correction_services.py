@@ -102,6 +102,18 @@ def _add_requirement(deltas, requirement, delta, *, raw_id, catalog_id, unit_id,
     deltas[key] = (previous + delta, raw_id, catalog_id, unit_id, component)
 
 
+def _processor_source_plans(batch, lines, request):
+    plan_ids = {line.print_order_line.order_id for line in lines}
+    plans = list(TubeOutsourcingOrder.objects.select_for_update(of=('self',)).filter(
+        pk__in=plan_ids, product_line_id=batch.product_line_id, is_plan=True,
+        source_snapshot__screen_print_pieces=True).exclude(status='CANCELLED').order_by('pk'))
+    if {plan.pk for plan in plans} != plan_ids:
+        raise Conflict('直送记录关联的原丝印单已失效。')
+    for plan in plans:
+        require_saved_order_access(request, plan, DISPATCH_PERMISSION)
+    return plans
+
+
 def _dispatch(order, correction, data, request):
     batch = get_object_or_404(TubeOutsourcingOrder.objects.select_for_update(of=('self',)).select_related('zone'),
                              pk=data['record_id'], plan=order, is_plan=False)
@@ -112,12 +124,18 @@ def _dispatch(order, correction, data, request):
     if action is None:
         raise Conflict('原外发确认凭证缺失，不能自动更正。')
     sewing_inputs = bool(batch.source_snapshot.get('sewing_inputs'))
-    lines = list((batch.inputs if sewing_inputs else batch.lines).select_for_update(of=('self',)).order_by('pk'))
+    records = (batch.inputs if sewing_inputs else batch.lines).select_for_update(of=('self',)).order_by('pk')
+    processor = batch.source_kind == 'PROCESSOR'
+    lines = list(records.select_related('print_order_line') if processor else records)
+    origins = _processor_source_plans(batch, lines, request) if processor else []
+    origin_quantities = plan_quantities(origins) if origins else {}
     materials = list(batch.materials.select_for_update(of=('self',)).select_related(
         'requirement', 'zone', 'unit', 'raw_material').order_by('pk'))
     entered = _quantities(data, [line.component_identity for line in lines])
     values = plan_quantities([order])[str(order.pk)]['lines']
     parent = {str(line.component_identity): line for line in order.lines.all()}
+    print_plan = bool(order.source_snapshot.get('screen_print_pieces'))
+    printed_pieces = {}
     if sewing_inputs:
         from types import SimpleNamespace
         from .part_flow_sources import input_dispatched
@@ -126,6 +144,9 @@ def _dispatch(order, correction, data, request):
             quantity=line.quantity * piece['pieces_per_part']) for line in parent.values()
             for piece in line.snapshot.get('pieces', [])}
         values = {key: {'dispatched_quantity': str(quantity)} for key, quantity in sent.items()}
+        if not processor and any(entered[str(line.component_identity)] > line.quantity for line in lines):
+            from .printed_pieces import printed_pieces_for_sewing
+            printed_pieces = printed_pieces_for_sewing(order.product_line_id)
     history = list(order.record_corrections.filter(record_kind='DISPATCH', record_id=batch.pk))
     before = {'number': batch.order_number, 'business_date': str(action.actual_dispatch_date),
         'remark': batch.remark, 'status': batch.status,
@@ -146,13 +167,30 @@ def _dispatch(order, correction, data, request):
         quantity = entered[key]
         value = values[str(target.pk)]
         dispatched_quantity = int(value['dispatched_quantity']) - line.quantity + quantity
+        if print_plan and dispatched_quantity < int(value['received_quantity']) + int(value['transferred_quantity']):
+            raise Conflict('更正后的丝印发出数量不能少于已回仓和已直送车缝的合计。')
+        if processor:
+            origin = origin_quantities[str(line.print_order_line.order_id)]['lines'][str(line.print_order_line_id)]
+            if quantity - line.quantity > int(origin['receivable_quantity']):
+                raise Conflict('更正数量超过原丝印厂剩余可交的裁片数量。')
+        if key in printed_pieces and quantity > line.quantity:
+            printed_identity, remaining = printed_pieces[key]
+            if line.input_identity != printed_identity or quantity - line.quantity > remaining:
+                raise Conflict('调增的车缝实发数量只能使用该裁片已丝印收回的可用数量。')
         if quantity > line.quantity and dispatched_quantity > target.quantity:
             raise ValidationError({'lines': f'“{line.snapshot.get("part_name", "部件")}”更正后的累计实发不能超过委外总单填写的{target.quantity}{output_unit(order.source_kind)}。'})
-        if batch.source_snapshot.get('part_flow') and batch.source_kind in DIRECT_SOURCES and quantity > line.quantity:
-            from apps.inventory.part_flow_quantities import first_output_available
-            available = first_output_available(order.product_line_id, line.bom_line, order.bom.order_quantity)
+        if not processor and batch.source_snapshot.get('part_flow') and batch.source_kind in DIRECT_SOURCES and quantity > line.quantity:
+            if print_plan:
+                from .printed_pieces import cut_print_direct_available
+                available = cut_print_direct_available(order.product_line_id, line.bom_line, order.bom.order_quantity)
+            else:
+                from apps.inventory.part_flow_quantities import first_output_available
+                available = first_output_available(order.product_line_id, line.bom_line, order.bom.order_quantity)
             if quantity-line.quantity > available:
                 raise Conflict('调增数量超过厂内首次产出的可用数量。')
+        if processor:
+            new_values[line.pk] = (quantity, None, None)
+            continue
         current_stock, current_meters = _stock_amount(batch.source_kind, line.quantity, line.snapshot)
         if current_stock != line.stock_quantity or (batch.source_kind == 'RAW_PIPE'
                 and Decimal(str(line.snapshot.get('meters', 'NaN'))) != Decimal(current_meters)):
@@ -206,6 +244,8 @@ def _dispatch(order, correction, data, request):
     batch.version += 1
     batch.updated_by_employee = request.employee
     batch.save(update_fields=['status', 'version', 'updated_by_employee', 'updated_at'])
+    for origin in origins:
+        _update_plan(origin, request)
     correction.after_data.update(status=batch.status, lines=[{'id': str(line.pk),
         'component_identity': str(line.component_identity), 'quantity': entered[str(line.component_identity)],
         'stock_quantity': new_values[line.pk][1], 'meters': new_values[line.pk][2]} for line in lines])
@@ -228,6 +268,18 @@ def _receipt(order, correction, data, request):
     correction.after_data = _json({**before, 'operation': data['operation'],
         **({'business_date': data['business_date']} if data['operation'] == 'UPDATE' else {})})
     events = []
+    if order.source_snapshot.get('screen_print_pieces'):
+        from .printed_pieces import printed_pieces_for_sewing
+        printed_pieces = printed_pieces_for_sewing(order.product_line_id)
+        totals = plan_quantities([order])[str(order.pk)]['lines']
+        for line in lines:
+            key = str(line.order_line.component_identity)
+            delta = entered[key] - line.received_quantity
+            item = totals[str(line.order_line_id)]
+            if delta > int(item['receivable_quantity']):
+                raise Conflict('更正后的丝印收回数量不能超过该裁片已发出数量。')
+            if delta < 0 and -delta > printed_pieces[key][1]:
+                raise Conflict('该裁片已发给车缝，不能将丝印收回数量改到低于已用数量。')
     for line in lines:
         quantity = entered[str(line.order_line.component_identity)]
         original = line.stock_movement

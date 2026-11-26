@@ -129,6 +129,7 @@ class OutsourcingOrder(TimeStampedModel):
             ("view_all_outsourcingorder", "可查看全部外发单"),
             ("cancel_outsourcingorder", "可取消外发单"),
             ("confirm_dispatch_outsourcingorder", "可确认委外发料"),
+            ("manage_cutpieceprinting", "办理本人跟进任务的裁片丝印外发"),
             ("confirm_return_outsourcingorder", "可确认委外回厂"),
             ("return_raw_outsourcingorder", "可确认外发原料退回"),
             ("reconcile_outsourcingorder", "可登记外发投入与损耗"),

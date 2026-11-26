@@ -11,6 +11,7 @@ from rest_framework import serializers
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from apps.access_control import module_policy
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
 from apps.core.api.permissions import HasActiveEmployee
 from apps.production_tasks.selectors import production_task_product_image
 
@@ -37,6 +38,8 @@ class TubeActionPermission(BasePermission):
     message = '当前账号没有执行外发单操作的权限。'
 
     def has_permission(self, request, view):
+        if view.printing:
+            return module_policy.has_permission(request, CUT_PIECE_PRINTING)
         warehouse_allowed = warehouse_read_permission(request, view)
         if warehouse_allowed is not None:
             return warehouse_allowed
@@ -46,6 +49,7 @@ class TubeActionPermission(BasePermission):
 
 
 class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
+    printing = False
     permission_classes = [HasActiveEmployee, TubeActionPermission]
     warehouse_read_actions = {'retrieve', 'print_pdf', 'action_by_request', 'receipt_preview', 'receipt'}
     warehouse_read_permissions = (DISPATCH_PERMISSION, RETURN_PERMISSION)
@@ -69,6 +73,8 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         OpenApiParameter('category', str, location=OpenApiParameter.QUERY, enum=['tube', 'cutting'], default='tube')])
     @action(detail=False, methods=['get'])
     def options(self, request):
+        if self.printing:
+            return Response({'data': tube_options(request, category='screen_printing', permission=CUT_PIECE_PRINTING)})
         return Response({'data': tube_options(request, category=request.query_params.get('category', 'tube'))})
 
     @extend_schema(request=None, parameters=[
@@ -80,7 +86,8 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def product_image(self, request, schedule_product_id=None, file_id=None):
         schedule_product_id = serializers.UUIDField().run_validation(schedule_product_id)
         file_id = serializers.UUIDField().run_validation(file_id)
-        product = get_object_or_404(visible_products(request, category='all'), pk=schedule_product_id)
+        permission = CUT_PIECE_PRINTING if self.printing else VIEW_PERMISSION
+        product = get_object_or_404(visible_products(request, permission, category='all'), pk=schedule_product_id)
         # 图片读取只继承当前外发产品的可见范围，不能转为整张任务或通用文件权限。
         image = production_task_product_image(product.product_line)
         if image is None or image.pk != file_id or not image.content_type.startswith('image/'):
@@ -101,10 +108,24 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     @extend_schema(request=None, parameters=[TubeSourceQuerySerializer], responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=['get'], url_path='source-context')
     def source_context(self, request):
-        serializer = TubeSourceQuerySerializer(data=request.query_params)
+        params = request.query_params
+        if self.printing:
+            params = params.copy()
+            if (params.pop('category', ['screen_printing']) != ['screen_printing'] or 'plan_id' in params
+                    or 'zone_id' in params or params.get('source_kind', 'CUTTING') != 'CUTTING'):
+                raise serializers.ValidationError('请从裁片丝印入口选择任务和产品。')
+            params.setdefault('is_plan', 'true')
+            params['source_kind'] = 'CUTTING'
+        serializer = TubeSourceQuerySerializer(data=params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        if data['source_kind'] == 'PROCESSOR' and (not data.get('plan_id') or data.get('is_plan')):
+            raise serializers.ValidationError('加工点发出须从仓库已保存的车缝总单办理。')
         permission = DISPATCH_PERMISSION if data.get('plan_id') else VIEW_PERMISSION
+        if self.printing:
+            if not data.get('is_plan'):
+                raise serializers.ValidationError('跟单入口仅支持裁片丝印总单。')
+            permission = CUT_PIECE_PRINTING
         product, craft = source_product(request, data['schedule_product_id'], permission,
             source_kind=data['source_kind'], craft_id=data.get('craft_id'))
         if data.get('category') == 'cutting' and craft.outsourcing_code == 'SEWING':
@@ -117,13 +138,21 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             plan = get_object_or_404(TubeOutsourcingOrder, pk=data['plan_id'], is_plan=True,
                 schedule_product=product, craft=craft)
             require_saved_order_access(request, plan, permission)
+            if data['source_kind'] == 'PROCESSOR' and not (plan.craft.outsourcing_code == 'SEWING'
+                    and plan.source_snapshot.get('sewing_inputs')):
+                raise serializers.ValidationError('加工点发出只适用于以裁片为投入的车缝总单。')
         zone = source_zone(data['source_kind'], data.get('zone_id'))
         from apps.inventory.tube_outsourcing_limits import tube_source_context
         from ..tube_materials import tube_material_context
         if data.get('is_plan') or data.get('plan_id'):
             from ..plan_services import plan_source_context
             context = plan_source_context(schedule_product=product, source_kind=data['source_kind'],
-                zone=zone, craft=craft, for_plan=bool(data.get('is_plan')))
+                zone=zone, craft=craft, for_plan=bool(data.get('is_plan')), request=request)
+            if data.get('plan_id'):
+                if bool(plan.source_snapshot.get('screen_print_pieces')) != bool(context.get('screen_print_pieces')):
+                    raise serializers.ValidationError('该发料来源与委外总单记录的工艺不符。')
+            elif self.printing != bool(context.get('screen_print_pieces')):
+                raise serializers.ValidationError('请选择对应的委外建单入口。')
             if data.get('plan_id') and data['source_kind'] == 'CUTTING' and context.get('sewing_inputs'):
                 from ..part_flow_sources import add_cut_piece_stock_zones
                 from ..source_access import allowed_source_kinds
@@ -134,10 +163,11 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)
         else:
             context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
-        options = tube_options(request, category=source_category(data['source_kind'])) if not data.get('plan_id') else {}
-        context = {**context, **product_summary(product), **product_display(product),
-                   **tube_material_context(product, source_kind=data['source_kind'],
-                       plan_mode=bool(data.get('is_plan') or data.get('plan_id')), for_plan=bool(data.get('is_plan'))),
+        options = tube_options(request, permission=permission, category='screen_printing' if self.printing
+                               else source_category(data['source_kind'])) if not data.get('plan_id') else {}
+        materials = {'material_rows': []} if context.get('screen_print_pieces') else tube_material_context(product, source_kind=data['source_kind'],
+                       plan_mode=bool(data.get('is_plan') or data.get('plan_id')), for_plan=bool(data.get('is_plan')))
+        context = {**context, **product_summary(product), **product_display(product, printing=self.printing), **materials,
                    **options, 'craft_name': craft.name, 'craft_id': str(craft.pk),
                    'output_unit': output_unit(data['source_kind']),
                    'material_category': '辅料' if data['source_kind'] in CUTTING_SOURCES else '五金',
@@ -161,7 +191,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
                 context['factories'] = [row for row in context['factories'] if row['id'] != own_id]
             units = {row['unit'] for row in context['rows']}
             context['output_unit'] = next(iter(units)) if len(units) == 1 else ''
-        if data.get('is_plan'):
+        if data.get('is_plan') and not self.printing:
             from ..plan_purchase_reference import add_plan_purchase_reference
             add_plan_purchase_reference(context, product)
         return Response({'data': context})
@@ -170,7 +200,14 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def create(self, request):
         serializer = TubeOrderWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        order, created = create_tube_order(data=serializer.validated_data, request=request)
+        data = serializer.validated_data
+        if self.printing:
+            if not data.get('is_plan') or data.get('source_kind') != 'CUTTING':
+                raise serializers.ValidationError('跟单入口仅支持裁片丝印总单。')
+            from ..plan_services import create_plan
+            order, created = create_plan(data=data, request=request, permission=CUT_PIECE_PRINTING)
+        else:
+            order, created = create_tube_order(data=data, request=request)
         order = tube_order_queryset().get(pk=order.pk)
         data = saved_order_data(order, created=created, request=request)
         response = Response({'data': data}, status=201 if created else 200)
@@ -183,7 +220,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def by_request(self, request, request_id=None):
         request_id = serializers.UUIDField().run_validation(request_id)
         order = get_object_or_404(tube_order_queryset(), client_request_id=request_id)
-        require_saved_order_access(request, order)
+        require_saved_order_access(request, order, CUT_PIECE_PRINTING if self.printing else VIEW_PERMISSION)
         data = saved_order_data(order, request=request)
         response = Response({'data': data})
         response['ETag'] = data['etag']
@@ -212,7 +249,9 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         return order
 
     def _require_detail_access(self, request, order):
-        if warehouse_stage(request):
+        if self.printing:
+            require_saved_order_access(request, order, CUT_PIECE_PRINTING)
+        elif warehouse_stage(request):
             get_object_or_404(warehouse_tube_orders(request), pk=order.pk)
         else:
             require_saved_order_access(request, order)

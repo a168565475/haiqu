@@ -1,6 +1,7 @@
 """Stage 5 operation overrides; old independently granted codes retain compatibility."""
 
 PACKAGING_PURCHASE = "procurement.manage_packagingpurchase"
+CUT_PIECE_PRINTING = "outsourcing.manage_cutpieceprinting"
 
 MODULE_OPERATIONS = (
     ('complete_purchaseorder', '完成采购订单', 'procurement', 'procurement.submit_purchaseorder'),

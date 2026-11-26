@@ -4,13 +4,14 @@ import { AxiosError, CanceledError } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/tubeOutsourcing'
+import * as printApi from '@/api/cutPiecePrinting'
 import type { TubeOptions, TubeOrderInput, TubePendingOrderInput, TubeOrderResult, TubeSourceContext, TubeSourceRow } from '@/types/tubeOutsourcing'
 import TubeOutsourcingFormView from './TubeOutsourcingFormView.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import type { MaterialSelectionSnapshot } from '@/types/materialCatalog'
 
-const routing = vi.hoisted(() => ({ push: vi.fn(), query: { schedule_product_id: 'schedule-product' } as Record<string, string> }))
+const routing = vi.hoisted(() => ({ push: vi.fn(), name: '', query: { schedule_product_id: 'schedule-product' } as Record<string, string> }))
 vi.mock('vue-router', () => ({ useRoute: () => routing, useRouter: () => routing }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
@@ -538,6 +539,33 @@ describe('原管材表单复用裁片模式', () => {
     vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...cuttingContext(), source_kind: params.source_kind || 'SEWING', zone_id: params.zone_id || null, craft_id: params.craft_id }))
     vi.mocked(api.createTubeOrder).mockImplementation(async payload => result(payload))
     vi.mocked(api.findTubeOrder).mockRejectedValue(httpError(404))
+  })
+  it('跟单只勾选裁片，按整单需求建丝印计划，不能手输部分需求', async () => {
+    routing.name = 'cut-piece-printing-new'
+    const config = cuttingOptions()
+    config.crafts = cuttingCrafts
+    vi.spyOn(printApi, 'fetchPrintOptions').mockResolvedValue(config)
+    vi.spyOn(printApi, 'fetchPrintSource').mockResolvedValue({ ...cuttingContext(), part_flow: true, screen_print_pieces: true,
+      source_kind: 'CUTTING', craft_id: 'printing', fees_deferred: false, material_rows: [], rows: [
+        { ...row, unit: '片', part_name: '面片', parent_name: '靠背', order_required: '200' },
+        { ...row, unit: '片', component_identity: 'edge', part_name: '围条', order_required: '100' },
+      ] })
+    vi.spyOn(printApi, 'createPrintOrder').mockImplementation(async payload => result(payload))
+    const { wrapper, vm } = await mountPage(true)
+    try {
+      expect(printApi.fetchPrintSource).toHaveBeenCalledWith('schedule-product', 'printing')
+      expect(wrapper.find('input[aria-label="面片外发片数"]').exists()).toBe(false)
+      expect(vm.rows.map(item => item.quantity)).toEqual(['', ''])
+      await wrapper.get('input[aria-label="选择面片丝印"]').setValue(true)
+      expect(vm.rows[0]!.quantity).toBe('200')
+      vm.rows[0]!.factoryId = 'factory'
+      vm.rows[0]!.unitPrice = '0.8'
+      await vm.save()
+      expect(printApi.createPrintOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'CUTTING', craft_id: 'printing',
+        lines: [{ component_identity: 'front', quantity: '200', factory_id: 'factory', unit_price: '0.8' }] }))
+      expect(api.createTubeOrder).not.toHaveBeenCalled()
+      expect(routing.push).toHaveBeenCalledWith({ name: 'cut-piece-printing-detail', params: { id: 'saved-order' } })
+    } finally { routing.name = ''; wrapper.unmount() }
   })
   it('选本厂自动带回整部位数量，本厂记录单价不计入计划加工金额', async () => {
     const config = cuttingOptions()

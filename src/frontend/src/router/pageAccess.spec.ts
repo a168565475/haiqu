@@ -100,6 +100,16 @@ describe('岗位菜单与独立页面权限', () => {
     auth.user!.effective_access.actions['inventory.view_materialinbound']!.scopes.push('MODULE')
     expect(canOpenPage('material-inventory', auth)).toBe(true)
   })
+  it('裁片丝印三个入口共用独立权限，普通外协授权不会打开它们', () => {
+    const follower = followedReader(['outsourcing.manage_cutpieceprinting'])
+    const workshop = reader(['outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder'])
+    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(entry => entry.key === 'cut-piece-printing')!
+    expect(canOpenMenu(item, follower)).toBe(true)
+    for (const route of ['cut-piece-printing', 'cut-piece-printing-new', 'cut-piece-printing-detail']) {
+      expect(canOpenPage(route, follower)).toBe(true)
+      expect(canOpenPage(route, workshop)).toBe(false)
+    }
+  })
   it('仅跟单范围保留任务关联读取，不开放领料和委外独立菜单或列表', () => {
     const auth = followedReader([
       'production_tasks.view_productiontask', 'material_issues.view_materialissue',

@@ -1378,6 +1378,24 @@ export const router = createRouter({
       },
     },
     {
+      path: '/workshop/cut-piece-printing', name: 'cut-piece-printing',
+      component: () => import('@/views/outsourcing/CutPiecePrintingListView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 裁片丝印外发',
+        breadcrumbs: [{ label: '车间' }, { label: '裁片丝印外发' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/workshop/cut-piece-printing/new', name: 'cut-piece-printing-new',
+      component: () => import('@/views/outsourcing/TubeOutsourcingFormView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 新建裁片丝印外发单',
+        breadcrumbs: [{ label: '裁片丝印外发', to: '/workshop/cut-piece-printing' }, { label: '新建外发单' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/workshop/cut-piece-printing/:id', name: 'cut-piece-printing-detail',
+      component: () => import('@/views/outsourcing/CutPiecePrintingDetailView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 裁片丝印外发单',
+        breadcrumbs: [{ label: '裁片丝印外发', to: '/workshop/cut-piece-printing' }, { label: '外发单详情' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
       path: '/workshop/outsourcing/tube/:id',
       name: 'workshop-outsourcing-tube-detail',
       component: () => import('@/views/outsourcing/TubeOutsourcingDetailView.vue'),

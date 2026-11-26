@@ -196,6 +196,65 @@ describe('车间编辑委外总单计划数量', () => {
 })
 
 describe('委外总单分次收发', () => {
+  it('仓库从车缝直发页能看到已丝印数量，并按回货库区发出', async () => {
+    const value = typedColumnOrder()
+    value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' })
+    value.plan_options!.zones.push({ id: 'print-zone', warehouse_id: 'fabric', warehouse_name: '布面仓', name: '四楼', warehouse_type: 'SEMI_FINISHED' })
+    vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...sourceContext, part_flow: true, sewing_inputs: true,
+      source_kind: params.source_kind!, inputs: [{ ...value.inputs![0]!, order_required: '200', stock_quantity: null, blockers: [],
+        max_quantity: params.zone_id === 'print-zone' ? '60' : '0', screen_print_required: true, printed_available_quantity: '60',
+        stock_zones: [{ zone_id: 'print-zone', available_quantity: '60' }] }] }))
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    expect(wrapper.get('.printed-stock').text()).toContain('已丝印可用 60 片')
+    await wrapper.get('.printed-stock button').trigger('click')
+    await flushPromises()
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith(expect.objectContaining({ source_kind: 'PUBLIC_PIECE', zone_id: 'print-zone' }))
+    vm.entries[0]!.quantity = '61'
+    await vm.submit()
+    expect(vm.message).toContain('当前库区已丝印可发 60 片')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+  })
+  it('加工点发出只列来源厂待交的裁片，目的厂按车缝总单，提交带原丝印行', async () => {
+    const value = typedColumnOrder()
+    value.plan_options!.source_kinds.push({ value: 'PROCESSOR', label: '加工点发出' })
+    value.inputs!.push({ ...value.inputs![0]!, component_identity: 'plain', part_name: '不用丝印裁片' })
+    vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...sourceContext, part_flow: true, sewing_inputs: true,
+      source_kind: params.source_kind!, inputs: [{ ...value.inputs![0]!, order_required: '200', stock_quantity: null, blockers: [],
+        max_quantity: '45', screen_print_required: true, processor_source: { factory_id: 'printer', factory_name: '丝印一厂',
+          order_id: 'print-order', order_number: 'WF-PRINT', order_line_id: 'print-line', available_quantity: '45' } }] }))
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    wrapper.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '实际材料来源')!.vm.$emit('change', 'PROCESSOR')
+    await flushPromises()
+    const table = wrapper.get('.plan-entry-table--parts')
+    expect(table.text()).toContain('目的车缝厂')
+    expect(table.text()).toContain('WF-PRINT')
+    expect(table.text()).not.toContain('不用丝印裁片')
+    expect(wrapper.find('[aria-label="实际来源库区"]').exists()).toBe(false)
+    vm.entries[0]!.quantity = '46'
+    await vm.submit()
+    expect(vm.message).toContain('丝印厂待交 45 片')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+    vm.entries[0]!.quantity = '40'
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith(value.id, expect.objectContaining({ source_kind: 'PROCESSOR', zone_id: null,
+      inputs: [{ component_identity: 'piece-1', quantity: '40', print_order_line_id: 'print-line' }], lines: [] }), value.etag)
+  })
+  it('丝印裁片回仓不能超过厂内待交，先扣除已直送数量', async () => {
+    const value = typedColumnOrder()
+    Object.assign(value, { screen_print_pieces: true, sewing_inputs: false })
+    Object.assign(value.lines[0]!, { part_name: '面片', unit: '片', quantity: '200', dispatched_quantity: '80', received_quantity: '20',
+      transferred_quantity: '15', receivable_quantity: '45' })
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: value, etag: value.etag, can_receive: true, blockers: [],
+      actor_name: '仓管', today: '2026-11-26', warehouses: [{ id: 'warehouse-1', name: '布面仓' }],
+      zones: [{ id: 'received-zone', warehouse_id: 'warehouse-1', warehouse: '布面仓', name: '四楼' }], receipt: null })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(wrapper.get('.plan-entry-table--parts').text()).toContain('丝印厂待交')
+    expect(wrapper.text()).toContain('本次收回的裁片将标记为「已丝印」')
+    vm.entries[0]!.quantity = '46'
+    await vm.submit()
+    expect(vm.message).toContain('不能超过丝印厂待交数量 45 片')
+    expect(api.receiveTubePlan).not.toHaveBeenCalled()
+  })
   it('部位、裁片投入及目标单价弹窗独立展示规格和四列冻结来源，计划辅料逐项展示', async () => {
     const value = typedColumnOrder()
     vi.mocked(api.fetchTubeOrder).mockResolvedValue(value)

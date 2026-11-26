@@ -2,11 +2,14 @@
 from types import SimpleNamespace
 
 from django.conf import settings
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.access_control.resource_scopes import filter_crafts, require_craft
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
+from apps.access_control.module_policy import has_permission
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.exceptions import Conflict
 from apps.inventory.models import WarehouseZone
@@ -30,7 +33,8 @@ CANCEL_PERMISSION = 'outsourcing.cancel_outsourcingorder'
 RETURN_PERMISSION = 'outsourcing.confirm_return_outsourcingorder'
 SOURCE_LABELS = {'RAW_PIPE': '原材料', 'PUBLIC_SEMI': '未喷塑半成品', 'METAL': '未入库半成品',
                  'PUBLIC_CUTTING': '已入库裁片半成品', 'SEWING': '未入库车缝完成件',
-                 'CUTTING': '车间裁片直发', 'PUBLIC_PIECE': '裁片库存', 'PUBLIC_PART': '车缝部位库存'}
+                 'CUTTING': '车间裁片直发', 'PUBLIC_PIECE': '裁片库存', 'PUBLIC_PART': '车缝部位库存',
+                 'PROCESSOR': '加工点发出'}
 
 
 def require_tube_feature():
@@ -41,6 +45,8 @@ def require_tube_feature():
 
 
 def powder_crafts(request, permission=VIEW_PERMISSION, *, category='tube'):
+    if permission == CUT_PIECE_PRINTING:
+        return Craft.objects.filter(craft_type='EXTERNAL', status='ACTIVE', outsourcing_code='SCREEN_PRINTING')
     codes = CUTTING_CRAFT_CODES if category == 'cutting' else {'POWDER_COATING'}
     if category == 'all':
         codes = codes | CUTTING_CRAFT_CODES
@@ -52,24 +58,39 @@ def visible_products(request, permission=VIEW_PERMISSION, *, category='tube'):
     crafts = powder_crafts(request, permission, category=category)
     links = ProductionScheduleProductCraft.objects.filter(craft__in=crafts, craft_type_snapshot='EXTERNAL',
                                                           removed_at__isnull=True)
-    schedules = outsourcing_source_schedules(request, permission=permission).filter(record_status='ACTIVE')
-    queryset = ProductionScheduleProduct.objects.filter(schedule__in=schedules, removed_at__isnull=True,
+    queryset = ProductionScheduleProduct.objects.filter(schedule__record_status='ACTIVE', removed_at__isnull=True,
         pk__in=links.values('schedule_product_id'), product_line__production_task__archived_at__isnull=True
     ).select_related('schedule__production_task', 'product_line__unit', 'unit',
         'product_line__production_task', 'product_line__image_file',
         'product_line__sales_order_delivery_batch_line__sales_order_line__product_image'
     ).prefetch_related('product_line__images__image_file').order_by('schedule_id', 'line_number', 'pk')
+    if permission == CUT_PIECE_PRINTING:
+        return followed_printing_scope(queryset, request, 'schedule__production_task')
+    schedules = outsourcing_source_schedules(request, permission=permission)
     from .source_access import filter_source_products
-    return filter_source_products(queryset, request, permission)
+    return filter_source_products(queryset.filter(schedule__in=schedules), request, permission)
+
+
+def followed_printing_scope(queryset, request, task_field):
+    if not has_permission(request, CUT_PIECE_PRINTING):
+        return queryset.none()
+    if request.user.is_superuser:
+        return queryset
+    return queryset.filter(**{f'{task_field}__followers': request.employee}).distinct()
 
 
 def source_product(request, schedule_product_id, permission=VIEW_PERMISSION, *, source_kind='RAW_PIPE', craft_id=None):
     from .source_access import require_source
-    require_source(request, permission, source_kind)
+    if permission == CUT_PIECE_PRINTING:
+        if source_kind != 'CUTTING' or not craft_id:
+            raise PermissionDenied('跟单只可新建裁片丝印总单。')
+    else:
+        require_source(request, permission, source_kind)
     category = source_category(source_kind)
     product = get_object_or_404(visible_products(request, permission, category=category), pk=schedule_product_id)
     from .source_access import require_source_product
-    require_source_product(request, permission, source_kind, product)
+    if permission != CUT_PIECE_PRINTING:
+        require_source_product(request, permission, source_kind, product)
     active_count = ProductionScheduleProduct.objects.filter(product_line_id=product.product_line_id,
         removed_at__isnull=True, schedule__record_status='ACTIVE').count()
     if active_count != 1:
@@ -85,7 +106,8 @@ def source_product(request, schedule_product_id, permission=VIEW_PERMISSION, *, 
     links = list(links_query.select_related('craft'))
     if len(links) != 1:
         raise ValidationError({'schedule_product_id': '未找到所选有效外发工艺，请先完善计划。'})
-    require_craft(request, permission, links[0].craft_id)
+    if permission != CUT_PIECE_PRINTING:
+        require_craft(request, permission, links[0].craft_id)
     return product, links[0].craft
 
 
@@ -123,7 +145,7 @@ def product_summary(product):
         'quantity': str(line.quantity), 'unit': line.unit.unit_name, 'color': line.color_name_snapshot}
 
 
-def product_display(product):
+def product_display(product, *, printing=False):
     line = product.product_line
     image = production_task_product_image(line)
     if image is not None and not image.content_type.startswith('image/'):
@@ -135,17 +157,18 @@ def product_display(product):
             color_snapshot=line.color_name_snapshot, customer_color_snapshot=line.customer_color_snapshot,
             material_snapshot=line.material_snapshot)),
         'material': line.material_snapshot, 'image_file_id': str(image.pk) if image else None,
-        'image_url': reverse('tube-outsourcing-order-product-image', kwargs={
+        'image_url': reverse('cut-piece-printing-product-image' if printing else 'tube-outsourcing-order-product-image', kwargs={
             'schedule_product_id': product.pk, 'file_id': image.pk}) if image else ''}
 
 
-def tube_options(request, *, category='tube'):
-    if category not in {'tube', 'cutting'}:
+def tube_options(request, *, category='tube', permission=VIEW_PERMISSION):
+    printing = permission == CUT_PIECE_PRINTING
+    if category not in ({'screen_printing'} if printing else {'tube', 'cutting'}):
         raise ValidationError({'category': '外发类别只能是管材或裁片。'})
     tasks = {}
     seen_products = set()
-    crafts = powder_crafts(request, category=category)
-    for product in visible_products(request, category=category):
+    crafts = powder_crafts(request, permission, category=category)
+    for product in visible_products(request, permission, category=category):
         if product.schedule.production_task.status not in {'READY', 'IN_PRODUCTION'}:
             continue
         if product.product_line_id in seen_products:
@@ -156,7 +179,7 @@ def tube_options(request, *, category='tube'):
                                                 'order_number': row['order_number'], 'products': []})
         task['products'].append({'id': row['product_line_id'], **{key: row[key] for key in (
             'schedule_product_id', 'schedule_number', 'product_number', 'item_number', 'product_name',
-            'quantity', 'unit', 'color')}, **product_display(product),
+            'quantity', 'unit', 'color')}, **product_display(product, printing=printing),
             'craft_ids': [str(value) for value in product.crafts.filter(removed_at__isnull=True,
                 craft_type_snapshot='EXTERNAL', craft__in=crafts).values_list('craft_id', flat=True)]})
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
@@ -165,13 +188,13 @@ def tube_options(request, *, category='tube'):
               TubeSourceKind.SEWING, TubeSourceKind.PUBLIC_CUTTING] if category == 'cutting' else
              [TubeSourceKind.RAW_PIPE, TubeSourceKind.PUBLIC_SEMI, TubeSourceKind.METAL])
     from .source_access import allowed_source_kinds
-    kinds = [kind for kind in kinds if kind in allowed_source_kinds(request, VIEW_PERMISSION)]
+    kinds = [] if printing else [kind for kind in kinds if kind in allowed_source_kinds(request, permission)]
     return {'category': category, 'crafts': [{'id': str(craft.pk), 'name': craft.name,
         'outsourcing_code': craft.outsourcing_code} for craft in crafts],
         'tasks': list(tasks.values()), 'factories': [{'id': str(factory.pk), 'name': factory.name}
-        for factory in source_factories(request, category=category)], 'zones': [{'id': str(zone.pk), 'name': zone.zone_name,
+        for factory in source_factories(request, permission=permission, category=category)], 'zones': [{'id': str(zone.pk), 'name': zone.zone_name,
         'warehouse_id': str(zone.warehouse_id), 'warehouse_name': zone.warehouse.warehouse_name,
-        'warehouse_type': zone.warehouse.warehouse_type} for zone in zones],
+        'warehouse_type': zone.warehouse.warehouse_type} for zone in ([] if printing else zones)],
         'source_kinds': [{'value': value, 'label': SOURCE_LABELS[value]} for value in kinds]}
 
 
@@ -182,6 +205,12 @@ def saved_orders_for_permission(request, permission=VIEW_PERMISSION):
     # 已保存单按自身冻结工艺鉴权，不能因当前计划移除工艺/产品而失去取消或回查入口。
     # 与既有外发单相同：新工艺范围只授权对应原单，旧权限仍受旧任务可见范围约束。
     queryset = TubeOutsourcingOrder.objects.all()
+    if permission == CUT_PIECE_PRINTING:
+        printing = queryset.filter(Q(is_plan=True) | Q(plan__source_snapshot__screen_print_pieces=True),
+            craft__outsourcing_code='SCREEN_PRINTING', source_snapshot__screen_print_pieces=True)
+        return followed_printing_scope(printing, request, 'schedule_product__schedule__production_task')
+    if permission not in {DISPATCH_PERMISSION, RETURN_PERMISSION} and not request.user.is_superuser:
+        queryset = queryset.exclude(source_snapshot__contains={'screen_print_pieces': True})
     legacy = queryset.filter(schedule_product__schedule_id__in=accessible_production_schedules(request).values('id'))
     from apps.access_control.resource_scopes import enforcing
     from .source_access import scoped_tube_orders
@@ -192,7 +221,8 @@ def saved_orders_for_permission(request, permission=VIEW_PERMISSION):
 
 
 def require_saved_order_access(request, order, permission=VIEW_PERMISSION):
-    require_craft(request, permission, order.craft_id)
+    if permission != CUT_PIECE_PRINTING:
+        require_craft(request, permission, order.craft_id)
     get_object_or_404(saved_orders_for_permission(request, permission), pk=order.pk)
 
 

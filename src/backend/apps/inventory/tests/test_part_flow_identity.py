@@ -62,6 +62,23 @@ class PartFlowIdentityTests(SimpleTestCase):
         with self.assertRaises(InventoryStockValidationError):
             validate_public_identity(identity)
 
+    def test_printed_piece_stays_a_piece_and_belongs_to_its_order_and_component(self):
+        self.piece.section.bom = SimpleNamespace(product_line_id=uuid4())
+        self.piece.component_identity = uuid4()
+        silk = SimpleNamespace(pk=uuid4(), craft_type='EXTERNAL', outsourcing_code='SCREEN_PRINTING')
+        normal = build_part_flow_identity(bom_line=self.piece, completed_craft=self.cutting, unit=self.unit)
+        printed = build_part_flow_identity(bom_line=self.piece, completed_craft=silk, unit=self.unit)
+        self.assertEqual(validate_public_identity(printed), printed)
+        self.assertEqual(printed['identity_snapshot']['semi_kind'], 'CUT_PIECE')
+        self.assertEqual(printed['identity_snapshot']['composition'], normal['identity_snapshot']['composition'])
+        self.assertNotEqual(printed['identity_key'], normal['identity_key'])
+        self.piece.section.bom.product_line_id = uuid4()
+        other_order = build_part_flow_identity(bom_line=self.piece, completed_craft=silk, unit=self.unit)
+        self.assertNotEqual(printed['identity_key'], other_order['identity_key'])
+        self.piece.component_identity = uuid4()
+        other_piece = build_part_flow_identity(bom_line=self.piece, completed_craft=silk, unit=self.unit)
+        self.assertNotEqual(other_order['identity_key'], other_piece['identity_key'])
+
     def reference(self, line, attributes, *, marked=True):
         line.material_selection_snapshot = {
             'selection_kind': 'BOM_COMPONENT_REFERENCE', 'attributes': attributes,

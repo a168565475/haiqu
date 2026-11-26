@@ -3,6 +3,7 @@ from rest_framework.routers import SimpleRouter
 from .views import OutsourcingFactoryViewSet, OutsourcingOrderViewSet
 from .unified_views import UnifiedOutsourcingOrderViewSet
 from .tube_views import TubeOutsourcingOrderViewSet
+from .cut_piece_printing import urlpatterns as cut_piece_printing_urls
 
 
 router = SimpleRouter()
@@ -11,5 +12,5 @@ router.register("outsourcing-orders", OutsourcingOrderViewSet, basename="outsour
 router.register("unified-outsourcing-orders", UnifiedOutsourcingOrderViewSet, basename="unified-outsourcing-order")
 router.register("tube-outsourcing-orders", TubeOutsourcingOrderViewSet, basename="tube-outsourcing-order")
 
-urlpatterns = router.urls
+urlpatterns = router.urls + cut_piece_printing_urls
 

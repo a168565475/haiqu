@@ -2,14 +2,14 @@
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.auth import active_employee_for
-from .module_operations import PACKAGING_PURCHASE as PACKAGING_PERMISSION
+from .module_operations import CUT_PIECE_PRINTING, PACKAGING_PURCHASE as PACKAGING_PERMISSION
 from .sales_policy import access_for
 
 
 PLAN_EDIT_PERMISSION = 'access_control.edit_productionplan'
 PLAN_UPDATE_FIELDS = ('planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids')
 
-# 包材采购写操作另校验材料范围，其余 FOLLOWED 权限仅用于读取。
+# 两项跟单办理权限各自在业务入口校验类型，其余 FOLLOWED 权限仅用于读取。
 FOLLOWED_PERMISSIONS = frozenset({
     'production_tasks.view_productiontask', 'production_tasks.view_productiontaskcost',
     'boms.view_bom', 'production_scheduling.view_productionschedule',
@@ -20,7 +20,7 @@ FOLLOWED_PERMISSIONS = frozenset({
     'inventory.view_internalsemifinishedreceipt', 'inventory.view_finishedgoodsreceipt',
     'inventory.view_finishedgoodsoutbound',
 })
-FOLLOWED_TASK_PERMISSIONS = FOLLOWED_PERMISSIONS | {PACKAGING_PERMISSION}
+FOLLOWED_TASK_PERMISSIONS = FOLLOWED_PERMISSIONS | {PACKAGING_PERMISSION, CUT_PIECE_PRINTING}
 STATEMENT_OWN_PERMISSIONS = frozenset({'finance.view_receivablestatement', 'finance.view_receipt'})
 
 

@@ -23,17 +23,18 @@ def workshop_sources(ids):
 
 
 def allowed_source_kinds(request, permission):
+    processor = {'PROCESSOR'} if permission == 'outsourcing.confirm_dispatch_outsourcingorder' else set()
     if not enforcing(request, permission):
-        return STOCK_SOURCES | set(DIRECT_WORKSHOPS)
+        return STOCK_SOURCES | set(DIRECT_WORKSHOPS) | processor
     access = access_for(request)
     result = set()
     if access['is_superuser'] or has_legacy_permission(request, permission):
-        return STOCK_SOURCES | set(DIRECT_WORKSHOPS)
+        return STOCK_SOURCES | set(DIRECT_WORKSHOPS) | processor
     for source in source_grants(request, permission):
         if source.get('scope') in {'MODULE', 'ALL'} or (source.get('scope') == 'CRAFT' and source.get('resource_ids')):
-            return STOCK_SOURCES | set(DIRECT_WORKSHOPS)
+            return STOCK_SOURCES | set(DIRECT_WORKSHOPS) | processor
         if source.get('scope') == 'STOCK':
-            result.update(STOCK_SOURCES)
+            result.update(STOCK_SOURCES | processor)
         if source.get('scope') == 'WORKSHOP':
             result.update(workshop_sources(source.get('resource_ids', [])))
     return result
@@ -97,6 +98,8 @@ def scoped_tube_orders(queryset, request, permission, legacy_queryset):
             allowed |= Q(schedule_product__schedule__production_task__followers=request.employee)
         elif scope == 'STOCK':
             allowed |= Q(source_kind__in=STOCK_SOURCES)
+            if permission in {'outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder'}:
+                allowed |= Q(source_kind='PROCESSOR')
         elif scope == 'WORKSHOP':
             allowed |= Q(source_kind__in=workshop_sources(source.get('resource_ids', [])))
     if has_legacy_permission(request, permission):

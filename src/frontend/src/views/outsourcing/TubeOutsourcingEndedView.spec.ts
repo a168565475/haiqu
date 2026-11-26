@@ -17,7 +17,7 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), createTubeOrd
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn(), fetchTubeReceipt: vi.fn(), fetchTubeReceiptCandidates: vi.fn(), confirmTubeReceipt: vi.fn(), findTubeReceipt: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { closeAll: vi.fn(), warning: vi.fn(), success: vi.fn() } }))
 
-const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品', PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发', CUTTING: '车间裁片直发', PUBLIC_PIECE: '裁片库存', PUBLIC_PART: '车缝部位库存' }
+const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品', PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发', CUTTING: '车间裁片直发', PUBLIC_PIECE: '裁片库存', PUBLIC_PART: '车缝部位库存', PROCESSOR: '加工点发出' }
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-ended-real', status: 'COMPLETED', version: 3, etag: '"order-1:v3"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: labels.RAW_PIPE, schedule_product_id: 'plan-1', product_line_id: 'product-1',

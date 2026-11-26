@@ -2,11 +2,11 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from urllib.parse import urlencode
 
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, F, OuterRef, Q
 
 from apps.outsourcing.models import OutsourcingFactoryAllocation, TubePlanReceiptLine
-from apps.outsourcing.part_flow_prices import PART_RECEIPT, receipt_price_data
-from apps.outsourcing.tube_models import TubeOutsourcingLine, TubeOutsourcingOrder
+from apps.outsourcing.part_flow_prices import PART_RECEIPT, delivered_price_data, receipt_price_data
+from apps.outsourcing.tube_models import TubeOutsourcingInput, TubeOutsourcingLine, TubeOutsourcingOrder
 from apps.procurement.models import PurchaseOrder, PurchaseRequestAllocation, SupplierPurchaseSheet
 from apps.workshop_reporting.models import WorkReport
 
@@ -67,6 +67,9 @@ def _cost_sources(task):
         'part_receipts': TubePlanReceiptLine.objects.filter(receipt__order_id__in=receipt_priced_plans,
             receipt__voided_at__isnull=True, received_quantity__gt=0).exclude(receipt__order__status='CANCELLED'
             ).select_related('receipt__order', 'order_line'),
+        'print_transfers': TubeOutsourcingInput.objects.filter(print_order_line__order_id__in=receipt_priced_plans,
+            source_kind='PROCESSOR', order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH'
+            ).annotate(delivered_on=F('order__actions__actual_dispatch_date')).select_related('order', 'print_order_line__order'),
         # 新车缝批次只保存投入裁片，费用暂缓按整批列一项未知金额，不按片数计价。
         'deferred_sewing': TubeOutsourcingOrder.objects.filter(product_line__production_task=task,
             is_plan=False, plan__is_plan=True, status__in=['PROCESSING', 'COMPLETED'], actions__kind='DISPATCH',
@@ -186,9 +189,17 @@ def _task_cost_summary(*, task):
         value = receipt_price_data(line)['received_amount']
         amount = Decimal(value) if value is not None else None
         part_name = line.snapshot.get('part_name') or line.order_line.snapshot.get('part_name', '部位')
-        add(outsourcing, 'TUBE_OUTSOURCING', order, line.receipt.receipt_number, f'部位回货加工费：{part_name}', amount,
+        label = '裁片丝印回仓加工费' if order.source_snapshot.get('screen_print_pieces') else '部位回货加工费'
+        add(outsourcing, 'TUBE_OUTSOURCING', order, line.receipt.receipt_number, f'{label}：{part_name}', amount,
             'CNY', f'/workshop/outsourcing/tube/{order.pk}', line.receipt.receipt_date,
             item_id=f'TUBE_OUTSOURCING:RECEIPT_LINE:{line.pk}')
+    for line in sources.get('print_transfers', []):
+        origin = line.print_order_line.order
+        value = delivered_price_data(line.snapshot.get('print_price', {}), line.quantity)['received_amount']
+        name = line.snapshot.get('part_name', '裁片')
+        add(outsourcing, 'TUBE_OUTSOURCING', origin, line.order.order_number, f'裁片丝印直送加工费：{name}',
+            Decimal(value) if value is not None else None, 'CNY', f'/workshop/outsourcing/tube/{origin.pk}',
+            line.delivered_on, item_id=f'TUBE_OUTSOURCING:PRINT_TRANSFER:{line.pk}')
     for order in sources['deferred_sewing']:
         add(outsourcing, 'TUBE_OUTSOURCING', order, order.order_number, '车缝加工费暂缓', None,
             'CNY', f'/workshop/outsourcing/tube/{order.plan_id}', order.created_at,

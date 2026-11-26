@@ -217,6 +217,8 @@ def public_semi_inventory_page(*, page, page_size, keyword="", section_title="",
         craft_code = snapshot["completed_craft"]["code"]
         processing_status_label = TUBE_PROCESSING_LABELS.get(
             craft_code, crafts.get(snapshot["completed_craft"]["id"], craft_code))
+        if semi_kind == "CUT_PIECE" and craft_code == "SCREEN_PRINTING":
+            processing_status_label = "已丝印"
         if semi_kind == "PIPE":
             specification = (f'{snapshot["tube_shape"]} {snapshot["tube_diameter"]} × {snapshot["tube_thickness"]}mm'
                              f' · 切割 {snapshot["cutting_length_mm"]}mm')

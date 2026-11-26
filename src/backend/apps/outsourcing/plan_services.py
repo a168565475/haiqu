@@ -5,6 +5,8 @@ from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomLine
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
+from rest_framework.exceptions import PermissionDenied
 from apps.core.api.concurrency import PreconditionRequired, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
@@ -27,7 +29,7 @@ from .tube_services import _json
 from .tube_prices import parse_unit_area
 
 
-def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False):
+def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False, request=None):
     from .part_flow_sources import uses_part_flow, part_source_context
     if source_kind == 'PUBLIC_CUTTING' and BomLine.objects.filter(
             section__bom__product_line_id=schedule_product.product_line_id,
@@ -35,7 +37,7 @@ def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
         raise ValidationError({'source_kind': '该 BOM 使用部位与裁片结构：车缝请选择车间裁片直发或裁片库存；丝印、刺绣请选择车缝部位来源。'})
     if uses_part_flow(schedule_product.product_line_id, source_kind):
         context = part_source_context(schedule_product=schedule_product, source_kind=source_kind,
-            zone=zone, craft=craft, for_plan=for_plan)
+            zone=zone, craft=craft, for_plan=for_plan, request=request)
     elif source_kind in CUTTING_SOURCES:
         from .cutting_sources import cutting_source_context
         context = cutting_source_context(schedule_product=schedule_product, source_kind=source_kind,
@@ -59,27 +61,31 @@ def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
 
 
 @stock_write_transaction
-def create_plan(*, data, request):
+def create_plan(*, data, request, permission=CREATE_PERMISSION):
     require_tube_feature()
     lock_request('tube-create', data['client_request_id'])
     payload_hash = _json_hash(data)
     existing = TubeOutsourcingOrder.objects.filter(client_request_id=data['client_request_id']).first()
     if existing:
-        require_saved_order_access(request, existing, CREATE_PERMISSION)
+        require_saved_order_access(request, existing, permission)
+        if bool(existing.source_snapshot.get('screen_print_pieces')) != (permission == CUT_PIECE_PRINTING):
+            raise PermissionDenied('请选择对应的委外建单入口。')
         if not existing.is_plan or existing.request_payload_hash != payload_hash:
             raise Conflict('相同提交标识已用于不同委外内容。')
         return existing, False
-    product, craft = source_product(request, data['schedule_product_id'], CREATE_PERMISSION,
+    product, craft = source_product(request, data['schedule_product_id'], permission,
         source_kind=data['source_kind'], craft_id=data.get('craft_id'))
     lock_source_product(product.product_line_id, data['source_kind'])
     boms = list(Bom.objects.filter(product_line_id=product.product_line_id, archived_at__isnull=True)
         .order_by('pk').select_for_update(of=('self',)))
     bom_lines = {str(line.pk): line for line in BomLine.objects.filter(section__bom__in=boms)
         .select_related('section').order_by('pk').select_for_update(of=('self',))}
-    product, craft = source_product(request, data['schedule_product_id'], CREATE_PERMISSION,
+    product, craft = source_product(request, data['schedule_product_id'], permission,
         source_kind=data['source_kind'], craft_id=data.get('craft_id'))
     zone = source_zone(data['source_kind'], data.get('zone_id'))
     context = plan_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, for_plan=True)
+    if bool(context.get('screen_print_pieces')) != (permission == CUT_PIECE_PRINTING):
+        raise PermissionDenied('请选择对应的委外建单入口。')
     if any(row.get('unit_price') is None for row in data['lines']):
         raise ValidationError({'lines': '每个委外计划部件都须填写加工单价。'})
     selected_components = {str(row['component_identity']) for row in data['lines']}
@@ -93,9 +99,19 @@ def create_plan(*, data, request):
     if TubeOutsourcingOrder.objects.filter(is_plan=True, product_line=product.product_line, craft=craft).exclude(status='CANCELLED').exists():
         raise ValidationError({'detail': '该产品与工艺已有有效委外总单，请在原总单登记发货或补料。'})
     requested_materials = data.get('materials', [])
+    if context.get('screen_print_pieces'):
+        from .models import TubeOutsourcingInput
+        from .printed_pieces import planned_print_lines
+        if requested_materials:
+            raise ValidationError({'materials': '裁片丝印总单只选择需要丝印的裁片。'})
+        if planned_print_lines(product.product_line_id).filter(component_identity__in=selected_components).exists():
+            raise ValidationError({'lines': '所选裁片已有有效丝印总单。'})
+        if TubeOutsourcingInput.objects.filter(order__product_line_id=product.product_line_id,
+                order__status__in=['PROCESSING', 'COMPLETED'], component_identity__in=selected_components).exists():
+            raise ValidationError({'lines': '所选裁片已经实际发出车缝，无法再安排整项丝印。'})
     if requested_materials and data['source_kind'] not in CUTTING_SOURCES:
         raise ValidationError({'materials': '管材委外总单不再选择附带五金。'})
-    factory_ids = source_factories(request, craft, CREATE_PERMISSION).values('pk')
+    factory_ids = source_factories(request, craft, permission).values('pk')
     factories = {value.pk: value for value in OutsourcingFactory.objects.filter(pk__in=factory_ids).select_for_update(of=('self',))}
     if any(row['factory_id'] not in factories for row in [*data['lines'], *requested_materials]):
         raise ValidationError({'lines': '加工厂不存在、已停用或无对应工艺权限。'})
@@ -130,6 +146,8 @@ def create_plan(*, data, request):
         row = rows.get(str(entered['component_identity']))
         if not row or row['blockers'] or Decimal(row['order_required']) <= 0:
             raise ValidationError({'lines': '所选部件不属于有效BOM或加工身份不完整。'})
+        if context.get('screen_print_pieces') and entered['quantity'] != Decimal(row['order_required']):
+            raise ValidationError({'lines': f'“{row["part_name"]}”须按订单全部需求安排丝印，数量为{row["order_required"]}{row["unit"]}。'})
         validate_public_identity(row['snapshot']['public_output_identity'])
         snapshot = {**row['snapshot'], **{key: row.get(key) for key in (
             'part_name', 'material', 'specification', 'thickness', 'cutting_length_mm', 'raw_color',
@@ -229,6 +247,9 @@ def update_plan_quantity(*, order_id, data, request):
     if len(entered) != len(data['lines']) or set(entered) != {str(line.pk) for line in lines}:
         raise ValidationError({'lines': '须完整提交原委外总单部件，不能增加、删除或重复部件。'})
     part_flow = bool(order.source_snapshot.get('part_flow'))
+    if order.source_snapshot.get('screen_print_pieces') and any(
+            entered[str(line.pk)]['quantity'] != line.quantity for line in lines):
+        raise ValidationError({'lines': '丝印计划数量由订单裁片需求确定，不能调整。'})
     if not part_flow and any('unit_price' in row for row in entered.values()):
         raise ValidationError({'lines': '本入口只允许修改部位总单单价；原管材和旧裁剪计价不变。'})
     changed = [line for line in lines if entered[str(line.pk)]['quantity'] != line.quantity
@@ -345,6 +366,7 @@ def receive_plan(*, order_id, data, request):
         return existing.order, False
     order = _lock_plan(order_id, request, RETURN_PERMISSION)
     lines = {line.pk: line for line in order.lines.select_for_update(of=('self',)).order_by('pk')}
+    print_quantities = plan_quantities([order])[str(order.pk)]['lines'] if order.source_snapshot.get('screen_print_pieces') else {}
     pending = []
     for entered in data['lines']:
         line = lines.get(entered['order_line_id'])
@@ -353,6 +375,8 @@ def receive_plan(*, order_id, data, request):
         quantity = entered['received_quantity']
         if not quantity:
             continue
+        if print_quantities and quantity > int(print_quantities[str(line.pk)]['receivable_quantity']):
+            raise ValidationError({'lines': f'“{line.snapshot["part_name"]}”本次丝印收回不能超过实际已发未收数量。'})
         require_saved_processing_materials(line)
         identity = validate_public_identity(line.snapshot['public_output_identity'])
         if identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id):

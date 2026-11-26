@@ -24,10 +24,7 @@ from apps.outsourcing.models import OutsourcingFactoryCraft, TubeOutsourcingInpu
 BASE = '/api/v1/tube-outsourcing-orders/'
 
 
-@override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True,
-    PUBLIC_STOCK_ISSUES_ENABLED=True, MODULE_ACCESS_ENABLED=False, SALES_ACCESS_ENABLED=False,
-    ACCESS_RESOURCE_SCOPES_ENABLED=False)
-class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
+class PartFlowPlanFixture(ScopedActorMixin, D1Fixture):
     def setUp(self):
         super().setUp()
         ProductCategory.objects.get_or_create(category_name='面料', item_type='MATERIAL')
@@ -57,6 +54,11 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
                 defaults={'craft_type_snapshot': 'EXTERNAL', 'craft_name_snapshot': craft.name})
             OutsourcingFactoryCraft.objects.get_or_create(factory=self.factory, craft=craft, defaults={'craft_name_snapshot': craft.name})
 
+
+@override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True,
+    PUBLIC_STOCK_ISSUES_ENABLED=True, MODULE_ACCESS_ENABLED=False, SALES_ACCESS_ENABLED=False,
+    ACCESS_RESOURCE_SCOPES_ENABLED=False)
+class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
     def part_context(self, source='CUTTING', craft=None, order=None):
         query = {'schedule_product_id': str(self.schedule_product.pk), 'source_kind': source,
             'craft_id': str((craft or self.external_sewing).pk),
@@ -605,3 +607,151 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
         order, _ = self.dispatch_part(order, 20)
         self.assertEqual(order['plan_summary']['dispatched_quantity'], '20')
         self.assertEqual(order['plan_summary']['input_totals'], [{'unit': '片', 'dispatched_quantity': '20'}])
+
+    def create_print_plan(self, factory):
+        piece = self.parts[0]
+        component = str(piece.component_identity)
+        today = str(timezone.localdate())
+        printing_api = '/api/v1/cut-piece-printing-orders/'
+        options = self.client.get(printing_api + 'source-context/', {
+            'schedule_product_id': str(self.schedule_product.pk), 'craft_id': str(self.print_craft.pk)})
+        self.assertEqual(options.status_code, 200, options.content[:240])
+        context = options.data['data']
+        row = next(item for item in context['rows'] if item['component_identity'] == component)
+        self.assertEqual(Decimal(row['order_required']), 200)  # 每个成品需要两片该裁片。
+        printing = self.client.post(printing_api, {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
+            'schedule_product_id': str(self.schedule_product.pk), 'source_kind': 'CUTTING',
+            'craft_id': str(self.print_craft.pk), 'source_revision': context['source_revision'],
+            'planned_dispatch_date': today, 'expected_return_date': today,
+            'lines': [{'component_identity': component, 'factory_id': str(factory.pk),
+                       'quantity': 200, 'unit_price': '0.50'}]}, format='json')
+        self.assertEqual(printing.status_code, 201, printing.data)
+        unprinted = build_semi_finished_identity(bom_line=piece, completed_craft=self.cut_craft, unit=self.piece_unit)
+        credit_public_stock(identity=unprinted, zone=self.semi_zone, quantity=100, actor_employee=self.employee,
+            source_type='TEST_CUT_STOCK', source_id=uuid.uuid4(), source_line_id=uuid.uuid4())
+        return printing.data['data']
+
+    def send_to_printer(self, printing, factory, quantity):
+        response = self.client.post(BASE + printing['id'] + '/plan-dispatch/', {
+            'client_request_id': str(uuid.uuid4()), 'source_kind': 'PUBLIC_PIECE', 'zone_id': str(self.semi_zone.pk),
+            'actual_dispatch_date': str(timezone.localdate()), 'lines': [{'component_identity': str(self.parts[0].component_identity),
+                'factory_id': str(factory.pk), 'quantity': quantity}]}, format='json', HTTP_IF_MATCH=printing['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data['data']
+
+    def test_processor_rejects_unprinted_piece_wrong_origin_and_excess_without_touching_stock(self):
+        sewing = self.create_part_plan()
+        printing = self.create_print_plan(self.factory)
+        component = str(self.parts[0].component_identity)
+        source = self.part_context('CUTTING', craft=self.print_craft, order=printing)
+        piece = next(row for row in source['rows'] if row['component_identity'] == component)
+        self.assertEqual(Decimal(piece['max_quantity']), 0)
+        self.assertEqual(Decimal(piece['order_required']), 200)
+        printing = self.send_to_printer(printing, self.factory, 12)
+        line_id = printing['lines'][0]['id']
+        rows = self.part_context('PROCESSOR', order=sewing)['inputs']
+        self.assertEqual(next(row['max_quantity'] for row in rows if row['component_identity'] == component), '12')
+        movement_count = PublicStockMovement.objects.count()
+        for identity, origin, quantity, status in [
+                (component, str(uuid.uuid4()), 1, 400),
+                (str(self.parts[1].component_identity), line_id, 1, 400),
+                (component, line_id, 13, 409)]:
+            response = self.client.post(BASE + sewing['id'] + '/plan-dispatch/', {
+                'client_request_id': str(uuid.uuid4()), 'source_kind': 'PROCESSOR',
+                'actual_dispatch_date': str(timezone.localdate()),
+                'inputs': [{'component_identity': identity, 'print_order_line_id': origin, 'quantity': quantity}],
+            }, format='json', HTTP_IF_MATCH=sewing['etag'])
+            self.assertEqual(response.status_code, status, response.data)
+        self.assertFalse(TubeOutsourcingInput.objects.filter(print_order_line_id=line_id).exists())
+        self.assertEqual(PublicStockMovement.objects.count(), movement_count)
+
+    def test_sewing_plan_precedes_returns_but_actual_issue_only_uses_its_printed_piece_returns(self):
+        piece = self.parts[0]
+        component = str(piece.component_identity)
+        today = str(timezone.localdate())
+        printing = self.create_print_plan(self.factory)
+        sewing = self.create_part_plan()
+
+        def check_issue_ceiling(order, available):
+            inputs = self.part_context('PUBLIC_PIECE', order=order)['inputs']
+            selected = next(item for item in inputs if item['component_identity'] == component)
+            self.assertEqual(Decimal(selected['max_quantity']), available)
+            payload = {'client_request_id': str(uuid.uuid4()), 'source_kind': 'PUBLIC_PIECE',
+                'zone_id': str(self.semi_zone.pk), 'actual_dispatch_date': today,
+                'inputs': [{'component_identity': component, 'quantity': available + 1}]}
+            rejected = self.client.post(BASE + order['id'] + '/plan-dispatch/', payload,
+                                        format='json', HTTP_IF_MATCH=order['etag'])
+            self.assertEqual(rejected.status_code, 409, rejected.data)
+
+        check_issue_ceiling(sewing, 0)
+        sewing, _ = self.dispatch_part(sewing, 3, piece=self.parts[1])
+        printing = self.receive_part(self.send_to_printer(printing, self.factory, 50), 30)
+        check_issue_ceiling(sewing, 30)
+        sewing, _ = self.dispatch_part(sewing, 18, source='PUBLIC_PIECE', piece=piece)
+        check_issue_ceiling(sewing, 12)
+        receipt_id = printing['receipt_records'][0]['id']
+
+        def reject_correction(order, kind, record_id, new_quantity):
+            result = self.client.post(BASE + order['id'] + '/plan-record-correction/', {
+                'client_request_id': str(uuid.uuid4()), 'record_kind': kind, 'record_id': record_id,
+                'operation': 'UPDATE', 'business_date': today,
+                'lines': [{'component_identity': component, 'quantity': new_quantity}]},
+                format='json', HTTP_IF_MATCH=order['etag'])
+            self.assertEqual(result.status_code, 409, result.data)
+
+        reject_correction(printing, 'RECEIPT', receipt_id, 17)
+        reject_correction(printing, 'RECEIPT', receipt_id, 51)
+        printing = self.receive_part(printing, 20)
+        check_issue_ceiling(sewing, 32)
+        reject_correction(printing, 'DISPATCH', printing['dispatch_records'][0]['id'], 49)
+
+    def test_printer_transfers_and_warehouse_receipts_share_one_remaining_quantity(self):
+        from apps.outsourcing.models import OutsourcingFactory
+        from apps.production_tasks.cost_selectors import task_cost_summary
+
+        printer = OutsourcingFactory.objects.create(name='直送丝印厂', factory_number='PRINT-DIRECT',
+            created_by_employee=self.employee, updated_by_employee=self.employee)
+        OutsourcingFactoryCraft.objects.create(factory=printer, craft=self.print_craft, craft_name_snapshot=self.print_craft.name)
+        sewing = self.create_part_plan()  # 丝印安排前吴杰即可建单。
+        printing = self.send_to_printer(self.create_print_plan(printer), printer, 100)
+        component = str(self.parts[0].component_identity)
+        today = str(timezone.localdate())
+        line_id = printing['lines'][0]['id']
+        payload = {'client_request_id': str(uuid.uuid4()), 'source_kind': 'PROCESSOR', 'actual_dispatch_date': today,
+            'inputs': [{'component_identity': component, 'quantity': 50, 'print_order_line_id': line_id}]}
+        through = BASE + sewing['id'] + '/plan-dispatch/'
+        count = PublicStockMovement.objects.count()
+        saved = self.client.post(through, payload, format='json', HTTP_IF_MATCH=sewing['etag'])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        replay = self.client.post(through, payload, format='json', HTTP_IF_MATCH=sewing['etag'])
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(PublicStockMovement.objects.count(), count)
+        transfer = TubeOutsourcingInput.objects.get(print_order_line_id=line_id)
+        self.assertEqual((transfer.quantity, transfer.factory_id, transfer.print_order_line.factory_id),
+                         (50, self.factory.pk, printer.pk))
+        sewing = saved.data['data']
+        print_url = BASE + printing['id'] + '/'
+        printing = self.receive_part(self.client.get(print_url).data['data'], 30)
+        self.assertEqual([printing['lines'][0][key] for key in
+            ('dispatched_quantity', 'received_quantity', 'transferred_quantity', 'receivable_quantity')], ['100','30','50','20'])
+        self.assertEqual(PublicStockMovement.objects.count(), count + 1)
+        items = [row for group in task_cost_summary(task=self.task)['categories'] for row in group['items']
+                 if row['id'] == f'TUBE_OUTSOURCING:PRINT_TRANSFER:{transfer.pk}']
+        self.assertEqual([row['amount_cny'] for row in items], ['25.00'])
+
+        def correct(quantity):
+            change = {'client_request_id': str(uuid.uuid4()), 'record_kind': 'DISPATCH', 'record_id': str(transfer.order_id),
+                'operation': 'UPDATE', 'business_date': today, 'lines': [{'component_identity': component, 'quantity': quantity}]}
+            return self.client.post(BASE + sewing['id'] + '/plan-record-correction/', change, format='json', HTTP_IF_MATCH=sewing['etag'])
+
+        rejected = correct(71)
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        updated = correct(60)
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(self.client.get(print_url).data['data']['lines'][0]['receivable_quantity'], '10')
+        deleted = self.client.post(BASE + sewing['id'] + '/plan-record-correction/', {'client_request_id': str(uuid.uuid4()),
+            'record_kind': 'DISPATCH', 'record_id': str(transfer.order_id), 'operation': 'DELETE'},
+            format='json', HTTP_IF_MATCH=updated.data['data']['etag'])
+        self.assertEqual(deleted.status_code, 200, deleted.data)
+        self.assertEqual(self.client.get(print_url).data['data']['lines'][0]['receivable_quantity'], '70')
+        self.assertEqual(PublicStockMovement.objects.count(), count + 1)

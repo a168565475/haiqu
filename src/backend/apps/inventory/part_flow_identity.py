@@ -74,8 +74,8 @@ def build_part_flow_identity(*, bom_line, completed_craft, unit):
     component_attributes = _component_attributes(bom_line)
     extended = bool(component_attributes)
     if kind == 'CUT_PIECE':
-        if craft['code'] != 'CUTTING':
-            _invalid('completed_craft', '裁片库存必须是裁剪完成状态。')
+        if craft['code'] not in {'CUTTING', 'SCREEN_PRINTING'}:
+            _invalid('completed_craft', '裁片库存须为裁剪完成或丝印完成状态。')
         piece = _piece_properties(bom_line)
         if unit_name != piece.get('unit_name', '片'):
             _invalid('unit', '裁片库存单位必须与 BOM 保存的单位一致。')
@@ -116,6 +116,10 @@ def build_part_flow_identity(*, bom_line, completed_craft, unit):
         'material': material, 'color': color, 'completed_craft': craft, 'composition': composition}
     if extended:
         snapshot['component_attributes'] = component_attributes
+    if kind == 'CUT_PIECE' and craft['code'] == 'SCREEN_PRINTING':
+        # 印样属于本订单的具体裁片，同面料、同名的其他订单不能拿走。
+        snapshot['print_product_line_id'] = str(bom_line.section.bom.product_line_id)
+        snapshot['print_component_identity'] = str(bom_line.component_identity)
     return _make_identity(snapshot)
 
 
@@ -126,6 +130,11 @@ def validate_part_flow_identity(identity):
               'part_name', 'specification', 'material', 'color', 'completed_craft', 'composition'}
     if extended:
         fields.add('component_attributes')
+    craft = snapshot.get('completed_craft')
+    printed = (snapshot.get('semi_kind') == 'CUT_PIECE' and isinstance(craft, dict)
+               and craft.get('code') == 'SCREEN_PRINTING')
+    if printed:
+        fields.update(('print_product_line_id', 'print_component_identity'))
     if set(snapshot) != fields or snapshot['stock_kind'] != 'SEMI' or snapshot['semi_kind'] not in PART_FLOW_KINDS:
         _invalid('identity_snapshot', '裁片或部位库存快照字段不完整。')
     for field in ('unit_name', 'category', 'part_name', 'material', 'specification', 'color'):
@@ -134,14 +143,19 @@ def validate_part_flow_identity(identity):
             _invalid(field, '冻结属性未经规范化。')
     if _uuid(snapshot['unit_id'], 'unit_id') != snapshot['unit_id']:
         _invalid('unit_id', '冻结单位编号无效。')
-    craft = snapshot['completed_craft']
     if (not isinstance(craft, dict) or set(craft) != {'id', 'craft_type', 'code'}
             or craft['craft_type'] not in {'INTERNAL', 'EXTERNAL'}):
         _invalid('completed_craft', '冻结完成工艺无效。')
     _uuid(craft['id'], 'completed_craft.id')
-    allowed = {'CUTTING'} if snapshot['semi_kind'] == 'CUT_PIECE' else {'SEWING', 'SCREEN_PRINTING', 'EMBROIDERY'}
+    allowed = {'CUTTING', 'SCREEN_PRINTING'} if snapshot['semi_kind'] == 'CUT_PIECE' else {'SEWING', 'SCREEN_PRINTING', 'EMBROIDERY'}
     if craft['code'] not in allowed:
         _invalid('completed_craft', '冻结实物种类、工艺或单位不一致。')
+    if printed:
+        if craft['craft_type'] != 'EXTERNAL':
+            _invalid('completed_craft', '丝印裁片应使用外发丝印工艺。')
+        for field in ('print_product_line_id', 'print_component_identity'):
+            if _uuid(snapshot[field], field) != snapshot[field]:
+                _invalid(field, '丝印裁片的订单和裁片标识必须有效。')
     composition = snapshot['composition']
     if not isinstance(composition, list) or not composition:
         _invalid('composition', '冻结部位组成不能为空。')

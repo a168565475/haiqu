@@ -12,7 +12,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'employee-list') return auth.canReadAccessDirectory
   if (auth.user?.is_superuser) return true
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly) {
@@ -36,6 +36,9 @@ const pagePermissions: Record<string, string[]> = {
   'purchase-order-create-details': ['procurement.add_purchaseorder'],
   'purchase-order-detail': ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'],
   'packaging-purchase-create': ['procurement.manage_packagingpurchase'],
+  'cut-piece-printing': ['outsourcing.manage_cutpieceprinting'],
+  'cut-piece-printing-new': ['outsourcing.manage_cutpieceprinting'],
+  'cut-piece-printing-detail': ['outsourcing.manage_cutpieceprinting'],
   'packaging-purchase-batch': ['procurement.manage_packagingpurchase'],
   'packaging-purchase-detail': ['procurement.manage_packagingpurchase'],
   'purchase-tracking': ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'],

@@ -234,6 +234,10 @@ class TubeDispatchWriteSerializer(TubeActionWriteSerializer):
     actual_dispatch_date = serializers.DateField()
 
 
+class TubePlanInputSerializer(TubeCorrectionLineSerializer):
+    print_order_line_id = serializers.UUIDField(required=False)
+
+
 class TubeCancelWriteSerializer(TubeActionWriteSerializer):
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
 
@@ -244,7 +248,7 @@ class TubePlanDispatchSerializer(TubeActionWriteSerializer):
     actual_dispatch_date = serializers.DateField()
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
     lines = TubeLineWriteSerializer(many=True, allow_empty=True, required=False)
-    inputs = TubeCorrectionLineSerializer(many=True, allow_empty=False, required=False, max_length=500)
+    inputs = TubePlanInputSerializer(many=True, allow_empty=False, required=False, max_length=500)
     materials = TubeMaterialWriteSerializer(many=True, required=False)
     material_source_revision = serializers.CharField(min_length=64, max_length=64, required=False)
 
@@ -261,6 +265,11 @@ class TubePlanDispatchSerializer(TubeActionWriteSerializer):
             identifiers = [row['component_identity'] for row in attrs['inputs']]
             if len(set(identifiers)) != len(identifiers):
                 raise serializers.ValidationError({'inputs': '同一种裁片不能重复提交。'})
+        transfer = attrs['source_kind'] == 'PROCESSOR'
+        if any(('print_order_line_id' in line) != transfer for line in attrs.get('inputs', [])):
+            raise serializers.ValidationError({'inputs': '加工点发出须指定每种裁片的原丝印总单行。'})
+        if transfer and (not attrs.get('inputs') or attrs.get('zone_id') or attrs.get('materials')):
+            raise serializers.ValidationError({'inputs': '加工点交接只登记裁片，不选择库区和随单辅料。'})
         if attrs['source_kind'] in CUTTING_SOURCES and any(
                 line.get('price_unit', PriceUnit.PIECE) != PriceUnit.PIECE for line in attrs.get('lines', [])):
             raise serializers.ValidationError({'lines': '裁片委外只支持按支计价。'})

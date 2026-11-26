@@ -14,10 +14,10 @@ export function tubeMaterialColumn(row: ProcessingMaterialPair & { thickness?: s
 export const tubeSourceLabels: Record<TubeSourceKind, string> = {
   RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品',
   PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发',
-  CUTTING: '车间裁片直发', PUBLIC_PIECE: '裁片库存', PUBLIC_PART: '车缝部位库存',
+  CUTTING: '车间裁片直发', PUBLIC_PIECE: '裁片库存', PUBLIC_PART: '车缝部位库存', PROCESSOR: '加工点发出',
 }
-export const isCuttingSource = (source: string | undefined) => ['PUBLIC_CUTTING', 'SEWING', 'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'].includes(source || '')
-export const isDirectSource = (source: string | undefined) => ['METAL', 'SEWING', 'CUTTING'].includes(source || '')
+export const isCuttingSource = (source: string | undefined) => ['PUBLIC_CUTTING', 'SEWING', 'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART', 'PROCESSOR'].includes(source || '')
+export const isDirectSource = (source: string | undefined) => ['METAL', 'SEWING', 'CUTTING', 'PROCESSOR'].includes(source || '')
 
 export function defaultOutsourcingReceiptWarehouse(source: TubeSourceKind, warehouses: TubeReceiptPreview['warehouses']) {
   const warehouseName = isCuttingSource(source) ? '成品布面仓' : '管材喷塑仓'

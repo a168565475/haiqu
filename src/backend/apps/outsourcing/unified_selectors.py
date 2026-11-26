@@ -35,14 +35,15 @@ VIEW_PERMISSIONS = ("outsourcing.view_outsourcingorder", "material_issues.view_m
 SOURCE_LABELS = {"RAW": "仓库原料", "METAL": "金工加工件", "REWORK": "重加工件", "UNSELECTED": "待选择",
                  "RAW_PIPE": "原材料", "PUBLIC_SEMI": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
                  "PUBLIC_CUTTING": "已入库裁片半成品", "SEWING": "未入库车缝完成件",
-                 "CUTTING": "车间裁片直发", "PUBLIC_PIECE": "裁片库存", "PUBLIC_PART": "车缝部位库存"}
+                 "CUTTING": "车间裁片直发", "PUBLIC_PIECE": "裁片库存", "PUBLIC_PART": "车缝部位库存",
+                 "PROCESSOR": "加工点发出"}
 SOURCE_GROUP_LABELS = {"RAW": "原材料", "TUBE_PUBLIC": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
                        "CUTTING": "车间裁片直发", "PUBLIC_PIECE": "裁片库存", "PUBLIC_PART": "车缝部位库存",
-                       "CUTTING_PUBLIC": "已入库裁片半成品", "SEWING": "未入库车缝完成件",
+                       "CUTTING_PUBLIC": "已入库裁片半成品", "SEWING": "未入库车缝完成件", "PROCESSOR": "加工点发出",
                        "OLD_METAL": "金工加工件（旧流程）", "REWORK": "重加工件（旧流程）", "UNSELECTED": "待选择（旧流程）"}
 SOURCE_GROUP_KINDS = {"RAW": ("RAW", "RAW_PIPE"), "TUBE_PUBLIC": ("PUBLIC_SEMI",),
                       "CUTTING": ("CUTTING",), "PUBLIC_PIECE": ("PUBLIC_PIECE",), "PUBLIC_PART": ("PUBLIC_PART",),
-                      "CUTTING_PUBLIC": ("PUBLIC_CUTTING",), "SEWING": ("SEWING",),
+                      "CUTTING_PUBLIC": ("PUBLIC_CUTTING",), "SEWING": ("SEWING",), "PROCESSOR": ("PROCESSOR",),
                       "TUBE_METAL": ("TUBE_METAL",), "OLD_METAL": ("METAL",),
                       "REWORK": ("REWORK",), "UNSELECTED": ("UNSELECTED",)}
 TUBE_STATUS_LABELS = {"PENDING_DISPATCH": "待外发", "PROCESSING": "加工中", "COMPLETED": "已结束", "CANCELLED": "已取消"}
@@ -165,8 +166,9 @@ def unified_order_candidates(request, filters):
     ).order_by("-updated_at", "-id", "record_type")
 
 
-def _tube_candidates(request, filters):
-    queryset = warehouse_tube_orders(request) if filters.get('warehouse_stage') == 'all' else saved_orders_for_permission(request)
+def _tube_candidates(request, filters, queryset=None):
+    if queryset is None:
+        queryset = warehouse_tube_orders(request) if filters.get('warehouse_stage') == 'all' else saved_orders_for_permission(request)
     tubes = queryset.filter(plan__isnull=True).annotate(
         record_type=Value("TUBE", output_field=CharField()),
         unified_access=Value("TUBE", output_field=CharField()),

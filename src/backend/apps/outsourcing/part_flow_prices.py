@@ -13,7 +13,10 @@ def receipt_price_snapshot(line):
 
 
 def receipt_price_data(line):
-    snapshot = line.snapshot or {}
+    return delivered_price_data(line.snapshot or {}, line.received_quantity)
+
+
+def delivered_price_data(snapshot, quantity):
     price = snapshot.get('unit_price') if snapshot.get('billing_basis') == PART_RECEIPT else None
     try:
         value = Decimal(price) if isinstance(price, str) else None
@@ -25,7 +28,7 @@ def receipt_price_data(line):
         price = _format(value, MONEY_QUANTUM)
         with localcontext() as context:
             context.prec = 64
-            amount = value * line.received_quantity
+            amount = value * quantity
     return {'billing_basis': PART_RECEIPT, 'unit_price': price, 'price_unit': 'PIECE',
             'received_amount': _format(amount, MONEY_QUANTUM)}
 

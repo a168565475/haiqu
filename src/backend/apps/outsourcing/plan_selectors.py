@@ -31,6 +31,10 @@ def plan_quantities(orders):
                 order__actions__kind='DISPATCH').values('order__plan_id', 'component_identity').annotate(total=Sum('quantity'))}
     received = {str(row['order_line_id']): row['total'] for row in TubePlanReceiptLine.objects.filter(
         receipt__order_id__in=ids, receipt__voided_at__isnull=True).values('order_line_id').annotate(total=Sum('received_quantity'))}
+    print_ids = [order.pk for order in orders if order.source_snapshot.get('screen_print_pieces')]
+    transferred = dict(TubeOutsourcingInput.objects.filter(print_order_line__order_id__in=print_ids,
+        order__status__in=['PROCESSING', 'COMPLETED']).values('print_order_line_id')
+        .annotate(total=Sum('quantity')).values_list('print_order_line_id', 'total')) if print_ids else {}
     input_plan_ids = [order.pk for order in orders if order.source_snapshot.get('sewing_inputs')]
     input_totals = {}
     if input_plan_ids:
@@ -48,19 +52,26 @@ def plan_quantities(orders):
             bom = int(Decimal(str(line.snapshot['order_required'])))
             outgoing = sent.get((str(order.pk), str(line.component_identity)), 0)
             incoming = received.get(str(line.pk), 0)
+            passed_on = transferred.get(line.pk, 0)
+            outstanding = max(outgoing - incoming - passed_on, 0)
             rows[str(line.pk)] = {'bom_quantity': str(bom), 'dispatched_quantity': str(outgoing),
-                'received_quantity': str(incoming), 'receivable_quantity': str(max(outgoing-incoming, 0))}
+                'received_quantity': str(incoming), 'receivable_quantity': str(outstanding)}
+            if order.pk in print_ids:
+                rows[str(line.pk)]['transferred_quantity'] = str(passed_on)
             target += bom
             planned += line.quantity
             dispatched += outgoing
             returned += incoming
-            covered += min(bom, incoming)
+            covered += min(bom, incoming + passed_on)
             unit = line.snapshot.get('unit') or ('套' if order.source_kind in CUTTING_SOURCES else '支')
             totals = quantity_totals.setdefault(unit, {'unit': unit, 'bom_quantity': 0, 'planned_quantity': 0,
                 'dispatched_quantity': 0, 'received_quantity': 0})
             for field, value in [('bom_quantity', bom), ('planned_quantity', line.quantity),
                                  ('dispatched_quantity', outgoing), ('received_quantity', incoming)]:
                 totals[field] += value
+            if order.pk in print_ids:
+                totals['transferred_quantity'] = totals.get('transferred_quantity', 0) + passed_on
+                totals['receivable_quantity'] = totals.get('receivable_quantity', 0) + outstanding
         input_units = input_totals.get(str(order.pk), {})
         if order.source_snapshot.get('sewing_inputs'):
             for line in order.lines.all():
@@ -75,6 +86,10 @@ def plan_quantities(orders):
             'receipt_progress': float(Decimal(covered)*100/target) if target else 0,
             'quantity_totals': [{key: str(value) if key != 'unit' else value for key, value in row.items()}
                                 for row in quantity_totals.values()]}}
+        if order.pk in print_ids:
+            result[str(order.pk)]['summary'].update({
+                field: str(sum(row[field] for row in quantity_totals.values()))
+                for field in ('transferred_quantity', 'receivable_quantity')})
     return result
 
 
@@ -102,6 +117,7 @@ def plan_detail_data(order, data, request):
     purchases = plan_purchase_references(order)
     data.update(is_plan=True, plan_summary=quantities['summary'],
         part_flow=bool(order.source_snapshot.get('part_flow')),
+        screen_print_pieces=bool(order.source_snapshot.get('screen_print_pieces')),
         sewing_inputs=bool(order.source_snapshot.get('sewing_inputs')),
         fees_deferred=bool(order.source_snapshot.get('fees_deferred')),
         billing_basis=order.source_snapshot.get('billing_basis'))
@@ -111,10 +127,14 @@ def plan_detail_data(order, data, request):
         data['internal_sewing_parts'] = assignment['internal']
     if data['sewing_inputs']:
         from .part_flow_sources import input_dispatched
+        from .printed_pieces import printed_pieces_for_sewing
         sent = input_dispatched(order)
+        printed = printed_pieces_for_sewing(order.product_line_id)
         for line in order.lines.all():
             for piece in line.snapshot.get('pieces', []):
                 data['inputs'].append({key: value for key, value in piece.items() if key != 'input_identity'} | {
+                    **({'screen_print_required': True, 'printed_available_quantity': str(printed[piece['component_identity']][1])}
+                       if piece['component_identity'] in printed else {}),
                     'component_source_materials': frozen_component_source_materials(piece),
                     'target_quantity': str(line.quantity * piece['pieces_per_part']),
                     'dispatched_quantity': str(sent.get(piece['component_identity'], 0)),
@@ -151,6 +171,7 @@ def plan_detail_data(order, data, request):
             'materials': [material_data(value) for value in batch.materials.all()],
             'lines': [{'component_identity': str(line.component_identity), 'quantity': str(line.quantity),
                 'factory_id': str(line.factory_id), 'factory_name': line.snapshot.get('factory_name', ''),
+                **({'processor_source': line.snapshot['processor_source']} if batch.source_kind == 'PROCESSOR' else {}),
                 'part_name': line.snapshot.get('part_name', ''), 'unit': line.snapshot.get('unit'),
                 'specification': line.snapshot.get('specification', ''),
                 'component_material_selection_snapshot': line.snapshot.get('component_material_selection_snapshot', {}),
@@ -179,12 +200,23 @@ def plan_detail_data(order, data, request):
         data['plan_summary'].update(receipt_amount_summary(all_receipt_lines))
         for line in data['lines']:
             line.update(receipt_amount_summary(row for row in all_receipt_lines if str(row.order_line_id) == line['id']))
+    if data['screen_print_pieces']:
+        from .printed_pieces import processor_transfer_records
+        data['transferred_records'] = processor_transfer_records(order)
     if request is not None:
         from .tube_selectors import SOURCE_LABELS
         zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE').select_related('warehouse')
         kinds = ['PUBLIC_CUTTING', 'SEWING'] if order.source_kind in CUTTING_SOURCES else ['RAW_PIPE', 'PUBLIC_SEMI', 'METAL']
         if data['part_flow']:
-            kinds = ['CUTTING', 'PUBLIC_PIECE'] if data['sewing_inputs'] else ['PUBLIC_PART', 'SEWING']
+            kinds = ['CUTTING', 'PUBLIC_PIECE'] if data['sewing_inputs'] or data['screen_print_pieces'] else ['PUBLIC_PART', 'SEWING']
+            if data['sewing_inputs'] and permissions['can_dispatch']:
+                from .printed_pieces import processor_sources
+                from .source_access import allowed_source_kinds
+                if 'PROCESSOR' in allowed_source_kinds(request, DISPATCH_PERMISSION):
+                    sources = processor_sources(order.product_line_id, request)
+                    if any(int(sources[row['component_identity']]['available_quantity']) > 0
+                           for row in data['inputs'] if row['component_identity'] in sources):
+                        kinds.append('PROCESSOR')
         data['plan_options'] = {'source_kinds': [{'value': value, 'label': SOURCE_LABELS[value]} for value in kinds],
             'factories': [{'id': str(value.pk), 'name': value.name} for value in source_factories(request, order.craft, DISPATCH_PERMISSION)],
             'zones': [{'id': str(zone.pk), 'name': zone.zone_name, 'warehouse_id': str(zone.warehouse_id),

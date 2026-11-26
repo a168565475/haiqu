@@ -26,6 +26,13 @@ def direct_output_usage(product_id, component_kind, *, exclude_order_id=None, ex
         for row in rows.filter(order__status__in=statuses).values('component_identity').annotate(total=Sum('quantity')):
             usage[str(row['component_identity'])][field] = row['total']
     if component_kind == 'CUT_PIECE':
+        printed = TubeOutsourcingLine.objects.filter(order__product_line_id=product_id,
+            order__source_kind='CUTTING', order__is_plan=False, order__source_snapshot__screen_print_pieces=True,
+            order__status__in=['PROCESSING', 'COMPLETED'])
+        if exclude_order_id:
+            printed = printed.exclude(order_id=exclude_order_id)
+        for row in printed.values('component_identity').annotate(total=Sum('quantity')):
+            usage[str(row['component_identity'])]['dispatched'] += row['total']
         from apps.material_issues.models import MaterialIssueLine
         issues = MaterialIssueLine.objects.filter(issue__product_line_id=product_id,
             conversion_snapshot__source_kind='CUTTING_DIRECT', semi_requirement__bom_line__component_kind='CUT_PIECE')

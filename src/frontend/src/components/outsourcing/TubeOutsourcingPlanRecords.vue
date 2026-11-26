@@ -6,13 +6,14 @@ import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterial
 import ComponentSourceMaterials from './ComponentSourceMaterials.vue'
 import TubeOutsourcingDetailTable from './TubeOutsourcingDetailTable.vue'
 import { fetchTubeOrder } from '@/api/tubeOutsourcing'
+import { fetchPrintOrder } from '@/api/cutPiecePrinting'
 import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import type { TubeOrderDetail, TubePlanDispatchRecord, TubePlanReceiptRecord, TubePlanRecordCorrectionDraft } from '@/types/tubeOutsourcing'
 import { isCuttingSource, tubeMaterialColumn, tubeSourceLabels, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 import { componentSourceColumns, materialSpecificationValue } from '@/utils/componentSourceColumns'
 
-const props = defineProps<{ order: TubeOrderDetail; warehouse: boolean; blocked?: boolean; busy?: boolean; pending?: boolean; writeBlocked?: boolean; message?: string; refreshRequired?: boolean; requestConflict?: boolean }>()
+const props = defineProps<{ order: TubeOrderDetail; warehouse: boolean; printTracking?: boolean; blocked?: boolean; busy?: boolean; pending?: boolean; writeBlocked?: boolean; message?: string; refreshRequired?: boolean; requestConflict?: boolean }>()
 const emit = defineEmits<{ correct: [payload: TubePlanRecordCorrectionDraft, etag: string]; prepared: [order: TubeOrderDetail]; active: [value: boolean]; check: []; retry: [] }>()
 const owned = useIdentityOwnedStorage({ storage: 'local', key: 'tube-outsourcing-plan-records' })
 const identityBlocked = computed(() => !owned.isCurrent())
@@ -35,6 +36,7 @@ const activeRecordQuantity = computed(() => mode.value === 'dispatch' ? batch.va
 let requestSequence = 0
 
 const cutting = computed(() => isCuttingSource(props.order.source_kind) || props.order.category === 'cutting')
+const dispatchOrigins = computed(() => new Map(dispatchRecord.value?.lines.map(line => [line.component_identity, line.processor_source])))
 const unit = computed(() => props.order.part_flow ? '各行单位' : cutting.value ? '套' : '支')
 const detailCutting = computed(() => mode.value === 'dispatch' && batch.value
   ? isCuttingSource(batch.value.source_kind) || batch.value.category === 'cutting' : cutting.value)
@@ -58,12 +60,13 @@ const receiptColumns = computed(() => [
   { key: 'action', label: '操作', width: 100 },
 ])
 const detailColumns = computed(() => props.order.part_flow ? [
-  { key: 'part_name', label: mode.value === 'dispatch' && props.order.sewing_inputs ? '裁片' : '部位', width: 180 },
+  { key: 'part_name', label: props.order.screen_print_pieces || (mode.value === 'dispatch' && props.order.sewing_inputs) ? '裁片' : '部位', width: 180 },
   { key: 'specification', label: '规格', width: 160 },
   ...componentSourceColumns,
   { key: 'unit', label: '单位', width: 70 },
   { key: mode.value === 'dispatch' ? 'quantity' : 'received_quantity', label: mode.value === 'dispatch' ? '实际外发' : '实际入库', width: 140, num: true },
-  { key: mode.value === 'dispatch' ? 'factory_name' : 'zone_name', label: mode.value === 'dispatch' ? '加工厂' : '入库库区', width: 160 },
+  ...(batch.value?.source_kind === 'PROCESSOR' ? [{ key: 'print_factory', label: '来源丝印厂', width: 150 }, { key: 'print_order', label: '来源丝印单', width: 160 }] : []),
+  { key: mode.value === 'dispatch' ? 'factory_name' : 'zone_name', label: batch.value?.source_kind === 'PROCESSOR' ? '目的车缝厂' : mode.value === 'dispatch' ? '加工厂' : '入库库区', width: 160 },
   ...(mode.value === 'receipt' && !props.warehouse ? [
     { key: 'unit_price', label: '本次回货单价', width: 150, num: true },
     { key: 'received_amount', label: '回货金额（元）', width: 150, num: true },
@@ -157,7 +160,7 @@ async function loadDispatch() {
   batch.value = null; loading.value = true; error.value = ''
   try {
     owned.assertCurrent()
-    const result = await fetchTubeOrder(record.id, warehouse)
+    const result = props.printTracking ? await fetchPrintOrder(record.id) : await fetchTubeOrder(record.id, warehouse)
     if (!current()) return
     if (result.id !== record.id || result.is_plan || result.plan_id !== orderId) {
       throw new Error('返回的外发批次与当前委外总单不一致，请重新加载。')
@@ -281,7 +284,16 @@ onBeforeUnmount(reset)
           <template #cell-actor_name="{ value }">{{ value || '—' }}</template>
           <template #cell-action="{ row }"><ElButton link type="primary" :disabled="unavailable || busy || pending" :aria-label="`查看入库明细 ${row.receipt_number}`" @click="openReceipt(row)">查看明细</ElButton></template>
         </TubeOutsourcingDetailTable>
-        <p class="muted">回货直接关联本总单，不匹配外发批次；达到 BOM 数量后仍可继续登记实际回货。</p>
+        <p v-if="!order.screen_print_pieces" class="muted">回货直接关联本总单，不匹配外发批次；达到 BOM 数量后仍可继续登记实际回货。</p>
+      </section>
+      <section v-if="order.transferred_records?.length" class="panel">
+        <h2>丝印厂直送车缝厂记录</h2>
+        <div class="tube-detail-table-wrap"><table class="tube-detail-table">
+          <thead><tr><th>发出日期</th><th>车缝总单号</th><th>发料单号</th><th>来源丝印厂</th><th>目的车缝厂</th><th>裁片</th><th>直送数量</th><th>经办人</th></tr></thead>
+          <tbody v-for="record in order.transferred_records" :key="record.id"><tr v-for="line in record.lines" :key="line.component_identity">
+            <td>{{ record.actual_dispatch_date }}</td><td>{{ record.sewing_plan_number }}</td><td>{{ record.order_number }}</td><td>{{ line.source_factory_name }}</td><td>{{ line.factory_name }}</td><td>{{ line.part_name }}</td><td>{{ number(line.quantity) }} {{ line.unit }}</td><td>{{ record.actor_name }}</td>
+          </tr></tbody>
+        </table></div>
       </section>
     </template>
   </div>
@@ -301,6 +313,8 @@ onBeforeUnmount(reset)
         <span>外发数量：<strong>{{ order.part_flow ? quantitiesText(batch.lines) : `${number(batch.total_quantity)} ${detailUnit}` }}</strong></span><span>经办人：{{ dispatchRecord.actor_name || '—' }}</span><span>登记时间：{{ dateTime(dispatchRecord.created_at) }}</span>
       </div>
       <TubeOutsourcingDetailTable class="dispatch-record-lines" :columns="detailColumns" :rows="batch.lines" empty="此批次没有保存部件明细">
+        <template #cell-print_factory="{ row }">{{ dispatchOrigins.get(row.component_identity)?.factory_name || '—' }}</template>
+        <template #cell-print_order="{ row }">{{ dispatchOrigins.get(row.component_identity)?.order_number || '—' }}</template>
         <template v-for="column in componentSourceColumns" :key="column.key" #[`cell-${column.key}`]="{ row }"><ComponentSourceMaterials :sources="row.component_source_materials" :field="column.sourceField" /></template>
         <template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template>
         <template #cell-material="{ row }">{{ (detailCutting ? row.fabric_material || row.material : row.material) || '—' }}</template>

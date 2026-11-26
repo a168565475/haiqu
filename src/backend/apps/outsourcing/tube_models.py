@@ -15,6 +15,7 @@ class TubeSourceKind(models.TextChoices):
     CUTTING = 'CUTTING', '车间裁片直发'
     PUBLIC_PIECE = 'PUBLIC_PIECE', '裁片库存'
     PUBLIC_PART = 'PUBLIC_PART', '部位半成品库存'
+    PROCESSOR = 'PROCESSOR', '加工点发出'
 
 
 class PriceUnit(models.TextChoices):
@@ -62,7 +63,7 @@ class TubeOutsourcingOrder(TimeStampedModel):
             models.CheckConstraint(condition=Q(status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED', 'CANCELLED']),
                                    name='tube_order_saved_status'),
             models.CheckConstraint(condition=Q(version__gt=0), name='tube_order_version_positive'),
-            models.CheckConstraint(condition=(Q(source_kind__in=['METAL', 'SEWING', 'CUTTING'], zone__isnull=True)
+            models.CheckConstraint(condition=(Q(source_kind__in=['METAL', 'SEWING', 'CUTTING', 'PROCESSOR'], zone__isnull=True)
                 | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'], zone__isnull=False)), name='tube_order_zone_shape'),
         ]
         indexes = [models.Index(fields=['product_line', 'source_kind', 'status'], name='tube_order_quota_idx')]
@@ -125,7 +126,9 @@ class TubeOutsourcingInput(TimeStampedModel):
     bom_line = models.ForeignKey('boms.BomLine', on_delete=models.PROTECT, related_name='outsourcing_inputs')
     component_identity = models.UUIDField()
     quantity = models.PositiveBigIntegerField()
-    source_kind = models.CharField(max_length=16, choices=[('CUTTING', '车间裁片直发'), ('PUBLIC_PIECE', '裁片库存')])
+    source_kind = models.CharField(max_length=16, choices=[('CUTTING', '车间裁片直发'), ('PUBLIC_PIECE', '裁片库存'), ('PROCESSOR', '加工点发出')])
+    print_order_line = models.ForeignKey(TubeOutsourcingLine, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='printing_transfers')
     factory = models.ForeignKey('outsourcing.OutsourcingFactory', on_delete=models.PROTECT, related_name='piece_inputs')
     stock_quantity = models.PositiveBigIntegerField(null=True, blank=True)
     input_identity = models.JSONField(default=dict)
@@ -138,8 +141,10 @@ class TubeOutsourcingInput(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=['order', 'component_identity'], name='tube_input_component_unique'),
             models.CheckConstraint(condition=Q(quantity__gt=0, quantity__lte=99999999999999), name='tube_input_quantity_valid'),
-            models.CheckConstraint(condition=(Q(source_kind='CUTTING', stock_quantity__isnull=True)
-                | Q(source_kind='PUBLIC_PIECE', stock_quantity__isnull=False, stock_quantity=models.F('quantity'))), name='tube_input_source_shape'),
+            models.CheckConstraint(condition=(
+                Q(source_kind='CUTTING', stock_quantity__isnull=True, print_order_line__isnull=True)
+                | Q(source_kind='PUBLIC_PIECE', stock_quantity__isnull=False, stock_quantity=models.F('quantity'), print_order_line__isnull=True)
+                | Q(source_kind='PROCESSOR', stock_quantity__isnull=True, print_order_line__isnull=False)), name='tube_input_source_shape'),
         ]
 
     def delete(self, *args, **kwargs):

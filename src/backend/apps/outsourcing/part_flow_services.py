@@ -18,6 +18,22 @@ from .tube_selectors import source_product, source_zone, source_factories, DISPA
 from .tube_services import _json
 
 
+def printing_dispatch_context(order, source_kind, zone, request):
+    from .printed_pieces import screen_print_context
+    from .source_access import require_source_product
+
+    if source_kind not in {'CUTTING', 'PUBLIC_PIECE'}:
+        raise ValidationError({'source_kind': '丝印发料请选择车间已裁好的裁片或裁片库存。'})
+    if order.craft.status != 'ACTIVE' or order.craft.outsourcing_code != 'SCREEN_PRINTING':
+        raise ValidationError({'craft_id': '本单丝印工艺已停用。'})
+    task = order.product_line.production_task
+    if task.archived_at or task.status not in {'READY', 'IN_PRODUCTION'}:
+        raise ValidationError({'product_line_id': '当前生产任务状态不能发料。'})
+    require_source_product(request, DISPATCH_PERMISSION, source_kind, order.schedule_product, product_line=order.product_line)
+    return screen_print_context(product_line=order.product_line, source_kind=source_kind, zone=zone,
+                                craft=order.craft, for_plan=False)
+
+
 def dispatch_parts(*, order, data, request, payload_hash):
     sewing = bool(order.source_snapshot.get('sewing_inputs'))
     printing = bool(order.source_snapshot.get('screen_print_pieces'))
@@ -26,8 +42,11 @@ def dispatch_parts(*, order, data, request, payload_hash):
         raise ValidationError({'inputs': '请按当前总单的加工对象提交发料明细。'})
     if printing and (data['source_kind'] not in {'CUTTING', 'PUBLIC_PIECE'} or data.get('materials')):
         raise ValidationError({'source_kind': '裁片丝印只发出总单选中的原裁片。'})
-    product, craft = source_product(request, order.schedule_product_id, DISPATCH_PERMISSION,
-        source_kind=data['source_kind'], craft_id=order.craft_id)
+    if printing:
+        product, craft = order.schedule_product, order.craft
+    else:
+        product, craft = source_product(request, order.schedule_product_id, DISPATCH_PERMISSION,
+            source_kind=data['source_kind'], craft_id=order.craft_id)
     zone = source_zone(data['source_kind'], data.get('zone_id'))
     targets = {str(line.component_identity): line for line in order.lines.select_for_update(of=('self',)).order_by('pk')}
     frozen = {piece['component_identity']: (line, piece) for line in targets.values()
@@ -43,7 +62,7 @@ def dispatch_parts(*, order, data, request, payload_hash):
         if any(str(row['factory_id']) == assignment['internal_factory_id'] for row in material_inputs):
             raise ValidationError({'materials': '附带外发辅料应选择外厂，本厂用料请在车间领料。'})
     stock_lines = lock_material_sources(product, material_inputs, source_kind=data['source_kind'])
-    issue = MaterialIssue(production_task_id=product.schedule.production_task_id,
+    issue = MaterialIssue(production_task_id=order.product_line.production_task_id,
         product_line_id=order.product_line_id, stock_mode='PUBLIC_V2')
     from .printed_pieces import printed_pieces_for_sewing
     printed = printed_pieces_for_sewing(order.product_line_id) if sewing else {}
@@ -59,7 +78,8 @@ def dispatch_parts(*, order, data, request, payload_hash):
                 conversion_snapshot={'kind': 'PUBLIC_SEMI', 'public_identity': identity}))
     if stock_lines:
         _lock_public_issue_stock(issue, stock_lines)
-    context = part_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, request=request)
+    context = (printing_dispatch_context(order, data['source_kind'], zone, request) if printing else
+               part_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, request=request))
     if bool(context.get('screen_print_pieces')) != printing:
         raise ValidationError({'source_kind': '发出来源与当前总单保存的加工对象不一致。'})
     rows = {row['component_identity']: row for row in context['inputs' if sewing else 'rows']}
@@ -155,7 +175,7 @@ def dispatch_parts(*, order, data, request, payload_hash):
                 raise Conflict('所选来源库区没有该实物库存。')
             movement = debit_public_stock(balance_id=balance.pk, quantity=quantity,
                 source_type='TUBE_OUTSOURCING_DISPATCH', source_id=batch.pk, source_line_id=line.pk,
-                actor_employee=request.employee, production_task=product.schedule.production_task_id,
+                actor_employee=request.employee, production_task=order.product_line.production_task_id,
                 product_line=order.product_line_id, bom_line=line.bom_line_id,
                 snapshot=_json({'public_identity': identity, 'order_number': batch.order_number,
                     'source_kind': data['source_kind'], 'quantity': quantity}))
@@ -185,5 +205,5 @@ def dispatch_parts(*, order, data, request, payload_hash):
             'movements': movements, 'material_movements': material_movements,
             'quantities': [{'component_identity': row['component_identity'], 'quantity': quantity,
                 'unit': row['unit']} for _, row, quantity, _ in pending]},
-        context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
+        **order.audit_context, request=request)
     return order, True

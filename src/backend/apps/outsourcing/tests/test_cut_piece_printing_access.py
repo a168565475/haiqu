@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.access_control.module_operations import CUT_PIECE_PRINTING
+from apps.production_scheduling.models import ProductionScheduleProduct
 from .test_part_flow_plan_api import BASE, PartFlowPlanFixture
 
 
@@ -16,6 +17,7 @@ PRINT = '/api/v1/cut-piece-printing-orders/'
 class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
     def setUp(self):
         super().setUp()
+        self.schedule_product.crafts.filter(craft=self.print_craft).update(removed_at=timezone.now(), removed_by_employee=self.employee)
         self.scoped_actor()
         self.source = {'schedule_product_id': str(self.schedule_product.pk), 'craft_id': str(self.print_craft.pk)}
         self.task = self.schedule_product.schedule.production_task
@@ -29,6 +31,7 @@ class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         options = response.data['data']
         self.assertEqual([row['id'] for row in options['tasks']], [str(self.task.pk)])
+        self.assertEqual(options['tasks'][0]['products'][0]['craft_ids'], [str(self.print_craft.pk)])
         self.assertEqual({row['outsourcing_code'] for row in options['crafts']}, {'SCREEN_PRINTING'})
         bad_craft = {**self.source, 'craft_id': str(self.external_sewing.pk)}
         self.assertEqual(self.client.get(PRINT + 'source-context/', bad_craft).status_code, 400)
@@ -59,11 +62,61 @@ class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(self.client.get(PRINT + pk + '/').status_code, 200)
         self.assertEqual(self.client.get(PRINT + 'by-request/' + payload['client_request_id'] + '/').status_code, 200)
         self.assertEqual(self.client.get(PRINT).data['meta']['total'], 1)
+        unified = '/api/v1/unified-outsourcing-orders/'
+        options = self.client.get(unified + 'options/')
+        self.assertEqual(options.status_code, 200, options.data)
+        self.assertEqual({item['outsourcing_code'] for item in options.data['data']['crafts']}, {'SCREEN_PRINTING'})
+        self.assertEqual(self.client.get(unified, {'warehouse_stage': 'all'}).status_code, 403)
+        for scope in (None, 'FOLLOWED', 'MODULE'):
+            if scope:
+                self.grant('outsourcing.view_outsourcingorder', scope)
+            listing = self.client.get(unified, {'search': self.task.task_number})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            self.assertEqual([(r['id'], r['detail_access']) for r in listing.data['data']], [(pk, 'CUT_PIECE_PRINTING')])
         self.assertEqual(self.client.post(BASE + pk + '/plan-dispatch/', {}, format='json').status_code, 403)
         self.assertEqual(self.client.post(BASE + pk + '/plan-receipt/', {}, format='json').status_code, 403)
         self.assertEqual(self.client.post(BASE, payload, format='json').status_code, 403)
         self.task.followers.remove(self.scope_employee)
+        self.assertEqual(self.client.get(unified).data['meta']['total'], 0)
         for path in (pk + '/', 'by-request/' + payload['client_request_id'] + '/'):
             self.assertEqual(self.client.get(PRINT + path).status_code, 404)
         self.assertEqual(self.client.post(PRINT, payload, format='json').status_code, 404)
         self.assertEqual(self.client.get(PRINT, {'warehouse_stage': 'all'}).data['meta']['total'], 0)
+
+    def test_followed_bom_can_be_planned_before_scheduling(self):
+        self.grant(CUT_PIECE_PRINTING, 'FOLLOWED')
+        self.task.followers.add(self.scope_employee)
+        schedule = self.schedule_product.schedule
+        schedule.record_status = 'VOID'
+        schedule.voided_at = timezone.now()
+        schedule.voided_by_employee = self.employee
+        schedule.void_reason = '测试未排产产品'
+        schedule.save(update_fields=['record_status', 'voided_at', 'voided_by_employee', 'void_reason'])
+        schedules = ProductionScheduleProduct.objects.count()
+        product = self.client.get(PRINT + 'options/').data['data']['tasks'][0]['products'][0]
+        self.assertEqual(product['id'], str(self.schedule_product.product_line_id))
+        self.assertIsNone(product['schedule_product_id'])
+        source = {'product_line_id': product['id'], 'craft_id': str(self.print_craft.pk)}
+        self.assertEqual(self.client.get(PRINT + 'source-context/', {**source, 'schedule_product_id': str(uuid4())}).status_code, 404)
+        result = self.client.get(PRINT + 'source-context/', source)
+        self.assertEqual(result.status_code, 200, result.data)
+        context = result.data['data']
+        self.assertTrue(context['ready'])
+        row = next(i for i in context['rows'] if i['bom_line_id'] == str(self.parts[0].pk))
+        self.assertEqual(row['order_required'], '200')
+        payload = {**source, 'client_request_id': str(uuid4()), 'is_plan': True, 'source_kind': 'CUTTING',
+                   'source_revision': context['source_revision'], 'planned_dispatch_date': str(timezone.localdate()),
+                   'expected_return_date': str(timezone.localdate()), 'lines': [{'component_identity': row['component_identity'],
+                       'quantity': row['order_required'], 'unit_price': '1.00', 'factory_id': str(self.factory.pk)}]}
+        response = self.client.post(PRINT, payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        detail = response.data['data']
+        self.assertIsNone(detail['schedule_product_id'])
+        self.assertEqual(detail['product_line_id'], product['id'])
+        self.assertEqual(self.client.get(PRINT + detail['id'] + '/').status_code, 200)
+        self.assertEqual(self.client.post(PRINT, payload, format='json').data['data']['id'], detail['id'])
+        self.assertEqual(ProductionScheduleProduct.objects.count(), schedules)
+        self.assertEqual(self.client.get(PRINT).data['meta']['total'], 1)
+        self.task.followers.remove(self.scope_employee)
+        self.assertEqual(self.client.get(PRINT + 'source-context/', source).status_code, 404)
+        self.assertEqual(self.client.get(PRINT + detail['id'] + '/').status_code, 404)

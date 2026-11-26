@@ -23,15 +23,15 @@ import '@/styles/tubeOutsourcing.scss'
 interface Entry extends TubeSourceRow { quantity: string; factoryId: string; priceUnit: OutsourcingPriceUnit; unitPrice: string }
 interface MaterialEntry extends TubeMaterialRow { quantity: string; factoryId: string; zoneId: string }
 interface Column { key: string; label: string; width: number; num?: boolean; sourceField?: ComponentSourceField }
-type ChangeKind = 'task' | 'product' | 'source' | 'warehouse' | 'zone' | 'craft'
+type ChangeKind = 'task' | 'product' | 'source' | 'warehouse' | 'zone'
 
 const auth = useAuthStore(), router = useRouter(), route = useRoute()
 const printEntry = route.name === 'cut-piece-printing-new'
-const cutting = printEntry || route.query.category === 'cutting'
+const sewingEntry = !printEntry && route.query.category === 'cutting'
+const cutting = printEntry || sewingEntry
 const categoryName = cutting ? '裁片' : '管材'
 const materialName = cutting ? '辅料' : '五金'
 const quantityUnit = cutting ? '套' : '支'
-const craftId = ref('')
 const options = ref<TubeOptions | null>(null), context = ref<TubeSourceContext | null>(null)
 const partFlow = computed(() => context.value?.part_flow === true)
 const printPieces = computed(() => context.value?.screen_print_pieces === true)
@@ -41,7 +41,7 @@ const taskId = ref(''), productId = ref(''), source = ref<TubeSourceKind>(cuttin
 const direct = computed(() => isDirectSource(source.value))
 const publicSemi = computed(() => ['PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'].includes(source.value))
 const warehouseId = ref(''), zoneId = ref(''), rows = ref<Entry[]>([])
-const materialRows = ref<MaterialEntry[]>([]), activeMaterial = ref<'tube' | 'hardware'>('tube')
+const activeMaterial = ref<'tube' | 'hardware'>('tube')
 const today = new Date()
 const sendDate = ref(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`)
 const returnDate = ref(''), remark = ref('')
@@ -74,11 +74,28 @@ let sourceRequest = 0
 let disposed = false
 
 const labels = tubeSourceLabels
-const task = computed(() => options.value?.tasks.find(item => item.id === taskId.value))
+const entryCraft = computed(() => options.value?.crafts?.find(craft =>
+  craft.outsourcing_code === (printEntry ? 'SCREEN_PRINTING' : 'SEWING')))
+const tasks = computed(() => {
+  const allTasks = options.value?.tasks || []
+  if (!sewingEntry || pending.value) return allTasks
+  const id = entryCraft.value?.id
+  if (!id) return []
+  return allTasks.map(task => ({ ...task, products: task.products.filter(product => product.craft_ids?.includes(id)) }))
+    .filter(task => task.products.length)
+})
+const task = computed(() => tasks.value.find(item => item.id === taskId.value))
 const products = computed(() => task.value?.products || [])
 const product = computed(() => products.value.find(item => item.id === productId.value))
-const crafts = computed(() => (options.value?.crafts || []).filter(item =>
-  (!printEntry || item.outsourcing_code === 'SCREEN_PRINTING') && (!product.value || product.value.craft_ids?.includes(item.id))))
+const craftId = computed(() => pending.value?.craft_id || entryCraft.value?.id || '')
+const orderName = computed(() => {
+  if (printEntry) return '裁片丝印外发单'
+  if (sewingEntry) {
+    const craftName = pending.value && options.value?.crafts?.find(craft => craft.id === pending.value?.craft_id)?.name
+    return `${craftName || '车缝'}外发单`
+  }
+  return planMode.value ? '管材委外加工单' : '管材外发单'
+})
 const productImageFailed = ref(false)
 watch(() => [product.value?.id, product.value?.image_url], () => { productImageFailed.value = false })
 const factories = computed(() => context.value?.factories || options.value?.factories || [])
@@ -94,8 +111,18 @@ const canCreate = computed(() => Boolean(auth.user?.is_superuser || auth.hasPerm
   ? 'outsourcing.manage_cutpieceprinting' : 'outsourcing.add_outsourcingorder')))
 const locked = computed(() => identityBlocked.value || loading.value || sourceLoading.value || saving.value || Boolean(pending.value) || storageError.value)
 const entered = computed(() => rows.value.filter(row => (wholeTubeQuantity(row.quantity) || 0) > 0))
-const editableMaterials = computed(() => materialRows.value.filter(row => !row.external_supply))
-const enteredMaterials = computed(() => editableMaterials.value.filter(row => Number(row.quantity) > 0))
+// 旧版已提交的请求仍按原编号核对，随单材料只供回看。
+const materialRows = computed<MaterialEntry[]>(() => {
+  const saved = pending.value?.materials
+  if (!saved?.length) return []
+  const lines = new Map(saved.map(line => [line.bom_line_id, line]))
+  return (context.value?.material_rows || []).filter(row => lines.has(row.bom_line_id)).map(row => {
+    const line = lines.get(row.bom_line_id)!
+    return { ...row, quantity: row.external_supply ? '' : line.quantity,
+      factoryId: !row.external_supply && 'factory_id' in line ? line.factory_id : '',
+      zoneId: row.external_supply ? '' : line.zone_id || '' }
+  })
+})
 const total = computed(() => entered.value.reduce((sum, row) => sum + (wholeTubeQuantity(row.quantity) || 0), 0))
 const totalText = computed(() => {
   if (!partFlow.value) return `${number(total.value)} ${quantityUnit}`
@@ -106,13 +133,13 @@ const totalText = computed(() => {
 const totalArea = computed(() => cutting ? null : sumOutsourcingAreas(entered.value.map(row => outsourcingLineArea(row.quantity, row.unit_area_sqm))))
 const plannedAmount = computed(() => feesDeferred.value ? null : sumOutsourcingAmounts(entered.value.filter(row => !internalPart(row)).map(row =>
   outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm))))
-const factoryCount = computed(() => new Set([...entered.value, ...enteredMaterials.value].map(row => row.factoryId).filter(Boolean)).size)
+const factoryCount = computed(() => new Set([...entered.value, ...materialRows.value].map(row => row.factoryId).filter(Boolean)).size)
 const emptyMessage = computed(() => {
   if (loading.value || sourceLoading.value) return `正在加载${categoryName}${planMode.value ? 'BOM' : '及额度'}…`
   if (error.value) return error.value
   if (!taskId.value) return '请先选择生产任务单，再选择产品'
   if (!productId.value) return planMode.value ? '请选择委外加工单的一个产品' : '请选择本次外发的一个产品'
-  if (cutting && !craftId.value) return planMode.value ? '请选择委外加工工艺' : '请选择本次外发工艺'
+  if (cutting && !craftId.value) return printEntry ? '尚未配置丝印工艺' : '尚未配置车缝工艺'
   if (!planMode.value && !direct.value && !zoneId.value) return '请选择来源仓库和库区'
   return context.value?.blockers.join('；') || `该产品暂无可外发的${categoryName}部位`
 })
@@ -170,7 +197,6 @@ const warn = (message: string) => { if (owned.isCurrent()) ElMessage.warning({ m
 const factoryName = (id: string) => factories.value.find(item => item.id === id)?.name || '—'
 const materialNumber = (value: string) => Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 const materialZoneName = (row: MaterialEntry) => { const zone = row.zones.find(item => item.zone_id === row.zoneId); return zone ? `${zone.warehouse_name} / ${zone.zone_name}` : '—' }
-const materialDisabled = (row: MaterialEntry) => locked.value || !canCreate.value || !context.value?.ready || row.blockers.length > 0 || (!planMode.value && Number(row.max_quantity) <= 0)
 const rowDisabled = (row: Entry) => locked.value || !canCreate.value || !context.value?.ready || (!planMode.value && !(wholeTubeQuantity(row.max_quantity) || 0)) || row.blockers.length > 0
 function cellText(row: Entry, key: string): string {
   if (key === 'shape' || key === 'thickness' || key === 'spray_color') return tubeMaterialColumn(row, key)
@@ -202,7 +228,6 @@ function sourceZoneCandidates(): string[] {
 }
 function clearRows() {
   rows.value.forEach(row => { row.quantity = ''; row.factoryId = ''; row.priceUnit = cutting ? 'PIECE' : 'SQUARE_METER'; row.unitPrice = '' })
-  materialRows.value.forEach(row => { row.quantity = ''; row.factoryId = '' })
 }
 
 function selectPrintPiece(row: Entry, selected: boolean) {
@@ -213,14 +238,13 @@ function selectPrintPiece(row: Entry, selected: boolean) {
 async function loadSource(preserve = true) {
   if (!owned.isCurrent()) return
   const request = ++sourceRequest
-  const scheduleId = product.value?.schedule_product_id
-  if (!scheduleId || (cutting && !craftId.value) || (!planMode.value && !direct.value && !zoneId.value)) {
-    context.value = null; rows.value = []; materialRows.value = []; sourceHint.value = ''; sourceLoading.value = false
+  const sourceProductId = printEntry ? product.value?.id : product.value?.schedule_product_id
+  if (!sourceProductId || (cutting && !craftId.value) || (!planMode.value && !direct.value && !zoneId.value)) {
+    context.value = null; rows.value = []; sourceHint.value = ''; sourceLoading.value = false
     return
   }
   sourceLoading.value = true; error.value = ''
   const previous = new Map(rows.value.map(row => [row.component_identity, row]))
-  const previousMaterials = new Map(materialRows.value.map(row => [row.bom_line_id, row]))
   try {
     const candidates = sourceZoneCandidates()
     let selected: { zoneId: string; result: TubeSourceContext } | null = null
@@ -230,8 +254,8 @@ async function loadSource(preserve = true) {
       if (request !== sourceRequest || disposed || !owned.isCurrent()) return
       try {
         owned.assertCurrent()
-        const result = printEntry ? await fetchPrintSource(scheduleId, craftId.value)
-          : await fetchTubeSource({ schedule_product_id: scheduleId, ...(planMode.value && !pending.value ? { category: cutting ? 'cutting' as const : 'tube' as const, is_plan: true } : { source_kind: source.value, ...(planMode.value ? { is_plan: true } : {}), ...(direct.value ? {} : { zone_id: candidate }) }), ...(cutting ? { craft_id: craftId.value } : {}) })
+        const result = printEntry ? await fetchPrintSource(sourceProductId, craftId.value)
+          : await fetchTubeSource({ schedule_product_id: sourceProductId, ...(planMode.value && !pending.value ? { category: cutting ? 'cutting' as const : 'tube' as const, is_plan: true } : { source_kind: source.value, ...(planMode.value ? { is_plan: true } : {}), ...(direct.value ? {} : { zone_id: candidate }) }), ...(cutting ? { craft_id: craftId.value } : {}) })
         owned.assertCurrent()
         if (request !== sourceRequest) return
         firstResult ||= { zoneId: candidate, result }
@@ -264,13 +288,6 @@ async function loadSource(preserve = true) {
       priceUnit: preserve ? previous.get(row.component_identity)?.priceUnit || (cutting ? 'PIECE' : 'SQUARE_METER') : cutting ? 'PIECE' : 'SQUARE_METER',
       unitPrice: preserve ? previous.get(row.component_identity)?.unitPrice || '' : '',
     }))
-    materialRows.value = (cutting || !planMode.value ? selected.result.material_rows || [] : []).map(row => {
-      const externalSupply = cutting && row.external_supply === true
-      if (externalSupply) return { ...row, quantity: '', factoryId: '', zoneId: '' }
-      const previous = preserve ? previousMaterials.get(row.bom_line_id) : undefined
-      return { ...row, external_supply: false, quantity: previous?.quantity || '', factoryId: previous?.factoryId || '',
-        zoneId: previous?.zoneId || (!planMode.value && row.zones.length === 1 ? row.zones[0]!.zone_id : '') }
-    })
   } catch (cause) {
     if (isCancel(cause) || request !== sourceRequest || disposed || !owned.isCurrent()) return
     context.value = null; sourceHint.value = ''
@@ -283,26 +300,23 @@ async function applyChange() {
   dialog.value = ''; pendingChange.value = null
   if (change.kind === 'task') { taskId.value = change.value; productId.value = '' }
   if (change.kind === 'product') productId.value = change.value
-  if (change.kind === 'craft') craftId.value = change.value
-  if (cutting && ['task', 'product'].includes(change.kind)) craftId.value = crafts.value.length === 1 ? crafts.value[0]!.id : ''
   if (change.kind === 'source') { source.value = change.value as TubeSourceKind; warehouseId.value = ''; zoneId.value = ''; selectDefaultZone() }
   if (change.kind === 'warehouse') { warehouseId.value = change.value; zoneId.value = zones.value[0]?.id || '' }
   if (change.kind === 'zone') zoneId.value = change.value
-  rows.value = []; materialRows.value = []; context.value = null
+  rows.value = []; context.value = null
   await loadSource(false)
 }
 function requestChange(kind: ChangeKind, raw: unknown) {
   if (locked.value) return
   const value = typeof raw === 'string' ? raw : ''
-  const current = { task: taskId.value, product: productId.value, source: source.value, warehouse: warehouseId.value, zone: zoneId.value, craft: craftId.value }
+  const current = { task: taskId.value, product: productId.value, source: source.value, warehouse: warehouseId.value, zone: zoneId.value }
   if (current[kind] === value) return
   pendingChange.value = { kind, value }
-  if (rows.value.some(row => row.factoryId || row.unitPrice.trim() !== '' || (row.quantity.trim() !== '' && (printPieces.value || !planMode.value || row.quantity !== row.order_required))) || materialRows.value.some(row => row.quantity.trim() !== '' || row.factoryId)) dialog.value = 'change'
+  if (rows.value.some(row => row.factoryId || row.unitPrice.trim() !== '' || (row.quantity.trim() !== '' && (printPieces.value || !planMode.value || row.quantity !== row.order_required)))) dialog.value = 'change'
   else void applyChange()
 }
 function validate(): boolean {
   if (!canCreate.value) { warn('当前账号没有新建外发单权限。'); return false }
-  if (cutting && !crafts.value.some(item => item.id === craftId.value)) { warn('请选择产品已配置的裁剪、车缝、刺绣或丝印工艺。'); return false }
   if (!context.value?.ready || !product.value) { warn(context.value?.blockers.join('；') || emptyMessage.value); return false }
   if (!sendDate.value || !returnDate.value) { warn('请填写计划发出日期和预计回货日期。'); return false }
   if (returnDate.value < sendDate.value) { warn('预计回货日期不能早于计划发出日期。'); return false }
@@ -321,17 +335,6 @@ function validate(): boolean {
     }
   }
   if (!entered.value.length) { warn(printPieces.value ? '请先勾选需要丝印的裁片。' : planMode.value ? '请至少填写一项大于0的计划数量。' : '请至少填写一项大于0的外发数量。'); return false }
-  for (const row of editableMaterials.value) {
-    const quantity = row.quantity.trim()
-    if (!quantity) continue
-    if (!/^\d+(?:\.\d{1,4})?$/.test(quantity) || !Number.isFinite(Number(quantity))) { warn(`${row.name}：数量须为非负数字，最多4位小数。`); return false }
-    if (Number(quantity) === 0) continue
-    if (row.blockers.length || (!planMode.value && Number(quantity) > Number(row.max_quantity))) { warn(`${row.name}：${row.blockers.join('；') || '数量超过当前可外发额度。'}`); return false }
-    if (!factories.value.some(factory => factory.id === row.factoryId)) { warn(`${row.name}：请选择一家加工厂。`); return false }
-    const zone = row.zones.find(item => item.zone_id === row.zoneId)
-    if (!planMode.value && (!zone || Number(quantity) > Number(zone.available_quantity))) { warn(`${row.name}：请选择${planMode.value ? '有效的' : '库存充足的'}来源库区。`); return false }
-  }
-  if (enteredMaterials.value.length && !context.value.material_source_revision) { warn(`${materialName}额度尚未加载完成，请刷新后重试。`); return false }
   return true
 }
 function checkDispatch() { if (!locked.value && validate()) dialog.value = 'confirm' }
@@ -342,7 +345,7 @@ function clearPending(): boolean {
       storageError.value = true; storageReason.value = '本地待核对记录已被其他页面更新，未清理新记录。请刷新后人工核对原请求。'
       warn(storageReason.value); return false
     }
-    pending.value = null; pendingRaw = null; return true
+    pending.value = null; pendingRaw = null; activeMaterial.value = 'tube'; return true
   } catch (cause) {
     if (isCancel(cause) || !owned.isCurrent()) return false
     storageError.value = true; warn('单据状态已确认，但本地请求记录未能清理。请恢复浏览器存储后刷新页面。'); return false
@@ -380,12 +383,12 @@ async function postPending(freshRequest = false) {
         || request.materials?.some(line => 'component_identity' in line)
       if (!clearPending()) return
       dialog.value = ''
-      if (status === 400 && legacyRequest) materialRows.value.forEach(row => { row.factoryId = '' })
       const needsRefresh = status === 412 || status === 428
+        || (sewingEntry && request.craft_id !== craftId.value)
         || (status === 400 && (request.is_plan !== true || !isDirectSource(request.source_kind)))
       if (needsRefresh) { await loadSource(true); if (!owned.isCurrent()) return }
       const message = errorText(cause, '未能保存，请检查填写内容。')
-        + (status === 400 && legacyRequest ? ' 这是旧格式请求，请重新填写加工单价并选择五金加工厂后保存。' : '')
+        + (status === 400 && legacyRequest ? ' 这是旧格式请求，请重新填写加工单价并核对加工厂后保存。' : '')
         + (needsRefresh ? context.value ? ' 已刷新额度，请重新核对后保存。' : ' 请刷新额度后重新核对。' : '')
       if (status === 403 || status === 404) error.value = message
       warn(message)
@@ -420,21 +423,21 @@ async function recoverPending(allowRetry: boolean) {
 async function save() {
   if (!owned.isCurrent() || saving.value || storageError.value || !storageAvailable()) return
   if (!pending.value) {
-    if (!validate() || !context.value || !product.value) return
+    const sourceProductId = printEntry ? product.value?.id : product.value?.schedule_product_id
+    if (!validate() || !context.value || !sourceProductId) return
     try {
       if (owned.read() !== null) { warn('另一个页面有待核对的提交，请刷新本页核对后再新建。'); return }
     } catch (cause) { if (isCancel(cause) || !owned.isCurrent()) return; storageError.value = true; warn('浏览器无法读取待核对请求，本次尚未提交。请允许本站本地存储后重试。'); return }
     const payload: TubeOrderInput = {
       is_plan: true,
       client_request_id: createClientUuid(), source_revision: context.value.source_revision,
-      schedule_product_id: product.value.schedule_product_id, source_kind: source.value,
+      ...(printEntry ? { product_line_id: sourceProductId } : { schedule_product_id: sourceProductId }),
+      source_kind: source.value,
       zone_id: null,
       ...(cutting ? { craft_id: craftId.value } : {}),
       planned_dispatch_date: sendDate.value, expected_return_date: returnDate.value, remark: remark.value.trim(),
       lines: entered.value.map(row => ({ component_identity: row.component_identity, quantity: String(wholeTubeQuantity(row.quantity)), factory_id: row.factoryId,
         ...(!cutting ? { price_unit: row.priceUnit } : {}), unit_price: feesDeferred.value ? null : row.unitPrice.trim() })),
-      ...(enteredMaterials.value.length ? { material_source_revision: context.value.material_source_revision,
-        materials: enteredMaterials.value.map(row => ({ bom_line_id: row.bom_line_id, factory_id: row.factoryId, quantity: row.quantity.trim() })) } : {}),
     }
     try { const raw = JSON.stringify(payload); owned.write(raw); pendingRaw = raw }
     catch (cause) { if (isCancel(cause) || !owned.isCurrent()) return; storageError.value = true; warn('浏览器无法保存请求编号，本次尚未提交。请允许本站本地存储后重试。'); return }
@@ -458,13 +461,10 @@ async function initialize() {
     if (!planMode.value && !pending.value && typeof route.query.zone_id === 'string') zoneId.value = route.query.zone_id
     if (!planMode.value && !pending.value && !options.value.source_kinds.some(item => item.value === source.value)) source.value = options.value.source_kinds[0]?.value || (cutting ? 'CUTTING' : 'METAL')
     const scheduleId = pending.value?.schedule_product_id || (typeof route.query.schedule_product_id === 'string' ? route.query.schedule_product_id : '')
-    for (const item of options.value.tasks) {
-      const found = item.products.find(candidate => candidate.schedule_product_id === scheduleId)
+    const lineId = printEntry && (pending.value?.product_line_id || route.query.product_line_id)
+    for (const item of tasks.value) {
+      const found = item.products.find(candidate => lineId ? candidate.id === lineId : scheduleId && candidate.schedule_product_id === scheduleId)
       if (found) { taskId.value = item.id; productId.value = found.id; break }
-    }
-    if (cutting) {
-      const requestedCraft = typeof route.query.craft_id === 'string' ? route.query.craft_id : ''
-      craftId.value = pending.value?.craft_id || (crafts.value.some(item => item.id === requestedCraft) ? requestedCraft : crafts.value.length === 1 ? crafts.value[0]!.id : '')
     }
     selectDefaultZone()
     await loadSource(false)
@@ -473,13 +473,6 @@ async function initialize() {
       for (const row of rows.value) {
         const line = pending.value.lines.find(item => item.component_identity === row.component_identity)
         if (line) { row.quantity = line.quantity; row.factoryId = line.factory_id; row.priceUnit = line.price_unit || 'PIECE'; row.unitPrice = line.unit_price ?? '' }
-      }
-      for (const row of editableMaterials.value) {
-        const line = pending.value.materials?.find(item => item.bom_line_id === row.bom_line_id)
-        if (line) {
-          row.quantity = line.quantity; row.zoneId = line.zone_id || ''
-          row.factoryId = 'factory_id' in line ? line.factory_id : ''
-        }
       }
     }
   } catch (cause) { if (isCancel(cause) || !owned.isCurrent()) return; error.value = errorText(cause, '外发基础选项加载失败，请重新加载。') }
@@ -492,7 +485,7 @@ onMounted(async () => {
     pendingRaw = raw
     if (raw !== null) {
       const value = JSON.parse(raw) as TubePendingOrderInput
-      const textFields = [value?.client_request_id, value?.source_revision, value?.schedule_product_id, value?.planned_dispatch_date, value?.expected_return_date]
+      const textFields = [value?.client_request_id, value?.source_revision, (printEntry && value?.product_line_id) || value?.schedule_product_id, value?.planned_dispatch_date, value?.expected_return_date]
       if (!textFields.every(item => typeof item === 'string' && item.length > 0)
         || typeof value?.remark !== 'string'
         || (value.zone_id !== null && typeof value.zone_id !== 'string')
@@ -520,19 +513,18 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
 
 <template>
   <section class="tube-outsourcing-page tube-outsourcing-form erp-glass-form">
-    <header class="page-heading"><div class="title-row"><h1>{{ printEntry ? '新建裁片丝印外发单' : `新建${partFlow ? '部位' : categoryName}${planMode ? '委外加工单' : '外发单'}` }}</h1><span v-if="!planMode" class="status">{{ labels[source] }}</span></div><span v-if="!printEntry" class="muted">一个产品 · 每个部位一家加工厂</span></header>
+    <header class="page-heading"><div class="title-row"><h1>新建{{ orderName }}</h1><span v-if="!planMode" class="status">{{ labels[source] }}</span></div><span v-if="!printEntry" class="muted">一个产品 · 每个部位一家加工厂</span></header>
     <ElAlert v-if="identityBlocked" title="身份尚未核验或已变化，已暂停本页操作。请核验身份后重新打开本页。" type="warning" :closable="false" show-icon />
     <ElAlert v-if="storageError" :title="storageReason" type="warning" :closable="false" show-icon />
     <ElAlert v-if="!canCreate" title="当前账号没有新建外发单权限。" type="warning" :closable="false" show-icon />
     <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon><ElButton v-if="!pending && !storageError" link @click="initialize">重新加载</ElButton></ElAlert>
     <section class="panel">
-      <div class="dispatch-layout" :class="{ 'dispatch-layout--cutting': cutting }">
+      <div class="dispatch-layout" :class="{ 'dispatch-layout--sewing': cutting && planMode }">
       <div class="field-grid">
-        <label class="form-field" title="生产任务单"><ElSelect :model-value="taskId" :disabled="locked || !canCreate" :loading="loading" @update:model-value="requestChange('task', $event)" filterable clearable aria-label="生产任务单" placeholder="选择生产任务单" :no-data-text="printEntry ? '暂无可办理丝印的生产任务' : cutting ? '暂无包含裁剪/车缝/刺绣/丝印工艺的有效排产任务' : '暂无可用喷塑排产任务'"><ElOption v-for="item in options?.tasks || []" :key="item.id" :label="item.task_number" :value="item.id" /></ElSelect></label>
+        <label class="form-field" title="生产任务单"><ElSelect :model-value="taskId" :disabled="locked || !canCreate" :loading="loading" @update:model-value="requestChange('task', $event)" filterable clearable aria-label="生产任务单" placeholder="选择生产任务单" :no-data-text="printEntry ? '暂无可办理丝印的生产任务' : cutting ? '暂无可办理车缝外发的生产任务' : '暂无可用喷塑排产任务'"><ElOption v-for="item in tasks" :key="item.id" :label="item.task_number" :value="item.id" /></ElSelect></label>
         <label class="form-field" title="产品"><ElSelect :model-value="productId" @update:model-value="requestChange('product', $event)" :disabled="!taskId || locked || !canCreate" filterable clearable aria-label="产品" placeholder="选择产品"><ElOption v-for="item in products" :key="item.id" :label="`${item.product_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
         <label v-if="!planMode" class="form-field" title="材料来源"><ElSelect :model-value="source" :disabled="locked || !canCreate" @update:model-value="requestChange('source', $event)" aria-label="材料来源" placeholder="选择材料来源"><ElOption v-for="item in options?.source_kinds || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
-        <label v-if="cutting && (!printEntry || crafts.length > 1)" class="form-field" title="外发工艺"><ElSelect :model-value="craftId" :disabled="locked || !canCreate || !product" aria-label="外发工艺" placeholder="选择外发工艺" no-data-text="所选产品尚未配置裁剪/车缝/刺绣/丝印工艺" @update:model-value="requestChange('craft', $event)"><ElOption v-for="item in crafts" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></label>
-        <label class="form-field schedule-field" title="关联排产"><ElInput :model-value="product ? product.schedule_number || '暂无可用排产' : ''" aria-label="关联排产" placeholder="关联排产（选择产品后带入）" readonly /></label>
+        <label v-if="!cutting" class="form-field" title="关联排产"><ElInput :model-value="product ? product.schedule_number || '暂无可用排产' : ''" aria-label="关联排产" placeholder="关联排产（选择产品后带入）" readonly /></label>
         <label class="form-field" title="计划发出日期"><ElDatePicker v-model="sendDate" :disabled="locked || !canCreate" aria-label="计划发出日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="计划发出日期" /></label>
         <label class="form-field" title="预计回货日期"><ElDatePicker v-model="returnDate" :disabled="locked || !canCreate" aria-label="预计回货日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="预计回货日期" /></label>
         <template v-if="!planMode && !direct">
@@ -556,7 +548,7 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
       </div>
     </section>
     <section class="panel workspace" v-loading="sourceLoading">
-      <div class="section-heading"><div><h2>{{ planMode ? '委外计划明细' : '外发明细' }}</h2><div v-if="!printEntry" class="tube-material-tabs" role="tablist" aria-label="外发材料分类"><button type="button" role="tab" :aria-selected="activeMaterial === 'tube'" aria-controls="tube-items" @click="activeMaterial = 'tube'">{{ categoryName }}</button><button v-if="cutting || !planMode" type="button" role="tab" :aria-selected="activeMaterial === 'hardware'" aria-controls="hardware-items" :disabled="!context?.material_rows" @click="activeMaterial = 'hardware'">{{ materialName }}<span v-if="enteredMaterials.length"> {{ enteredMaterials.length }}</span></button></div><span v-if="!printEntry" class="muted">{{ planMode ? (activeMaterial === 'tube' ? '填写计划数量并选择加工厂；空白或0不纳入本单' : '填写计划辅料数量，实际发货时另行登记') : activeMaterial === 'tube' ? '填写数量并选择加工厂；空白或0不外发' : `随${categoryName}同单外发，直接选择加工厂` }}</span></div><ElButton :icon="Refresh" :disabled="locked || !product" @click="loadSource(true)">{{ planMode ? '刷新BOM' : '刷新额度' }}</ElButton></div>
+      <div class="section-heading"><div><h2>{{ planMode ? '委外计划明细' : '外发明细' }}</h2><div v-if="!printEntry && (!cutting || materialRows.length)" class="tube-material-tabs" role="tablist" aria-label="外发材料分类"><button type="button" role="tab" :aria-selected="activeMaterial === 'tube'" aria-controls="tube-items" @click="activeMaterial = 'tube'">{{ categoryName }}</button><button v-if="materialRows.length" type="button" role="tab" :aria-selected="activeMaterial === 'hardware'" aria-controls="hardware-items" :disabled="!context?.material_rows" @click="activeMaterial = 'hardware'">{{ materialName }} {{ materialRows.length }}</button></div><span v-if="!printEntry" class="muted">{{ planMode ? '填写计划数量并选择加工厂；空白或0不纳入本单' : '' }}</span></div><ElButton :icon="Refresh" :disabled="locked || !product" @click="loadSource(true)">{{ planMode ? '刷新BOM' : '刷新额度' }}</ElButton></div>
       <div v-if="context?.sewing_inputs && planMode" class="notice">每个车缝部位选一家加工厂。本厂部位的单价仅作记录，外厂部位按实际回货数量计费。</div>
       <div v-else-if="partFlow && !printPieces" class="notice">按部位填写目标，后续可分次发出、分次回货。</div>
       <div v-if="context?.blockers.length" class="notice warning">{{ context.blockers.join('；') }}</div>
@@ -582,27 +574,22 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
           <span v-else class="cell-text" :title="cellText(row, column.key)">{{ cellText(row, column.key) }}</span>
         </td></tr><tr v-if="!rows.length"><td :colspan="columns.length" class="empty-cell">{{ emptyMessage }}</td></tr>
       </tbody></table></div>
-      <div v-if="cutting || !planMode" v-show="activeMaterial === 'hardware'" id="hardware-items" class="tube-table-wrap" :class="{ 'is-empty': !materialRows.length }">
-        <table class="erp-table-editor tube-table hardware-table" :aria-label="`附带${materialName}明细`"><colgroup><col style="width:120px" /><col style="width:80px" /><col style="width:110px" /><col style="width:80px" /><col style="width:100px" /><col v-if="!planMode" style="width:100px" /><col style="width:130px" /><col style="width:200px" /><col v-if="!planMode" style="width:210px" /></colgroup>
-          <thead><tr><th>{{ materialName }}名称</th><th>材质</th><th>规格</th><th>颜色</th><th class="num">{{ planMode ? 'BOM需求' : '订单剩余' }}</th><th v-if="!planMode" class="num">库存可用</th><th class="num">{{ planMode ? '计划数量' : '本次外发' }}</th><th>加工厂</th><th v-if="!planMode">来源仓库 / 库区</th></tr></thead>
+      <div v-if="materialRows.length" v-show="activeMaterial === 'hardware'" id="hardware-items" class="tube-table-wrap" :class="{ 'is-empty': !materialRows.length }">
+        <table class="tube-table hardware-table" :aria-label="`附带${materialName}明细`">
+          <thead><tr><th>{{ materialName }}名称</th><th>材质</th><th>规格</th><th>颜色</th><th class="num">原提交数量</th><th>加工厂</th><th>来源仓库 / 库区</th></tr></thead>
           <tbody><tr v-for="row in materialRows" :key="row.bom_line_id">
-            <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails><span v-if="row.external_supply">（外供）</span></td><td :title="row.material">{{ row.material || '—' }}</td><td :title="materialSpecificationValue(row)">{{ materialSpecificationValue(row) }}</td><td>{{ row.color || '—' }}</td>
-            <td v-if="row.external_supply" :colspan="planMode ? 3 : 5" class="num">—</td>
-            <template v-else>
-            <td class="num">{{ materialNumber(planMode ? row.required_quantity : row.order_remaining) }} {{ row.unit }}</td><td v-if="!planMode" class="num" :title="row.blockers.join('；')">{{ materialNumber(row.available_stock) }} {{ row.unit }}</td>
-            <td class="num"><ElInput v-model="row.quantity" :aria-label="`${row.name}附带${materialName}数量`" :disabled="materialDisabled(row)" inputmode="decimal" placeholder="0"><template #suffix>{{ row.unit }}</template></ElInput></td>
-            <td><ElSelect v-model="row.factoryId" :aria-label="`${row.name}加工厂`" :disabled="materialDisabled(row)" filterable clearable placeholder="选择加工厂" no-data-text="该工艺暂无加工厂，请先添加加工厂并关联该工艺"><ElOption v-for="factory in factories" :key="factory.id" :value="factory.id" :label="factory.name" /></ElSelect></td>
-            <td v-if="!planMode"><ElSelect v-model="row.zoneId" :aria-label="`${row.name}来源库区`" :disabled="materialDisabled(row)" :placeholder="`选择${materialName}来源库区`"><ElOption v-for="zone in row.zones" :key="zone.zone_id" :value="zone.zone_id" :label="`${zone.warehouse_name} / ${zone.zone_name}（${materialNumber(zone.available_quantity)} ${row.unit}）`" /></ElSelect></td>
-            </template>
-          </tr><tr v-if="!materialRows.length"><td :colspan="planMode ? 7 : 9" class="empty-cell">{{ !product ? '请先选择生产任务单和产品' : `该产品暂无可外发的${materialName}材料` }}</td></tr></tbody>
+            <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails><span v-if="row.external_supply">（外供）</span></td><td>{{ row.material || '—' }}</td><td>{{ materialSpecificationValue(row) }}</td><td>{{ row.color || '—' }}</td>
+            <td v-if="row.external_supply" colspan="3">—</td>
+            <template v-else><td class="num">{{ materialNumber(row.quantity) }} {{ row.unit }}</td><td>{{ factoryName(row.factoryId) }}</td><td>{{ materialZoneName(row) }}</td></template>
+          </tr></tbody>
         </table>
       </div>
       <label class="form-field dispatch-remark"><span>外发备注 <span class="muted">选填</span></span><ElInput v-model="remark" :disabled="locked || !canCreate" type="textarea" :rows="2" :maxlength="2000" placeholder="填写加工、交接或送货说明" /></label>
     </section>
-    <footer class="footer-bar"><div>{{ planMode && context?.sewing_inputs ? '本单车缝计划' : '本单计划外发' }} <strong>{{ totalText }}</strong><span v-if="!cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(totalArea, '—') }}</strong> ㎡</span><span v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</span><span v-if="feesDeferred" class="planned-amount"> · 加工费暂缓</span><span v-else class="planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(plannedAmount) }}</strong> 元</span><small v-if="!printEntry">{{ planMode ? '计划默认取BOM数量，可手填；进度仍按BOM计算。保存总单不预留库存，实际发出时才交接或扣库。' : '保存后预留数量，实物尚未发出；确认发出时才交接或扣库。' }}</small></div><ElButton :disabled="saving" @click="router.push({ name: printEntry ? 'cut-piece-printing' : 'workshop-outsourcing' })">返回</ElButton><ElButton :disabled="locked" @click="clearRows">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || (!pending && (locked || !canCreate))" @click="pending ? save() : checkDispatch()">{{ pending ? '核对本次提交' : printEntry ? '保存丝印外发单' : '保存委外加工单' }}</ElButton></footer>
+    <footer class="footer-bar"><div>{{ planMode && context?.sewing_inputs ? '本单车缝计划' : '本单计划外发' }} <strong>{{ totalText }}</strong><span v-if="!cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(totalArea, '—') }}</strong> ㎡</span><span v-if="feesDeferred" class="planned-amount"> · 加工费暂缓</span><span v-else class="planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(plannedAmount) }}</strong> 元</span><small v-if="!printEntry">{{ planMode ? '计划默认取BOM数量，可手填；进度仍按BOM计算。保存总单不预留库存，实际发出时才交接或扣库。' : '保存后预留数量，实物尚未发出；确认发出时才交接或扣库。' }}</small></div><ElButton :disabled="saving" @click="router.push({ name: 'workshop-outsourcing' })">返回</ElButton><ElButton :disabled="locked" @click="clearRows">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || (!pending && (locked || !canCreate))" @click="pending ? save() : checkDispatch()">{{ pending ? '核对本次提交' : printEntry ? '保存丝印外发单' : sewingEntry ? '保存车缝外发单' : '保存委外加工单' }}</ElButton></footer>
   </section>
-  <AppWindowDialog :model-value="dialog === 'change'" @update:model-value="dialog = ''; pendingChange = null" modal-class="tube-outsourcing-dialog" title="更换来源信息" :width="700"><p>更换后将清空当前填写的{{ categoryName }}<template v-if="cutting || !planMode">、附带{{ materialName }}</template>数量和加工厂，并重新核对{{ planMode ? 'BOM' : '材料及额度' }}。</p><p>更换生产任务单还需要重新选择产品。本次尚未保存，不会改变库存。</p><template #footer><ElButton @click="dialog = ''; pendingChange = null">保留当前填写</ElButton><ElButton type="primary" @click="applyChange">确认更换</ElButton></template></AppWindowDialog>
-  <AppWindowDialog :model-value="dialog === 'confirm'" @update:model-value="dialog = ''" modal-class="tube-outsourcing-dialog" :title="printEntry ? '核对并保存裁片丝印外发单' : `核对并保存${categoryName}${planMode ? '委外加工单' : '外发单'}`" width="80vw" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving"><div class="info-grid"><div class="info-cell"><span>生产任务单</span><b>{{ task?.task_number }}</b></div><div class="info-cell"><span>产品</span><b>{{ product?.product_name }}</b></div><div v-if="!planMode" class="info-cell"><span>材料来源</span><b>{{ labels[source] }}</b></div></div>
+  <AppWindowDialog :model-value="dialog === 'change'" @update:model-value="dialog = ''; pendingChange = null" modal-class="tube-outsourcing-dialog" title="更换来源信息" :width="700"><p>更换后将清空当前填写的{{ categoryName }}数量和加工厂，并重新核对{{ planMode ? 'BOM' : '材料及额度' }}。</p><p>更换生产任务单还需要重新选择产品。本次尚未保存，不会改变库存。</p><template #footer><ElButton @click="dialog = ''; pendingChange = null">保留当前填写</ElButton><ElButton type="primary" @click="applyChange">确认更换</ElButton></template></AppWindowDialog>
+  <AppWindowDialog :model-value="dialog === 'confirm'" @update:model-value="dialog = ''" modal-class="tube-outsourcing-dialog" :title="`核对并保存${orderName}`" width="80vw" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving"><div class="info-grid"><div class="info-cell"><span>生产任务单</span><b>{{ task?.task_number }}</b></div><div class="info-cell"><span>产品</span><b>{{ product?.product_name }}</b></div><div v-if="!planMode" class="info-cell"><span>材料来源</span><b>{{ labels[source] }}</b></div></div>
     <div class="tube-table-wrap"><table v-if="partFlow" class="tube-table confirm-table" :style="{ minWidth: `${partConfirmWidth}px` }">
       <colgroup><col v-for="column in partConfirmColumns" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
       <thead><tr><th v-for="column in partConfirmColumns" :key="column.key" :class="{ num: column.num }">{{ column.label }}</th></tr></thead>
@@ -616,7 +603,6 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         <span v-else :title="cellText(row, column.key)">{{ cellText(row, column.key) }}</span>
       </td></tr></tbody>
     </table><table v-else class="tube-table confirm-table"><colgroup><col style="width:160px" /><col style="width:100px" /><template v-if="!cutting"><col style="width:90px" /><col style="width:90px" /><col style="width:110px" /></template><col style="width:200px" /><col style="width:160px" /><template v-if="!cutting"><col style="width:150px" /><col style="width:100px" /></template><template v-if="!feesDeferred"><col style="width:150px" /><col style="width:150px" /></template><template v-if="!planMode && source === 'RAW_PIPE'"><col style="width:150px" /><col style="width:170px" /></template></colgroup><thead><tr><th>部位</th><th>材质</th><template v-if="!cutting"><th>形状</th><th>厚度 mm</th><th>喷塑颜色</th></template><th>加工厂</th><th class="num">{{ planMode ? '计划委外' : '本次外发' }}（{{ quantityUnit }}）</th><template v-if="!cutting"><th class="num">喷塑面积（㎡）</th><th>计价方式</th></template><template v-if="!feesDeferred"><th class="num">加工单价</th><th class="num">计划金额（元）</th></template><template v-if="!planMode && source === 'RAW_PIPE'"><th class="num">{{ planMode ? '折合' : '扣除' }}（根）</th><th class="num">{{ planMode ? '折合' : '扣除' }}（米）</th></template></tr></thead><tbody><tr v-for="row in entered" :key="row.component_identity"><td><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></td><td><span :title="cutting ? row.fabric_material : row.material">{{ (cutting ? row.fabric_material : row.material) || '—' }}</span></td><template v-if="!cutting"><td>{{ tubeMaterialColumn(row, 'shape') }}</td><td>{{ tubeMaterialColumn(row, 'thickness') }}</td><td>{{ tubeMaterialColumn(row, 'spray_color') }}</td></template><td>{{ factoryName(row.factoryId) }}</td><td class="num">{{ number(row.quantity) }}</td><template v-if="!cutting"><td class="num">{{ formatOutsourcingMoney(outsourcingLineArea(row.quantity, row.unit_area_sqm), '—') }}</td><td>{{ row.priceUnit === 'SQUARE_METER' ? '按㎡' : '按支' }}</td></template><template v-if="!feesDeferred"><td class="num">{{ formatOutsourcingMoney(row.unitPrice) }} 元/{{ row.priceUnit === 'SQUARE_METER' ? '㎡' : rowUnit(row) }}</td><td class="num">{{ formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm)) }}</td></template><template v-if="!planMode && source === 'RAW_PIPE'"><td class="num">{{ rootsText(row) }}</td><td class="num">{{ metersText(row) }}</td></template></tr></tbody></table></div>
-    <template v-if="enteredMaterials.length"><h2>同单附带{{ materialName }}</h2><div class="tube-table-wrap"><table class="tube-table confirm-material-table"><thead><tr><th>{{ materialName }}名称</th><th>材质</th><th v-if="cutting">规格</th><th>加工厂</th><th class="num">{{ planMode ? '计划数量' : '外发数量' }}</th><th v-if="!planMode">来源仓库 / 库区</th></tr></thead><tbody><tr v-for="row in enteredMaterials" :key="row.bom_line_id"><td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td><td :title="row.material">{{ row.material || '—' }}</td><td v-if="cutting" :title="row.specification">{{ row.specification || '—' }}</td><td>{{ factoryName(row.factoryId) }}</td><td class="num">{{ materialNumber(row.quantity) }} {{ row.unit }}</td><td v-if="!planMode">{{ materialZoneName(row) }}</td></tr></tbody></table></div></template>
-    <p>本次 {{ entered.length }} {{ printPieces ? '种裁片' : '个部位' }}、{{ factoryCount }} 家加工厂，共 <b>{{ totalText }}</b><template v-if="!cutting">，喷塑总面积 <b>{{ formatOutsourcingMoney(totalArea, '—') }} ㎡</b></template><template v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</template>。<template v-if="feesDeferred">加工费暂缓。</template><template v-else>计划加工金额 <b>{{ formatOutsourcingMoney(plannedAmount) }} 元</b>。</template><template v-if="!printPieces">每个部位只对应一家加工厂。</template><template v-if="partFlow">加工费按实际回货数量计算。</template></p><div class="notice">{{ planMode ? '保存后建立委外总单，计划量不等于实际发出数量。' : '保存后预留上述数量，实物尚未发出；请在外发单详情确认发出。' }}<br />{{ planMode ? '后续可分次外发、独立分次入库，回货不选择外发批次。' : '本单所有部位、所有厂家须统一一次登记回货并结束。' }}</div><template #footer><ElButton :disabled="saving" @click="dialog = ''">返回检查</ElButton><ElButton type="primary" :loading="saving" @click="save">{{ pending ? '核对本次提交' : '确认保存' }}</ElButton></template>
+    <p>本次 {{ entered.length }} {{ printPieces ? '种裁片' : '个部位' }}、{{ factoryCount }} 家加工厂，共 <b>{{ totalText }}</b><template v-if="!cutting">，喷塑总面积 <b>{{ formatOutsourcingMoney(totalArea, '—') }} ㎡</b></template>。<template v-if="feesDeferred">加工费暂缓。</template><template v-else>计划加工金额 <b>{{ formatOutsourcingMoney(plannedAmount) }} 元</b>。</template><template v-if="!printPieces">每个部位只对应一家加工厂。</template><template v-if="partFlow">加工费按实际回货数量计算。</template></p><div class="notice">{{ planMode ? '保存后建立委外总单，计划量不等于实际发出数量。' : '保存后预留上述数量，实物尚未发出；请在外发单详情确认发出。' }}<br />{{ planMode ? '后续可分次外发、独立分次入库，回货不选择外发批次。' : '本单所有部位、所有厂家须统一一次登记回货并结束。' }}</div><template #footer><ElButton :disabled="saving" @click="dialog = ''">返回检查</ElButton><ElButton type="primary" :loading="saving" @click="save">{{ pending ? '核对本次提交' : '确认保存' }}</ElButton></template>
   </AppWindowDialog>
 </template>

@@ -87,17 +87,17 @@ def purchase_reference(line, purchases, *, cutting):
     return result
 
 
-def add_plan_purchase_reference(context, schedule_product):
+def add_plan_purchase_reference(context, product_line):
     lines = {str(line.pk): line for line in BomLine.objects.filter(
         pk__in=[row['bom_line_id'] for row in context['rows']]
     ).select_related('section__bom', 'fabric_source_line__section__bom')}
     purchases = list(PurchaseOrderLine.objects.filter(
-        purchase_order__production_task_id=schedule_product.schedule.production_task_id,
+        purchase_order__production_task_id=product_line.production_task_id,
         purchase_order__archived_at__isnull=True,
         purchase_order__status__in=[PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING,
                                    PurchaseOrderStatus.COMPLETED],
-    ).filter(Q(product_line_id_snapshot=schedule_product.product_line_id)
-             | Q(product_line_id_snapshot__isnull=True, bom__product_line_id=schedule_product.product_line_id)
+    ).filter(Q(product_line_id_snapshot=product_line.pk)
+             | Q(product_line_id_snapshot__isnull=True, bom__product_line_id=product_line.pk)
     ).select_related('bom_line').prefetch_related(Prefetch(
         'material_inbound_lines', queryset=MaterialInboundLine.objects.select_related('inbound'))))
     cutting = context['source_kind'] in CUTTING_SOURCES

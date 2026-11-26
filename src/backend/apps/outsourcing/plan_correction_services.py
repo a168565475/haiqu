@@ -333,5 +333,5 @@ def correct_plan_record(*, order_id, data, request):
         actor_employee=request.employee, before_data=correction.before_data,
         after_data={**correction.after_data, 'record_correction': correction_data(correction),
                     'stock_movements': correction.stock_movements, 'version': order.version},
-        context_type='PRODUCTION_SCHEDULE', context_id=order.schedule_product.schedule_id, request=request)
+        **order.audit_context, request=request)
     return order, correction, True

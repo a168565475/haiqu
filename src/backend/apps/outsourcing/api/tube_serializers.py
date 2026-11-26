@@ -105,13 +105,21 @@ class TubePlanQuantityWriteSerializer(serializers.Serializer):
 class TubeSourceQuerySerializer(serializers.Serializer):
     is_plan = serializers.BooleanField(required=False)
     plan_id = serializers.UUIDField(required=False)
-    schedule_product_id = serializers.UUIDField()
+    schedule_product_id = serializers.UUIDField(required=False)
+    product_line_id = serializers.UUIDField(required=False)
     source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices, required=False)
     category = serializers.ChoiceField(choices=['tube', 'cutting'], required=False)
     zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     craft_id = serializers.UUIDField(required=False)
 
     def validate(self, attrs):
+        if not self.context.get('cut_piece_printing'):
+            if not attrs.get('schedule_product_id') and not (attrs.get('plan_id') and attrs.get('product_line_id')):
+                raise serializers.ValidationError({'schedule_product_id': '请选择产品。'})
+            if attrs.get('product_line_id') and not attrs.get('plan_id'):
+                raise serializers.ValidationError({'product_line_id': '生产任务产品仅用于已有丝印单发料。'})
+        if attrs.get('is_plan') and attrs.get('plan_id'):
+            raise serializers.ValidationError({'plan_id': '已有总单按实际可发数量登记。'})
         if attrs.get('category'):
             if not attrs.get('is_plan') or attrs.get('plan_id'):
                 raise serializers.ValidationError({'category': '加工类别仅用于新建需求计划，实际发货请选择材料来源。'})
@@ -169,6 +177,9 @@ class TubePlanMaterialWriteSerializer(TubeMaterialWriteSerializer):
 
 class TubeOrderWriteSerializer(TubeSourceQuerySerializer):
     category = None
+    plan_id = None
+    product_line_id = None
+    schedule_product_id = serializers.UUIDField()
     source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
     client_request_id = serializers.UUIDField()
     source_revision = serializers.CharField(min_length=64, max_length=64)

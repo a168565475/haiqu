@@ -1,3 +1,5 @@
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
+from apps.access_control.module_policy import has_permission
 from apps.access_control.resource_scopes import filter_crafts, enabled
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -11,6 +13,7 @@ from ..models import OutsourcingFactory, OutsourcingOrder, OutsourcingOrderStatu
 from ..selectors import factories_with_context
 from ..unified_selectors import (
     SOURCE_GROUP_LABELS, SOURCE_LABELS, VIEW_PERMISSIONS, UnifiedOrderFilters, unified_order_candidates, unified_order_rows,
+    workshop_regular_access,
 )
 from ..warehouse_access import WarehouseActionReadPermission, warehouse_crafts, warehouse_stage
 
@@ -26,7 +29,7 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
     serializer_class = UnifiedOutsourcingSummarySerializer
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
     warehouse_read_actions = {'list', 'options'}
-    action_permission_map = {"list": VIEW_PERMISSIONS, "options": VIEW_PERMISSIONS}
+    action_permission_map = dict.fromkeys(('list', 'options'), (*VIEW_PERMISSIONS, CUT_PIECE_PRINTING))
 
     @extend_schema(parameters=[UnifiedOrderFilters])
     def list(self, request):
@@ -40,15 +43,21 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["get"])
     def options(self, request):
         warehouse = warehouse_stage(request)
-        regular = bool(warehouse) or request.user.has_perm(VIEW_PERMISSIONS[0])
-        codes = OutsourcingCode.values if regular else ["POWDER_COATING"]
-        crafts = Craft.objects.filter(craft_type="EXTERNAL", status="ACTIVE", outsourcing_code__in=codes).order_by("name", "id")
+        printing = not warehouse and has_permission(request, CUT_PIECE_PRINTING)
+        regular = bool(warehouse) or (workshop_regular_access(request) if printing else request.user.has_perm(VIEW_PERMISSIONS[0]))
+        crafts = Craft.objects.filter(craft_type="EXTERNAL", status="ACTIVE", outsourcing_code__in=OutsourcingCode.values).order_by("name", "id")
         if warehouse:
             crafts = warehouse_crafts(request, crafts)
-        elif enabled():
-            regular_crafts = filter_crafts(crafts, request, VIEW_PERMISSIONS[0], "pk") if regular else crafts.none()
-            metal_crafts = filter_crafts(crafts.filter(outsourcing_code="POWDER_COATING"), request, VIEW_PERMISSIONS[1], "pk") if request.user.has_perm(VIEW_PERMISSIONS[1]) else crafts.none()
-            crafts = (regular_crafts | metal_crafts).distinct()
+        else:
+            visible = crafts if regular else crafts.none()
+            if regular and enabled():
+                visible = filter_crafts(crafts, request, VIEW_PERMISSIONS[0], 'pk')
+            if request.user.has_perm(VIEW_PERMISSIONS[1]):
+                metal = crafts.filter(outsourcing_code='POWDER_COATING')
+                visible = visible | (filter_crafts(metal, request, VIEW_PERMISSIONS[1], 'pk') if enabled() else metal)
+            if printing:
+                visible = visible | crafts.filter(outsourcing_code='SCREEN_PRINTING')
+            crafts = visible.distinct()
         visible_craft_ids = set(crafts.values_list("pk", flat=True))
         factories = OutsourcingFactory.objects.filter(status="ACTIVE")
         if warehouse or not regular or enabled():
@@ -56,7 +65,7 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
         return Response({"data": {
             "crafts": [{"id": str(row.pk), "name": row.name, "outsourcing_code": row.outsourcing_code} for row in crafts],
             "factories": [{"id": str(row.pk), "name": row.name, "crafts": [
-                {"id": str(link.craft_id), "name": link.craft_name_snapshot} for link in row.prefetched_craft_links if not (warehouse or enabled()) or link.craft_id in visible_craft_ids
+                {"id": str(link.craft_id), "name": link.craft_name_snapshot} for link in row.prefetched_craft_links if not (warehouse or enabled() or printing) or link.craft_id in visible_craft_ids
             ]} for row in factories_with_context(factories).order_by("name", "id")],
             "statuses": [{"value": value, "label": label} for value, label in [
                 *OutsourcingOrderStatus.choices, ("PENDING_HANDOFF", "待交接"),

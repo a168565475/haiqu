@@ -1,6 +1,6 @@
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
-import type { TubeCancelInput, TubeDispatchInput, TubeOptions, TubeOrderDetail, TubePendingOrderInput, TubeOrderResult, TubeSourceContext, TubeSourceKind, TubePlanDispatchInput, TubePlanReceiptInput, TubePlanRecordCorrectionInput, TubePlanQuantityInput } from '@/types/tubeOutsourcing'
+import type { TubeCancelInput, TubeDispatchInput, TubeOptions, TubeOrderDetail, TubePendingOrderInput, TubeOrderResult, TubeProductReference, TubeSourceContext, TubeSourceKind, TubePlanDispatchInput, TubePlanReceiptInput, TubePlanRecordCorrectionInput, TubePlanQuantityInput } from '@/types/tubeOutsourcing'
 
 const path = '/api/v1/tube-outsourcing-orders/'
 
@@ -8,8 +8,8 @@ export async function fetchTubeOptions(category?: 'cutting'): Promise<TubeOption
   const response = await apiClient.get<DataResponse<TubeOptions>>(`${path}options/`, ...(category ? [{ params: { category } }] : []))
   return response.data.data
 }
-export async function fetchTubeSource(params: {
-  schedule_product_id: string; source_kind?: TubeSourceKind; category?: 'tube' | 'cutting'; zone_id?: string; craft_id?: string; is_plan?: boolean; plan_id?: string
+export async function fetchTubeSource(params: TubeProductReference & {
+  source_kind?: TubeSourceKind; category?: 'tube' | 'cutting'; zone_id?: string; craft_id?: string; is_plan?: boolean; plan_id?: string
 }): Promise<TubeSourceContext> {
   const response = await apiClient.get<DataResponse<TubeSourceContext>>(`${path}source-context/`, { params, timeout: 15000 })
   return response.data.data

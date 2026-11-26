@@ -53,6 +53,6 @@ describe('领料关联详情的返回范围', () => {
     await wrapper.findAll('button').find(button => button.text() === '返回列表')!.trigger('click')
     expect(navigation.push).toHaveBeenLastCalledWith({ name: 'material-issues', query: {} })
     await wrapper.get('[data-testid="issue-metal-processing-entry"]').trigger('click')
-    expect(navigation.push).toHaveBeenLastCalledWith({ name: 'workshop-outsourcing', query: { tab: 'sources', issue_id: 'issue-1' } })
+    expect(navigation.push).toHaveBeenLastCalledWith({ name: 'workshop-metal-processing', query: { issue_id: 'issue-1' } })
   })
 })

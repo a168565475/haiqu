@@ -12,7 +12,6 @@ vi.mock('@/api/outsourcing', () => ({
   deleteOutsourcingOrder: api.remove, revokeDispatchedOutsourcingOrder: api.revoke,
 }))
 vi.mock('@/api/unifiedOutsourcing', async (original) => ({ ...await original<object>(), fetchUnifiedOutsourcingOrders: api.list, fetchUnifiedOutsourcingOptions: api.options }))
-vi.mock('./MetalProcessingP4View.vue', () => ({ default: { name: 'MetalProcessingP4View', props: ['mode', 'embedded'], emits: ['updated'], template: '<div data-testid="sources-workspace">来源工作区</div>' } }))
 vi.mock('@/components/outsourcing/OutsourcingPrintDialog.vue', () => ({ default: { props: ['record', 'kind'], emits: ['close'], template: '<div data-testid="print-dialog" />' } }))
 vi.mock('@/components/outsourcing/WarehouseOutsourcingActionDialog.vue', () => ({ default: { name: 'WarehouseOutsourcingActionDialog', props: ['record', 'action'], emits: ['closed', 'updated'], template: `<div data-testid="warehouse-action-dialog"><button @click="$emit('closed')">关闭</button></div>` } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { get is_superuser() { return permissions.superuser } }, hasPermission: (name: string) => permissions.values.includes(name) }) }))
@@ -172,14 +171,16 @@ describe('统一外发列表及来源入口', () => {
     vm.openWarehouseAction({ ...row, warehouse_actions: ['dispatch'] }, 'dispatch')
     expect(api.push).not.toHaveBeenCalled()
   })
-  it('外发单页只保留管材和裁片新建，并跳转对应专用表单', async () => {
+  it('委外加工并列管材、车缝、丝印新建入口', async () => {
     const wrapper = await createView()
     const buttons = wrapper.findAll('.heading-actions button')
     expect(buttons.some(button => button.text() === '新建外发单')).toBe(false)
     await buttons.find(button => button.text() === '新建管材外发单')!.trigger('click')
     expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new')
-    await buttons.find(button => button.text() === '新建裁片外发单')!.trigger('click')
+    await buttons.find(button => button.text() === '新建车缝外发单')!.trigger('click')
     expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new?category=cutting')
+    await buttons.find(button => button.text() === '新建丝印外发单')!.trigger('click')
+    expect(api.push).toHaveBeenLastCalledWith({ name: 'cut-piece-printing-new' })
   })
 
   it('管材单通过更多菜单分别打印，打开指定模板不触发行跳转', async () => {
@@ -227,52 +228,18 @@ describe('统一外发列表及来源入口', () => {
     expect(vm.printRequest).toBeNull()
   })
 
-  it('直接进入待外发材料不读取隐藏列表或筛选项，保留管材和裁片新建入口', async () => {
+  it('原材料页签链接进入统一列表，丝印专权只提供丝印建单和本人详情', async () => {
     route.query = { tab: 'sources' }
-    const wrapper = await createView()
-    expect(wrapper.find('[data-testid="sources-workspace"]').exists()).toBe(true)
-    expect(api.list).not.toHaveBeenCalled()
-    expect(api.options).not.toHaveBeenCalled()
-    const button = (label: string) => wrapper.findAll('.heading-actions button').find(item => item.text() === label)!
-    await button('新建管材外发单').trigger('click')
-    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new')
-    await button('新建裁片外发单').trigger('click')
-    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new?category=cutting')
-    expect(wrapper.findAll('.heading-actions button').some(item => item.text() === '新建外发单')).toBe(false)
-    expect(api.list).not.toHaveBeenCalled()
-    expect(api.options).not.toHaveBeenCalled()
-  })
-
-  it('来源操作更新不读取隐藏外发单，切回外发单重新读取最新列表及筛选项', async () => {
-    route.query = { tab: 'sources', issue_id: 'issue-1' }
-    api.replace.mockImplementation((target: { query: Record<string, string> }) => { route.query = target.query; return Promise.resolve() })
-    const wrapper = await createView()
-    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
-    await flushPromises()
-    expect(api.list).not.toHaveBeenCalled()
-    expect(api.options).not.toHaveBeenCalled()
-    await wrapper.get('#outsourcing-orders-tab').trigger('click')
-    await flushPromises()
-    expect(api.replace).toHaveBeenLastCalledWith({ path: '/workshop/outsourcing', query: { issue_id: 'issue-1' } })
+    permissions.superuser = false
+    permissions.values = ['outsourcing.manage_cutpieceprinting']
+    const wrapper = await createView({ ...row, record_type: 'TUBE', detail_access: 'CUT_PIECE_PRINTING' })
     expect(api.list).toHaveBeenCalledTimes(1)
-    expect(api.options).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.el-table__body').text()).toContain('HT-001')
-    await wrapper.get('#outsourcing-sources-tab').trigger('click')
-    await flushPromises()
-    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
-    await flushPromises()
-    expect(api.list).toHaveBeenCalledTimes(1)
-    expect(api.options).toHaveBeenCalledTimes(1)
-    const latestOptions = { statuses: [{ value: 'COMPLETED', label: '已完成' }], crafts: [], factories: [{ id: 'factory-new', name: '新加工厂' }] }
-    api.list.mockResolvedValueOnce({ data: [{ ...row, id: 'order-new', row_key: 'ORIGINAL:order-new', order_number: 'WW-NEW', production_task_number: 'HT-NEW' }], meta: { total: 1 } })
-    api.options.mockResolvedValueOnce(latestOptions)
-    await wrapper.get('#outsourcing-orders-tab').trigger('click')
-    await flushPromises()
-    expect(api.list).toHaveBeenCalledTimes(2)
-    expect(api.options).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('.el-table__body').text()).toContain('HT-NEW')
-    expect(wrapper.find('.el-table__body').text()).not.toContain('HT-001')
-    expect((wrapper.vm as any).options).toEqual(latestOptions)
+    expect(wrapper.find('[role="tablist"]').exists()).toBe(false)
+    expect(wrapper.findAll('.heading-actions button').map(button => button.text())).toEqual(['新建丝印外发单'])
+    const vm = wrapper.vm as any
+    expect(vm.canPrintRow(vm.rows[0])).toBe(false)
+    vm.openDetail(vm.rows[0])
+    expect(api.push).toHaveBeenCalledWith('/workshop/outsourcing/screen-printing/order-1')
   })
 
   it('产品材质替代品号，保留缺值和多款边界', async () => {
@@ -337,22 +304,13 @@ describe('统一外发列表及来源入口', () => {
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50, source_group: 'REWORK', search: 'WF-001' }))
   })
 
-  it('只有金工查看权限只保留来源tab，不加载普通外发列表；不出现普通新建和加工厂管理', async () => {
+  it('金工查看权限在统一列表读取关联外发单', async () => {
     permissions.superuser = false
     permissions.values = ['material_issues.view_metalprocessingsource']
-    const wrapper = await createView()
-    expect(api.list).not.toHaveBeenCalled()
-    expect(api.options).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('待外发材料')
-    expect(wrapper.text()).not.toContain('新建外发单')
-    expect(wrapper.find('[to="/workshop/outsourcing/factories"]').exists()).toBe(false)
-    route.query = { tab: 'sources', issue_id: 'issue-1' }
-    await flushPromises()
-    expect(wrapper.find('[data-testid="sources-workspace"]').exists()).toBe(true)
-    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
-    await flushPromises()
-    expect(api.list).not.toHaveBeenCalled()
-    expect(api.options).not.toHaveBeenCalled()
+    const wrapper = await createView({ ...row, detail_access: 'METAL' })
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).not.toContain('待外发材料')
+    expect(wrapper.findAll('.heading-actions button')).toHaveLength(0)
   })
 
   it('只有普通权限不显示来源区，无查看权限不请求列表或options', async () => {
@@ -361,7 +319,7 @@ describe('统一外发列表及来源入口', () => {
     let wrapper = await createView()
     expect(wrapper.text()).not.toContain('待外发材料')
     expect(wrapper.text()).not.toContain('新建管材外发单')
-    expect(wrapper.text()).not.toContain('新建裁片外发单')
+    expect(wrapper.text()).not.toContain('新建车缝外发单')
     wrapper.unmount()
     api.list.mockClear(); api.options.mockClear()
     permissions.values = []
@@ -390,14 +348,15 @@ describe('统一外发列表及来源入口', () => {
     expect(vm.rows[0].id).toBe(row.id)
   })
 
-  it('空列表保留筛选及两种专用新建入口并展示真实零总数', async () => {
+  it('空列表保留筛选及三种新建入口并展示真实零总数', async () => {
     const wrapper = await createView()
     api.list.mockResolvedValueOnce({ data: [], meta: { total: 0 } })
     await (wrapper.vm as any).load()
     expect(wrapper.text()).toContain('暂无外发单')
     expect(wrapper.text()).toContain('共 0 条')
     expect(wrapper.text()).toContain('新建管材外发单')
-    expect(wrapper.text()).toContain('新建裁片外发单')
+    expect(wrapper.text()).toContain('新建车缝外发单')
+    expect(wrapper.text()).toContain('新建丝印外发单')
     expect(wrapper.text()).not.toContain('新建外发单')
   })
 

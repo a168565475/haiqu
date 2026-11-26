@@ -1378,22 +1378,20 @@ export const router = createRouter({
       },
     },
     {
-      path: '/workshop/cut-piece-printing', name: 'cut-piece-printing',
-      component: () => import('@/views/outsourcing/CutPiecePrintingListView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 裁片丝印外发',
-        breadcrumbs: [{ label: '车间' }, { label: '裁片丝印外发' }], pageWidth: 'fluid', flushPage: true },
+      path: '/workshop/cut-piece-printing',
+      redirect: { name: 'workshop-outsourcing' },
     },
     {
-      path: '/workshop/cut-piece-printing/new', name: 'cut-piece-printing-new',
+      path: '/workshop/outsourcing/screen-printing/new', alias: '/workshop/cut-piece-printing/new', name: 'cut-piece-printing-new',
       component: () => import('@/views/outsourcing/TubeOutsourcingFormView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 新建裁片丝印外发单',
-        breadcrumbs: [{ label: '裁片丝印外发', to: '/workshop/cut-piece-printing' }, { label: '新建外发单' }], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 新建丝印外发单',
+        breadcrumbs: [{ label: '委外加工', to: '/workshop/outsourcing' }, { label: '新建丝印外发单' }], pageWidth: 'fluid', flushPage: true },
     },
     {
-      path: '/workshop/cut-piece-printing/:id', name: 'cut-piece-printing-detail',
+      path: '/workshop/outsourcing/screen-printing/:id', alias: '/workshop/cut-piece-printing/:id', name: 'cut-piece-printing-detail',
       component: () => import('@/views/outsourcing/CutPiecePrintingDetailView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'cut-piece-printing', headerTitle: '车间 / 裁片丝印外发单',
-        breadcrumbs: [{ label: '裁片丝印外发', to: '/workshop/cut-piece-printing' }, { label: '外发单详情' }], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 丝印外发单',
+        breadcrumbs: [{ label: '委外加工', to: '/workshop/outsourcing' }, { label: '丝印外发单' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/workshop/outsourcing/tube/:id',
@@ -1415,9 +1413,15 @@ export const router = createRouter({
       redirect: { name: 'workshop-outsourcing' },
     },
     {
+      path: '/workshop/metal-processing', name: 'workshop-metal-processing',
+      component: () => import('@/views/outsourcing/MetalProcessingP4View.vue'),
+      beforeEnter: to => ['issue_id', 'production_task_id'].some(key => typeof to.query[key] === 'string' && to.query[key]) || { name: 'workshop-metalworking-plan' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-metalworking-plan', headerTitle: '生产车间 / 金工完成登记',
+        breadcrumbs: [{ label: '金工计划', to: '/workshop/plans/metalworking' }, { label: '金工完成登记' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
       path: '/workshop/outsourcing/metal-processing',
-      name: 'workshop-outsourcing-metal-processing',
-      redirect: to => ({ name: 'workshop-outsourcing', query: { ...to.query, tab: 'sources' } }),
+      redirect: { name: 'workshop-outsourcing' },
     },
     {
       path: '/workshop/outsourcing/rework/:orderId',

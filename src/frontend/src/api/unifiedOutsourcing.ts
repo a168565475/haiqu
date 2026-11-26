@@ -17,6 +17,7 @@ export async function fetchUnifiedOutsourcingOptions(warehouse = false): Promise
 
 export function unifiedOutsourcingDetailPath(row: UnifiedOutsourcingOrder, warehouse = false): string {
   const base = warehouse ? '/warehouse/outsourcing' : '/workshop/outsourcing'
+  if (!warehouse && row.detail_access === 'CUT_PIECE_PRINTING') return `${base}/screen-printing/${encodeURIComponent(row.id)}`
   if (row.record_type === 'TUBE') return `${base}/tube/${encodeURIComponent(row.id)}`
   if (row.record_type === 'REWORK') return `${base}/rework/${encodeURIComponent(row.id)}`
   const target = `${base}/${encodeURIComponent(row.id)}`

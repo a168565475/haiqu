@@ -1,6 +1,9 @@
 """委外统一列表：先按原权限合并分页，再批量读取当页摘要。"""
 
-from apps.access_control.resource_scopes import can_order
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
+from apps.access_control.module_policy import has_permission
+from apps.access_control.resource_scopes import can_order, has_legacy_permission
+from apps.access_control.sales_policy import access_for
 from apps.material_issues.p4_access import scoped_records
 from collections import defaultdict
 from decimal import Decimal, localcontext
@@ -71,10 +74,20 @@ def _source_lines(request, filters):
     return lines
 
 
-def unified_order_sources(request, filters):
+def workshop_regular_access(request):
+    permission = VIEW_PERMISSIONS[0]
+    if not has_permission(request, permission):
+        return False
+    access = access_for(request)
+    scopes = access['actions'].get(permission, {}).get('scopes', [])
+    return access['is_superuser'] or set(scopes) != {'FOLLOWED'} or has_legacy_permission(request, permission)
+
+
+def unified_order_sources(request, filters, *, workshop_list=False):
     """返回统一列表使用的三个授权查询，供列表和只读统计共用。"""
     warehouse = filters.get('warehouse_stage') == 'all'
-    regular = warehouse or request.user.has_perm(VIEW_PERMISSIONS[0])
+    printing = workshop_list and not warehouse and has_permission(request, CUT_PIECE_PRINTING)
+    regular = warehouse or (workshop_regular_access(request) if printing else request.user.has_perm(VIEW_PERMISSIONS[0]))
     metal = not warehouse and request.user.has_perm(VIEW_PERMISSIONS[1])
     visible_handoffs = MetalProcessingOriginalHandoff.objects.filter(
         source__issue_line__in=_source_lines(request, filters),
@@ -115,9 +128,17 @@ def unified_order_sources(request, filters):
     reworks = reworks.annotate(record_type=Value("REWORK", output_field=CharField()),
                                unified_source=Value("REWORK", output_field=CharField()),
                                unified_access=Value("METAL", output_field=CharField()))
-    tubes = _tube_candidates(request, filters) if regular and getattr(settings, "TUBE_OUTSOURCING_ENABLED", False) else TubeOutsourcingOrder.objects.none().annotate(
-        record_type=Value("TUBE", output_field=CharField()), unified_source=Value("", output_field=CharField()),
-        unified_access=Value("TUBE", output_field=CharField()))
+    tube_orders = TubeOutsourcingOrder.objects.none()
+    detail_access = Value('TUBE', output_field=CharField())
+    if getattr(settings, 'TUBE_OUTSOURCING_ENABLED', False):
+        if regular:
+            tube_orders = warehouse_tube_orders(request) if warehouse else saved_orders_for_permission(request)
+        if printing:
+            print_orders = saved_orders_for_permission(request, CUT_PIECE_PRINTING)
+            detail_access = Case(When(pk__in=tube_orders.values('pk'), then=Value('TUBE')),
+                                 default=Value('CUT_PIECE_PRINTING'), output_field=CharField())
+            tube_orders = TubeOutsourcingOrder.objects.filter(Q(pk__in=tube_orders.values('pk')) | Q(pk__in=print_orders.values('pk')))
+    tubes = _tube_candidates(request, filters, queryset=tube_orders, detail_access=detail_access)
     for key in ("status", "craft_id"):
         if filters.get(key):
             originals = originals.filter(**{key: filters[key]})
@@ -159,19 +180,17 @@ def unified_order_sources(request, filters):
 
 def unified_order_candidates(request, filters):
     """UNION 只选择排序和定位列；三个渠道统一计数、排序和分页。"""
-    originals, reworks, tubes = unified_order_sources(request, filters)
+    originals, reworks, tubes = unified_order_sources(request, filters, workshop_list=True)
     fields = ("id", "updated_at", "record_type", "unified_source", "unified_access")
     return originals.order_by().values(*fields).distinct().union(
         reworks.order_by().values(*fields), tubes.order_by().values(*fields).distinct(), all=True,
     ).order_by("-updated_at", "-id", "record_type")
 
 
-def _tube_candidates(request, filters, queryset=None):
-    if queryset is None:
-        queryset = warehouse_tube_orders(request) if filters.get('warehouse_stage') == 'all' else saved_orders_for_permission(request)
+def _tube_candidates(request, filters, *, queryset, detail_access=None):
     tubes = queryset.filter(plan__isnull=True).annotate(
         record_type=Value("TUBE", output_field=CharField()),
-        unified_access=Value("TUBE", output_field=CharField()),
+        unified_access=detail_access if detail_access is not None else Value('TUBE', output_field=CharField()),
         unified_source=Case(When(source_kind="METAL", then=Value("TUBE_METAL")),
                             default=F("source_kind"), output_field=CharField()),
     )
@@ -179,7 +198,7 @@ def _tube_candidates(request, filters, queryset=None):
         if filters.get(key):
             tubes = tubes.filter(**{key: filters[key]})
     if filters.get("production_task_id"):
-        tubes = tubes.filter(schedule_product__schedule__production_task_id=filters["production_task_id"])
+        tubes = tubes.filter(product_line__production_task_id=filters["production_task_id"])
     if filters.get("issue_id"):
         # 新管材单不归属旧领料来源；不能按产品扩大旧来源筛选。
         tubes = tubes.none()
@@ -200,9 +219,10 @@ def _tube_candidates(request, filters, queryset=None):
     if keyword:
         search = (Q(order_number__icontains=keyword)
                   | Q(schedule_product__schedule__schedule_number__icontains=keyword)
-                  | Q(schedule_product__schedule__production_task__task_number__icontains=keyword))
+                  | Q(product_line__production_task__task_number__icontains=keyword))
         for field in ("product_name", "product_number", "item_number", "color_name"):
             search |= Q(**{f"schedule_product__product_snapshot__{field}__icontains": keyword})
+            search |= Q(schedule_product__isnull=True, **{f"product_line__{field}_snapshot__icontains": keyword})
         tubes = tubes.filter(search)
     return tubes
 
@@ -302,6 +322,7 @@ def _original_quantities(rows, request, filters, regular):
             handoffs = handoffs.filter(pk__in=warehouse_original_handoffs(request).values('pk'))
         else:
             handoffs = handoffs.filter(source__issue_line__in=_source_lines(request, filters))
+        handoffs = handoffs.select_related("original_order__schedule", "source__issue_line__issue__production_task")
     if filters.get("factory_id"):
         handoffs = handoffs.filter(factory_id=filters["factory_id"])
     handoffs = list(handoffs.select_related("source", "factory").order_by("created_at", "id"))
@@ -315,6 +336,10 @@ def _original_quantities(rows, request, filters, regular):
         factories[order_id][handoff.factory_id] = handoff.factory.name
         if rows[order_id]["source_issue_line_id"] is None:
             rows[order_id]["source_issue_line_id"] = str(handoff.source.issue_line_id)
+        if not regular:
+            issue = handoff.source.issue_line.issue
+            if issue.production_task_id == handoff.original_order.schedule.production_task_id:
+                rows[order_id]["production_task_number"] = issue.production_task.task_number
     if regular:
         dispatches = OutsourcingDispatchLine.objects.filter(dispatch__order_id__in=rows).select_related("dispatch", "unit")
         if filters.get("factory_id"):
@@ -348,8 +373,9 @@ def _tube_rows(candidates, filters):
     if not candidates:
         return {}
     sources = {row["id"]: row["unified_source"] for row in candidates}
+    access = {row['id']: row['unified_access'] for row in candidates}
     orders = TubeOutsourcingOrder.objects.filter(pk__in=sources).select_related(
-        "schedule_product__schedule__production_task", "product_line", "craft",
+        "schedule_product__schedule", "product_line__production_task", "craft",
     ).prefetch_related(
         Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id")),
         Prefetch("materials", queryset=TubeOutsourcingMaterial.objects.order_by("created_at", "id"), to_attr="list_materials"),
@@ -369,7 +395,7 @@ def _tube_rows(candidates, filters):
             plan_factories[str(value['order__plan_id'])][str(value['factory_id'])] = value['snapshot__factory_name'] or ''
     for order in orders:
         order.list_lines = list(order.lines.all())
-        row = _base_row(order, "TUBE", sources[order.pk], "TUBE")
+        row = _base_row(order, "TUBE", sources[order.pk], access[order.pk])
         from .tube_kinds import output_unit
         unit = output_unit(order.source_kind)
         lines = [line for line in order.list_lines if order.is_plan or not factory_id or str(line.factory_id) == factory_id]
@@ -386,15 +412,17 @@ def _tube_rows(candidates, filters):
                     factories[part['factory_id']] = part['factory_name']
             for material in order.source_snapshot.get('planned_materials', []):
                 factories[str(material['factory_id'])] = material.get('factory_name', '')
-        product = order.schedule_product.product_snapshot
+        product = (order.schedule_product.product_snapshot if order.schedule_product_id else {
+            field: getattr(order.product_line, f"{field}_snapshot")
+            for field in ("product_name", "product_number", "item_number", "color_name")})
         product = product if isinstance(product, dict) else {}
         row.update(
             is_plan=order.is_plan,
             part_flow=bool(order.source_snapshot.get('part_flow')),
             fees_deferred=bool(order.source_snapshot.get('part_flow')),
-            schedule_id=str(order.schedule_product.schedule_id),
-            schedule_number=order.schedule_product.schedule.schedule_number,
-            production_task_number=order.schedule_product.schedule.production_task.task_number,
+            schedule_id=str(order.schedule_product.schedule_id) if order.schedule_product_id else "",
+            schedule_number=order.schedule_product.schedule.schedule_number if order.schedule_product_id else "",
+            production_task_number=order.product_line.production_task.task_number,
             product={**{field: product.get(field, "") for field in ("product_name", "product_number", "item_number", "color_name")},
                      "material": product.get("material", order.product_line.material_snapshot)},
             product_count=1, craft={"id": str(order.craft_id), "name": order.craft.name},
@@ -526,7 +554,7 @@ def _warehouse_actions(request, rows):
     ).values_list('pk', flat=True)))
     from apps.material_issues.p4_services import original_good_return_context
     from apps.material_issues.original_order_services import original_order_context
-    for order in warehouse_original_dispatch_orders(request).filter(pk__in=original_ids).select_related('schedule', 'craft'):
+    for order in warehouse_original_dispatch_orders(request).filter(pk__in=original_ids).select_related('schedule__production_task', 'craft'):
         if original_order_context(order, request)['can_handoff']:
             allowed[('ORIGINAL', 'dispatch')].add(str(order.pk))
     for handoff in warehouse_original_handoffs(request).filter(original_order_id__in=original_ids).select_related('original_order', 'source', 'factory'):

@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -55,17 +55,17 @@ def powder_crafts(request, permission=VIEW_PERMISSION, *, category='tube'):
 
 
 def visible_products(request, permission=VIEW_PERMISSION, *, category='tube'):
-    crafts = powder_crafts(request, permission, category=category)
-    links = ProductionScheduleProductCraft.objects.filter(craft__in=crafts, craft_type_snapshot='EXTERNAL',
-                                                          removed_at__isnull=True)
     queryset = ProductionScheduleProduct.objects.filter(schedule__record_status='ACTIVE', removed_at__isnull=True,
-        pk__in=links.values('schedule_product_id'), product_line__production_task__archived_at__isnull=True
+        product_line__production_task__archived_at__isnull=True
     ).select_related('schedule__production_task', 'product_line__unit', 'unit',
         'product_line__production_task', 'product_line__image_file',
         'product_line__sales_order_delivery_batch_line__sales_order_line__product_image'
     ).prefetch_related('product_line__images__image_file').order_by('schedule_id', 'line_number', 'pk')
     if permission == CUT_PIECE_PRINTING:
-        return followed_printing_scope(queryset, request, 'schedule__production_task')
+        return queryset.filter(product_line_id__in=printing_product_lines(request).values('pk'))
+    links = ProductionScheduleProductCraft.objects.filter(craft__in=powder_crafts(request, permission, category=category),
+                                                          craft_type_snapshot='EXTERNAL', removed_at__isnull=True)
+    queryset = queryset.filter(pk__in=links.values('schedule_product_id'))
     schedules = outsourcing_source_schedules(request, permission=permission)
     from .source_access import filter_source_products
     return filter_source_products(queryset.filter(schedule__in=schedules), request, permission)
@@ -79,18 +79,50 @@ def followed_printing_scope(queryset, request, task_field):
     return queryset.filter(**{f'{task_field}__followers': request.employee}).distinct()
 
 
+def printing_product_lines(request):
+    from apps.boms.models import Bom, BomLine
+    from apps.production_tasks.models import ProductionTaskProduct
+    latest_bom = Bom.objects.filter(product_line_id=OuterRef('pk'), archived_at__isnull=True).order_by('-version_number', '-pk')
+    piece_boms = BomLine.objects.filter(component_kind='CUT_PIECE', section__bom__status='VERIFIED').values('section__bom_id')
+    lines = ProductionTaskProduct.objects.filter(production_task__archived_at__isnull=True,
+        production_task__status__in=['READY', 'IN_PRODUCTION']).alias(print_bom_id=Subquery(latest_bom.values('pk')[:1])
+        ).filter(print_bom_id__in=piece_boms).select_related('production_task', 'unit', 'image_file',
+        'sales_order_delivery_batch_line__sales_order_line__product_image').prefetch_related('images__image_file',
+        Prefetch('schedule_products', queryset=ProductionScheduleProduct.objects.filter(removed_at__isnull=True,
+            schedule__record_status='ACTIVE').select_related('schedule'), to_attr='active_print_schedules')
+        ).order_by('production_task__task_number', 'line_number', 'pk')
+    return followed_printing_scope(lines, request, 'production_task')
+
+
+def printing_source(request, data):
+    lines = printing_product_lines(request)
+    if data.get('product_line_id'):
+        lines = lines.filter(pk=data['product_line_id'])
+    schedule_id = data.get('schedule_product_id')
+    if schedule_id:
+        lines = lines.filter(schedule_products__pk=schedule_id, schedule_products__removed_at__isnull=True,
+                             schedule_products__schedule__record_status='ACTIVE')
+    line = get_object_or_404(lines)
+    schedules = line.active_print_schedules
+    if schedule_id:
+        schedule = next((product for product in schedules if product.pk == schedule_id), None)
+        if schedule is None:
+            raise NotFound('所选排产已变更，请重新选择产品。')
+    else:
+        schedule = schedules[0] if len(schedules) == 1 else None
+    craft = powder_crafts(request, CUT_PIECE_PRINTING).filter(pk=data['craft_id']).first()
+    if not craft:
+        raise ValidationError({'craft_id': '请选择已启用的丝印外协工艺。'})
+    return line, schedule, craft
+
+
 def source_product(request, schedule_product_id, permission=VIEW_PERMISSION, *, source_kind='RAW_PIPE', craft_id=None):
     from .source_access import require_source
-    if permission == CUT_PIECE_PRINTING:
-        if source_kind != 'CUTTING' or not craft_id:
-            raise PermissionDenied('跟单只可新建裁片丝印总单。')
-    else:
-        require_source(request, permission, source_kind)
+    require_source(request, permission, source_kind)
     category = source_category(source_kind)
     product = get_object_or_404(visible_products(request, permission, category=category), pk=schedule_product_id)
     from .source_access import require_source_product
-    if permission != CUT_PIECE_PRINTING:
-        require_source_product(request, permission, source_kind, product)
+    require_source_product(request, permission, source_kind, product)
     active_count = ProductionScheduleProduct.objects.filter(product_line_id=product.product_line_id,
         removed_at__isnull=True, schedule__record_status='ACTIVE').count()
     if active_count != 1:
@@ -106,8 +138,7 @@ def source_product(request, schedule_product_id, permission=VIEW_PERMISSION, *, 
     links = list(links_query.select_related('craft'))
     if len(links) != 1:
         raise ValidationError({'schedule_product_id': '未找到所选有效外发工艺，请先完善计划。'})
-    if permission != CUT_PIECE_PRINTING:
-        require_craft(request, permission, links[0].craft_id)
+    require_craft(request, permission, links[0].craft_id)
     return product, links[0].craft
 
 
@@ -135,18 +166,18 @@ def source_factories(request, craft=None, permission=VIEW_PERMISSION, *, categor
     return OutsourcingFactory.objects.filter(status='ACTIVE', craft_links__craft__in=crafts).distinct().order_by('name', 'pk')
 
 
-def product_summary(product):
-    task = product.schedule.production_task
-    line = product.product_line
-    return {'schedule_product_id': str(product.pk), 'product_line_id': str(line.pk),
+def product_summary(product, *, product_line=None):
+    line = product_line if product_line is not None else product.product_line
+    task = line.production_task
+    return {'schedule_product_id': str(product.pk) if product else None, 'product_line_id': str(line.pk),
         'task_id': str(task.pk), 'task_number': task.task_number, 'order_number': task.order_number,
-        'schedule_number': product.schedule.schedule_number, 'product_number': line.product_number_snapshot,
+        'schedule_number': product.schedule.schedule_number if product else '', 'product_number': line.product_number_snapshot,
         'item_number': line.item_number_snapshot, 'product_name': line.product_name_snapshot,
         'quantity': str(line.quantity), 'unit': line.unit.unit_name, 'color': line.color_name_snapshot}
 
 
-def product_display(product, *, printing=False):
-    line = product.product_line
+def product_display(product, *, printing=False, product_line=None):
+    line = product_line if product_line is not None else product.product_line
     image = production_task_product_image(line)
     if image is not None and not image.content_type.startswith('image/'):
         image = None
@@ -157,8 +188,9 @@ def product_display(product, *, printing=False):
             color_snapshot=line.color_name_snapshot, customer_color_snapshot=line.customer_color_snapshot,
             material_snapshot=line.material_snapshot)),
         'material': line.material_snapshot, 'image_file_id': str(image.pk) if image else None,
-        'image_url': reverse('cut-piece-printing-product-image' if printing else 'tube-outsourcing-order-product-image', kwargs={
-            'schedule_product_id': product.pk, 'file_id': image.pk}) if image else ''}
+        'image_url': (reverse('cut-piece-printing-line-image', kwargs={'product_line_id': line.pk, 'file_id': image.pk})
+            if printing else reverse('tube-outsourcing-order-product-image',
+                kwargs={'schedule_product_id': product.pk, 'file_id': image.pk})) if image else ''}
 
 
 def tube_options(request, *, category='tube', permission=VIEW_PERMISSION):
@@ -168,19 +200,25 @@ def tube_options(request, *, category='tube', permission=VIEW_PERMISSION):
     tasks = {}
     seen_products = set()
     crafts = powder_crafts(request, permission, category=category)
-    for product in visible_products(request, permission, category=category):
-        if product.schedule.production_task.status not in {'READY', 'IN_PRODUCTION'}:
+    printing_craft_ids = [str(craft.pk) for craft in crafts] if printing else []
+    if printing:
+        candidates = ((line, line.active_print_schedules[0] if len(line.active_print_schedules) == 1 else None)
+                      for line in printing_product_lines(request))
+    else:
+        candidates = ((product.product_line, product) for product in visible_products(request, permission, category=category))
+    for line, product in candidates:
+        if line.production_task.status not in {'READY', 'IN_PRODUCTION'}:
             continue
-        if product.product_line_id in seen_products:
+        if line.pk in seen_products:
             continue
-        seen_products.add(product.product_line_id)
-        row = product_summary(product)
+        seen_products.add(line.pk)
+        row = product_summary(product, product_line=line)
         task = tasks.setdefault(row['task_id'], {'id': row['task_id'], 'task_number': row['task_number'],
                                                 'order_number': row['order_number'], 'products': []})
         task['products'].append({'id': row['product_line_id'], **{key: row[key] for key in (
             'schedule_product_id', 'schedule_number', 'product_number', 'item_number', 'product_name',
-            'quantity', 'unit', 'color')}, **product_display(product, printing=printing),
-            'craft_ids': [str(value) for value in product.crafts.filter(removed_at__isnull=True,
+            'quantity', 'unit', 'color')}, **product_display(product, printing=printing, product_line=line),
+            'craft_ids': printing_craft_ids if printing else [str(value) for value in product.crafts.filter(removed_at__isnull=True,
                 craft_type_snapshot='EXTERNAL', craft__in=crafts).values_list('craft_id', flat=True)]})
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
         warehouse__warehouse_type__in=['MATERIAL', 'SEMI_FINISHED']).select_related('warehouse').order_by('warehouse_id', 'zone_name', 'pk')
@@ -208,7 +246,7 @@ def saved_orders_for_permission(request, permission=VIEW_PERMISSION):
     if permission == CUT_PIECE_PRINTING:
         printing = queryset.filter(Q(is_plan=True) | Q(plan__source_snapshot__screen_print_pieces=True),
             craft__outsourcing_code='SCREEN_PRINTING', source_snapshot__screen_print_pieces=True)
-        return followed_printing_scope(printing, request, 'schedule_product__schedule__production_task')
+        return followed_printing_scope(printing, request, 'product_line__production_task')
     if permission not in {DISPATCH_PERMISSION, RETURN_PERMISSION} and not request.user.is_superuser:
         queryset = queryset.exclude(source_snapshot__contains={'screen_print_pieces': True})
     legacy = queryset.filter(schedule_product__schedule_id__in=accessible_production_schedules(request).values('id'))
@@ -289,7 +327,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
                 total_meters += meter_value
         except (InvalidOperation, TypeError, ValueError, ArithmeticError):
             pass  # 只读详情保留原值；动作门禁会阻断不完整换算凭证。
-    summary = product_summary(order.schedule_product)
+    summary = product_summary(order.schedule_product, product_line=order.product_line)
     task_order_number = summary.pop('order_number')
     from .tube_materials import material_data
     result = {**summary, 'task_order_number': task_order_number,
@@ -309,7 +347,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'material_category': '辅料' if order.source_kind in CUTTING_SOURCES else '五金',
         'created_at': order.created_at.isoformat(), 'created_by_name': order.created_by_employee.display_name,
         'updated_at': order.updated_at.isoformat(),
-        'planned_quantity': str(order.schedule_product.planned_quantity),
+        'planned_quantity': str(order.schedule_product.planned_quantity if order.schedule_product_id else order.product_line.quantity),
         'specification': order.product_line.specification_snapshot, 'material': order.product_line.material_snapshot,
         'actual_dispatch_date': str(dispatch.actual_dispatch_date) if dispatch else None,
         'dispatched_at': dispatch.created_at.isoformat() if dispatch else None,
@@ -317,7 +355,6 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'cancelled_at': cancel.created_at.isoformat() if cancel else None,
         'cancelled_by_name': cancel.actor_employee.display_name if cancel else '',
         'cancel_remark': cancel.remark if cancel else '', 'permissions': permissions,
-        'schedule_product_id': str(order.schedule_product_id), 'product_line_id': str(order.product_line_id),
         'planned_dispatch_date': str(order.planned_dispatch_date), 'expected_return_date': str(order.expected_return_date),
         'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind in DIRECT_SOURCES else str(total_stock),
         'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines,
@@ -341,7 +378,7 @@ def tube_order_queryset():
     from .models import TubeOutsourcingOrder
     from django.db.models import Prefetch
     from .models import TubeOutsourcingAction
-    return TubeOutsourcingOrder.objects.select_related('schedule_product__schedule__production_task',
-        'schedule_product__product_line__unit', 'product_line', 'craft', 'zone__warehouse', 'created_by_employee')\
+    return TubeOutsourcingOrder.objects.select_related('schedule_product__schedule',
+        'product_line__production_task', 'product_line__unit', 'craft', 'zone__warehouse', 'created_by_employee')\
         .prefetch_related('lines', 'materials__order_line',
             Prefetch('actions', queryset=TubeOutsourcingAction.objects.select_related('actor_employee')))

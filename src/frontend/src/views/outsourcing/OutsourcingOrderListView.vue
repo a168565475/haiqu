@@ -11,7 +11,6 @@ import { fetchUnifiedOutsourcingOptions, fetchUnifiedOutsourcingOrders, unifiedO
 import OutsourcingPrintDialog from '@/components/outsourcing/OutsourcingPrintDialog.vue'
 import WarehouseOutsourcingActionDialog from '@/components/outsourcing/WarehouseOutsourcingActionDialog.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
-import MetalProcessingP4View from './MetalProcessingP4View.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { UnifiedOutsourcingOptions, UnifiedOutsourcingOrder, UnifiedOutsourcingStatus } from '@/types/unifiedOutsourcing'
 import type { OutsourcingPrintKind } from '@/types/outsourcingPrint'
@@ -25,19 +24,12 @@ const auth = useAuthStore()
 const hasPermission = (permission: string) => Boolean(auth.user?.is_superuser || auth.hasPermission(permission))
 const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
 const canViewWarehouse = computed(() => ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff', 'material_issues.confirm_metalprocessingexternalreturn'].some(hasPermission))
-const canViewSources = computed(() => !warehouseWorkspace.value && hasPermission('material_issues.view_metalprocessingsource'))
-const canViewRegularOrders = computed(() => hasPermission('outsourcing.view_outsourcingorder'))
-const canViewList = computed(() => warehouseWorkspace.value ? canViewWarehouse.value : canViewRegularOrders.value)
-const canViewOrders = computed(() => canViewSources.value || canViewList.value)
+const canCreatePrint = computed(() => !warehouseWorkspace.value && hasPermission('outsourcing.manage_cutpieceprinting'))
+const canViewOrders = computed(() => warehouseWorkspace.value ? canViewWarehouse.value : canCreatePrint.value
+  || hasPermission('outsourcing.view_outsourcingorder') || hasPermission('material_issues.view_metalprocessingsource'))
 const canCreateOriginal = computed(() => !warehouseWorkspace.value && hasPermission('outsourcing.add_outsourcingorder'))
 const canViewFactories = computed(() => !warehouseWorkspace.value && hasPermission('outsourcing.view_outsourcingfactory'))
 const options = ref<UnifiedOutsourcingOptions | null>(null)
-const activeTab = computed(() => {
-  if (warehouseWorkspace.value) return 'orders'
-  if (route.query.tab === 'sources' && canViewSources.value) return 'sources'
-  if (!canViewRegularOrders.value && canViewSources.value) return 'sources'
-  return 'orders'
-})
 const total = ref<number | null>(null)
 const page = ref(1)
 const pageSize = ref(50)
@@ -91,17 +83,8 @@ function openTubeCreate(category?: 'cutting'): void {
   if (canCreateOriginal.value && canViewOrders.value && !accessDenied.value) void router.push(category === 'cutting' ? '/workshop/outsourcing/tube/new?category=cutting' : '/workshop/outsourcing/tube/new')
 }
 
-function switchTab(tab: 'orders' | 'sources'): void {
-  if (tab === 'orders' && !canViewRegularOrders.value) return
-  if (tab === 'sources' && !canViewSources.value) return
-  const query = { ...route.query }
-  if (tab === 'sources') query.tab = 'sources'
-  else delete query.tab
-  void router.replace({ path: '/workshop/outsourcing', query })
-}
-
 async function loadOptions(): Promise<void> {
-  if (activeTab.value !== 'orders' || !canViewList.value) return
+  if (!canViewOrders.value) return
   try {
     options.value = await fetchUnifiedOutsourcingOptions(warehouseWorkspace.value)
   } catch (error) {
@@ -110,7 +93,7 @@ async function loadOptions(): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  if (activeTab.value !== 'orders' || !canViewList.value) return
+  if (!canViewOrders.value) return
   const current = ++requestSequence
   loading.value = true
   loadError.value = ''
@@ -165,7 +148,7 @@ function openWarehouseAction(row: UnifiedOutsourcingOrder, action: 'dispatch' | 
 }
 
 function canPrintRow(row: UnifiedOutsourcingOrder): boolean {
-  return canViewList.value && (row.record_type === 'TUBE' || (row.record_type === 'ORIGINAL' && row.detail_access === 'REGULAR'))
+  return canViewOrders.value && row.detail_access !== 'CUT_PIECE_PRINTING' && (row.record_type === 'TUBE' || (row.record_type === 'ORIGINAL' && row.detail_access === 'REGULAR'))
 }
 
 function canPrintSpray(row: UnifiedOutsourcingOrder): boolean {
@@ -236,7 +219,14 @@ async function removeRow(row: UnifiedOutsourcingOrder): Promise<void> {
   }
 }
 
-watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value === 'orders') void Promise.all([load(), loadOptions()]) }, { immediate: true })
+watch([canViewOrders, warehouseWorkspace], () => {
+  ++requestSequence
+  page.value = 1
+  rows.value = []
+  total.value = null
+  options.value = null
+  if (canViewOrders.value) void Promise.all([load(), loadOptions()])
+}, { immediate: true })
 </script>
 
 <template>
@@ -244,13 +234,8 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
     <section v-glass-spotlight class="erp-list-filter">
     <header class="outsourcing-heading erp-list-heading">
       <div class="heading-title"><h1>{{ warehouseWorkspace ? '委外管理' : '委外加工' }}</h1><span>{{ warehouseWorkspace ? '办理发料、回货入库，跟踪委外状态' : '统一查看外发与回货' }}</span></div>
-      <div v-if="activeTab === 'sources'" class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div>
     </header>
-    <nav v-if="!warehouseWorkspace" class="unified-outsourcing-tabs erp-list-tabs" role="tablist" aria-label="委外加工内容">
-      <button v-if="canViewRegularOrders" id="outsourcing-orders-tab" role="tab" :aria-selected="activeTab === 'orders'" aria-controls="outsourcing-orders-panel" :class="{ 'is-active': activeTab === 'orders' }" @click="switchTab('orders')">外发单</button>
-      <button v-if="canViewSources" id="outsourcing-sources-tab" role="tab" :aria-selected="activeTab === 'sources'" aria-controls="outsourcing-sources-panel" :class="{ 'is-active': activeTab === 'sources' }" @click="switchTab('sources')">待外发材料</button>
-    </nav>
-    <div v-if="activeTab === 'orders' && canViewList" class="outsourcing-filter-bar order-filter-bar unified-order-filter-bar erp-list-filters">
+    <div v-if="canViewOrders" class="outsourcing-filter-bar order-filter-bar unified-order-filter-bar erp-list-filters">
       <ElInput v-model="search" clearable aria-label="搜索外发单" placeholder="外发单号、任务单、产品名称、品号、货号" :disabled="!canViewOrders || accessDenied" @keyup.enter="applyFilters" />
       <ElSelect v-model="sourceKind" placeholder="全部材料来源" clearable aria-label="材料来源" :disabled="!canViewOrders || accessDenied || !options"><ElOption v-for="item in options?.source_groups || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="status" placeholder="全部状态" clearable aria-label="状态" :disabled="!canViewOrders || accessDenied || !options"><ElOption v-for="item in options?.statuses || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
@@ -259,11 +244,8 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
       <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" :disabled="loading || !canViewOrders || accessDenied" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" :disabled="loading || !canViewOrders || accessDenied" @click="applyFilters">应用筛选</ElButton></div>
     </div>
     </section>
-    <section v-if="activeTab === 'sources'" id="outsourcing-sources-panel" class="outsourcing-source-workspace outsourcing-page" role="tabpanel" aria-labelledby="outsourcing-sources-tab">
-      <MetalProcessingP4View mode="sources" embedded @updated="load" />
-    </section>
-    <section v-else-if="canViewList" id="outsourcing-orders-panel" class="erp-list-data" :role="warehouseWorkspace ? undefined : 'tabpanel'" :aria-labelledby="warehouseWorkspace ? undefined : 'outsourcing-orders-tab'">
-    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">历史单数量仅含所选加工厂；委外总单显示全单累计 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
+    <section v-if="canViewOrders" class="erp-list-data">
+    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建车缝外发单</ElButton><ElButton v-if="canCreatePrint" class="erp-button-motion" type="primary" @click="router.push({ name: 'cut-piece-printing-new' })">新建丝印外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">历史单数量仅含所选加工厂；委外总单显示全单累计 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
       <div class="d4-list-table-area erp-list-table-frame"><ElTable :data="rows" border height="100%" row-key="row_key" class="d4-list-table" @row-click="openDetail">
         <ElTableColumn prop="order_number" label="外发单号" width="170" show-overflow-tooltip><template #default="{ row }"><RouterLink class="order-number-link" :to="unifiedOutsourcingDetailPath(row, warehouseWorkspace)" @click.stop>{{ row.order_number }}</RouterLink></template></ElTableColumn>
         <ElTableColumn label="生产任务单" width="130" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
@@ -303,7 +285,7 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
             </div>
           </template>
         </ElTableColumn>
-        <template #empty><div class="d4-list-empty"><template v-if="!canViewOrders || accessDenied"><strong>{{ warehouseWorkspace ? '暂无委外管理操作权限' : '暂无委外加工查看权限' }}</strong><span>请联系管理员核对权限</span></template><template v-else-if="loading"><ElIcon class="is-loading"><Refresh/></ElIcon><strong>正在读取外发单</strong><span>读取完成后显示数量与状态</span></template><template v-else-if="loadError"><strong>外发单读取失败</strong><span>{{ loadError }}</span><ElButton class="erp-button-motion" @click="load">重新读取</ElButton></template><template v-else><strong>{{ search || sourceKind || status || craftId || factoryId ? '没有符合条件的外发单' : '暂无外发单' }}</strong><span>{{ warehouseWorkspace ? '可调整筛选条件；新建外发单后在此办理发料和入库' : '可调整筛选条件或新建管材、裁片外发单' }}</span></template></div></template>
+        <template #empty><div class="d4-list-empty"><template v-if="!canViewOrders || accessDenied"><strong>{{ warehouseWorkspace ? '暂无委外管理操作权限' : '暂无委外加工查看权限' }}</strong><span>请联系管理员核对权限</span></template><template v-else-if="loading"><ElIcon class="is-loading"><Refresh/></ElIcon><strong>正在读取外发单</strong><span>读取完成后显示数量与状态</span></template><template v-else-if="loadError"><strong>外发单读取失败</strong><span>{{ loadError }}</span><ElButton class="erp-button-motion" @click="load">重新读取</ElButton></template><template v-else><strong>{{ search || sourceKind || status || craftId || factoryId ? '没有符合条件的外发单' : '暂无外发单' }}</strong><span>{{ warehouseWorkspace ? '可调整筛选条件；新建外发单后在此办理发料和入库' : '可调整筛选条件或创建单据' }}</span></template></div></template>
       </ElTable></div>
       <footer class="outsourcing-pagination erp-list-footer"><span>{{ total === null ? '数量待读取' : `共 ${total} 条` }}</span><div v-if="total !== null" class="pagination"><ElSelect v-model="pageSize" class="page-size-picker" aria-label="每页条数" @change="page = 1; load()"><ElOption :value="20" label="20 条 / 页"/><ElOption :value="50" label="50 条 / 页"/></ElSelect><ElPagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" background @current-change="load" /></div><span v-else>页数 —</span></footer>
     </section>

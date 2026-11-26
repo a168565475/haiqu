@@ -165,7 +165,7 @@ function openMaterialIssueRecords(row: ScheduleItem) {
 }
 function openMetalProcessing(row: ScheduleItem) {
   if (config.value.category !== 'METAL' || !canViewMetalProcessing.value) return
-  void router.push({ name: 'workshop-outsourcing', query: { tab: 'sources',
+  void router.push({ name: 'workshop-metal-processing', query: {
     production_task_id: row.production_task_id, product_line_id: row.product_line_id,
   } })
 }

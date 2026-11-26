@@ -25,7 +25,7 @@ export interface UnifiedOutsourcingOrder extends Omit<OutsourcingOrder, 'status'
   planned_amount: string | null
   dispatched_quantities: OutsourcingQuantitySummary[]
   returned_quantities: OutsourcingQuantitySummary[]
-  detail_access: 'REGULAR' | 'METAL' | 'TUBE'
+  detail_access: 'REGULAR' | 'METAL' | 'TUBE' | 'CUT_PIECE_PRINTING'
   receipt_state?: 'NOT_RECEIVED' | 'RECORDED' | 'MISSING'
   shortage_quantities?: OutsourcingQuantitySummary[]
   source_issue_line_id?: string | null

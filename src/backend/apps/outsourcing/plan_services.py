@@ -24,18 +24,21 @@ from .processing_materials import processing_line_fields, require_saved_processi
 from apps.inventory.processing_material_snapshots import KILOGRAM_TUBE_PROCESSING_MESSAGE
 from .tube_kinds import CUTTING_FIELDS, CUTTING_SOURCES, lock_source_product, output_unit, source_category
 from .tube_selectors import (CREATE_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION,
-    require_saved_order_access, require_tube_feature, source_factories, source_product, source_zone)
+    printing_source, require_saved_order_access, require_tube_feature, source_factories, source_product, source_zone)
 from .tube_services import _json
 from .tube_prices import parse_unit_area
 
 
-def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False, request=None):
+def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False, request=None, printing_line=None):
     from .part_flow_sources import uses_part_flow, part_source_context
     if source_kind == 'PUBLIC_CUTTING' and BomLine.objects.filter(
             section__bom__product_line_id=schedule_product.product_line_id,
             section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists():
         raise ValidationError({'source_kind': '该 BOM 使用部位与裁片结构：车缝请选择车间裁片直发或裁片库存；丝印、刺绣请选择车缝部位来源。'})
-    if uses_part_flow(schedule_product.product_line_id, source_kind):
+    if printing_line is not None:
+        from .printed_pieces import screen_print_context
+        context = screen_print_context(product_line=printing_line, source_kind=source_kind, zone=zone, craft=craft, for_plan=for_plan)
+    elif uses_part_flow(schedule_product.product_line_id, source_kind):
         context = part_source_context(schedule_product=schedule_product, source_kind=source_kind,
             zone=zone, craft=craft, for_plan=for_plan, request=request)
     elif source_kind in CUTTING_SOURCES:
@@ -60,6 +63,14 @@ def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
     return context
 
 
+def _plan_product(request, data, permission):
+    if permission == CUT_PIECE_PRINTING:
+        return printing_source(request, data)
+    product, craft = source_product(request, data['schedule_product_id'], permission,
+        source_kind=data['source_kind'], craft_id=data.get('craft_id'))
+    return product.product_line, product, craft
+
+
 @stock_write_transaction
 def create_plan(*, data, request, permission=CREATE_PERMISSION):
     require_tube_feature()
@@ -73,17 +84,16 @@ def create_plan(*, data, request, permission=CREATE_PERMISSION):
         if not existing.is_plan or existing.request_payload_hash != payload_hash:
             raise Conflict('相同提交标识已用于不同委外内容。')
         return existing, False
-    product, craft = source_product(request, data['schedule_product_id'], permission,
-        source_kind=data['source_kind'], craft_id=data.get('craft_id'))
-    lock_source_product(product.product_line_id, data['source_kind'])
-    boms = list(Bom.objects.filter(product_line_id=product.product_line_id, archived_at__isnull=True)
+    line, product, craft = _plan_product(request, data, permission)
+    lock_source_product(line.pk, data['source_kind'])
+    boms = list(Bom.objects.filter(product_line=line, archived_at__isnull=True)
         .order_by('pk').select_for_update(of=('self',)))
     bom_lines = {str(line.pk): line for line in BomLine.objects.filter(section__bom__in=boms)
         .select_related('section').order_by('pk').select_for_update(of=('self',))}
-    product, craft = source_product(request, data['schedule_product_id'], permission,
-        source_kind=data['source_kind'], craft_id=data.get('craft_id'))
+    product_line, product, craft = _plan_product(request, data, permission)
     zone = source_zone(data['source_kind'], data.get('zone_id'))
-    context = plan_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, for_plan=True)
+    context = plan_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft, for_plan=True,
+                                  printing_line=product_line if permission == CUT_PIECE_PRINTING else None)
     if bool(context.get('screen_print_pieces')) != (permission == CUT_PIECE_PRINTING):
         raise PermissionDenied('请选择对应的委外建单入口。')
     if any(row.get('unit_price') is None for row in data['lines']):
@@ -96,17 +106,19 @@ def create_plan(*, data, request, permission=CREATE_PERMISSION):
         raise ValidationError({'lines': '；'.join(context['blockers']) or '当前BOM部件或实物身份不完整。'})
     if data['source_revision'] != context['source_revision']:
         raise Conflict('BOM或加工身份已变化，请刷新后重新保存。')
-    if TubeOutsourcingOrder.objects.filter(is_plan=True, product_line=product.product_line, craft=craft).exclude(status='CANCELLED').exists():
+    if TubeOutsourcingOrder.objects.filter(is_plan=True, product_line=product_line, craft=craft).exclude(status='CANCELLED').exists():
         raise ValidationError({'detail': '该产品与工艺已有有效委外总单，请在原总单登记发货或补料。'})
     requested_materials = data.get('materials', [])
+    if requested_materials and craft.outsourcing_code == 'SEWING':
+        raise ValidationError({'materials': '车缝辅料请在实际外发时填写。'})
     if context.get('screen_print_pieces'):
         from .models import TubeOutsourcingInput
         from .printed_pieces import planned_print_lines
         if requested_materials:
             raise ValidationError({'materials': '裁片丝印总单只选择需要丝印的裁片。'})
-        if planned_print_lines(product.product_line_id).filter(component_identity__in=selected_components).exists():
+        if planned_print_lines(product_line.pk).filter(component_identity__in=selected_components).exists():
             raise ValidationError({'lines': '所选裁片已有有效丝印总单。'})
-        if TubeOutsourcingInput.objects.filter(order__product_line_id=product.product_line_id,
+        if TubeOutsourcingInput.objects.filter(order__product_line=product_line,
                 order__status__in=['PROCESSING', 'COMPLETED'], component_identity__in=selected_components).exists():
             raise ValidationError({'lines': '所选裁片已经实际发出车缝，无法再安排整项丝印。'})
     if requested_materials and data['source_kind'] not in CUTTING_SOURCES:
@@ -140,8 +152,6 @@ def create_plan(*, data, request, permission=CREATE_PERMISSION):
     if context.get('sewing_inputs'):
         from .sewing_assignments import internal_sewing_factory_id
         own_factory_id = internal_sewing_factory_id()
-        if own_factory_id and any(row['factory_id'] == own_factory_id for row in requested_materials):
-            raise ValidationError({'materials': '附带外发辅料应选择外厂，本厂用料请在车间领料。'})
     for entered in data['lines']:
         row = rows.get(str(entered['component_identity']))
         if not row or row['blockers'] or Decimal(row['order_required']) <= 0:
@@ -184,10 +194,8 @@ def create_plan(*, data, request, permission=CREATE_PERMISSION):
         if internal_parts and not product.crafts.filter(removed_at__isnull=True, craft_type_snapshot='INTERNAL',
                                                        plan_category='SEWING').exists():
             raise ValidationError({'lines': '该产品未安排厂内车缝，请在生产排产中补选厂内车缝后再保存本厂部位。'})
-        if not lines and requested_materials:
-            raise ValidationError({'materials': '全由本厂制作的车缝单无需外发辅料。'})
     order = TubeOutsourcingOrder.objects.create(is_plan=True, order_number=next_business_number('OUTSOURCING_ORDER'),
-        schedule_product=product, product_line=product.product_line, bom_id=context['bom_id'], craft=craft,
+        schedule_product=product, product_line=product_line, bom_id=context['bom_id'], craft=craft,
         source_kind=data['source_kind'], zone=zone, planned_dispatch_date=data['planned_dispatch_date'],
         expected_return_date=data['expected_return_date'], remark=data.get('remark', ''),
         client_request_id=data['client_request_id'], request_payload_hash=payload_hash,
@@ -203,7 +211,7 @@ def create_plan(*, data, request, permission=CREATE_PERMISSION):
                        'price_unit': line.price_unit,
                        'unit_area_sqm': str(line.unit_area_sqm) if line.unit_area_sqm is not None else None,
                        'unit_price': str(line.unit_price) if line.unit_price is not None else None} for line in lines]},
-        context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
+        **order.audit_context, request=request)
     from apps.wecom.workshop_notifications import outsourcing_created
     if lines:
         outsourcing_created(order, request.employee, tube=True)
@@ -294,7 +302,7 @@ def update_plan_quantity(*, order_id, data, request):
     write_audit_log(object_type='TUBE_OUTSOURCING_ORDER', object_id=order.pk, action='PLAN_QUANTITY_UPDATED',
         actor_employee=request.employee, before_data={'lines': before},
         after_data={'lines': after, 'version': order.version},
-        context_type='PRODUCTION_SCHEDULE', context_id=order.schedule_product.schedule_id, request=request)
+        **order.audit_context, request=request)
     return order
 
 
@@ -403,7 +411,7 @@ def receive_plan(*, order_id, data, request):
         row.receipt = receipt
         row.stock_movement = credit_public_stock(identity=identity, zone=row.zone, quantity=row.received_quantity,
             source_type='TUBE_OUTSOURCING_RETURN', source_id=receipt.pk, source_line_id=row.pk, actor_employee=request.employee,
-            production_task=order.schedule_product.schedule.production_task_id, product_line=order.product_line_id,
+            production_task=order.product_line.production_task_id, product_line=order.product_line_id,
             bom_line=row.order_line.bom_line_id, snapshot=_json({'order_id': order.pk, 'order_number': order.order_number,
                 'receipt_number': receipt.receipt_number, 'receipt_date': receipt.receipt_date, 'is_plan': True,
                 'source_kind': order.source_kind,
@@ -419,5 +427,5 @@ def receive_plan(*, order_id, data, request):
         actor_employee=request.employee, after_data={'receipt_id': str(receipt.pk), 'receipt_number': receipt.receipt_number,
             'quantity': sum(row.received_quantity for row, _, _ in pending), 'version': order.version,
             'previous_status': previous_status},
-        context_type='PRODUCTION_SCHEDULE', context_id=order.schedule_product.schedule_id, request=request)
+        **order.audit_context, request=request)
     return order, True

@@ -14,6 +14,16 @@ describe('委外新建入口退役后的路由', () => {
     expect(navigation.currentRoute.value.meta.activeMenu).toBe('warehouse-outsourcing')
   })
 
+  it('丝印旧菜单地址进入委外加工，旧建单与详情地址仍归属同一菜单', async () => {
+    const navigation = createRouter({ history: createMemoryHistory(), routes: router.getRoutes() })
+    await navigation.push('/workshop/cut-piece-printing')
+    expect(navigation.currentRoute.value.name).toBe('workshop-outsourcing')
+    for (const path of ['/workshop/cut-piece-printing/new', '/workshop/cut-piece-printing/order-1',
+      '/workshop/outsourcing/screen-printing/new', '/workshop/outsourcing/screen-printing/order-1']) {
+      expect(router.resolve(path).meta.activeMenu).toBe('workshop-outsourcing')
+    }
+  })
+
   it('旧回货表单入口转到仓库，保留单据和查询参数', async () => {
     const navigation = createRouter({ history: createMemoryHistory(), routes: router.getRoutes() })
     await navigation.push('/workshop/outsourcing/tube/order-1/return?record=existing')

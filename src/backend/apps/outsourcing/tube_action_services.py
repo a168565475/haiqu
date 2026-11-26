@@ -208,5 +208,5 @@ def confirm_tube_action(*, order_id, kind, data, request, plan_dispatch=False):
             'version': order.version, 'source_kind': order.source_kind, 'action_id': str(record.pk),
             'client_request_id': str(record.client_request_id), 'actual_dispatch_date': str(record.actual_dispatch_date)
             if record.actual_dispatch_date else None, 'remark': record.remark, **record.snapshot},
-        context_type='PRODUCTION_SCHEDULE', context_id=order.schedule_product.schedule_id, request=request)
+        **order.audit_context, request=request)
     return order, record, True

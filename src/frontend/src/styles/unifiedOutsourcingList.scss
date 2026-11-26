@@ -4,7 +4,6 @@
   .heading-title > span, .list-toolbar small { color: var(--erp-color-text-secondary); font-size: 12px; }
   .heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .heading-actions > a.el-button { text-decoration: none; }
-  .unified-outsourcing-tabs { margin-bottom: 10px; }
   .unified-order-filter-bar > .el-input { width: 320px; max-width: 100%; }
   .unified-order-filter-bar > .el-select { width: 168px; }
   .unified-order-filter-bar > .factory-picker { width: 180px; }
@@ -30,5 +29,4 @@
   .d4-list-empty .el-icon { font-size: 22px; }
   .el-table__empty-text { width: 100%; }
   .page-size-picker { width: 128px; }
-  .outsourcing-source-workspace { flex: 1; min-height: 0; padding: 0; overflow: auto; background: transparent; }
 }

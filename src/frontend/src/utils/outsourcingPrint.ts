@@ -56,7 +56,7 @@ export function buildTubePrintDocument(detail: TubeOrderDetail, kind: Outsourcin
     preparedBy: value(detail.created_by_name), preparedDate: createdAt.slice(0, 10), deliveryDate: value(detail.expected_return_date),
     productName: value(detail.product_name), dispatchDate: value(detail.actual_dispatch_date || detail.planned_dispatch_date), remark: detail.remark || '',
     plans: [{
-      id: detail.schedule_product_id, completed: detail.status === 'COMPLETED' ? '是' : '否', orderNumber,
+      id: detail.schedule_product_id || detail.product_line_id, completed: detail.status === 'COMPLETED' ? '是' : '否', orderNumber,
       itemNumber: value(detail.item_number || detail.product_number), productName: value(detail.product_name),
       plannedQuantity: value(detail.planned_quantity), color: value(detail.color), specification: value(detail.specification),
     }],

@@ -75,9 +75,6 @@
   .field-grid .el-date-editor, .field-grid .el-input, .field-grid .el-select { width: 100%; }
   .dispatch-layout { display: grid; grid-template-columns: minmax(0, 912px) minmax(240px, 1fr); gap: 24px; align-items: start; }
   .dispatch-layout > .field-grid { grid-template-columns: repeat(4, minmax(0, 210px)); }
-  .dispatch-layout--cutting { grid-template-columns: minmax(0, 1146px) minmax(240px, 1fr); }
-  .dispatch-layout--cutting > .field-grid { grid-template-columns: repeat(5, minmax(0, 210px)); }
-  .dispatch-layout--cutting .schedule-field { grid-column: 1; }
   .product-overview { display: flex; align-items: start; gap: 16px; width: 100%; max-width: 560px; margin-left: auto; min-width: 0; }
   .product-overview__image { width: 72px; height: 72px; flex-shrink: 0; }
   .product-overview .product-image.large { width: 72px; height: 72px; }
@@ -107,7 +104,6 @@
   .tube-outsourcing-page {
     .dispatch-layout { grid-template-columns: minmax(0, 678px) minmax(190px, 1fr); }
     .dispatch-layout > .field-grid { grid-template-columns: repeat(3, minmax(0, 210px)); }
-    .dispatch-layout--cutting .schedule-field { grid-column: auto; }
     .product-overview { gap: 12px; }
     .product-overview__image, .product-overview .product-image.large { width: 64px; height: 64px; }
   }
@@ -116,7 +112,11 @@
   .tube-outsourcing-page {
     .dispatch-layout { grid-template-columns: minmax(0, 444px) minmax(190px, 1fr); }
     .dispatch-layout > .field-grid { grid-template-columns: repeat(2, minmax(0, 210px)); }
+    .dispatch-layout--sewing { grid-template-columns: minmax(0, 1fr); }
   }
+}
+@media (min-width: 761px) {
+  .tube-outsourcing-page .dispatch-layout--sewing > .field-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .tube-outsourcing-page {

@@ -57,7 +57,7 @@ def _sources_for_tasks(request, task_ids, product_ids):
     ).annotate(unified_access=Case(When(pk__in=regular.values("pk"), then=Value("REGULAR")),
         default=Value("METAL"), output_field=CharField()))
     tubes = saved_orders_for_permission(external_request, permission=OUTSOURCING_PERMISSION).filter(
-        schedule_product__schedule__production_task_id__in=task_ids,
+        product_line__production_task_id__in=task_ids,
     ) if request.user.has_perm(OUTSOURCING_PERMISSION) and getattr(settings, "TUBE_OUTSOURCING_ENABLED", False) else TubeOutsourcingOrder.objects.none()
     return originals, reworks, tubes, metal_request
 

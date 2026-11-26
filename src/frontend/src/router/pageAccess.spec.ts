@@ -100,12 +100,15 @@ describe('岗位菜单与独立页面权限', () => {
     auth.user!.effective_access.actions['inventory.view_materialinbound']!.scopes.push('MODULE')
     expect(canOpenPage('material-inventory', auth)).toBe(true)
   })
-  it('裁片丝印三个入口共用独立权限，普通外协授权不会打开它们', () => {
+  it('丝印专权可进入委外加工，建单和本人详情仍需专权', () => {
     const follower = followedReader(['outsourcing.manage_cutpieceprinting'])
     const workshop = reader(['outsourcing.view_outsourcingorder', 'outsourcing.add_outsourcingorder'])
-    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(entry => entry.key === 'cut-piece-printing')!
-    expect(canOpenMenu(item, follower)).toBe(true)
-    for (const route of ['cut-piece-printing', 'cut-piece-printing-new', 'cut-piece-printing-detail']) {
+    const items = sidebarMenuItems.flatMap(group => group.children ?? [group])
+    expect(items.some(item => item.key === 'cut-piece-printing')).toBe(false)
+    const menu = items.find(item => item.key === 'workshop-outsourcing')!
+    expect(canOpenMenu(menu, follower)).toBe(true)
+    expect(canOpenPage('workshop-outsourcing', follower)).toBe(true)
+    for (const route of ['cut-piece-printing-new', 'cut-piece-printing-detail']) {
       expect(canOpenPage(route, follower)).toBe(true)
       expect(canOpenPage(route, workshop)).toBe(false)
     }

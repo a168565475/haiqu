@@ -25,11 +25,11 @@ def uses_part_flow(product_id, source_kind):
             section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists())
 
 
-def _part_stock_by_zone(schedule_product, rows):
+def _part_stock_by_zone(product_line, rows):
     if not rows:
         return
-    issue = MaterialIssue(production_task_id=schedule_product.schedule.production_task_id,
-        product_line_id=schedule_product.product_line_id, stock_mode='PUBLIC_V2')
+    issue = MaterialIssue(production_task_id=product_line.production_task_id,
+        product_line_id=product_line.pk, stock_mode='PUBLIC_V2')
     lines = [MaterialIssueLine(id=row['bom_line_id'], issue=issue, line_type='SEMI',
         unit_id=row['input_identity']['unit_id'], requested_quantity=1,
         conversion_snapshot={'kind': 'PUBLIC_SEMI', 'public_identity': row['input_identity']}) for row in rows]
@@ -50,7 +50,7 @@ def add_cut_piece_stock_zones(schedule_product, plan, inputs):
         for quantity, snapshot in plan.lines.values_list('quantity', 'snapshot') for piece in snapshot.get('pieces', [])}
     short_rows = [row for row in inputs if not row['blockers']
         and Decimal(row['max_quantity']) < targets.get(row['component_identity'], 0)]
-    for row, by_zone in _part_stock_by_zone(schedule_product, short_rows):
+    for row, by_zone in _part_stock_by_zone(schedule_product.product_line, short_rows):
         if row.get('screen_print_required'):
             limit = Decimal(row['printed_available_quantity'])
             by_zone = {key: (total, min(free, limit)) for key, (total, free) in by_zone.items()}
@@ -62,7 +62,7 @@ def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
     sewing = craft.outsourcing_code == 'SEWING'
     if craft.outsourcing_code == 'SCREEN_PRINTING' and source_kind in {'CUTTING', 'PUBLIC_PIECE'}:
         from .printed_pieces import screen_print_context
-        return screen_print_context(schedule_product=schedule_product, source_kind=source_kind,
+        return screen_print_context(product_line=schedule_product.product_line, source_kind=source_kind,
             zone=zone, craft=craft, for_plan=for_plan)
     if source_kind == 'PROCESSOR' and (for_plan or request is None):
         raise ValidationError({'source_kind': '加工点发出仅用于仓库登记车缝总单的实际交接。'})
@@ -141,7 +141,7 @@ def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
             row['max_quantity'] = str(first_output_available(schedule_product.product_line_id, line, bom.order_quantity))
         elif row['input_identity']:
             stock_rows.append(row)
-    for row, by_zone in _part_stock_by_zone(schedule_product, stock_rows):
+    for row, by_zone in _part_stock_by_zone(schedule_product.product_line, stock_rows):
         amount, available = by_zone.get(zone.pk, (Decimal(0), Decimal(0)))
         if row.get('screen_print_required'):
             available = min(available, Decimal(row['printed_available_quantity']))

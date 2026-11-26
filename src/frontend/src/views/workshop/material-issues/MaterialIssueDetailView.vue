@@ -168,7 +168,7 @@ function back() {
 function edit() { void router.push({ name: 'material-issue-edit', params: { issueId: issueId.value } }) }
 function openMetalProcessing() {
   if (!canOpenMetalProcessing.value) return
-  void router.push({ name: 'workshop-outsourcing', query: { tab: 'sources', issue_id: issueId.value } })
+  void router.push({ name: 'workshop-metal-processing', query: { issue_id: issueId.value } })
 }
 function useProductImageFallback(event: Event) {
   const image = event.currentTarget as HTMLImageElement

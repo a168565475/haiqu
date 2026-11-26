@@ -239,6 +239,13 @@ describe('委外总单分次收发', () => {
     expect(api.dispatchTubePlan).toHaveBeenCalledWith(value.id, expect.objectContaining({ source_kind: 'PROCESSOR', zone_id: null,
       inputs: [{ component_identity: 'piece-1', quantity: '40', print_order_line_id: 'print-line' }], lines: [] }), value.etag)
   })
+  it('无排产的裁片丝印单按原单和产品行查询实际发料来源', async () => {
+    const value = typedColumnOrder()
+    Object.assign(value, { screen_print_pieces: true, sewing_inputs: false, schedule_product_id: null })
+    await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: value.id, product_line_id: value.product_line_id }))
+    expect(vi.mocked(api.fetchTubeSource).mock.calls[0]![0]).not.toHaveProperty('schedule_product_id')
+  })
   it('丝印裁片回仓不能超过厂内待交，先扣除已直送数量', async () => {
     const value = typedColumnOrder()
     Object.assign(value, { screen_print_pieces: true, sewing_inputs: false })

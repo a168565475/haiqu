@@ -28,7 +28,7 @@ watch(() => route.params.id, load, { immediate: true })
 
 <template>
   <section v-loading="loading" class="tube-outsourcing-page tube-outsourcing-detail">
-    <header class="page-heading"><h1>裁片丝印外发单</h1><RouterLink class="el-button" :to="{ name: 'cut-piece-printing' }">返回列表</RouterLink></header>
+    <header class="page-heading"><h1>裁片丝印外发单</h1><RouterLink class="el-button" :to="{ name: 'workshop-outsourcing' }">返回委外加工</RouterLink></header>
     <template v-if="error"><ElAlert :title="error" type="error" :closable="false" /><ElButton @click="load">重新读取</ElButton></template>
     <TubeOutsourcingPlanDetail v-else-if="order" :key="order.id" :order="order" :warehouse="false" read-only @refresh="load" />
   </section>

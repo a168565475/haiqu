@@ -15,7 +15,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
-    if (relatedReadOnly) {
+    if (relatedReadOnly && permission !== 'outsourcing.manage_cutpieceprinting') {
       const access = auth.user?.effective_access
       const scopes = access?.actions[permission]?.scopes
       if (scopes?.length && scopes.every(scope => scope === 'FOLLOWED')
@@ -36,7 +36,7 @@ const pagePermissions: Record<string, string[]> = {
   'purchase-order-create-details': ['procurement.add_purchaseorder'],
   'purchase-order-detail': ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'],
   'packaging-purchase-create': ['procurement.manage_packagingpurchase'],
-  'cut-piece-printing': ['outsourcing.manage_cutpieceprinting'],
+  'workshop-metal-processing': ['material_issues.view_metalprocessingsource'],
   'cut-piece-printing-new': ['outsourcing.manage_cutpieceprinting'],
   'cut-piece-printing-detail': ['outsourcing.manage_cutpieceprinting'],
   'packaging-purchase-batch': ['procurement.manage_packagingpurchase'],

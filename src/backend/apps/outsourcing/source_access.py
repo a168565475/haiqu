@@ -45,7 +45,7 @@ def require_source(request, permission, source_kind):
         raise PermissionDenied('当前动作未授权此库存或车间来源。')
 
 
-def require_source_product(request, permission, source_kind, product):
+def require_source_product(request, permission, source_kind, product, *, product_line=None):
     require_source(request, permission, source_kind)
     if not enforcing(request, permission) or source_kind not in DIRECT_WORKSHOPS:
         return
@@ -56,7 +56,13 @@ def require_source_product(request, permission, source_kind, product):
     ):
         return
     ids = {pk for source in sources if source.get('scope') == 'WORKSHOP' for pk in source.get('resource_ids', [])}
-    if not product.crafts.filter(removed_at__isnull=True, craft_type_snapshot='INTERNAL',
+    if product is None:
+        from apps.production_scheduling.models import ProductionScheduleProductCraft
+        links = ProductionScheduleProductCraft.objects.filter(schedule_product__product_line=product_line,
+            schedule_product__removed_at__isnull=True, schedule_product__schedule__record_status='ACTIVE')
+    else:
+        links = product.crafts
+    if not links.filter(removed_at__isnull=True, craft_type_snapshot='INTERNAL',
         plan_category=source_kind, craft__workshop_id__in=ids,
         craft__workshop__name=DIRECT_WORKSHOPS[source_kind]).exists():
         raise PermissionDenied('所选产品的实际工艺车间不在当前来源授权内。')
@@ -95,11 +101,11 @@ def scoped_tube_orders(queryset, request, permission, legacy_queryset):
         if scope == 'CRAFT':
             allowed |= Q(craft_id__in=source.get('resource_ids', []))
         elif scope == 'FOLLOWED' and permission == 'outsourcing.view_outsourcingorder':
-            allowed |= Q(schedule_product__schedule__production_task__followers=request.employee)
+            allowed |= Q(product_line__production_task__followers=request.employee)
         elif scope == 'STOCK':
             allowed |= Q(source_kind__in=STOCK_SOURCES)
             if permission in {'outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder'}:
-                allowed |= Q(source_kind='PROCESSOR')
+                allowed |= Q(source_kind='PROCESSOR') | Q(is_plan=True, source_snapshot__contains={'screen_print_pieces': True})
         elif scope == 'WORKSHOP':
             allowed |= Q(source_kind__in=workshop_sources(source.get('resource_ids', [])))
     if has_legacy_permission(request, permission):

@@ -191,15 +191,15 @@ def receipt_candidates(request, data):
             | Q(product_line__product_name_snapshot__icontains=search)
             | Q(lines__snapshot__factory_name__icontains=search)
             | Q(materials__snapshot__factory_name__icontains=search)
-            | Q(schedule_product__schedule__production_task__task_number__icontains=search)
-            | Q(schedule_product__schedule__production_task__order_number__icontains=search)).distinct()
+            | Q(product_line__production_task__task_number__icontains=search)
+            | Q(product_line__production_task__order_number__icontains=search)).distinct()
     total = eligible.count()
     offset = (data['page'] - 1) * data['page_size']
     page = list(tube_order_queryset().filter(pk__in=eligible.values('pk')).order_by('-created_at', '-pk')[
         offset:offset + data['page_size']])
     rows = []
     for order in page:
-        summary = product_summary(order.schedule_product)
+        summary = product_summary(order.schedule_product, product_line=order.product_line)
         dispatch = next(row for row in order.actions.all() if row.kind == 'DISPATCH')
         rows.append({'id': str(order.pk), 'order_number': order.order_number,
             'task_order_number': summary['order_number'], **{key: summary[key] for key in (

@@ -643,6 +643,7 @@ onMounted(() => { if (!props.lazy && !props.disabled) void initialize() })
 .material-selection--dropdown .catalog-names > header { flex-shrink: 0; }
 .material-selection--dropdown .catalog-name-list { flex: 1; min-height: 0; overflow-y: auto; }
 .material-selection--dropdown > .attribute-groups { grid-column: 2; grid-row: 2; grid-template-rows: repeat(var(--material-attribute-rows, 2), minmax(0, 1fr)); min-height: 0; overflow: hidden; padding: 10px; gap: 8px; }
+.material-selection--dropdown > .attribute-groups--fabric-colors { grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); }
 .material-selection--dropdown > .attribute-groups--four-columns { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .material-selection--dropdown > .attribute-groups--seven > .attribute-group:last-of-type { grid-column: span 2; }
 .material-selection--dropdown .attribute-group { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }

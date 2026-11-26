@@ -120,17 +120,17 @@ def processor_transfer_records(order):
     return list(records.values())
 
 
-def screen_print_context(*, schedule_product, source_kind, zone, craft, for_plan):
+def screen_print_context(*, product_line, source_kind, zone, craft, for_plan):
     from .part_flow_sources import _part_stock_by_zone
-    bom = Bom.objects.filter(product_line_id=schedule_product.product_line_id, archived_at__isnull=True).order_by('-version_number', '-pk').first()
+    bom = Bom.objects.filter(product_line=product_line, archived_at__isnull=True).order_by('-version_number', '-pk').first()
     blockers = []
-    if not bom or bom.status != 'VERIFIED' or bom.order_quantity != schedule_product.product_line.quantity:
+    if not bom or bom.status != 'VERIFIED' or bom.order_quantity != product_line.quantity:
         blockers.append('请先确认与订单数量一致的最新 BOM。')
     rows = []
     pieces = BomLine.objects.filter(section__bom=bom, component_kind='CUT_PIECE').select_related(
         'section__bom', 'parent_part', 'fabric_source_line__section').order_by('line_number', 'pk') if bom else []
     units = {unit.unit_name: unit for unit in ProductionUnit.objects.filter(status='ACTIVE', archived_at__isnull=True)}
-    reported = _reported_cut_pieces(schedule_product.product_line_id) if source_kind == 'CUTTING' and not for_plan else {}
+    reported = _reported_cut_pieces(product_line.pk) if source_kind == 'CUTTING' and not for_plan else {}
     for piece in pieces:
         parent = piece.parent_part
         row = {'component_identity': str(piece.component_identity), 'bom_line_id': str(piece.pk),
@@ -163,10 +163,10 @@ def screen_print_context(*, schedule_product, source_kind, zone, craft, for_plan
         if for_plan:
             row['max_quantity'] = str(quantity)
         elif source_kind == 'CUTTING':
-            row['max_quantity'] = str(cut_print_direct_available(schedule_product.product_line_id, piece,
+            row['max_quantity'] = str(cut_print_direct_available(product_line.pk, piece,
                 bom.order_quantity, reported=reported))
     if zone and not for_plan:
-        for row, by_zone in _part_stock_by_zone(schedule_product, [row for row in rows if not row['blockers']]):
+        for row, by_zone in _part_stock_by_zone(product_line, [row for row in rows if not row['blockers']]):
             total, free = by_zone.get(zone.pk, (0, 0))
             row['stock_quantity'], row['max_quantity'] = str(total), str(free)
     context = {'part_flow': True, 'screen_print_pieces': True, 'sewing_inputs': False, 'fees_deferred': False,

@@ -50,6 +50,7 @@ class TubeActionPermission(BasePermission):
 
 class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     printing = False
+    write_serializer = TubeOrderWriteSerializer
     permission_classes = [HasActiveEmployee, TubeActionPermission]
     warehouse_read_actions = {'retrieve', 'print_pdf', 'action_by_request', 'receipt_preview', 'receipt'}
     warehouse_read_permissions = (DISPATCH_PERMISSION, RETURN_PERMISSION)
@@ -83,13 +84,17 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         responses={(200, 'application/octet-stream'): OpenApiTypes.BINARY})
     @action(detail=False, methods=['get'],
         url_path=r'product-images/(?P<schedule_product_id>[^/.]+)/(?P<file_id>[^/.]+)')
-    def product_image(self, request, schedule_product_id=None, file_id=None):
-        schedule_product_id = serializers.UUIDField().run_validation(schedule_product_id)
+    def product_image(self, request, schedule_product_id=None, file_id=None, product_line_id=None):
         file_id = serializers.UUIDField().run_validation(file_id)
-        permission = CUT_PIECE_PRINTING if self.printing else VIEW_PERMISSION
-        product = get_object_or_404(visible_products(request, permission, category='all'), pk=schedule_product_id)
+        if self.printing and product_line_id is not None:
+            from ..tube_selectors import printing_product_lines
+            line = get_object_or_404(printing_product_lines(request), pk=product_line_id)
+        else:
+            schedule_product_id = serializers.UUIDField().run_validation(schedule_product_id)
+            permission = CUT_PIECE_PRINTING if self.printing else VIEW_PERMISSION
+            line = get_object_or_404(visible_products(request, permission, category='all'), pk=schedule_product_id).product_line
         # 图片读取只继承当前外发产品的可见范围，不能转为整张任务或通用文件权限。
-        image = production_task_product_image(product.product_line)
+        image = production_task_product_image(line)
         if image is None or image.pk != file_id or not image.content_type.startswith('image/'):
             raise Http404('产品图片不存在。')
         media_root = Path(settings.MEDIA_ROOT).resolve()
@@ -108,50 +113,53 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     @extend_schema(request=None, parameters=[TubeSourceQuerySerializer], responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=['get'], url_path='source-context')
     def source_context(self, request):
-        params = request.query_params
-        if self.printing:
-            params = params.copy()
-            if (params.pop('category', ['screen_printing']) != ['screen_printing'] or 'plan_id' in params
-                    or 'zone_id' in params or params.get('source_kind', 'CUTTING') != 'CUTTING'):
-                raise serializers.ValidationError('请从裁片丝印入口选择任务和产品。')
-            params.setdefault('is_plan', 'true')
-            params['source_kind'] = 'CUTTING'
-        serializer = TubeSourceQuerySerializer(data=params)
+        serializer = TubeSourceQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         if data['source_kind'] == 'PROCESSOR' and (not data.get('plan_id') or data.get('is_plan')):
             raise serializers.ValidationError('加工点发出须从仓库已保存的车缝总单办理。')
         permission = DISPATCH_PERMISSION if data.get('plan_id') else VIEW_PERMISSION
-        if self.printing:
-            if not data.get('is_plan'):
-                raise serializers.ValidationError('跟单入口仅支持裁片丝印总单。')
-            permission = CUT_PIECE_PRINTING
-        product, craft = source_product(request, data['schedule_product_id'], permission,
-            source_kind=data['source_kind'], craft_id=data.get('craft_id'))
+        plan = None
+        if data.get('plan_id'):
+            identifiers = {key: data[key] for key in ('product_line_id', 'schedule_product_id') if key in data}
+            plan = get_object_or_404(TubeOutsourcingOrder, pk=data['plan_id'], is_plan=True, **identifiers)
+            require_saved_order_access(request, plan, permission)
+        saved_printing = plan is not None and plan.source_snapshot.get('screen_print_pieces')
+        if saved_printing:
+            product, craft = plan.schedule_product, plan.craft
+            if data.get('craft_id') != plan.craft_id:
+                raise Http404('所选工艺与丝印总单不符。')
+        else:
+            if not data.get('schedule_product_id'):
+                raise serializers.ValidationError({'schedule_product_id': '请选择已排产的产品。'})
+            product, craft = source_product(request, data['schedule_product_id'], permission,
+                source_kind=data['source_kind'], craft_id=data.get('craft_id'))
         if data.get('category') == 'cutting' and craft.outsourcing_code == 'SEWING':
             # 沿用已有单据的加工分类；实际发料来源仍由后续发货单独选择。
             from apps.boms.models import BomLine
             if BomLine.objects.filter(section__bom__product_line_id=product.product_line_id,
                     section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists():
                 data['source_kind'] = 'CUTTING'
-        if data.get('plan_id'):
-            plan = get_object_or_404(TubeOutsourcingOrder, pk=data['plan_id'], is_plan=True,
-                schedule_product=product, craft=craft)
-            require_saved_order_access(request, plan, permission)
+        if plan is not None:
+            if plan.craft_id != craft.pk:
+                raise Http404('所选工艺与委外总单不符。')
             if data['source_kind'] == 'PROCESSOR' and not (plan.craft.outsourcing_code == 'SEWING'
                     and plan.source_snapshot.get('sewing_inputs')):
                 raise serializers.ValidationError('加工点发出只适用于以裁片为投入的车缝总单。')
         zone = source_zone(data['source_kind'], data.get('zone_id'))
         from apps.inventory.tube_outsourcing_limits import tube_source_context
         from ..tube_materials import tube_material_context
-        if data.get('is_plan') or data.get('plan_id'):
+        if saved_printing:
+            from ..part_flow_services import printing_dispatch_context
+            context = printing_dispatch_context(plan, data['source_kind'], zone, request)
+        elif data.get('is_plan') or data.get('plan_id'):
             from ..plan_services import plan_source_context
             context = plan_source_context(schedule_product=product, source_kind=data['source_kind'],
                 zone=zone, craft=craft, for_plan=bool(data.get('is_plan')), request=request)
             if data.get('plan_id'):
                 if bool(plan.source_snapshot.get('screen_print_pieces')) != bool(context.get('screen_print_pieces')):
                     raise serializers.ValidationError('该发料来源与委外总单记录的工艺不符。')
-            elif self.printing != bool(context.get('screen_print_pieces')):
+            elif context.get('screen_print_pieces'):
                 raise serializers.ValidationError('请选择对应的委外建单入口。')
             if data.get('plan_id') and data['source_kind'] == 'CUTTING' and context.get('sewing_inputs'):
                 from ..part_flow_sources import add_cut_piece_stock_zones
@@ -165,9 +173,11 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
         options = tube_options(request, permission=permission, category='screen_printing' if self.printing
                                else source_category(data['source_kind'])) if not data.get('plan_id') else {}
-        materials = {'material_rows': []} if context.get('screen_print_pieces') else tube_material_context(product, source_kind=data['source_kind'],
+        skip_materials = context.get('screen_print_pieces') or (data.get('is_plan') and craft.outsourcing_code == 'SEWING')
+        materials = {'material_rows': []} if skip_materials else tube_material_context(product, source_kind=data['source_kind'],
                        plan_mode=bool(data.get('is_plan') or data.get('plan_id')), for_plan=bool(data.get('is_plan')))
-        context = {**context, **product_summary(product), **product_display(product, printing=self.printing), **materials,
+        line = plan.product_line if plan else product.product_line
+        context = {**context, **product_summary(product, product_line=line), **product_display(product, printing=bool(self.printing or saved_printing), product_line=line), **materials,
                    **options, 'craft_name': craft.name, 'craft_id': str(craft.pk),
                    'output_unit': output_unit(data['source_kind']),
                    'material_category': '辅料' if data['source_kind'] in CUTTING_SOURCES else '五金',
@@ -193,12 +203,12 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             context['output_unit'] = next(iter(units)) if len(units) == 1 else ''
         if data.get('is_plan') and not self.printing:
             from ..plan_purchase_reference import add_plan_purchase_reference
-            add_plan_purchase_reference(context, product)
+            add_plan_purchase_reference(context, line)
         return Response({'data': context})
 
     @extend_schema(request=TubeOrderWriteSerializer, responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT})
     def create(self, request):
-        serializer = TubeOrderWriteSerializer(data=request.data)
+        serializer = self.write_serializer(data=request.data, context={'cut_piece_printing': self.printing})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         if self.printing:

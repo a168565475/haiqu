@@ -97,7 +97,7 @@ def plan_purchase_references(order):
     from .plan_purchase_reference import add_plan_purchase_reference
     context = {'source_kind': order.source_kind, 'rows': [
         {'id': str(line.pk), 'bom_line_id': str(line.bom_line_id)} for line in order.lines.all()]}
-    add_plan_purchase_reference(context, order.schedule_product)
+    add_plan_purchase_reference(context, order.product_line)
     return {row['id']: row['purchase_reference'] for row in context['rows']}
 
 

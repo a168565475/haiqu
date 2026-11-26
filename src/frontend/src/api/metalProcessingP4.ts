@@ -118,11 +118,6 @@ export async function createP4ExternalOrder(
   return data(await apiClient.post<DataResponse<P4ExternalOrder>>(`${reworkPath}${encodeURIComponent(reworkId)}/orders/`, payload))
 }
 
-export async function fetchP4ExternalOrders(): Promise<Paginated<P4ExternalOrder>> {
-  const response = await apiClient.get<{ data: P4ExternalOrder[]; meta: { total: number } }>(orderPath)
-  return { data: response.data.data, meta: { page: 1, page_size: response.data.data.length, total: response.data.meta.total, total_pages: 1 } }
-}
-
 export async function fetchP4ExternalOrder(id: string, warehouse = false): Promise<P4ExternalOrder> {
   return data(await apiClient.get<DataResponse<P4ExternalOrder>>(`${orderPath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }

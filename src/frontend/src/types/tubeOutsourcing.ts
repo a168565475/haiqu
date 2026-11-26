@@ -16,7 +16,7 @@ export interface CuttingAttributes {
 export interface TubeProduct {
   craft_ids?: string[]
   id: string
-  schedule_product_id: string
+  schedule_product_id: string | null
   schedule_number: string
   product_number: string
   item_number: string
@@ -84,7 +84,7 @@ export interface TubeSourceContext {
   part_flow?: boolean; sewing_inputs?: boolean; fees_deferred?: boolean
   inputs?: TubePieceSource[]
   category?: 'tube' | 'cutting'; craft_id?: string; material_category?: string; output_unit?: string
-  source_revision: string; source_kind: TubeSourceKind; schedule_product_id: string; product_line_id: string
+  source_revision: string; source_kind: TubeSourceKind; schedule_product_id: string | null; product_line_id: string
   task_id: string; task_number: string; order_number: string; schedule_number: string
   product_number: string; item_number: string; product_name: string; quantity: string; unit: string; color: string
   specification: string; specification_display: string; material: string; image_file_id: string | null; image_url: string
@@ -92,16 +92,21 @@ export interface TubeSourceContext {
   tasks: TubeTask[]; factories: TubeFactory[]; zones: TubeZone[]; rows: TubeSourceRow[]
   material_rows?: TubeMaterialRow[]; material_source_revision?: string
 }
-export interface TubeOrderInput {
+export type TubeProductReference =
+  | { schedule_product_id: string; product_line_id?: never }
+  | { product_line_id: string; schedule_product_id?: never }
+
+interface TubeOrderFields {
   is_plan?: boolean
   craft_id?: string
-  client_request_id: string; source_revision: string; schedule_product_id: string; source_kind: TubeSourceKind
+  client_request_id: string; source_revision: string; source_kind: TubeSourceKind
   zone_id: string | null; planned_dispatch_date: string; expected_return_date: string; remark: string
   lines: Array<{ component_identity: string; quantity: string; factory_id: string; price_unit?: OutsourcingPriceUnit; unit_price: string | null }>
   materials?: TubePlannedMaterialInput[]; material_source_revision?: string
 }
+export type TubeOrderInput = TubeOrderFields & TubeProductReference
 // 已提交但结果未知的旧请求须按原内容核对，不能补价或重写五金的绑定方式。
-export interface TubePendingOrderInput extends Omit<TubeOrderInput, 'lines' | 'materials'> {
+export type TubePendingOrderInput = Omit<TubeOrderFields, 'lines' | 'materials'> & TubeProductReference & {
   lines: Array<{ component_identity: string; quantity: string; factory_id: string; price_unit?: OutsourcingPriceUnit; unit_price?: string | null }>
   materials?: Array<TubePlannedMaterialInput | { bom_line_id: string; component_identity: string; quantity: string; zone_id: string }>
 }
@@ -110,7 +115,7 @@ export interface TubeOrderResult {
   plan_id?: string | null
   category?: 'tube' | 'cutting'; craft_id?: string; craft_name?: string; output_unit?: string
   id: string; order_number: string; status: string; version: number; etag: string; created: boolean
-  client_request_id: string; source_kind: TubeSourceKind; schedule_product_id: string; product_line_id: string
+  client_request_id: string; source_kind: TubeSourceKind; schedule_product_id: string | null; product_line_id: string
   planned_dispatch_date: string; expected_return_date: string; total_quantity: string
   total_stock_quantity: string | null; total_meters: string | null
   total_area_sqm: string | null

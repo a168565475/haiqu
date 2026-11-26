@@ -28,7 +28,7 @@ class TubeOutsourcingOrder(TimeStampedModel):
     is_plan = models.BooleanField(default=False)
     plan = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='dispatch_batches')
     stock_mode = models.CharField(max_length=16, default='PUBLIC_V2')
-    schedule_product = models.ForeignKey('production_scheduling.ProductionScheduleProduct', on_delete=models.PROTECT,
+    schedule_product = models.ForeignKey('production_scheduling.ProductionScheduleProduct', null=True, blank=True, on_delete=models.PROTECT,
                                          related_name='tube_outsourcing_orders')
     product_line = models.ForeignKey('production_tasks.ProductionTaskProduct', on_delete=models.PROTECT,
                                      related_name='tube_outsourcing_orders')
@@ -56,6 +56,8 @@ class TubeOutsourcingOrder(TimeStampedModel):
         default_permissions = ()
         ordering = ['-created_at', '-id']
         constraints = [
+            models.CheckConstraint(condition=Q(schedule_product__isnull=False) | Q(source_snapshot__contains={'screen_print_pieces': True}),
+                                   name='tube_schedule_or_piece_print'),
             models.CheckConstraint(condition=Q(is_plan=False) | Q(plan__isnull=True), name='tube_plan_not_nested'),
             models.UniqueConstraint(fields=['product_line', 'craft'], condition=Q(is_plan=True) & ~Q(status='CANCELLED'), name='tube_active_plan_unique'),
             models.CheckConstraint(condition=Q(stock_mode='PUBLIC_V2'), name='tube_order_public_mode'),
@@ -67,6 +69,12 @@ class TubeOutsourcingOrder(TimeStampedModel):
                 | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'], zone__isnull=False)), name='tube_order_zone_shape'),
         ]
         indexes = [models.Index(fields=['product_line', 'source_kind', 'status'], name='tube_order_quota_idx')]
+
+    @property
+    def audit_context(self):
+        if self.schedule_product_id:
+            return {'context_type': 'PRODUCTION_SCHEDULE', 'context_id': self.schedule_product.schedule_id}
+        return {'context_type': 'PRODUCTION_TASK', 'context_id': self.product_line.production_task_id}
 
     def delete(self, *args, **kwargs):
         raise ValidationError('已保存管材外发单须保留，不支持直接删除。')

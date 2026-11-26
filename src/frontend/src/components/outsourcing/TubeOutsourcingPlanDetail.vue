@@ -292,7 +292,9 @@ async function loadSource() {
   loading.value = true
   try {
     owned.assertCurrent()
-    const result = await fetchTubeSource({ schedule_product_id: props.order.schedule_product_id, source_kind: source.value, plan_id: props.order.id,
+    const result = await fetchTubeSource({
+      ...(props.order.schedule_product_id ? { schedule_product_id: props.order.schedule_product_id } : { product_line_id: props.order.product_line_id }),
+      source_kind: source.value, plan_id: props.order.id,
       ...(props.order.craft_id ? { craft_id: props.order.craft_id } : {}), ...(direct.value ? {} : { zone_id: zone.value }) })
     if (!isCurrent() || disposed || sequence !== requestSequence) return
     context.value = result

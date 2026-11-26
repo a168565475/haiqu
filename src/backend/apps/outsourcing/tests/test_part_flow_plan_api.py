@@ -96,6 +96,44 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(response.status_code, expected, response.data)
         return response.data.get('data')
 
+    def test_sewing_accessories_are_entered_only_on_actual_dispatch(self):
+        from apps.inventory.stock_services import credit_material_stock
+        from apps.products.models import RawMaterialInformation
+
+        category, _ = ProductCategory.objects.get_or_create(category_name='辅料', item_type='MATERIAL')
+        raw = RawMaterialInformation.objects.create(material_number='SEW-AUX', item_type='MATERIAL',
+            category=category, unit=self.part_unit, material_name='随单扣件')
+        accessory = BomLine.objects.create(section=self.cotton.fabric_source_line.section, line_number=2,
+            part_name='随单扣件', unit='个', unit_consumption='1', total_consumption='100',
+            raw_values={'source_inventory_material_id': str(raw.pk), 'purchase_required': True})
+        material = {'bom_line_id': str(accessory.pk), 'factory_id': str(self.factory.pk), 'quantity': '2',
+                    'zone_id': str(self.raw_zone.pk)}
+        context = self.part_context()
+        self.assertEqual(context['material_rows'], [])
+        today = str(timezone.localdate())
+        plan = {'is_plan': True, 'client_request_id': str(uuid.uuid4()), 'source_revision': context['source_revision'],
+                'schedule_product_id': str(self.schedule_product.pk), 'source_kind': 'CUTTING',
+                'craft_id': str(self.external_sewing.pk), 'planned_dispatch_date': today, 'expected_return_date': today,
+                'lines': [{'component_identity': str(self.part.component_identity), 'quantity': '100',
+                           'factory_id': str(self.factory.pk), 'unit_price': '1'}]}
+        rejected = self.client.post(BASE, {**plan, 'materials': [material], 'material_source_revision': '0' * 64}, format='json')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('车缝辅料请在实际外发时填写', str(rejected.data))
+        saved = self.client.post(BASE, plan, format='json')
+        self.assertEqual(saved.status_code, 201, saved.data)
+        order = saved.data['data']
+        balance = credit_material_stock(raw_material=raw, unit=self.part_unit, zone=self.raw_zone, quantity=5,
+            source_type='TEST_SEWING_AUX', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee).balance
+        context = self.part_context(order=order)
+        self.assertIn(str(accessory.pk), [row['bom_line_id'] for row in context['material_rows']])
+        response = self.client.post(BASE + order['id'] + '/plan-dispatch/', {'client_request_id': str(uuid.uuid4()),
+            'actual_dispatch_date': today, 'source_kind': 'CUTTING', 'inputs': [{'component_identity': str(self.parts[0].component_identity), 'quantity': '1'}],
+            'materials': [material], 'material_source_revision': context['material_source_revision']},
+            format='json', HTTP_IF_MATCH=order['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        balance.refresh_from_db()
+        self.assertEqual(balance.quantity, 3)
+
     def dispatch_part(self, order, quantity, source='CUTTING', piece=None):
         row = {'component_identity': str((piece or self.parts[0]).component_identity), 'quantity': str(quantity)}
         payload = {'client_request_id': str(uuid.uuid4()), 'actual_dispatch_date': str(timezone.localdate()),
@@ -608,19 +646,19 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(order['plan_summary']['dispatched_quantity'], '20')
         self.assertEqual(order['plan_summary']['input_totals'], [{'unit': '片', 'dispatched_quantity': '20'}])
 
-    def create_print_plan(self, factory):
+    def create_print_plan(self, factory, *, product_ref=None):
         piece = self.parts[0]
         component = str(piece.component_identity)
         today = str(timezone.localdate())
         printing_api = '/api/v1/cut-piece-printing-orders/'
-        options = self.client.get(printing_api + 'source-context/', {
-            'schedule_product_id': str(self.schedule_product.pk), 'craft_id': str(self.print_craft.pk)})
+        product_ref = product_ref or {'schedule_product_id': str(self.schedule_product.pk)}
+        options = self.client.get(printing_api + 'source-context/', {**product_ref, 'craft_id': str(self.print_craft.pk)})
         self.assertEqual(options.status_code, 200, options.content[:240])
         context = options.data['data']
         row = next(item for item in context['rows'] if item['component_identity'] == component)
         self.assertEqual(Decimal(row['order_required']), 200)  # 每个成品需要两片该裁片。
         printing = self.client.post(printing_api, {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
-            'schedule_product_id': str(self.schedule_product.pk), 'source_kind': 'CUTTING',
+            **product_ref, 'source_kind': 'CUTTING',
             'craft_id': str(self.print_craft.pk), 'source_revision': context['source_revision'],
             'planned_dispatch_date': today, 'expected_return_date': today,
             'lines': [{'component_identity': component, 'factory_id': str(factory.pk),
@@ -630,6 +668,30 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         credit_public_stock(identity=unprinted, zone=self.semi_zone, quantity=100, actor_employee=self.employee,
             source_type='TEST_CUT_STOCK', source_id=uuid.uuid4(), source_line_id=uuid.uuid4())
         return printing.data['data']
+
+    def test_unscheduled_print_plan_uses_cut_stock_and_receives_against_original_task(self):
+        schedule = self.schedule_product.schedule
+        schedule.record_status, schedule.voided_at, schedule.voided_by_employee = 'VOID', timezone.now(), self.employee
+        schedule.void_reason = '尚无有效排产的产品'
+        schedule.save()
+        product_ref = {'product_line_id': str(self.product_line.pk)}
+        order = self.create_print_plan(self.factory, product_ref=product_ref)
+        query = {**product_ref, 'plan_id': order['id'], 'craft_id': str(self.print_craft.pk)}
+        direct = self.client.get(BASE + 'source-context/', {**query, 'source_kind': 'CUTTING'})
+        self.assertEqual(direct.status_code, 200, direct.data)
+        self.assertTrue(all(Decimal(row['max_quantity']) == 0 for row in direct.data['data']['rows']))
+        invalid = self.client.post(BASE + order['id'] + '/plan-dispatch/', {'client_request_id': str(uuid.uuid4()),
+            'source_kind': 'CUTTING', 'actual_dispatch_date': str(timezone.localdate()), 'lines': [{
+                'component_identity': str(self.parts[0].component_identity), 'factory_id': str(self.factory.pk), 'quantity': 1}]},
+            format='json', HTTP_IF_MATCH=order['etag'])
+        self.assertEqual(invalid.status_code, 409, invalid.data)
+        stock = self.client.get(BASE + 'source-context/', {**query, 'source_kind': 'PUBLIC_PIECE', 'zone_id': str(self.semi_zone.pk)})
+        self.assertEqual(stock.status_code, 200, stock.data)
+        order = self.send_to_printer(order, self.factory, 7)
+        order = self.receive_part(order, 5)
+        self.assertEqual(order['plan_summary']['received_quantity'], '5')
+        self.assertTrue(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_RETURN',
+            production_task=self.task, product_line=self.product_line, quantity=5).exists())
 
     def send_to_printer(self, printing, factory, quantity):
         response = self.client.post(BASE + printing['id'] + '/plan-dispatch/', {
@@ -666,11 +728,13 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(PublicStockMovement.objects.count(), movement_count)
 
     def test_sewing_plan_precedes_returns_but_actual_issue_only_uses_its_printed_piece_returns(self):
+        self.schedule_product.crafts.filter(craft=self.print_craft).update(removed_at=timezone.now(), removed_by_employee=self.employee)
         piece = self.parts[0]
         component = str(piece.component_identity)
         today = str(timezone.localdate())
         printing = self.create_print_plan(self.factory)
         sewing = self.create_part_plan()
+        self.assertTrue(self.part_context('PUBLIC_PIECE', craft=self.print_craft, order=printing)['screen_print_pieces'])
 
         def check_issue_ceiling(order, available):
             inputs = self.part_context('PUBLIC_PIECE', order=order)['inputs']

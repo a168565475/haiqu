@@ -168,7 +168,7 @@ describe('统一入口内的单据与来源范围', () => {
     expect(Boolean(button)).toBe(canViewSource)
     if (button) {
       await button.trigger('click')
-      expect(router.push).toHaveBeenCalledWith({ path: '/workshop/outsourcing', query: { tab: 'sources', source_issue_line_id: 'line-1' } })
+      expect(router.push).toHaveBeenCalledWith({ name: 'workshop-metal-processing', query: { production_task_id: 'task-1', product_line_id: 'product-1', source_issue_line_id: 'line-1' } })
     } else expect(router.push).not.toHaveBeenCalled()
   })
 
@@ -748,9 +748,9 @@ describe('新外发交接前调整分配', () => {
       max_allocatable_pieces: 12, remaining_allocatable_pieces: 4, can_adjust: true, blockers: [],
       part_name: '前脚管', issue_number: '领料-1' },
   }
-  async function ready() {
-    api.externalOrder.mockResolvedValue(structuredClone(order))
-    const wrapper = await createView()
+  async function ready(handoffPieces = 0) {
+    api.externalOrder.mockResolvedValue({ ...structuredClone(order), handoff_pieces: handoffPieces })
+    const wrapper = await createView({ mode: 'rework', externalOrderId: order.id })
     const vm = state(wrapper)
     await vm.openAllocation(order)
     await flushPromises()
@@ -769,7 +769,7 @@ describe('新外发交接前调整分配', () => {
     await vm.submit()
     expect(api.adjustAllocation).toHaveBeenCalledWith('new-order', { request_id: expect.any(String), allocated_pieces: 10 }, '"order-8"')
     expect(vm.dialog).toBeNull()
-    expect(api.orders).toHaveBeenCalledTimes(2)
+    expect(api.externalOrder).toHaveBeenCalledTimes(3)
   })
 
   it.each(['0', '-1', '1.5', '13'])('非法调整支数%s不发请求，输入保留', async pieces => {
@@ -782,10 +782,8 @@ describe('新外发交接前调整分配', () => {
   })
 
   it('实际已交接时锁定入口并且直接调用提交也不会写入', async () => {
-    api.orders.mockResolvedValue({ data: [{ ...order, handoff_pieces: 8 }], meta: {} })
-    const { wrapper, vm } = await ready()
-    expect(wrapper.get('[data-testid="allocation-button"]').attributes('disabled')).toBeDefined()
-    vm.selectedOrder.handoff_pieces = 8
+    const { wrapper, vm } = await ready(8)
+    expect(wrapper.get('[data-testid="rework-allocation-button"]').attributes('disabled')).toBeDefined()
     vm.allocationForm.pieces = '10'
     await vm.submit()
     expect(api.adjustAllocation).not.toHaveBeenCalled()
@@ -946,15 +944,14 @@ describe('原始金工登记与来源结清', () => {
     expect(vm.sourceContext).toBeNull()
   })
 
-  it('领料详情直达时按领料ID过滤来源及新外发单，分页保持过滤条件', async () => {
+  it('领料详情直达时分页保持领料ID，不额外读取全部外发单', async () => {
     route.query = { issue_id: 'issue-1' }
     api.sources.mockResolvedValueOnce({ data: [completedSource], meta: { total_pages: 2 } })
       .mockResolvedValueOnce({ data: [], meta: { total_pages: 2 } })
-    api.orders.mockResolvedValue({ data: [{ id: 'allowed-order', source_id: 'source-1' }, { id: 'other-order', source_id: 'source-2' }] })
-    const vm = state(await createView())
+    await createView()
     expect(api.sources).toHaveBeenNthCalledWith(1, { issue_id: 'issue-1', page: 1, page_size: 100 })
     expect(api.sources).toHaveBeenNthCalledWith(2, { issue_id: 'issue-1', page: 2, page_size: 100 })
-    expect(vm.visibleOrders.map((row: any) => row.id)).toEqual(['allowed-order'])
+    expect(api.orders).not.toHaveBeenCalled()
   })
 })
 

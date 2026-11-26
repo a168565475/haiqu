@@ -62,7 +62,8 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         section = BomSection.objects.create(bom=self.bom, line_number=4, section_type='FABRIC', title='辅料类')
         self.auxiliary = BomLine.objects.create(section=section, line_number=1, part_name='包边带',
             category='辅料', material='涤纶', specification='25mm', unit='米', unit_consumption='2',
-            total_consumption='1000', material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected)
+            total_consumption='1000', material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected,
+            raw_values={'purchase_required': False})
 
     def entered(self, quantity):
         return {'bom_line_id': str(self.auxiliary.pk), 'factory_id': str(self.factory.pk),
@@ -81,16 +82,17 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         self.assertEqual(response.status_code, 200, response.data)
         return response.data['data']
 
-    def pending_order(self, quantity):
+    def pending_order(self, quantity, expected=201):
         context = self.pending_context()
         response = self.client.post(BASE, {'client_request_id': str(uuid4()),
             'source_revision': context['source_revision'], 'schedule_product_id': str(self.schedule_product.pk),
             'source_kind': 'SEWING', 'craft_id': str(self.print_craft.pk), 'zone_id': None,
             'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
             'lines': [{'component_identity': self.component, 'quantity': '10', 'factory_id': str(self.factory.pk)}],
-            'material_source_revision': context['material_source_revision'], 'materials': [self.entered(quantity)]}, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        return response.data['data']
+            'material_source_revision': context['material_source_revision'],
+            'materials': [] if quantity is None else [self.entered(quantity)]}, format='json')
+        self.assertEqual(response.status_code, expected, response.data)
+        return response.data['data'] if expected == 201 else response
 
     def action(self, order, kind, expected=200):
         payload = {'client_request_id': str(uuid4())}
@@ -100,6 +102,38 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
             format='json', HTTP_IF_MATCH=order['etag'])
         self.assertEqual(response.status_code, expected, response.data)
         return response
+
+    def test_new_contexts_show_only_explicit_external_auxiliary(self):
+        for number, name, flags in ((2, '自购包边带', {'purchase_required': True}), (3, '旧包边带', {})):
+            BomLine.objects.create(section=self.auxiliary.section, line_number=number, part_name=name,
+                material=self.auxiliary.material, specification=self.auxiliary.specification, unit='米',
+                unit_consumption='2', total_consumption='1000', raw_values=flags,
+                material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected)
+        for context in (self.context(), self.pending_context()):
+            self.assertEqual([row['bom_line_id'] for row in context['material_rows']], [str(self.auxiliary.pk)])
+
+    def test_no_external_auxiliary_allows_empty_orders_and_rejects_injected_material(self):
+        self.report((200, 300))
+        stock = self.opening(100)
+        self.auxiliary.raw_values = {}
+        self.auxiliary.save(update_fields=['raw_values'])
+        self.assertEqual(self.context()['material_rows'], [])
+        plan = self.plan(materials=[])
+        self.assertEqual(plan['planned_materials'], [])
+        pending = self.pending_order(None)
+        self.assertFalse(TubeOutsourcingOrder.objects.get(pk=pending['id']).materials.exists())
+        for flags in ({}, {'purchase_required': True}):
+            with self.subTest(flags=flags):
+                self.auxiliary.raw_values = flags
+                self.auxiliary.save(update_fields=['raw_values'])
+                material = self.entered('12.5')
+                for response in (self.plan(materials=[material], expected=400), self.pending_order('12.5', expected=400),
+                                 self.dispatch(plan, 10, materials=[material], expected=400)):
+                    self.assertIn('materials', response.data['error']['field_errors'])
+        self.assertEqual(TubeOutsourcingOrder.objects.count(), 2)
+        self.assertFalse(PublicStockMovement.objects.filter(source_type=MOVEMENT_SOURCE).exists())
+        stock.refresh_from_db()
+        self.assertEqual(stock.quantity, 100)
 
     def test_plan_does_not_reserve_and_batches_debit_saved_decimal_units(self):
         order = self.plan(materials=[self.entered('1200.25')])
@@ -144,6 +178,9 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         self.report((200, 300))
         stock = self.opening(100)
         order = self.pending_order('20.25')
+        self.auxiliary.raw_values = {'purchase_required': True}
+        self.auxiliary.save(update_fields=['raw_values'])
+        self.assertEqual(self.pending_context()['material_rows'], [])
         self.auxiliary_catalog.name = '目录后来改名'
         self.auxiliary_catalog.archived_at = timezone.now()
         self.auxiliary_catalog.save(update_fields=['name', 'archived_at'])

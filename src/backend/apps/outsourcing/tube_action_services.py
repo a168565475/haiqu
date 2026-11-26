@@ -117,7 +117,8 @@ def confirm_tube_action(*, order_id, kind, data, request, plan_dispatch=False):
             raise Conflict('当前加工工艺与原单不一致，请取消后重新创建。')
         zone = source_zone(order.source_kind, order.zone_id)
         material_inputs = frozen_material_inputs(materials)
-        material_stock_lines = lock_material_sources(product, material_inputs, source_kind=order.source_kind)
+        material_stock_lines = lock_material_sources(product, material_inputs, source_kind=order.source_kind,
+                                                    frozen_materials=materials)
         # 同一事件在库存余额前锁定，且不引入采购批次查询。
         if order.source_kind not in DIRECT_SOURCES:
             for line in lines:

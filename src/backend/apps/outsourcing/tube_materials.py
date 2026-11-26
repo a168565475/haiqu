@@ -108,7 +108,8 @@ def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan)
     return facts
 
 
-def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mode=False, for_plan=False):
+def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mode=False, for_plan=False,
+             frozen_materials=()):
     cutting = source_kind in CUTTING_SOURCES
     section_title = '辅料类' if cutting else '五金件'
     bom = Bom.objects.filter(product_line_id=product.product_line_id, archived_at__isnull=True).order_by(
@@ -119,7 +120,10 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
         # 被裁片引用的面料/棉原料只进入裁剪，不再作为车缝随单辅料发出。
         cutting_sources = set(BomLine.objects.filter(section__bom=bom, component_kind='CUT_PIECE',
             fabric_source_line__isnull=False).values_list('fabric_source_line_id', flat=True))
-        bom_lines = [line for line in bom_lines if line.pk not in cutting_sources]
+        # 新录入只选 BOM 外供辅料，确认旧待发单时仍可办理原单保存的行。
+        saved_ids = {material.bom_line_id for material in frozen_materials}
+        bom_lines = [line for line in bom_lines if line.pk not in cutting_sources
+                     and (not line.purchase_required or line.pk in saved_ids)]
     rows, items, raws, sources, catalog_sources = [], [], {}, {}, []
     allocation = SimpleNamespace(processing_item=SimpleNamespace(order_product=SimpleNamespace(schedule_product=product)))
     for line in bom_lines:
@@ -207,7 +211,7 @@ def tube_material_context(product, *, source_kind='RAW_PIPE', plan_mode=False, f
     return _context(product, source_kind=source_kind, plan_mode=plan_mode, for_plan=for_plan)[0]
 
 
-def lock_material_sources(product, entered, *, source_kind='RAW_PIPE'):
+def lock_material_sources(product, entered, *, source_kind='RAW_PIPE', frozen_materials=()):
     """先同步既有普通原料额度，余额锁由来源准备服务与随单材料一次性取得。"""
     if not entered:
         return []
@@ -219,7 +223,7 @@ def lock_material_sources(product, entered, *, source_kind='RAW_PIPE'):
     if catalog_ids:
         sync_catalog_requirements(MaterialIssue(production_task_id=product.schedule.production_task_id,
             product_line_id=product.product_line_id, stock_mode='PUBLIC_V2'), catalog_ids)
-    _, facts = _context(product, source_kind=source_kind)
+    _, facts = _context(product, source_kind=source_kind, frozen_materials=frozen_materials)
     if selected - facts.keys():
         raise ValidationError({'materials': '所选随单材料不属于当前已确认BOM，或原料、单位、订单需求未就绪。'})
     return [facts[key]['issue_line'] for key in sorted(selected)]
@@ -229,7 +233,8 @@ def prepare_materials(product, entered, *, expected_revision=None, exclude_order
     """调用方已锁齐加工部位与随单材料库存；整单合计校验订单额度、物料池及库区。"""
     if not entered:
         return []
-    context, facts = _context(product, exclude_order_id=exclude_order_id, source_kind=source_kind, plan_mode=plan_mode)
+    context, facts = _context(product, exclude_order_id=exclude_order_id, source_kind=source_kind, plan_mode=plan_mode,
+                              frozen_materials=frozen.values() if frozen else ())
     if frozen is None and expected_revision != context['material_source_revision']:
         raise PreconditionFailed('随单材料BOM、库存或预留已变化，请刷新后重新确认。')
     by_requirement, by_pool, by_zone = defaultdict(Decimal), defaultdict(Decimal), defaultdict(Decimal)

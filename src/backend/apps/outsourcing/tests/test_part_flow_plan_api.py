@@ -48,7 +48,7 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
             line.save()
         section = BomSection.objects.create(bom=self.bom, line_number=4, section_type='FABRIC', title='辅料类')
         cotton = BomLine.objects.create(section=section, line_number=1, part_name='无胶棉', material='无胶棉',
-            specification='200g', unit='米', raw_values={'accessory_color': '白色'})
+            specification='200g', unit='米', raw_values={'accessory_color': '白色', 'purchase_required': False})
         self.cotton = BomLine.objects.create(section=self.part.section, line_number=4, component_kind='CUT_PIECE',
             parent_part=self.part, pieces_per_part=1, unit='片', part_name='床面棉片', specification='50*40', fabric_source_line=cotton)
         self.print_craft = Craft.objects.create(name='部位丝印', craft_type='EXTERNAL', outsourcing_code='SCREEN_PRINTING')

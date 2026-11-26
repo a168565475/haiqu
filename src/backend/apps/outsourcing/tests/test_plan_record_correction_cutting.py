@@ -64,7 +64,7 @@ class PlanCuttingCorrectionTests(CorrectionApiMixin, SewingProcessingFixture, Te
                 'unit_id': str(self.meter.pk), 'unit_name': '米', 'display_name': '更正包边带 / 米'}
             line = BomLine.objects.create(section=section, line_number=1, part_name='包边带', category='辅料',
                 material='涤纶', specification='25mm', unit='米', unit_consumption='2', total_consumption='1000',
-                material_catalog=item, material_selection_snapshot=selected)
+                material_catalog=item, material_selection_snapshot=selected, raw_values={'purchase_required': False})
             identity = build_catalog_stock_identity(material_catalog_id=item.pk, material_selection_snapshot=selected)
             stock = credit_public_stock(identity=identity, zone=self.zone, quantity=Decimal('100.5'),
                 source_type='CORRECTION_AUX_OPENING', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee).balance
@@ -74,7 +74,7 @@ class PlanCuttingCorrectionTests(CorrectionApiMixin, SewingProcessingFixture, Te
                 category=category, unit=unit, material_name='更正扣件', material='塑料', specification='M6', color_snapshot='黑色')
             line = BomLine.objects.create(section=section, line_number=1, part_name='更正扣件', category='辅料',
                 material='塑料', specification='M6', unit='个', unit_consumption='2', total_consumption='1000',
-                raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色'})
+                raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色', 'purchase_required': False})
             stock = credit_material_stock(raw_material=raw, unit=unit, zone=self.zone, quantity=100,
                 source_type='CORRECTION_AUX_OPENING', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee).balance
         entered = {'bom_line_id': str(line.pk), 'factory_id': str(self.factory.pk),

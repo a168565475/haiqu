@@ -44,7 +44,7 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response.data['data']
 
-    def plan(self, source='SEWING', materials=None):
+    def plan(self, source='SEWING', materials=None, expected=201):
         context = self.context(source)
         self.assertEqual(context['rows'][0]['order_required'], '500')
         payload = {'is_plan': True, 'client_request_id': str(uuid.uuid4()), 'source_revision': context['source_revision'],
@@ -52,11 +52,11 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
             'source_kind': source, 'zone_id': context['zone_id'], 'planned_dispatch_date': str(timezone.localdate()),
             'expected_return_date': str(timezone.localdate()), 'lines': [
                 {'component_identity': self.component, 'quantity': '600', 'factory_id': str(self.factory.pk), 'unit_price': '1.25'}]}
-        if materials:
+        if materials is not None:
             payload.update(materials=materials, material_source_revision=context['material_source_revision'])
         response = self.client.post(BASE, payload, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        return response.data['data']
+        self.assertEqual(response.status_code, expected, response.data)
+        return response.data['data'] if expected == 201 else response
 
     def dispatch(self, order, quantity, source='SEWING', materials=None, expected=200):
         context = self.context(source, order)
@@ -131,7 +131,7 @@ class PlanCuttingApiTests(SewingProcessingFixture, TestCase):
         section = BomSection.objects.create(bom=self.bom, line_number=4, section_type='FABRIC', title='辅料类')
         line = BomLine.objects.create(section=section, line_number=1, part_name='随单扣件', category='辅料',
             material='塑料', specification='M6', unit='个', unit_consumption='2', total_consumption='1000',
-            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色'})
+            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色', 'purchase_required': False})
         material = {'bom_line_id': str(line.pk), 'factory_id': str(self.factory.pk), 'quantity': '1200'}
         order = self.plan(materials=[material])
         self.assertEqual(len(order['planned_materials']), 1)

@@ -88,7 +88,8 @@ const zones = computed(() => eligibleZones.value.filter(item => item.warehouse_i
 const canCreate = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.add_outsourcingorder')))
 const locked = computed(() => identityBlocked.value || loading.value || sourceLoading.value || saving.value || Boolean(pending.value) || storageError.value)
 const entered = computed(() => rows.value.filter(row => (wholeTubeQuantity(row.quantity) || 0) > 0))
-const enteredMaterials = computed(() => materialRows.value.filter(row => Number(row.quantity) > 0))
+const editableMaterials = computed(() => materialRows.value.filter(row => !row.external_supply))
+const enteredMaterials = computed(() => editableMaterials.value.filter(row => Number(row.quantity) > 0))
 const total = computed(() => entered.value.reduce((sum, row) => sum + (wholeTubeQuantity(row.quantity) || 0), 0))
 const totalText = computed(() => {
   if (!partFlow.value) return `${number(total.value)} ${quantityUnit}`
@@ -248,8 +249,10 @@ async function loadSource(preserve = true) {
       unitPrice: preserve ? previous.get(row.component_identity)?.unitPrice || '' : '',
     }))
     materialRows.value = (cutting || !planMode.value ? selected.result.material_rows || [] : []).map(row => {
+      const externalSupply = cutting && row.external_supply === true
+      if (externalSupply) return { ...row, quantity: '', factoryId: '', zoneId: '' }
       const previous = preserve ? previousMaterials.get(row.bom_line_id) : undefined
-      return { ...row, quantity: previous?.quantity || '', factoryId: previous?.factoryId || '',
+      return { ...row, external_supply: false, quantity: previous?.quantity || '', factoryId: previous?.factoryId || '',
         zoneId: previous?.zoneId || (!planMode.value && row.zones.length === 1 ? row.zones[0]!.zone_id : '') }
     })
   } catch (cause) {
@@ -301,7 +304,7 @@ function validate(): boolean {
     }
   }
   if (!entered.value.length) { warn(planMode.value ? '请至少填写一项大于0的计划数量。' : '请至少填写一项大于0的外发数量。'); return false }
-  for (const row of materialRows.value) {
+  for (const row of editableMaterials.value) {
     const quantity = row.quantity.trim()
     if (!quantity) continue
     if (!/^\d+(?:\.\d{1,4})?$/.test(quantity) || !Number.isFinite(Number(quantity))) { warn(`${row.name}：数量须为非负数字，最多4位小数。`); return false }
@@ -454,7 +457,7 @@ async function initialize() {
         const line = pending.value.lines.find(item => item.component_identity === row.component_identity)
         if (line) { row.quantity = line.quantity; row.factoryId = line.factory_id; row.priceUnit = line.price_unit || 'PIECE'; row.unitPrice = line.unit_price ?? '' }
       }
-      for (const row of materialRows.value) {
+      for (const row of editableMaterials.value) {
         const line = pending.value.materials?.find(item => item.bom_line_id === row.bom_line_id)
         if (line) {
           row.quantity = line.quantity; row.zoneId = line.zone_id || ''
@@ -565,11 +568,14 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         <table class="erp-table-editor tube-table hardware-table" :aria-label="`附带${materialName}明细`"><colgroup><col style="width:120px" /><col style="width:80px" /><col style="width:110px" /><col style="width:80px" /><col style="width:100px" /><col v-if="!planMode" style="width:100px" /><col style="width:130px" /><col style="width:200px" /><col v-if="!planMode" style="width:210px" /></colgroup>
           <thead><tr><th>{{ materialName }}名称</th><th>材质</th><th>规格</th><th>颜色</th><th class="num">{{ planMode ? 'BOM需求' : '订单剩余' }}</th><th v-if="!planMode" class="num">库存可用</th><th class="num">{{ planMode ? '计划数量' : '本次外发' }}</th><th>加工厂</th><th v-if="!planMode">来源仓库 / 库区</th></tr></thead>
           <tbody><tr v-for="row in materialRows" :key="row.bom_line_id">
-            <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td><td :title="row.material">{{ row.material || '—' }}</td><td :title="materialSpecificationValue(row)">{{ materialSpecificationValue(row) }}</td><td>{{ row.color || '—' }}</td>
+            <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails><span v-if="row.external_supply">（外供）</span></td><td :title="row.material">{{ row.material || '—' }}</td><td :title="materialSpecificationValue(row)">{{ materialSpecificationValue(row) }}</td><td>{{ row.color || '—' }}</td>
+            <td v-if="row.external_supply" :colspan="planMode ? 3 : 5" class="num">—</td>
+            <template v-else>
             <td class="num">{{ materialNumber(planMode ? row.required_quantity : row.order_remaining) }} {{ row.unit }}</td><td v-if="!planMode" class="num" :title="row.blockers.join('；')">{{ materialNumber(row.available_stock) }} {{ row.unit }}</td>
             <td class="num"><ElInput v-model="row.quantity" :aria-label="`${row.name}附带${materialName}数量`" :disabled="materialDisabled(row)" inputmode="decimal" placeholder="0"><template #suffix>{{ row.unit }}</template></ElInput></td>
             <td><ElSelect v-model="row.factoryId" :aria-label="`${row.name}加工厂`" :disabled="materialDisabled(row)" filterable clearable placeholder="选择加工厂" no-data-text="该工艺暂无加工厂，请先添加加工厂并关联该工艺"><ElOption v-for="factory in factories" :key="factory.id" :value="factory.id" :label="factory.name" /></ElSelect></td>
             <td v-if="!planMode"><ElSelect v-model="row.zoneId" :aria-label="`${row.name}来源库区`" :disabled="materialDisabled(row)" :placeholder="`选择${materialName}来源库区`"><ElOption v-for="zone in row.zones" :key="zone.zone_id" :value="zone.zone_id" :label="`${zone.warehouse_name} / ${zone.zone_name}（${materialNumber(zone.available_quantity)} ${row.unit}）`" /></ElSelect></td>
+            </template>
           </tr><tr v-if="!materialRows.length"><td :colspan="planMode ? 7 : 9" class="empty-cell">{{ !product ? '请先选择生产任务单和产品' : `该产品暂无可外发的${materialName}材料` }}</td></tr></tbody>
         </table>
       </div>

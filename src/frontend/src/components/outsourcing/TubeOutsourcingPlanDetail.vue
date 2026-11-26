@@ -39,7 +39,7 @@ const receiptPreview = ref<TubeReceiptPreview | null>(null)
 const dispatchTable = ref<HTMLTableElement | null>(null)
 const quantityIssueRow = ref('')
 const entries = ref<Array<{ id: string; component: string; name: string; quantity: string; factory: string; zone: string }>>([])
-const materialEntries = ref<Array<{ id: string; name: string; quantity: string; factory: string; zone: string }>>([])
+const materialEntries = ref<Array<{ id: string; name: string; quantity: string; factory: string; zone: string; externalSupply: boolean }>>([])
 const ownedOrderId = props.order.id
 const ownedWarehouse = props.warehouse
 let requestSequence = 0, disposed = false
@@ -259,10 +259,13 @@ async function loadSource() {
     if (!isCurrent() || disposed || sequence !== requestSequence) return
     context.value = result
     const previousMaterials = new Map(materialEntries.value.map(row => [row.id, row]))
-    materialEntries.value = cutting.value ? (result.material_rows || []).map(row => ({
-      ...(previousMaterials.get(row.bom_line_id) || { id: row.bom_line_id, name: row.name, quantity: '', zone: row.zones.length === 1 ? row.zones[0]!.zone_id : '' }),
-      factory: materialFactory(row.bom_line_id)?.id || '',
-    })) : []
+    materialEntries.value = cutting.value ? (result.material_rows || []).map(row => {
+      if (row.external_supply) return { id: row.bom_line_id, name: row.name, externalSupply: true, quantity: '', factory: '', zone: '' }
+      return {
+        ...(previousMaterials.get(row.bom_line_id) || { id: row.bom_line_id, name: row.name, quantity: '', zone: row.zones.length === 1 ? row.zones[0]!.zone_id : '' }),
+        externalSupply: false, factory: materialFactory(row.bom_line_id)?.id || '',
+      }
+    }) : []
     const unavailable = result.rows.filter(row => row.processing_not_enabled_reason)
       .map(row => `${row.part_name}：${row.processing_not_enabled_reason}`).join('；')
     if (unavailable || !result.ready) message.value = unavailable || result.blockers.join('；') || '当前来源不可发出，请核对后重试。'
@@ -554,7 +557,7 @@ async function submit() {
       }
       if (!context.value.factories.some(factory => factory.id === row.factory)) { message.value = `${row.name}：总单指定的加工厂当前不可用，请核对总单。`; return }
     }
-    const materials = materialEntries.value.filter(row => row.quantity.trim() && Number(row.quantity) !== 0)
+    const materials = materialEntries.value.filter(row => !row.externalSupply && row.quantity.trim() && Number(row.quantity) !== 0)
     for (const row of materials) {
       const basis = context.value.material_rows?.find(item => item.bom_line_id === row.id)
       const sourceZone = basis?.zones.find(item => item.zone_id === row.zone)
@@ -756,9 +759,13 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
       </table></div>
       <p class="muted">{{ mode === 'DISPATCH' ? '可外发多少 = 总单目标数量 - 已外发数量；本次外发不能超过可外发数量，库存来源还需满足实际库存。' : '按实际回货数量填写本次收到的部件，其余留空或填0。加工厂按总单计划显示，回货不匹配外发批次。' }}</p>
       <template v-if="mode === 'DISPATCH' && cutting && materialEntries.length"><h3>本次附带辅料（选填）</h3><div class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table plan-material-table" :class="{ 'plan-material-table--parts': partFlow }"><thead><tr><th>辅料</th><template v-if="partFlow"><th>规格</th><th>材质</th><th>颜色</th><th>单位</th></template><th class="num">可外发多少</th><th class="num">已外发</th><th class="num">本次数量</th><th>加工厂</th><th>来源库区</th></tr></thead><tbody><tr v-for="row in materialEntries" :key="row.id">
-        <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: materialSource(row.id)?.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td><template v-if="partFlow"><td>{{ materialSpecificationValue(materialSource(row.id) || {}) }}</td><td>{{ materialSource(row.id)?.material || '—' }}</td><td>{{ materialSource(row.id)?.color || '—' }}</td><td>{{ materialSource(row.id)?.unit || '—' }}</td></template>
-        <td class="num">{{ number(materialSource(row.id)?.max_quantity ?? '0') }}</td><td class="num">{{ number(materialSource(row.id)?.outsourcing_issued_quantity ?? '0') }}</td><td class="num"><ElInput v-model="row.quantity" :disabled="locked || (!partFlow && !row.factory)" inputmode="decimal" :aria-label="`${row.name}本次辅料数量`" /></td><td><ElSelect v-if="partFlow" v-model="row.factory" :disabled="locked" :aria-label="`${row.name}辅料加工厂`"><ElOption v-for="factory in context?.factories || []" :key="factory.id" :value="factory.id" :label="factory.name" /></ElSelect><template v-else>{{ materialFactory(row.id)?.name || '总单未指定唯一加工厂' }}</template></td>
+        <td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: materialSource(row.id)?.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails><span v-if="row.externalSupply">（外供）</span></td><template v-if="partFlow"><td>{{ materialSpecificationValue(materialSource(row.id) || {}) }}</td><td>{{ materialSource(row.id)?.material || '—' }}</td><td>{{ materialSource(row.id)?.color || '—' }}</td><td>{{ materialSource(row.id)?.unit || '—' }}</td></template>
+        <td v-if="row.externalSupply" colspan="5" class="num">—</td>
+        <template v-else>
+        <td class="num">{{ number(materialSource(row.id)?.max_quantity ?? '0') }}</td><td class="num">{{ number(materialSource(row.id)?.outsourcing_issued_quantity ?? '0') }}</td>
+        <td class="num"><ElInput v-model="row.quantity" :disabled="locked || (!partFlow && !row.factory)" inputmode="decimal" :aria-label="`${row.name}本次辅料数量`" /></td><td><ElSelect v-if="partFlow" v-model="row.factory" :disabled="locked" :aria-label="`${row.name}辅料加工厂`"><ElOption v-for="factory in context?.factories || []" :key="factory.id" :value="factory.id" :label="factory.name" /></ElSelect><template v-else>{{ materialFactory(row.id)?.name || '总单未指定唯一加工厂' }}</template></td>
         <td><ElSelect v-model="row.zone" :disabled="locked || !row.factory" :aria-label="`${row.name}辅料库区`"><ElOption v-for="item in context?.material_rows?.find(item => item.bom_line_id === row.id)?.zones || []" :key="item.zone_id" :value="item.zone_id" :label="`${item.warehouse_name} / ${item.zone_name}（${item.available_quantity}）`" /></ElSelect></td>
+        </template>
       </tr></tbody></table></div></template>
       <label class="form-field"><span>备注（选填）</span><ElInput v-model="remark" type="textarea" :rows="2" :disabled="locked" maxlength="2000" aria-label="本次备注" /></label>
     </template>

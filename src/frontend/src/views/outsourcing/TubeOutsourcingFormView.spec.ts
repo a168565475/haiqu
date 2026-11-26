@@ -695,6 +695,51 @@ describe('原管材表单复用裁片模式', () => {
     expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ source_kind: 'SEWING', zone_id: null, craft_id: 'embroidery', materials: [{ bom_line_id: 'hardware', factory_id: 'hardware-factory', quantity: '1' }] }))
     wrapper.unmount()
   })
+  it('辅料改为外供后保留展示、清空输入，保存只含普通辅料', async () => {
+    const current = cuttingContext()
+    const first = current.material_rows![0]!
+    current.material_rows!.push({ ...first, bom_line_id: 'zip', name: '拉链' })
+    vi.mocked(api.fetchTubeSource).mockResolvedValue(current)
+    const { wrapper, vm } = await mountPage(true)
+    fill(vm)
+    for (const row of vm.materialRows) Object.assign(row, { quantity: '2', factoryId: 'factory', zoneId: 'hardware-zone' })
+    first.external_supply = true
+    await vm.loadSource(true)
+    const rows = wrapper.get('#hardware-items').findAll('tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain('外供')
+    expect(rows[0]!.get('td[colspan]').text()).toBe('—')
+    expect(rows[0]!.find('input,select,textarea,el-input-stub,el-select-stub,[role="combobox"]').exists()).toBe(false)
+    expect(rows[1]!.find('[aria-label="拉链附带辅料数量"]').exists()).toBe(true)
+    expect(rows[1]!.find('[aria-label="拉链加工厂"]').exists()).toBe(true)
+    expect(vm.materialRows[0]).toMatchObject({ quantity: '', factoryId: '', zoneId: '' })
+    await vm.save()
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({
+      materials: [{ bom_line_id: 'zip', quantity: '2', factory_id: 'factory' }],
+    }))
+    wrapper.unmount()
+  })
+  it('待发原请求回读时外供行不回填数量、厂家和库区，保留原编号核对', async () => {
+    const current = cuttingContext()
+    current.material_rows![0]!.external_supply = true
+    vi.mocked(api.fetchTubeSource).mockResolvedValue(current)
+    const original = JSON.stringify({
+      client_request_id: 'pending-cutting', schedule_product_id: 'schedule-product', source_revision: 'revision',
+      source_kind: 'SEWING', craft_id: 'embroidery', zone_id: null, planned_dispatch_date: '2026-10-01', expected_return_date: '2026-10-02', remark: '',
+      lines: [{ component_identity: 'front', quantity: '1', factory_id: 'factory', unit_price: '0' }],
+      material_source_revision: 'old-revision', materials: [{ bom_line_id: 'hardware', quantity: '2', factory_id: 'factory', zone_id: 'hardware-zone' }],
+    })
+    localStorage.setItem(key + ':cutting', original)
+    const { wrapper, vm } = await mountPage(true)
+    const row = wrapper.get('#hardware-items tbody tr')
+    expect(row.text()).toContain('外供')
+    expect(row.find('input,select,textarea,el-input-stub,el-select-stub,[role="combobox"]').exists()).toBe(false)
+    expect(vm.materialRows[0]).toMatchObject({ quantity: '', factoryId: '', zoneId: '' })
+    expect(api.findTubeOrder).toHaveBeenCalledWith('pending-cutting')
+    expect(api.createTubeOrder).not.toHaveBeenCalled()
+    expect(localStorage.getItem(key + ':cutting')).toBe(original)
+    wrapper.unmount()
+  })
   it('辅料无库区的需求提交超时后仍可恢复并核对原请求', async () => {
     const current = cuttingContext(); current.material_rows![0]!.zones = []
     vi.mocked(api.fetchTubeSource).mockResolvedValue(current)

@@ -61,6 +61,7 @@ export interface TubeMaterialZone {
   zone_id: string; zone_name: string; warehouse_id: string; warehouse_name: string; available_quantity: string
 }
 export interface TubeMaterialRow {
+  external_supply?: boolean
   material_catalog_id?: string | null
   material_selection_snapshot?: MaterialSelectionSnapshot | Record<string, never> | null
   bom_line_id: string; material_number: string; name: string; specification: string; material: string; color: string

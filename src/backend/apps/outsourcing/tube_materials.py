@@ -45,6 +45,14 @@ def _catalog_material_specification(selection):
     return ' / '.join(values)
 
 
+def _catalog_material_display(row, selection):
+    attrs = selection.get('attributes') or {}
+    row.update(name=selection.get('name') or row['name'], material_number='', material=attrs.get('material', ''),
+        specification=_catalog_material_specification(selection) or str(row['specification'] or '').strip(),
+        color=attrs.get('color', ''), unit=selection.get('unit_name') or row['unit'],
+        material_catalog_id=selection.get('catalog_id'), material_selection_snapshot=selection)
+
+
 def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan):
     """复用已确认 BOM 的新目录需求和公共库存，不创建旧原料映射。"""
     if not sources:
@@ -75,11 +83,7 @@ def _catalog_sources(product, sources, *, exclude_order_id, plan_mode, for_plan)
         requirement.required_quantity = spec['quantity']
         requirement.source_revision_hash = spec['revision']
         issue_line = MaterialIssueLine(issue=issue, requested_quantity=1, **catalog_issue_line_values(requirement))
-        attrs = selected['attributes']
-        row.update(name=selected['name'], material_number='', material=attrs.get('material', ''),
-            specification=_catalog_material_specification(selected) or str(line.specification or '').strip(),
-            color=attrs.get('color', ''), unit=selected['unit_name'],
-            material_catalog_id=selected['catalog_id'], material_selection_snapshot=selected)
+        _catalog_material_display(row, selected)
         facts[str(line.pk)] = dict(bom_line=line, raw=None, row=row, unit=spec['unit'],
             issue_line=issue_line, requirement=requirement, identity=identity)
     stock = public_issue_quantity_context(issue, lines=[fact['issue_line'] for fact in facts.values()],
@@ -120,10 +124,8 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
         # 被裁片引用的面料/棉原料只进入裁剪，不再作为车缝随单辅料发出。
         cutting_sources = set(BomLine.objects.filter(section__bom=bom, component_kind='CUT_PIECE',
             fabric_source_line__isnull=False).values_list('fabric_source_line_id', flat=True))
-        # 新录入只选 BOM 外供辅料，确认旧待发单时仍可办理原单保存的行。
-        saved_ids = {material.bom_line_id for material in frozen_materials}
-        bom_lines = [line for line in bom_lines if line.pk not in cutting_sources
-                     and (not line.purchase_required or line.pk in saved_ids)]
+        bom_lines = [line for line in bom_lines if line.pk not in cutting_sources]
+    saved_ids = {material.bom_line_id for material in frozen_materials}
     rows, items, raws, sources, catalog_sources = [], [], {}, {}, []
     allocation = SimpleNamespace(processing_item=SimpleNamespace(order_product=SimpleNamespace(schedule_product=product)))
     for line in bom_lines:
@@ -135,6 +137,14 @@ def _context(product, *, exclude_order_id=None, source_kind='RAW_PIPE', plan_mod
             'required_quantity': '0', 'outsourcing_issued_quantity': '0', 'order_remaining': '0', 'available_stock': '0', 'max_quantity': '0',
             'blockers': [], 'zones': []}
         rows.append(row)
+        if cutting:
+            row['external_supply'] = not line.purchase_required
+            # 外供仅展示；确认已保存的旧待发单时仍办理原单记录的材料。
+            if row['external_supply'] and line.pk not in saved_ids:
+                selection = line.material_selection_snapshot
+                if line.material_catalog_id and isinstance(selection, dict) and isinstance(selection.get('attributes'), dict):
+                    _catalog_material_display(row, selection)
+                continue
         if line.material_catalog_id:
             catalog_sources.append((line, row))
             continue
@@ -223,8 +233,11 @@ def lock_material_sources(product, entered, *, source_kind='RAW_PIPE', frozen_ma
     if catalog_ids:
         sync_catalog_requirements(MaterialIssue(production_task_id=product.schedule.production_task_id,
             product_line_id=product.product_line_id, stock_mode='PUBLIC_V2'), catalog_ids)
-    _, facts = _context(product, source_kind=source_kind, frozen_materials=frozen_materials)
-    if selected - facts.keys():
+    context, facts = _context(product, source_kind=source_kind, frozen_materials=frozen_materials)
+    unavailable = selected - facts.keys()
+    if unavailable:
+        if any(row.get('external_supply') and row['bom_line_id'] in unavailable for row in context['material_rows']):
+            raise ValidationError({'materials': '该辅料已标为外供，无需填写发料数量。'})
         raise ValidationError({'materials': '所选随单材料不属于当前已确认BOM，或原料、单位、订单需求未就绪。'})
     return [facts[key]['issue_line'] for key in sorted(selected)]
 

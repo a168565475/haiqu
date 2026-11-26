@@ -379,7 +379,7 @@ class CuttingTubeOrdersTests(sewing_fixture.SewingProcessingFixture, TestCase):
         section = BomSection.objects.create(bom=self.bom, line_number=4, section_type='FABRIC', title='辅料类')
         line = BomLine.objects.create(section=section, line_number=1, part_name='裁片随单扣件', category='辅料',
             material='塑料', specification='M6', unit='个', unit_consumption='2', total_consumption='1000',
-            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色', 'purchase_required': False})
+            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色'})
         stock = credit_material_stock(raw_material=raw, unit=unit, zone=self.zone, quantity=100,
             source_type='TEST_CUTTING_AUXILIARY', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(),
             actor_employee=self.employee).balance

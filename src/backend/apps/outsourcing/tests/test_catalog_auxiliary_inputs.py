@@ -63,7 +63,7 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         self.auxiliary = BomLine.objects.create(section=section, line_number=1, part_name='包边带',
             category='辅料', material='涤纶', specification='25mm', unit='米', unit_consumption='2',
             total_consumption='1000', material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected,
-            raw_values={'purchase_required': False})
+            raw_values={'purchase_required': True})
 
     def entered(self, quantity):
         return {'bom_line_id': str(self.auxiliary.pk), 'factory_id': str(self.factory.pk),
@@ -103,38 +103,48 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         self.assertEqual(response.status_code, expected, response.data)
         return response
 
-    def test_new_contexts_show_only_explicit_external_auxiliary(self):
-        for number, name, flags in ((2, '自购包边带', {'purchase_required': True}), (3, '旧包边带', {})):
-            BomLine.objects.create(section=self.auxiliary.section, line_number=number, part_name=name,
-                material=self.auxiliary.material, specification=self.auxiliary.specification, unit='米',
-                unit_consumption='2', total_consumption='1000', raw_values=flags,
-                material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected)
+    def test_mixed_candidates_mark_external_supply_and_allow_only_ordinary_materials(self):
+        external = BomLine.objects.create(section=self.auxiliary.section, line_number=2, part_name='外供包边带',
+            unit='米', unit_consumption='2', total_consumption='1000', raw_values={'purchase_required': False},
+            material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected)
+        legacy = BomLine.objects.create(section=self.auxiliary.section, line_number=3, part_name='未标记包边带',
+            unit='米', unit_consumption='2', total_consumption='1000',
+            material_catalog=self.auxiliary_catalog, material_selection_snapshot=self.selected)
         for context in (self.context(), self.pending_context()):
-            self.assertEqual([row['bom_line_id'] for row in context['material_rows']], [str(self.auxiliary.pk)])
+            rows = {row['bom_line_id']: row for row in context['material_rows']}
+            self.assertEqual({key: row['external_supply'] for key, row in rows.items()},
+                             {str(self.auxiliary.pk): False, str(external.pk): True, str(legacy.pk): False})
+            supplied = rows[str(external.pk)]
+            self.assertEqual((supplied['name'], supplied['specification'], supplied['color'], supplied['unit']),
+                             ('目录包边带', '25mm', '黑色', '米'))
+            self.assertEqual(supplied['zones'], [])
+        ordinary = [self.entered(2), {**self.entered(3), 'bom_line_id': str(legacy.pk)}]
+        forged = {**self.entered(1), 'bom_line_id': str(external.pk)}
+        response = self.plan(materials=[*ordinary, forged], expected=400)
+        self.assertEqual(response.data['error']['field_errors']['materials'], '该辅料已标为外供，无需填写发料数量。')
+        self.assertFalse(TubeOutsourcingOrder.objects.exists())
+        saved = self.plan(materials=ordinary)
+        self.assertCountEqual([row['bom_line_id'] for row in saved['planned_materials']],
+                              [str(self.auxiliary.pk), str(legacy.pk)])
 
-    def test_no_external_auxiliary_allows_empty_orders_and_rejects_injected_material(self):
+    def test_all_external_auxiliary_stays_visible_allows_empty_orders_and_rejects_stock_issue(self):
         self.report((200, 300))
         stock = self.opening(100)
-        non_external = ({}, {'purchase_required': True})
+        self.auxiliary.raw_values = {'purchase_required': False}
+        self.auxiliary.save(update_fields=['raw_values'])
         material = self.entered('12.5')
-        for flags in non_external:
-            with self.subTest(operation='create', flags=flags):
-                self.auxiliary.raw_values = flags
-                self.auxiliary.save(update_fields=['raw_values'])
-                for response in (self.plan(materials=[material], expected=400), self.pending_order('12.5', expected=400)):
-                    self.assertIn('materials', response.data['error']['field_errors'])
-        self.assertEqual(self.context()['material_rows'], [])
+        for response in (self.plan(materials=[material], expected=400), self.pending_order('12.5', expected=400)):
+            self.assertEqual(response.data['error']['field_errors']['materials'], '该辅料已标为外供，无需填写发料数量。')
+        self.assertTrue(self.context()['material_rows'][0]['external_supply'])
         plan = self.plan(materials=[])
         self.assertEqual(plan['planned_materials'], [])
         pending = self.pending_order(None)
         self.assertFalse(TubeOutsourcingOrder.objects.get(pk=pending['id']).materials.exists())
-        for flags in non_external:
-            with self.subTest(operation='dispatch', flags=flags):
-                self.auxiliary.raw_values = flags
-                self.auxiliary.save(update_fields=['raw_values'])
-                response = self.dispatch(plan, 10, materials=[material], expected=400)
-                self.assertIn('materials', response.data['error']['field_errors'])
+        response = self.dispatch(plan, 10, materials=[material], expected=400)
+        self.assertEqual(response.data['error']['field_errors']['materials'], '该辅料已标为外供，无需填写发料数量。')
         self.assertEqual(TubeOutsourcingOrder.objects.count(), 2)
+        dispatched = self.dispatch(plan, 10)
+        self.assertEqual(dispatched['dispatch_records'][0]['materials'], [])
         self.assertFalse(PublicStockMovement.objects.filter(source_type=MOVEMENT_SOURCE).exists())
         stock.refresh_from_db()
         self.assertEqual(stock.quantity, 100)
@@ -182,9 +192,9 @@ class CatalogAuxiliaryInputTests(sewing_tests.SewingProcessingFixture, TestCase)
         self.report((200, 300))
         stock = self.opening(100)
         order = self.pending_order('20.25')
-        self.auxiliary.raw_values = {'purchase_required': True}
+        self.auxiliary.raw_values = {'purchase_required': False}
         self.auxiliary.save(update_fields=['raw_values'])
-        self.assertEqual(self.pending_context()['material_rows'], [])
+        self.assertTrue(self.pending_context()['material_rows'][0]['external_supply'])
         self.auxiliary_catalog.name = '目录后来改名'
         self.auxiliary_catalog.archived_at = timezone.now()
         self.auxiliary_catalog.save(update_fields=['name', 'archived_at'])

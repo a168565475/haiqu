@@ -106,6 +106,8 @@ def create_plan(*, data, request):
         available = {row['bom_line_id']: row for row in material_context['material_rows']}
         for entered in requested_materials:
             material = available.get(str(entered['bom_line_id']))
+            if material and material.get('external_supply'):
+                raise ValidationError({'materials': '该辅料已标为外供，无需填写发料数量。'})
             if not material or material['blockers']:
                 raise ValidationError({'materials': '辅料不属于当前产品的有效材料。'})
             if entered.get('zone_id') and not any(str(zone['zone_id']) == str(entered['zone_id']) for zone in material['zones']):

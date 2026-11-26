@@ -68,7 +68,7 @@ class PlanMaterialRequirementMergeTests(cutting_fixtures.SewingProcessingFixture
         section = BomSection.objects.create(bom=self.bom, line_number=4, section_type='FABRIC', title='辅料类')
         line = BomLine.objects.create(section=section, line_number=1, part_name='合并回归扣件', category='辅料',
             material='塑料', specification='M6', unit='个', unit_consumption='2', total_consumption='1000',
-            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色', 'purchase_required': False})
+            raw_values={'source_inventory_material_id': str(raw.pk), 'accessory_color': '黑色'})
         material = {'bom_line_id': str(line.pk), 'factory_id': str(self.factory.pk),
             'quantity': '1200', 'zone_id': str(self.zone.pk)}
         order = self.plan(materials=[material])

@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/tubeOutsourcing'
 import * as receipts from '@/api/tubeReceipts'
-import type { TubeOrderDetail, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubePlanRecordCorrectionInput, TubeSourceContext } from '@/types/tubeOutsourcing'
+import type { TubeMaterialRow, TubeOrderDetail, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubePlanRecordCorrectionInput, TubeSourceContext } from '@/types/tubeOutsourcing'
 import TubeOutsourcingPlanDetail from './TubeOutsourcingPlanDetail.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import type { MaterialSelectionSnapshot } from '@/types/materialCatalog'
@@ -70,6 +70,7 @@ interface ViewModel {
   mode: string; pending: TubePlanPendingAction | null; message: string; canReceive: boolean
   open: (kind: 'DISPATCH' | 'RECEIPT') => Promise<void>; submit: () => Promise<void>; postPending: () => Promise<void>
   close: () => void; reloadAction: () => Promise<void>
+  loadSource: () => Promise<void>
   correctionActive: boolean; correctionRefreshRequired: boolean
   preparedCorrection: (order: TubeOrderDetail) => void
   submitCorrection: (input: TubePlanRecordCorrectionDraft, etag: string) => Promise<void>
@@ -496,6 +497,34 @@ describe('委外总单分次收发', () => {
     resolve({ ...structuredClone(order), etag: 'v2', dispatch_records: [{ id: 'batch', client_request_id: action.payload.client_request_id, order_number: 'WF-batch', actual_dispatch_date: '2026-11-02', created_at: '', actor_name: '经办人', source_kind: 'PUBLIC_SEMI', zone_name: '未喷塑区', total_quantity: '100', lines: [] }] })
     await saving; expect(wrapper.emitted('closed')).toHaveLength(1)
   })
+  it('发料时外供辅料保留名称且没有输入控件，刷新后的旧数量不会提交', async () => {
+    const value = typedColumnOrder()
+    const material: TubeMaterialRow = { bom_line_id: 'strap', material_number: '', name: '织带', specification: '', material: '', color: '', unit: '米',
+      required_quantity: '8', order_remaining: '8', available_stock: '8', max_quantity: '8', blockers: [],
+      zones: [{ zone_id: 'material-zone', zone_name: '辅料区', warehouse_id: 'warehouse-1', warehouse_name: '辅料仓', available_quantity: '8' }] }
+    const source = { ...structuredClone(sourceContext), source_kind: 'CUTTING' as const, part_flow: true, sewing_inputs: true,
+      inputs: value.inputs!.map(piece => ({ ...piece, order_required: '200', max_quantity: '200', stock_quantity: null, blockers: [] })),
+      material_source_revision: 'revision', material_rows: [{ ...material, external_supply: false }, { ...material, bom_line_id: 'zip', name: '拉链' }] }
+    vi.mocked(api.fetchTubeSource).mockResolvedValue(source)
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    vm.materialEntries[0]!.quantity = '3'
+    source.material_rows[0]!.external_supply = true
+    await vm.loadSource()
+    const rows = wrapper.get('.plan-material-table').findAll('tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain('织带（外供）')
+    expect(rows[0]!.get('td[colspan]').text()).toBe('—')
+    expect(rows[0]!.find('input,select,textarea,el-input-stub,el-select-stub,[role="combobox"]').exists()).toBe(false)
+    for (const label of ['拉链本次辅料数量', '拉链辅料加工厂', '拉链辅料库区']) expect(rows[1]!.find(`[aria-label="${label}"]`).exists()).toBe(true)
+    expect(vm.materialEntries[0]).toMatchObject({ quantity: '', factory: '', zone: '' })
+    Object.assign(vm.materialEntries[1]!, { quantity: '2', factory: 'factory-1', zone: 'material-zone' })
+    vm.entries[0]!.quantity = '1'
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith(value.id, expect.objectContaining({
+      materials: [{ bom_line_id: 'zip', quantity: '2', factory_id: 'factory-1', zone_id: 'material-zone' }],
+    }), value.etag)
+  })
+
   it.each(['unique', 'missing', 'multiple'] as const)('辅料厂家%s时只沿用总单唯一厂家，无法确定则禁用且拒绝提交', async mode => {
     const value = structuredClone(order); value.source_kind = 'SEWING'
     value.lines[0]!.quantity = '1300'

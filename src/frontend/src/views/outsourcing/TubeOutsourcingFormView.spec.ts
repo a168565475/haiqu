@@ -539,6 +539,27 @@ describe('原管材表单复用裁片模式', () => {
     vi.mocked(api.createTubeOrder).mockImplementation(async payload => result(payload))
     vi.mocked(api.findTubeOrder).mockRejectedValue(httpError(404))
   })
+  it('选本厂自动带回整部位数量，本厂记录单价不计入计划加工金额', async () => {
+    const config = cuttingOptions()
+    config.crafts = [{ id: 'sewing-craft', name: '车缝', outsourcing_code: 'SEWING' }]
+    vi.mocked(api.fetchTubeOptions).mockResolvedValue(config)
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...cuttingContext(), part_flow: true,
+      sewing_inputs: true, source_kind: 'CUTTING', craft_id: 'sewing-craft', fees_deferred: false,
+      internal_sewing_factory_id: 'own', factories: [{ id: 'own', name: '本厂' }, { id: 'factory', name: '外厂' }],
+      rows: [{ ...row, part_name: '床面', order_required: '10', unit: '个' },
+        { ...row, component_identity: 'bag', part_name: '外袋', order_required: '20', unit: '个' }] })
+    const { wrapper, vm } = await mountPage(true)
+    try {
+      vm.rows[0]!.quantity = '2'; vm.rows[0]!.unitPrice = '9'
+      vm.rows[1]!.factoryId = 'factory'; vm.rows[1]!.unitPrice = '1.50'
+      wrapper.findAllComponents(ElSelect).find(select => select.attributes('aria-label') === '床面加工厂')!
+        .vm.$emit('update:modelValue', 'own')
+      await flushPromises()
+      expect(vm.rows[0]!.quantity).toBe('10')
+      expect(wrapper.get('input[aria-label="床面外发个数"]').attributes('disabled')).toBeDefined()
+      expect(Number(vm.plannedAmount)).toBe(30)
+    } finally { wrapper.unmount() }
+  })
   it('新车缝主表和保存确认拆分多来源列，部位规格独立且单价计算和保存不变', async () => {
     routing.query.source_kind = 'CUTTING'
     const config = cuttingOptions()

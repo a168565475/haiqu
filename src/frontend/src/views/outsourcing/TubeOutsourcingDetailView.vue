@@ -81,7 +81,7 @@ const locked = computed(() => identityBlocked.value || loading.value || saving.v
 const hasLines = computed(() => rows.value.length > 0 && Number(detail.value?.total_quantity) > 0)
 const dispatchWorkspace = computed(() => Boolean(source.value) && warehouseWorkspace.value)
 const canDispatch = computed(() => !detail.value?.is_plan && dispatchWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_dispatch === true)
-const canCancel = computed(() => !warehouseWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_cancel === true)
+const canCancel = computed(() => !warehouseWorkspace.value && !locked.value && (hasLines.value || Boolean(detail.value?.internal_sewing_parts?.length)) && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_cancel === true)
 const canCreate = computed(() => !warehouseWorkspace.value && Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.add_outsourcingorder')))
 const canReceive = computed(() => warehouseWorkspace.value && !locked.value && state.value === 'PROCESSING'
   && receiptPermissionEtag.value === detail.value?.etag
@@ -487,7 +487,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
 
   <AppWindowDialog :model-value="dialog === 'cancel'" title="取消待发外发单" :width="720" class="tube-outsourcing-detail-dialog" :before-close="beforeClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
     <div class="d4-cancel">
-      <div class="info-grid"><div class="info-cell"><span>外发单号</span><strong :title="detail?.order_number">{{ detail?.order_number || '—' }}</strong></div><div class="info-cell"><span>当前状态</span><strong>{{ stateLabel }}</strong></div><div class="info-cell"><span>材料来源</span><strong>{{ sourceLabel }}</strong></div><div class="info-cell"><span>原单数量</span><strong>{{ format(detail?.total_quantity) }} {{ quantityUnit }} · {{ rows.length }} 个部位</strong></div></div>
+      <div class="info-grid"><div class="info-cell"><span>外发单号</span><strong :title="detail?.order_number">{{ detail?.order_number || '—' }}</strong></div><div class="info-cell"><span>当前状态</span><strong>{{ stateLabel }}</strong></div><div class="info-cell"><span>材料来源</span><strong>{{ sourceLabel }}</strong></div><div class="info-cell"><span>原单数量</span><strong v-if="detail?.internal_sewing_parts?.length">本厂 {{ detail.internal_sewing_parts.length }} 个部位，外厂 {{ rows.length }} 个部位</strong><strong v-else>{{ format(detail?.total_quantity) }} {{ quantityUnit }} · {{ rows.length }} 个部位</strong></div></div>
       <p class="d4-cancel-text">{{ detail?.is_plan ? '确认后取消未发生收发的委外总单，原记录保留；仓库库存不发生变化。' : '确认后释放此单的待发预留，保留已取消原单。仓库库存不发生扣减。' }}</p>
       <label class="form-field"><span>取消备注 <small class="muted">选填</small></span><ElInput v-model="cancellationRemark" :disabled="saving || Boolean(pending)" type="textarea" :rows="3" maxlength="2000" placeholder="填写取消原因或调整说明" aria-label="取消备注" /></label>
       <p class="d4-cancel-note muted">需要调整数量或加工厂时，取消后重新创建外发单。</p>

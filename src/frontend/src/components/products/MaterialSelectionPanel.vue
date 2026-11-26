@@ -123,7 +123,8 @@ const fields = computed(() => {
     PLASTIC: ['material', 'color', 'specification', 'unit'],
     FABRIC: ['material', 'color', 'fabric_spec', 'width', 'unit'],
   }
-  const keys = categoryFields[catalog.value?.category_key || '']
+  const keys = catalog.value?.category_key === 'FABRIC' && catalog.value.template_key !== 'FABRIC'
+    ? undefined : categoryFields[catalog.value?.category_key || '']
   return (keys ? selectedFields.filter(field => keys.includes(field.key)).sort((left, right) => keys.indexOf(left.key) - keys.indexOf(right.key)) : selectedFields)
     .map(field => ({ ...field, label: field.key === 'unit' ? (catalog.value?.category_key === 'FABRIC' ? '单位' : '本次数量单位')
       : field.key === 'specification' && catalog.value?.category_key === 'HARDWARE' ? '型号规格'

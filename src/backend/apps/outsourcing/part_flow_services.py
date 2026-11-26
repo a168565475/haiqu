@@ -35,6 +35,10 @@ def dispatch_parts(*, order, data, request, payload_hash):
     from apps.material_issues.models import MaterialIssue, MaterialIssueLine
     from apps.material_issues.public_issue_services import _lock_public_issue_stock
     material_inputs = data.get('materials', [])
+    assignment = order.source_snapshot.get('sewing_part_assignments')
+    if assignment:
+        if any(str(row['factory_id']) == assignment['internal_factory_id'] for row in material_inputs):
+            raise ValidationError({'materials': '附带外发辅料应选择外厂，本厂用料请在车间领料。'})
     stock_lines = lock_material_sources(product, material_inputs, source_kind=data['source_kind'])
     issue = MaterialIssue(production_task_id=product.schedule.production_task_id,
         product_line_id=order.product_line_id, stock_mode='PUBLIC_V2')

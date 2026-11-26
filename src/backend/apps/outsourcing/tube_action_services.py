@@ -17,6 +17,7 @@ from apps.material_issues.models import OrderMaterialRequirement
 from .material_flow import lock_request
 from .models import OutsourcingFactory, TubeOutsourcingAction, TubeOutsourcingOrder
 from .services import _json_hash
+from .sewing_assignments import internal_sewing_assignment_in_use
 from .tube_kinds import CUTTING_SOURCES, DIRECT_SOURCES, lock_source_product
 from .tube_selectors import (CANCEL_PERMISSION, DISPATCH_PERMISSION, require_saved_order_access,
                             require_tube_feature, source_factories, source_product, source_zone)
@@ -99,9 +100,11 @@ def confirm_tube_action(*, order_id, kind, data, request, plan_dispatch=False):
         require_matching_etag(request, order)
     if order.status != 'PENDING_DISPATCH':
         raise Conflict('只有待外发原单可以发出或取消，请刷新查看当前状态。')
+    if kind == 'CANCEL' and internal_sewing_assignment_in_use(order):
+        raise Conflict('本厂车缝分工已有工价送审、领料、报工或入库记录，不能取消总单。')
     lines = list(order.lines.select_for_update(of=('self',)).order_by('pk'))
     materials = list(order.materials.select_for_update(of=('self',)).select_related('order_line', 'zone').order_by('pk'))
-    if not lines:
+    if not lines and not (kind == 'CANCEL' and order.source_snapshot.get('sewing_part_assignments', {}).get('internal')):
         _fail('原单没有可办理明细，不能提交。')
     before = {'status': order.status, 'version': order.version}
     movements = []

@@ -358,6 +358,10 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             allowed_section_codes = material_section_codes_for_workshop(workshop.name, plan_category)
         if allowed_section_codes is None:
             raise ValidationError({"plan_category": "作业计划类型与领料车间不一致或暂未开放生产领料。"})
+        if not issue_id and plan_category == 'SEWING':
+            from apps.outsourcing.sewing_assignments import sewing_part_scope
+            if sewing_part_scope(product_line_id=product_line_id) == {}:
+                raise ValidationError({"plan_category": "当前产品没有已分给本厂的车缝部位，可在车间委外加工中核对分工。"})
         from ..scopes import cutting_source_line_ids, raw_line_allowed_for_plan, semi_plan_category
         cutting_sources = cutting_source_line_ids(product_line_id)
         source_plan_category = semi_plan_category(workshop.name, plan_category)

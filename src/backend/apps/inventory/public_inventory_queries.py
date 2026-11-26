@@ -29,10 +29,10 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
     balances = PublicStockBalance.objects.filter(
         stock_kind__in=["CATALOG_RAW"] if legacy else ["RAW_PIPE", "CATALOG_RAW"], quality="AVAILABLE",
     ).filter(Q(quantity__gt=0) | Q(weight_quantity__gt=0)).select_related(
-        "raw_material__category", "raw_material__color", "unit", "zone__warehouse")
+        "raw_material__category", "raw_material__color", "material_catalog", "unit", "zone__warehouse")
     if bom_section:
         balances = balances.filter(
-            Q(stock_kind="CATALOG_RAW", identity_snapshot__material_selection_snapshot__category_key=bom_section)
+            Q(stock_kind="CATALOG_RAW", material_catalog__category_key=bom_section)
             | Q(stock_kind="RAW_PIPE", raw_material__category__category_name__in=legacy_names))
     if keyword:
         matching = stock_receipt_source_lines(PublicStockMovement).filter(
@@ -49,7 +49,7 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
             raw_material_information_id=OuterRef("raw_material_id"), section_title_snapshot=section_title)
         balances = balances.annotate(section_match=Exists(matching)).filter(
             Q(raw_material__category__category_name=section_title) | Q(section_match=True)
-            | Q(identity_snapshot__material_selection_snapshot__category_key={
+            | Q(stock_kind="CATALOG_RAW", material_catalog__category_key={
                 "管材": "TUBE", "管材类": "TUBE", "五金件": "HARDWARE", "塑料件类": "PLASTIC",
                 "辅料类": "AUXILIARY", "面料类": "FABRIC", "包材类": "PACKAGING"}.get(section_title, section_title)))
     if warehouse_id:
@@ -81,7 +81,7 @@ def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", 
             selected = balance.identity_snapshot["material_selection_snapshot"]
             attrs = selected["attributes"]
             title = {"TUBE": "管材类", "HARDWARE": "五金件", "PLASTIC": "塑料件类", "AUXILIARY": "辅料类",
-                     "FABRIC": "面料类", "PACKAGING": "包材类"}[selected["category_key"]]
+                     "FABRIC": "面料类", "PACKAGING": "包材类"}[balance.material_catalog.category_key]
             rows.append({"_balance_id": str(balance.pk), "material_catalog_id": str(balance.material_catalog_id),
                 "material_selection_snapshot": selected, "identity_key": balance.identity_key,
                 "inventory_key": f"CATALOG_RAW|{balance.pk}", "measurement_kind": "PIPE" if balance.raw_bar_length_m else "HARDWARE_WEIGHT" if selected["category_key"] == "HARDWARE" else "CATALOG",

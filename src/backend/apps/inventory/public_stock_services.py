@@ -161,7 +161,8 @@ def _check_replay(movement, *, source, quantity, balance_id=None, identity=None,
         same_balance = same_balance and all((
             movement.balance.stock_kind == identity["stock_kind"],
             movement.balance.identity_key == identity["identity_key"],
-            movement.balance.identity_snapshot == identity["identity_snapshot"],
+            (identity["stock_kind"] in CATALOG_STOCK_KINDS
+             or movement.balance.identity_snapshot == identity["identity_snapshot"]),
             movement.balance.unit_id == identity["unit_id"],
             movement.balance.zone_id == zone_id,
             movement.balance.quality == quality,

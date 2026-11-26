@@ -17,6 +17,7 @@ export interface BomDisplayOption {
   component_kind: '' | 'CUT_PIECE' | 'SEWN_PART'
   pieces_per_product: number | null
   parts_per_product: number | null
+  internal_sewing_quantity?: number
   pieces_per_part: number | null
   unit: string
   cutting_sets_per_product: number | null

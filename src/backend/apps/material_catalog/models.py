@@ -32,7 +32,7 @@ class MaterialCatalog(ArchivableModel):
             models.CheckConstraint(condition=~Q(name=""), name="mat_catalog_name_not_empty"),
             models.CheckConstraint(
                 condition=(Q(category_key="TUBE", template_key="TUBE")
-                    | Q(category_key="FABRIC", template_key="FABRIC")
+                    | Q(category_key="FABRIC", template_key__in=["FABRIC", "COTTON", "AUXILIARY_GENERAL"])
                     | Q(category_key="HARDWARE", template_key="HARDWARE")
                     | Q(category_key="PLASTIC", template_key="PLASTIC")
                     | Q(category_key="PACKAGING", template_key__in=["CARTON", "BAG", "PACKAGING_GENERAL"])

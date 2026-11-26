@@ -56,7 +56,7 @@ def _part_label_with_cutting_length(label, cutting_length_mm):
     return f"{label}-{cutting_length_mm}mm" if cutting_length_mm else label
 
 
-def bom_options_for_product_line(product_line_id):
+def bom_options_for_product_line(product_line_id, *, schedule_product_id=None):
     bom = Bom.objects.filter(
         product_line_id=product_line_id,
         status=BomStatus.VERIFIED,
@@ -109,6 +109,15 @@ def bom_options_for_product_line(product_line_id):
             "unit": line.unit,
         }
         options.append(option)
+    if schedule_product_id and any(item["component_kind"] == "SEWN_PART" for item in options):
+        from apps.outsourcing.sewing_assignments import sewing_part_scope
+        assigned = sewing_part_scope(schedule_product_id)
+        if assigned is not None:
+            options = [item for item in options
+                       if item["component_kind"] != "SEWN_PART" or item["component_identity"] in assigned]
+            for item in options:
+                if item["component_kind"] == "SEWN_PART":
+                    item["internal_sewing_quantity"] = assigned[item["component_identity"]]
     return options
 
 
@@ -260,6 +269,18 @@ def _resolve_source(product_line_id, workshop_id, schedule_product_id, craft_ids
         raise ValidationError({"craft_ids": "存在无效或非厂内工艺。"})
     if any(item.workshop_id != workshop.pk for item in crafts):
         raise ValidationError({"craft_ids": "所选工艺不属于该车间。"})
+    if crafts[0].plan_category == PlanCategory.SEWING:
+        from apps.outsourcing.sewing_assignments import internal_sewing_products
+        if not schedule_product:
+            matches = list(ProductionScheduleProduct.objects.filter(
+                product_line=product_line, removed_at__isnull=True, schedule__record_status=ScheduleStatus.ACTIVE,
+                crafts__craft=crafts[0], crafts__removed_at__isnull=True,
+            ).distinct()[:2])
+            if len(matches) != 1:
+                raise ValidationError({"schedule_product_id": "请选择有效的车缝排产产品。"})
+            schedule_product = matches[0]
+        if not internal_sewing_products().filter(pk=schedule_product.pk).exists():
+            raise ValidationError({"craft_ids": "当前车缝任务没有已分配给本厂的部位。"})
     if schedule_product and ProductionScheduleProductCraft.objects.filter(
         schedule_product=schedule_product, removed_at__isnull=True, craft_id__in=[item.pk for item in crafts]
     ).count() != len(crafts):
@@ -325,6 +346,8 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
                 raise ValidationError({"lines": f"车缝部位“{display_name}”只能按套计价。"})
             counting_mode = WorkCountingMode.SET
             required_quantity = Decimal(order_quantity) * Decimal(parts)
+            if "internal_sewing_quantity" in bom_option:
+                required_quantity = Decimal(bom_option["internal_sewing_quantity"])
     else:
         if not display_name:
             raise ValidationError({"lines": "名称/部位不能为空。"})
@@ -402,8 +425,9 @@ def _replace_scheme_lines(scheme, items, crafts):
     scheme.lines.all().delete()
     craft_map = {item.pk: item for item in crafts}
     is_metal_scope = _is_metal_craft_scope(crafts)
+    sewing_product_id = scheme.schedule_product_id if crafts[0].plan_category == PlanCategory.SEWING else None
     bom_options = {
-        item["id"]: item for item in bom_options_for_product_line(scheme.product_line_id)
+        item["id"]: item for item in bom_options_for_product_line(scheme.product_line_id, schedule_product_id=sewing_product_id)
     }
     order_quantity = (
         scheme.schedule_product.source_quantity_snapshot
@@ -463,7 +487,13 @@ def _replace_scheme_lines(scheme, items, crafts):
 
 
 def _refresh_scheme_required_quantities(scheme):
-    options = bom_options_for_product_line(scheme.product_line_id)
+    sewing_product_id = None
+    if scheme.scope_craft.plan_category == PlanCategory.SEWING:
+        sewing_product_id = scheme.schedule_product_id
+        if not sewing_product_id:
+            _, _, product, _ = _resolve_source(scheme.product_line_id, scheme.workshop_id, None, [scheme.scope_craft_id])
+            sewing_product_id = product.pk
+    options = bom_options_for_product_line(scheme.product_line_id, schedule_product_id=sewing_product_id)
     options_by_component = {item["component_identity"]: item for item in options}
     order_quantity = (
         scheme.schedule_product.source_quantity_snapshot
@@ -796,16 +826,31 @@ def price_scheme_for(*, product_line_id, workshop_id, craft_id, production_date)
     return schemes.first()
 
 
-def wage_scheme_progress(scheme, cumulative_by_work_item=None):
+def active_report_requirements(lines, sewing_scope=None):
+    requirements = []
+    for line in lines:
+        if line.status != WageSchemeLineStatus.ACTIVE:
+            continue
+        required = line.required_quantity_snapshot
+        if sewing_scope is not None:
+            identity = str(line.bom_component_identity_snapshot)
+            if identity not in sewing_scope:
+                continue
+            required = Decimal(sewing_scope[identity])
+        requirements.append((line, required))
+    return requirements
+
+
+def wage_scheme_progress(scheme, cumulative_by_work_item=None, *, sewing_scope=None):
     cumulative_by_work_item = cumulative_by_work_item or {}
-    lines = [line for line in scheme.lines.all() if line.status == WageSchemeLineStatus.ACTIVE]
-    if not lines or any(line.required_quantity_snapshot is None for line in lines):
+    requirements = active_report_requirements(scheme.lines.all(), sewing_scope)
+    if not requirements or any(required is None for _, required in requirements):
         return None
-    required_total = sum((line.required_quantity_snapshot for line in lines), Decimal("0"))
+    required_total = sum((required for _, required in requirements), Decimal("0"))
     if required_total <= 0:
         return None
     reported_total = sum(
-        (cumulative_by_work_item.get(line.work_item_id, Decimal("0")) for line in lines),
+        (cumulative_by_work_item.get(line.work_item_id, Decimal("0")) for line, _ in requirements),
         Decimal("0"),
     )
     percentage = int(
@@ -845,10 +890,16 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
         status=WorkshopPlanStatus.COMPLETED,
     ).exists():
         raise ValidationError({"schedule_product_id": "当前生产计划已完成，不能继续报工。"})
-    valid_lines = {
-        item.pk: item for item in scheme.lines.select_for_update().select_related("work_item")
-        .filter(status=WageSchemeLineStatus.ACTIVE)
-    }
+    sewing_scope = None
+    if scheme.scope_craft.plan_category == PlanCategory.SEWING:
+        from apps.outsourcing.sewing_assignments import sewing_part_scope
+        sewing_scope = sewing_part_scope(schedule_product.pk)
+        if sewing_scope == {}:
+            raise ValidationError({"schedule_product_id": "当前车缝任务没有已分配给本厂的部位。"})
+    requirements = active_report_requirements(
+        scheme.lines.select_for_update().select_related("work_item").filter(status=WageSchemeLineStatus.ACTIVE), sewing_scope,
+    )
+    valid_lines = {item.pk: item for item, _ in requirements}
     employees = {item.pk: item for item in locked_active_employees(Employee.objects.filter(
         pk__in=[row["workshop_employee_id"] for row in data["lines"]], workshop=scheme.workshop,
     ))}
@@ -873,12 +924,11 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
         if total > MAX_WORK_REPORT_AMOUNT:
             raise ValidationError({"lines": "本次报工金额合计超出系统可保存范围。"})
         built.append((index, row, scheme_line, employees[row["workshop_employee_id"]], amount))
-    active_lines = list(valid_lines.values())
     required_by_work_item = {}
-    for line in active_lines:
-        if line.required_quantity_snapshot is None or line.required_quantity_snapshot <= 0:
+    for line, required in requirements:
+        if required is None or required <= 0:
             raise ValidationError({"scheme_id": "工价方案缺少需完成次数，请先变更并重新批准工价方案。"})
-        required_by_work_item[line.work_item_id] = line.required_quantity_snapshot
+        required_by_work_item[line.work_item_id] = required
 
     existing_lines = WorkReportLine.objects.filter(
         report__schedule_product_id=schedule_product.pk,

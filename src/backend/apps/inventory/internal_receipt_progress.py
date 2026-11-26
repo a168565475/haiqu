@@ -2,6 +2,7 @@
 from collections import defaultdict
 from django.db.models import Sum
 from apps.boms.models import Bom, BomLine
+from apps.outsourcing.sewing_assignments import sewing_part_scopes
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from .models import PublicStockMovement
 from .internal_receipt_quantities import net_component_demand, ReceiptQuantityError
@@ -32,14 +33,20 @@ def receipt_progress_for_plans(plans, category):
             source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN'])
         .values('product_line_id','bom_line__component_identity','balance__identity_snapshot__completed_craft__code').annotate(total=Sum('quantity')) }
     result={}
+    sewing_scopes = sewing_part_scopes([plan.pk for plan in plans]) if category == 'SEWING' else {}
     for plan in plans:
         bom=latest.get(plan.product_line_id)
         lines=parts[bom.pk] if bom else []
+        scope = sewing_scopes.get(plan.pk)
+        if scope is not None:
+            lines = [line for line in lines if str(line.component_identity) in scope]
         complete=0
         if bom and bom.status=='VERIFIED' and bom.order_quantity==plan.product_line.quantity:
             for line in lines:
                 try:
-                    if line.component_kind:
+                    if scope is not None:
+                        required = scope[str(line.component_identity)]
+                    elif line.component_kind:
                         from .part_flow_quantities import component_required_quantity
                         required=component_required_quantity(line, plan.product_line.quantity)
                     else:

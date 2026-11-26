@@ -44,7 +44,7 @@ from ..schedule_progress import schedule_progress_statuses
 from ..schedule_stage_progress import schedule_stage_progress_statuses
 from ..services import (
     approve_scheme, create_change_scheme, create_scheme, create_work_report, price_scheme_for, return_scheme, submit_scheme, update_scheme,
-    update_work_report, bom_options_for_product_line, wage_scheme_progress,
+    update_work_report, active_report_requirements, bom_options_for_product_line, wage_scheme_progress,
 )
 from .serializers import (
     MobileWageFormQuerySerializer, MobileWageTargetQuerySerializer,
@@ -73,12 +73,12 @@ def _date(value, field):
         raise ValidationError({field: "日期格式必须为 YYYY-MM-DD。"}) from exc
 
 
-def _estimated_plan_wage(scheme):
-    active_lines = [line for line in scheme.lines.all() if line.status == WageSchemeLineStatus.ACTIVE]
-    if not active_lines or any(line.required_quantity_snapshot is None for line in active_lines):
+def _estimated_plan_wage(scheme, sewing_scope=None):
+    requirements = active_report_requirements(scheme.lines.all(), sewing_scope)
+    if not requirements or any(required is None for _, required in requirements):
         return None
     total = sum(
-        (line.required_quantity_snapshot * line.declared_price for line in active_lines),
+        (required * line.declared_price for line, required in requirements),
         Decimal("0"),
     )
     return str(total.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
@@ -131,7 +131,7 @@ class ReportingContextView(generics.GenericAPIView):
             workshop__in=workshops
         )).select_related("workshop")
         bom_items = (
-            bom_options_for_product_line(schedule_product.product_line_id)
+            bom_options_for_product_line(schedule_product.product_line_id, schedule_product_id=schedule_product.pk)
             if schedule_product else []
         )
         return Response({"data": {
@@ -225,6 +225,11 @@ class PlanWageStatusView(generics.GenericAPIView):
         links = ProductionScheduleProductCraft.objects.select_related("craft").filter(
             schedule_product_id__in=products, removed_at__isnull=True, plan_category=plan_category
         )
+        sewing_scopes = {}
+        if plan_category == PlanCategory.SEWING:
+            from apps.outsourcing.sewing_assignments import sewing_part_scopes
+            sewing_scopes = sewing_part_scopes(products.keys())
+            links = links.exclude(schedule_product_id__in=[pk for pk, scope in sewing_scopes.items() if scope == {}])
         if has_reporting_access:
             links = (reporting_source_crafts(request, 'workshop_reporting.view_wagescheme', links)
                      | reporting_source_crafts(request, 'workshop_reporting.view_workreport', links))
@@ -331,7 +336,7 @@ class PlanWageStatusView(generics.GenericAPIView):
             plan_status = execution.status if execution else WorkshopPlanStatus.IN_PROGRESS
             plan_status_display = execution.get_status_display() if execution else "进行中"
             if len(active) == 1:
-                progress = wage_scheme_progress(active[0], cumulative_by_product.get(product_id, {}))
+                progress = wage_scheme_progress(active[0], cumulative_by_product.get(product_id, {}), sewing_scope=sewing_scopes.get(product_id))
                 if plan_status == WorkshopPlanStatus.COMPLETED:
                     from apps.workshop_reporting.tube_plan_services import is_current_tube_scheme, tube_plan_is_complete
                     if is_current_tube_scheme(active[0]) and not tube_plan_is_complete(
@@ -355,7 +360,7 @@ class PlanWageStatusView(generics.GenericAPIView):
                     "schedule_product_id": str(product_id), "workshop_id": str(workshop_id),
                     "craft_id": str(craft_id), "status": WageSchemeStatus.APPROVED,
                     "scheme_id": str(active[0].pk), "can_report": can_report, "reason": reason,
-                    "estimated_wage": _estimated_plan_wage(active[0]),
+                    "estimated_wage": _estimated_plan_wage(active[0], sewing_scopes.get(product_id)),
                     "progress_percent": progress["percentage"] if progress else None,
                     "plan_status": plan_status, "plan_status_display": plan_status_display,
                 })
@@ -376,7 +381,7 @@ class PlanWageStatusView(generics.GenericAPIView):
                     "craft_id": str(craft_id), "status": latest_status if latest else "NOT_CREATED",
                     "scheme_id": str(latest.pk) if latest else None, "can_report": False,
                     "reason": "当前日期没有适用的已批准工价方案。",
-                    "estimated_wage": _estimated_plan_wage(latest) if latest else None,
+                    "estimated_wage": _estimated_plan_wage(latest, sewing_scopes.get(product_id)) if latest else None,
                     "progress_percent": None, "plan_status": plan_status,
                     "plan_status_display": plan_status_display,
                 })
@@ -716,6 +721,15 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             craft_id=craft_id, production_date=production_date,
         )
         scheme = wage_schemes_with_context(WageScheme.objects.filter(pk=scheme.pk)).get()
+        assigned = None
+        if scheme.scope_craft.plan_category == PlanCategory.SEWING:
+            from apps.outsourcing.sewing_assignments import sewing_part_scope
+            if not schedule_product_id:
+                products = list(sources.order_by().values_list("schedule_product_id", flat=True).distinct()[:2])
+                if len(products) != 1:
+                    raise ValidationError({"schedule_product_id": "请选择车缝排产产品后查看适用工价。"})
+                schedule_product_id = products[0]
+            assigned = sewing_part_scope(schedule_product_id)
         visible_reports = accessible_work_reports(request).filter(
             product_line_id=product_line_id, workshop_id=workshop_id
         )
@@ -750,6 +764,10 @@ class WorkReportViewSet(viewsets.GenericViewSet):
                     row["work_item_id"], str(row["workshop_employee_id"])
                 )
         data = wage_scheme_data(scheme)
+        if assigned is not None:
+            data["lines"] = [line for line in data["lines"] if line["bom_component_identity"] in assigned]
+            for line in data["lines"]:
+                line["required_quantity"] = str(assigned[line["bom_component_identity"]])
         for line in data["lines"]:
             work_item_id = UUID(line["work_item_id"])
             line["cumulative_quantity"] = str(cumulative.get(work_item_id, 0))

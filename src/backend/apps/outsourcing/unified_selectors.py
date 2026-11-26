@@ -186,7 +186,9 @@ def _tube_candidates(request, filters):
     if filters.get("source_group"):
         tubes = tubes.filter(unified_source__in=SOURCE_GROUP_KINDS[filters["source_group"]])
     if filters.get("factory_id"):
-        tubes = tubes.filter(Q(lines__factory_id=filters["factory_id"])
+        internal = (Q(source_snapshot__sewing_part_assignments__internal__contains=[{'factory_id': str(filters['factory_id'])}])
+                    if filters.get('warehouse_stage') != 'all' else Q(pk__in=[]))
+        tubes = tubes.filter(internal | Q(lines__factory_id=filters["factory_id"])
                              | Q(materials__factory_id=filters["factory_id"])
                              | (Q(is_plan=True, dispatch_batches__status__in=['PROCESSING', 'COMPLETED'],
                                   dispatch_batches__actions__kind='DISPATCH') &
@@ -377,6 +379,9 @@ def _tube_rows(candidates, filters):
             factories[str(line.factory_id)] = snapshot.get("factory_name", "")
         if order.is_plan:
             factories.update(plan_factories[str(order.pk)])
+            if filters.get('warehouse_stage') != 'all':
+                for part in order.source_snapshot.get('sewing_part_assignments', {}).get('internal', []):
+                    factories[part['factory_id']] = part['factory_name']
             for material in order.source_snapshot.get('planned_materials', []):
                 factories[str(material['factory_id'])] = material.get('factory_name', '')
         product = order.schedule_product.product_snapshot
@@ -406,6 +411,8 @@ def _tube_rows(candidates, filters):
                 receipt_state='RECORDED' if Decimal(summary['received_quantity']) > 0 else 'NOT_RECEIVED',
                 status_display='入库达标' if order.status == 'COMPLETED' else row['status_display'])
             if order.source_snapshot.get('part_flow'):
+                if order.source_snapshot.get('sewing_part_assignments', {}).get('has_external') is False and order.status != 'CANCELLED':
+                    row['status_display'] = '本厂车缝'
                 row['dispatched_quantities'] = ([{'quantity': value['dispatched_quantity'], 'unit': value['unit']}
                     for value in summary['input_totals']] if order.source_snapshot.get('sewing_inputs') else [
                         {'quantity': value['dispatched_quantity'], 'unit': value['unit']} for value in summary['quantity_totals']])

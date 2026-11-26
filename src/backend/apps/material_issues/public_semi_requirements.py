@@ -190,6 +190,10 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
         return [], [_blocker("BOM_NOT_VERIFIED", "半成品领用需使用本产品最新已确认 BOM。")]
     if Decimal(product.quantity) != bom.order_quantity:
         return [], [_blocker("BOM_QUANTITY_STALE", "订单数量与已确认 BOM 不一致。")]
+    sewing_scope = None
+    if plan_category == 'SEWING':
+        from apps.outsourcing.sewing_assignments import sewing_part_scope
+        sewing_scope = sewing_part_scope(product_line_id=product_id)
     lines = list(BomLine.objects.filter(section__bom=bom).select_related(
         "section", "parent_part", "fabric_source_line__section").prefetch_related(
             'cut_pieces__section', 'cut_pieces__fabric_source_line__section').order_by("section__line_number", "line_number", "id"))
@@ -263,6 +267,10 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow
             required_kind = {'SEWING': 'CUT_PIECE', 'ASSEMBLY': 'SEWN_PART'}.get(plan_category)
             if kind != required_kind:
                 continue
+        if kind == 'CUT_PIECE' and sewing_scope is not None and (
+            not line.parent_part_id or str(line.parent_part.component_identity) not in sewing_scope
+        ):
+            continue
         for craft, unit in grouped_dimensions[kind]:
             if unit.catalog_owner_id and unit.catalog_owner_id != line.material_catalog_id:
                 continue

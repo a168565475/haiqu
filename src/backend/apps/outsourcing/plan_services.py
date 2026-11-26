@@ -117,6 +117,13 @@ def create_plan(*, data, request):
                 'factory_name': factories[entered['factory_id']].name})
     rows = {row['component_identity']: row for row in context['rows']}
     lines = []
+    internal_parts = []
+    own_factory_id = None
+    if context.get('sewing_inputs'):
+        from .sewing_assignments import internal_sewing_factory_id
+        own_factory_id = internal_sewing_factory_id()
+        if own_factory_id and any(row['factory_id'] == own_factory_id for row in requested_materials):
+            raise ValidationError({'materials': '附带外发辅料应选择外厂，本厂用料请在车间领料。'})
     for entered in data['lines']:
         row = rows.get(str(entered['component_identity']))
         if not row or row['blockers'] or Decimal(row['order_required']) <= 0:
@@ -129,6 +136,17 @@ def create_plan(*, data, request):
         price_unit = entered.get('price_unit', PriceUnit.PIECE)
         if context.get('part_flow') and price_unit != PriceUnit.PIECE:
             raise ValidationError({'lines': '部位须按各自单位填写单价，按实际回货数量计费。'})
+        if entered['factory_id'] == own_factory_id:
+            required = int(Decimal(row['order_required']))
+            if entered['quantity'] != required:
+                raise ValidationError({'lines': f'本厂负责整个“{row["part_name"]}”部位，计划数量应为 {required}。'})
+            internal_parts.append({
+                'component_identity': row['component_identity'], 'bom_line_id': row['bom_line_id'],
+                'part_name': row['part_name'], 'unit': row['unit'], 'quantity': required,
+                'factory_id': str(own_factory_id), 'factory_name': snapshot['factory_name'],
+                'unit_price': str(entered['unit_price']),
+            })
+            continue
         explicit_price_unit = 'price_unit' in entered
         bom_line = bom_lines[row['bom_line_id']]
         unit_area = (parse_unit_area((bom_line.raw_values or {}).get('coating_unit_area_sqm'))
@@ -140,6 +158,14 @@ def create_plan(*, data, request):
             factory_id=entered['factory_id'], quantity=entered['quantity'], price_unit=price_unit,
             unit_area_sqm=unit_area, unit_price=entered.get('unit_price'),
             stock_quantity=None, input_identity=_json(row['input_identity']), snapshot=_json(snapshot)))
+    if context.get('sewing_inputs'):
+        context['sewing_part_assignments'] = {'internal': internal_parts, 'has_external': bool(lines),
+                                              'internal_factory_id': str(own_factory_id) if own_factory_id else None}
+        if internal_parts and not product.crafts.filter(removed_at__isnull=True, craft_type_snapshot='INTERNAL',
+                                                       plan_category='SEWING').exists():
+            raise ValidationError({'lines': '该产品未安排厂内车缝，请在生产排产中补选厂内车缝后再保存本厂部位。'})
+        if not lines and requested_materials:
+            raise ValidationError({'materials': '全由本厂制作的车缝单无需外发辅料。'})
     order = TubeOutsourcingOrder.objects.create(is_plan=True, order_number=next_business_number('OUTSOURCING_ORDER'),
         schedule_product=product, product_line=product.product_line, bom_id=context['bom_id'], craft=craft,
         source_kind=data['source_kind'], zone=zone, planned_dispatch_date=data['planned_dispatch_date'],
@@ -159,7 +185,8 @@ def create_plan(*, data, request):
                        'unit_price': str(line.unit_price) if line.unit_price is not None else None} for line in lines]},
         context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
     from apps.wecom.workshop_notifications import outsourcing_created
-    outsourcing_created(order, request.employee, tube=True)
+    if lines:
+        outsourcing_created(order, request.employee, tube=True)
     return order, True
 
 
@@ -175,6 +202,9 @@ def _lock_plan(order_id, request, permission):
     require_matching_etag(request, order)
     if order.status == 'CANCELLED':
         raise Conflict('已取消的委外总单不能再办理。')
+    assignment = order.source_snapshot.get('sewing_part_assignments')
+    if assignment is not None and not assignment['has_external'] and permission in {DISPATCH_PERMISSION, RETURN_PERMISSION}:
+        raise Conflict('本单车缝部位均由本厂制作，无需外发或回货。')
     return order
 
 

@@ -97,8 +97,9 @@ def links_for_permission(queryset, request, permission):
 
 
 def visible_plan_links(request):
+    from apps.production_scheduling.selectors import available_internal_craft_links
     base = plan_links()
-    return base.filter(
+    return available_internal_craft_links(base).filter(
         Q(pk__in=links_for_permission(base, request, ISSUE_VIEW).values("pk"))
         | Q(pk__in=links_for_permission(base, request, REPORT_VIEW).values("pk"))
         | Q(pk__in=links_for_permission(base, request, FINISHED_RECEIPT_ADD).values("pk"))
@@ -169,6 +170,8 @@ def mobile_plan_data(request, keys, *, production_date=None, include_people=Fals
     for link in links:
         grouped[(link.schedule_product_id, link.plan_category, link.craft.workshop_id)].append(link)
     report_links = [link for link in links if link.pk in permission_ids[REPORT_VIEW]]
+    from apps.outsourcing.sewing_assignments import sewing_part_scopes
+    sewing_scopes = sewing_part_scopes({link.schedule_product_id for link in report_links if link.plan_category == PlanCategory.SEWING})
     schemes_by_scope = defaultdict(list)
     cumulative = defaultdict(dict)
     executions = {}
@@ -237,7 +240,8 @@ def mobile_plan_data(request, keys, *, production_date=None, include_people=Fals
             candidates = schemes_by_scope.get((source.product_line_id, workshop.pk, link.craft_id), [])
             scheme = candidates[0] if len(candidates) == 1 else None
             counts = cumulative.get((source.pk, workshop.pk), {})
-            metric = wage_scheme_progress(scheme, counts) if scheme else None
+            sewing_scope = sewing_scopes.get(source.pk) if category == PlanCategory.SEWING else None
+            metric = wage_scheme_progress(scheme, counts, sewing_scope=sewing_scope) if scheme else None
             plan_status = executions.get((source.pk, link.craft_id), WorkshopPlanStatus.IN_PROGRESS)
             if scheme and plan_status == WorkshopPlanStatus.COMPLETED and is_current_tube_scheme(scheme) and not tube_plan_is_complete(source.pk, scheme, cumulative_by_work_item=counts):
                 plan_status = WorkshopPlanStatus.IN_PROGRESS

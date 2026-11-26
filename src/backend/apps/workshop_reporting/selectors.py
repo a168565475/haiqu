@@ -27,9 +27,11 @@ def reporting_source_crafts(request, permission, queryset=None):
     """按产品所属任务与本动作车间授权过滤每条工艺，避免跨任务拼接车间范围。"""
     from apps.access_control.role_policy import filter_task_scope
     from apps.production_scheduling.models import ProductionScheduleProductCraft
+    from apps.production_scheduling.selectors import available_internal_craft_links
     if queryset is None:
         queryset = ProductionScheduleProductCraft.objects.filter(removed_at__isnull=True,
             schedule_product__removed_at__isnull=True, schedule_product__schedule__record_status='ACTIVE')
+    queryset = available_internal_craft_links(queryset)
     ids = allowed_workshop_ids(request, permission=permission, for_work_reports=permission.endswith('workreport'))
     selected = queryset if ids is None else queryset.filter(craft__workshop_id__in=ids)
     followed = filter_task_scope(request, queryset, permission, 'schedule_product__schedule__production_task')

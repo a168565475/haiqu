@@ -1,6 +1,5 @@
 import uuid
 
-from django.contrib.auth.models import Permission
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -78,6 +77,38 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         self.assertEqual({row['unit'] for row in cutting}, {'片'})
         self.assertEqual([(row['bom_line_id'], row['unit']) for row in sewing], [(str(self.part.pk), '个')])
         invalid, _ = self.submit('SEWING', self.parts[0], 1)
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+
+    def test_unassigned_mixed_sewing_keeps_cutting_but_has_no_internal_pieces_or_outputs(self):
+        ProductionScheduleProductCraft.objects.create(schedule_product=self.schedule_product,
+            craft=self.external_sewing, craft_type_snapshot='EXTERNAL', craft_name_snapshot=self.external_sewing.name)
+        query = {'schedule_product_id': str(self.schedule_product.pk), 'plan_category': 'SEWING'}
+        self.assertEqual(self.client.get(self.url + 'preview/', query).status_code, 404)
+        self.assertEqual(len(self.preview('CUTTING')['lines']), len(self.parts))
+        rows, _ = public_semi_requirement_rows(self.task.pk, self.product_line.pk, plan_category='SEWING')
+        self.assertFalse(any(row['component_kind'] == 'CUT_PIECE' for row in rows))
+        invalid, _ = self.submit('SEWING', self.part, 1, etag='"unassigned"')
+        self.assertEqual(invalid.status_code, 404, invalid.data)
+
+    def test_internal_receipt_and_pick_list_use_assigned_parent(self):
+        from apps.outsourcing.models import TubeOutsourcingOrder
+        external = BomLine.objects.create(section=self.part.section, line_number=10,
+            component_kind='SEWN_PART', part_name='外厂靠背', unit='个', parts_per_product=1)
+        piece = self.parts[0]
+        piece.parent_part = external
+        piece.save(update_fields=['parent_part'])
+        TubeOutsourcingOrder.objects.create(order_number='RK-SEW-MIX', schedule_product=self.schedule_product,
+            product_line=self.product_line, bom=self.bom, craft=self.external_sewing, source_kind='CUTTING',
+            is_plan=True, planned_dispatch_date=timezone.localdate(), expected_return_date=timezone.localdate(),
+            client_request_id=uuid.uuid4(), created_by_employee=self.employee, updated_by_employee=self.employee,
+            source_snapshot={'part_flow': True, 'sewing_inputs': True, 'sewing_part_assignments': {
+                'internal': [{'component_identity': str(self.part.component_identity), 'quantity': 100}],
+                'has_external': True}})
+        self.assertEqual([row['bom_line_id'] for row in self.preview('SEWING')['lines']], [str(self.part.pk)])
+        rows, _ = public_semi_requirement_rows(self.task.pk, self.product_line.pk, plan_category='SEWING')
+        names = {row['material_name'] for row in rows if row['component_kind'] == 'CUT_PIECE'}
+        self.assertEqual(names, {row.part_name for row in self.parts[1:]})
+        invalid, _ = self.submit('SEWING', external, 1)
         self.assertEqual(invalid.status_code, 400, invalid.data)
 
     def test_pending_confirm_and_replay_credit_cut_pieces_once(self):
@@ -170,30 +201,6 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         typed_sewing = [row for row in sewing if row['conversion_snapshot']['public_identity']['identity_snapshot'].get('schema_version') == 3]
         self.assertEqual({row['material_name'] for row in typed_sewing}, {line.part_name for line in self.parts})
         self.assertEqual(PublicStockBalance.objects.filter(identity_snapshot__semi_kind='SEWN_PART').get().quantity, 9000)
-
-    def test_inventory_tabs_split_receipts_and_legacy_fabric_stock(self):
-        self.user.user_permissions.add(Permission.objects.get(content_type__app_label='inventory', codename='view_materialinbound'))
-        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
-        for category, line in (('CUTTING', self.parts[0]), ('SEWING', self.part)):
-            created, _ = self.submit(category, line, 1)
-            self.assertEqual(created.status_code, 201, created.data)
-            confirmed = self.confirm(created)
-            self.assertEqual(confirmed.status_code, 200, confirmed.data)
-
-        legacy_line = BomLine(section=self.part.section, category='裁片', specification='50*40',
-            material=self.fabric.material, fabric_source_line=self.fabric, cutting_pieces_per_set=2)
-        for stage, name in (('CUTTING', '旧款裁片'), ('SEWING', '旧款车缝部位')):
-            legacy_line.part_name = name
-            identity = build_semi_finished_identity(bom_line=legacy_line, completed_craft=component_stock_craft(stage), unit=self.set_unit)
-            credit_public_stock(identity=identity, zone=self.semi_zone, quantity=3, actor_employee=self.employee,
-                source_type='TEST_LEGACY_FABRIC', source_id=uuid.uuid4(), source_line_id=uuid.uuid4())
-
-        for section, expected in (('FABRIC_SEMI', {self.parts[0].part_name, '旧款裁片'}),
-                                  ('SEWN_PART', {self.part.part_name, '旧款车缝部位'})):
-            result = self.client.get('/api/v1/material-inventory/', {'stock_kind': 'SEMI', 'bom_section': section})
-            self.assertEqual(result.status_code, 200, result.data)
-            self.assertEqual(result.data['count'], 2)
-            self.assertEqual({row['part_name'] for row in result.data['results']}, expected)
 
     def test_attribute_identity_extension_passes_receipt_constraints_and_freezes_each_stage(self):
         from apps.material_catalog.models import MaterialCatalog

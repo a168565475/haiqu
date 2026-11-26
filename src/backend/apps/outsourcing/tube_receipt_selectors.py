@@ -25,6 +25,8 @@ def require_receipt_read_access(request, order):
         return
     # 每个动作单独检查自己的原单工艺范围，不能拼接两种权限的范围。
     for permission in (VIEW_PERMISSION, RETURN_PERMISSION):
+        if permission == RETURN_PERMISSION and order.source_snapshot.get('sewing_part_assignments', {}).get('has_external') is False:
+            continue
         if not module_policy.has_permission(request, permission):
             continue
         try:

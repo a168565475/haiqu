@@ -7,6 +7,7 @@ from apps.access_control.module_policy import has_permission
 from apps.access_control.resource_scopes import has_resource_grant
 from apps.access_control.sales_policy import access_for
 from apps.production_scheduling.models import ProductionScheduleProductCraft
+from apps.production_scheduling.selectors import available_internal_craft_links
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.workshop_config.constants import METAL_WORKSHOP_NAME
 from apps.workshop_config.models import CraftType, Operation, PlanCategory, RecordStatus
@@ -50,6 +51,7 @@ def _eligible_links(request):
     ).select_related(
         "schedule_product__product_line__production_task", "schedule_product__schedule", "craft__workshop",
     )
+    links = available_internal_craft_links(links)
     for permission in (VIEW, SUBMIT):
         links = _links_in_workshop_scope(request, links, permission)
     latest_scheme = WageScheme.objects.filter(
@@ -164,7 +166,7 @@ def mobile_wage_form(request, schedule_product_id, craft_id):
     options = None
     if category == PlanCategory.METAL or category in kinds:
         options = []
-        for item in bom_options_for_product_line(product.product_line_id):
+        for item in bom_options_for_product_line(product.product_line_id, schedule_product_id=product.pk):
             belongs = item["source_type"] == PlanCategory.METAL if category == PlanCategory.METAL else (
                 item["source_type"] == PlanCategory.CUTTING and item["component_kind"] == kinds[category]
             )

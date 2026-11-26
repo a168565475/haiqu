@@ -2,8 +2,9 @@
 from decimal import Decimal
 
 from django.db.models import Sum
+from django.http import Http404
 from django.utils import timezone
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 
 from apps.access_control import module_policy
 from apps.core.api.concurrency import etag_for_instance
@@ -13,9 +14,11 @@ from .models import TubeOutsourcingLine, TubeOutsourcingInput, TubePlanReceiptLi
 from .tube_kinds import CUTTING_SOURCES
 from .tube_prices import line_area_data, line_price_data
 from .part_flow_prices import receipt_price_data, receipt_amount_summary
+from .sewing_assignments import internal_sewing_assignment_in_use
 from .component_source_snapshots import frozen_component_source_materials
 from .tube_selectors import (CANCEL_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION,
                             require_saved_order_access, source_factories)
+from .warehouse_access import warehouse_stage
 
 
 def plan_quantities(orders):
@@ -83,6 +86,17 @@ def plan_purchase_references(order):
     return {row['id']: row['purchase_reference'] for row in context['rows']}
 
 
+def _can_view_sewing_assignment(order, request):
+    permission = 'outsourcing.view_outsourcingorder'
+    if request is None or warehouse_stage(request) or not module_policy.has_permission(request, permission):
+        return False
+    try:
+        require_saved_order_access(request, order, permission)
+    except (PermissionDenied, Http404):
+        return False
+    return True
+
+
 def plan_detail_data(order, data, request):
     quantities = plan_quantities([order])[str(order.pk)]
     purchases = plan_purchase_references(order)
@@ -92,6 +106,9 @@ def plan_detail_data(order, data, request):
         fees_deferred=bool(order.source_snapshot.get('fees_deferred')),
         billing_basis=order.source_snapshot.get('billing_basis'))
     data['inputs'] = []
+    assignment = order.source_snapshot.get('sewing_part_assignments')
+    if assignment is not None and _can_view_sewing_assignment(order, request):
+        data['internal_sewing_parts'] = assignment['internal']
     if data['sewing_inputs']:
         from .part_flow_sources import input_dispatched
         sent = input_dispatched(order)
@@ -114,7 +131,10 @@ def plan_detail_data(order, data, request):
                     require_saved_order_access(request, order, permission)
                 except APIException:
                     continue
-                permissions[field] = field != 'can_cancel' or not order.dispatch_batches.exists()
+                permissions[field] = field != 'can_cancel' or (not order.dispatch_batches.exists()
+                    and (assignment is None or (order.status == 'PENDING_DISPATCH' and not internal_sewing_assignment_in_use(order))))
+    if assignment is not None and not assignment['has_external']:
+        permissions.update(can_dispatch=False, can_receive=False, can_edit_quantity=False)
     permissions.update(can_correct_dispatch=permissions['can_dispatch'], can_correct_receive=permissions['can_receive'])
     data['permissions'] = permissions
     from .tube_materials import material_data

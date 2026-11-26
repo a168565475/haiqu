@@ -1048,13 +1048,14 @@ describe('BOM管材品名属性及规格录入', () => {
 
 describe('正式 BOM 各分区的品名选项', () => {
   it.each([
-    ['HARDWARE', '五金件', 'flow_unit'], ['PLASTIC', '塑料件类', 'specification'],
-    ['AUXILIARY', '辅料类', 'specification'], ['PACKAGING', '包材类', 'size'], ['FABRIC', '面料类', 'width'],
-    ['FABRIC_SEMI', '裁剪明细', 'process'],
-  ] as const)('%s 仅可搜索与追加当前品名的候选', async (category, title, key) => {
-    const item = { ...catalog, name: '当前品名', category_key: category, template_key: category, values: [
+    ['HARDWARE', '五金件', 'flow_unit', 'HARDWARE'], ['PLASTIC', '塑料件类', 'specification', 'PLASTIC'],
+    ['AUXILIARY', '辅料类', 'specification', 'AUXILIARY'], ['PACKAGING', '包材类', 'size', 'PACKAGING'],
+    ['FABRIC', '面料类', 'width', 'FABRIC'], ['FABRIC_SEMI', '裁剪明细', 'process', 'FABRIC_SEMI'],
+    ['FABRIC', '面料类', 'thickness', 'COTTON'], ['FABRIC', '面料类', 'specification', 'AUXILIARY_GENERAL'],
+  ] as const)('%s 仅可搜索与追加当前品名的候选', async (category, title, key, template) => {
+    const item = { ...catalog, name: '当前品名', category_key: category, template_key: template, values: [
       { id: 'local', scope: 'BASE', field_key: key, value: '候选A', parent_id: null }] }
-    api.options.mockResolvedValue({ categories: [{ key: category, templates: [{ key: category, fields: [{ key, label: key, kind: 'text' }] }] }] })
+    api.options.mockResolvedValue({ categories: [{ key: category, templates: [{ key: template, fields: [{ key, label: key, kind: 'text' }] }] }] })
     api.detail.mockResolvedValue({ data: item, etag: 'v1' })
     api.publicOptions.mockRejectedValue(new Error('不应读公共候选'))
     const line = reactive(blankLine())

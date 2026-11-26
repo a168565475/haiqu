@@ -224,6 +224,10 @@ def _validate_plan_source(*, schedule_product_id, plan_category, production_task
     ).exists()
     if not has_category:
         raise ValidationError({"plan_category": "该产品当前排产中不存在对应的厂内作业计划。"})
+    if plan_category == 'SEWING':
+        from apps.outsourcing.sewing_assignments import sewing_part_scope
+        if sewing_part_scope(schedule_product.pk) == {}:
+            raise ValidationError({"plan_category": "当前产品没有已分给本厂的车缝部位，可在车间委外加工中核对分工。"})
     return {
         "schedule_id": str(schedule.pk),
         "schedule_product_id": str(schedule_product.pk),

@@ -82,7 +82,7 @@ def catalog_stock_summary(balance):
     return {"stock_item_id": str(balance.material_catalog_id), "material_catalog_id": str(balance.material_catalog_id),
         "identity_key": balance.identity_key, "material_selection_snapshot": selected, "stock_kind": "RAW" if balance.stock_kind == "CATALOG_RAW" else "SEMI",
         "measurement_kind": "PIPE" if balance.raw_bar_length_m else "HARDWARE_WEIGHT" if hardware_weight else "CATALOG", "material_number": "", "material_name": selected["name"],
-        "category": dict(CATEGORY_CHOICES)[selected["category_key"]],
+        "category": dict(CATEGORY_CHOICES)[balance.material_catalog.category_key],
         "specification": " / ".join(selected["attributes"].values()), "color": selected["attributes"].get("color", ""),
         "unit": selected["unit_name"], "current_quantity": str(totals["available"] or 0),
         "available_quantity": str(sum((row["available_quantity"] for row in free), Decimal(0))),

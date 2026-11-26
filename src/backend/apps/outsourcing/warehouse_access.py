@@ -90,7 +90,8 @@ def warehouse_tube_orders(request, permission=None):
         if module_policy.has_permission(request, code):
             scoped = saved_orders_for_permission(request, code)
             allowed |= Q(pk__in=scoped.values('pk'))
-    return TubeOutsourcingOrder.objects.filter(allowed)
+    return TubeOutsourcingOrder.objects.filter(allowed).exclude(source_snapshot__contains={
+        'sewing_part_assignments': {'has_external': False}})
 
 
 def warehouse_crafts(request, crafts):

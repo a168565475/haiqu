@@ -79,6 +79,11 @@ def schedule_plan_categories(request):
     ]
 
 
+def available_internal_craft_links(links):
+    from apps.outsourcing.sewing_assignments import internal_sewing_products
+    return links.filter(~Q(plan_category="SEWING") | Q(schedule_product_id__in=internal_sewing_products().values("pk")))
+
+
 def schedule_items_for_category(request, category):
     from apps.access_control.resource_scopes import resource_ids, has_legacy_permission
     from apps.access_control.role_policy import filter_task_scope
@@ -88,6 +93,8 @@ def schedule_items_for_category(request, category):
         schedule_product_id=OuterRef("pk"), removed_at__isnull=True,
         craft_type_snapshot="INTERNAL", plan_category=category,
     )
+    if category == "SEWING":
+        craft_match = available_internal_craft_links(craft_match)
     visible_crafts = ProductionScheduleProductCraft.objects.filter(removed_at__isnull=True)
     if ids is not None:
         allowed = Q(craft__workshop_id__in=ids)

@@ -77,6 +77,7 @@ export interface TubeMaterialDetail extends Omit<TubeMaterialRow, 'required_quan
   quantity: string; zone_id: string; zone_name: string; warehouse_id: string; warehouse_name: string
 }
 export interface TubeSourceContext {
+  internal_sewing_factory_id?: string | null
   part_flow?: boolean; sewing_inputs?: boolean; fees_deferred?: boolean
   inputs?: TubePieceSource[]
   category?: 'tube' | 'cutting'; craft_id?: string; material_category?: string; output_unit?: string
@@ -168,6 +169,7 @@ export interface TubeOrderAction {
   actor_name: string
 }
 export interface TubeOrderDetail extends TubeOrderResult {
+  internal_sewing_parts?: Array<{ component_identity: string; part_name: string; quantity: number; unit: string; unit_price: string; factory_name: string }>
   part_flow?: boolean; sewing_inputs?: boolean; fees_deferred?: boolean
   inputs?: TubePieceTarget[]
   plan_summary?: TubePlanSummary

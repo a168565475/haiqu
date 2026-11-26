@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomLine
 from apps.material_issues.processing_selectors import digest
+from apps.outsourcing.sewing_assignments import sewing_part_scope
 from apps.production_scheduling.models import ProductionScheduleProduct
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
@@ -58,8 +59,11 @@ def load_part_flow_context(request, schedule_product_id, category, *, lock=False
     if link is None:
         raise ValidationError({'detail': '当前计划没有有效的对应厂内工艺。'})
     kind = 'CUT_PIECE' if category == 'CUTTING' else 'SEWN_PART'
-    lines = list(BomLine.objects.filter(section__bom=bom, component_kind=kind)
-        .select_related('section', 'parent_part', 'fabric_source_line__section')
+    scope = sewing_part_scope(plan.pk) if category == 'SEWING' else None
+    candidates = BomLine.objects.filter(section__bom=bom, component_kind=kind)
+    if scope is not None:
+        candidates = candidates.filter(component_identity__in=scope)
+    lines = list(candidates.select_related('section', 'parent_part', 'fabric_source_line__section')
         .prefetch_related('cut_pieces__section', 'cut_pieces__fabric_source_line__section').order_by('line_number', 'pk'))
     units = {unit.unit_name: unit for unit in ProductionUnit.objects.filter(status='ACTIVE', archived_at__isnull=True)}
     stock_craft = component_stock_craft(category)
@@ -74,7 +78,7 @@ def load_part_flow_context(request, schedule_product_id, category, *, lock=False
         if key in facts:
             raise ValidationError({'detail': '同一 BOM 的部位或裁片编号重复。'})
         identity = build_semi_finished_identity(bom_line=line, completed_craft=stock_craft, unit=unit)
-        required = component_required_quantity(line, product.quantity)
+        required = scope[str(line.component_identity)] if scope is not None else component_required_quantity(line, product.quantity)
         used = direct.get(str(line.component_identity), {})
         demands.append(ComponentDemand(str(task.pk), key, key, '片', unit_name, required,
             None, directly_committed=used.get('reserved', 0) + used.get('dispatched', 0)))
@@ -82,6 +86,8 @@ def load_part_flow_context(request, schedule_product_id, category, *, lock=False
             usage=required / product.quantity, material_pair={})
     rows = InternalSemiFinishedReceiptLine.objects.filter(receipt__schedule_product__product_line=product,
         receipt__plan_category=category, bom_line__component_kind=kind).select_related('receipt', 'unit')
+    if scope is not None:
+        rows = rows.filter(component_identity__in=scope)
     if exclude_receipt_id:
         rows = rows.exclude(receipt_id=exclude_receipt_id)
     for row in rows:

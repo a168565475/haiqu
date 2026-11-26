@@ -633,6 +633,16 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
     <ElAlert v-if="identityBlocked" title="身份尚未核验或已变化，已暂停本页操作。请核验身份后重新打开本页。" type="warning" :closable="false" />
     <ElAlert v-if="storageError" :title="storageReason" type="warning" :closable="false" />
     <ElAlert v-if="message && !mode" :title="message" type="warning" :closable="false" />
+    <section v-if="!warehouse && order.internal_sewing_parts?.length" class="panel">
+      <h2>本厂车缝部位</h2>
+      <div class="tube-detail-table-wrap"><table class="tube-detail-table">
+        <thead><tr><th>部位</th><th>计划数量</th><th>部位单价（仅记录）</th></tr></thead>
+        <tbody><tr v-for="part in order.internal_sewing_parts" :key="part.component_identity">
+          <td>{{ part.part_name }}</td><td>{{ number(part.quantity) }} {{ part.unit }}</td>
+          <td>{{ formatOutsourcingMoney(part.unit_price) }} 元/{{ part.unit }}</td>
+        </tr></tbody>
+      </table></div>
+    </section>
     <section class="panel">
       <div class="section-heading"><h2>{{ order.product_name }} · {{ order.craft_name }}</h2><div><ElButton v-if="!warehouse && order.permissions.can_edit_quantity === true" :disabled="!canEditQuantity" @click="openQuantityEditor">{{ partFlow ? '编辑计划数量与单价' : '编辑计划数量' }}</ElButton><ElButton v-if="!warehouse && order.permissions.can_cancel" :disabled="locked" @click="!identityBlocked && emit('cancel')">取消委外总单</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="!identityBlocked && emit('refresh')">刷新</ElButton></div></div>
       <div class="plan-context"><span>生产任务 {{ order.task_number }}</span><span>排产 {{ order.schedule_number }}</span><span>计划发出 {{ order.planned_dispatch_date }}</span><span>预计回货 {{ order.expected_return_date }}</span></div>

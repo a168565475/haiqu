@@ -12,7 +12,6 @@ from apps.boms.models import BomLine, BomSection
 from apps.inventory.models import PublicStockMovement, WarehouseZone
 from apps.inventory.part_flow_quantities import first_output_available
 from apps.inventory.part_flow_receipts import component_stock_craft
-from apps.inventory.public_inventory_queries import public_semi_inventory_page
 from apps.inventory.public_stock_identity import build_semi_finished_identity
 from apps.inventory.public_stock_services import credit_public_stock
 from apps.inventory.tests.test_internal_receipt_sewing import SewingFixture
@@ -112,6 +111,95 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response.data['data']
 
+    def sewing_assignment(self, *, external=False, schedule_internal=True):
+        if schedule_internal:
+            craft, _ = Craft.objects.get_or_create(plan_category='SEWING', defaults={
+                'craft_type': 'INTERNAL', 'name': '本厂车缝工艺', 'workshop': self.workshop})
+            ProductionScheduleProductCraft.objects.get_or_create(schedule_product=self.schedule_product,
+                craft=craft, defaults={'craft_type_snapshot': 'INTERNAL', 'craft_name_snapshot': craft.name,
+                                       'plan_category': 'SEWING'})
+        own = type(self.factory).objects.get(pk=self.factory.pk)
+        own.pk, own.factory_number, own.name = uuid.uuid4(), 'PFT-OWN', '本厂'
+        own.save(force_insert=True)
+        OutsourcingFactoryCraft.objects.create(factory=own, craft=self.external_sewing,
+                                               craft_name_snapshot=self.external_sewing.name)
+        quantity = int(self.product_line.quantity)
+        rows = [{'component_identity': str(self.part.component_identity), 'quantity': quantity,
+                 'factory_id': str(own.pk), 'unit_price': '2.25'}]
+        if external:
+            other = BomLine.objects.create(section=self.part.section, line_number=5, component_kind='SEWN_PART',
+                                           part_name='外袋', unit=self.part.unit, parts_per_product=1)
+            self.parts[1].parent_part = other
+            self.parts[1].save(update_fields=['parent_part'])
+            rows.append({'component_identity': str(other.component_identity), 'quantity': quantity,
+                         'factory_id': str(self.factory.pk), 'unit_price': '1.50'})
+        context = self.part_context()
+        return self.client.post(BASE, {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
+            'source_revision': context['source_revision'], 'schedule_product_id': str(self.schedule_product.pk),
+            'source_kind': 'CUTTING', 'craft_id': str(self.external_sewing.pk),
+            'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
+            'lines': rows}, format='json')
+
+    def test_sewing_assignment_keeps_internal_price_out_of_dispatch_receipts_and_external_totals(self):
+        from apps.outsourcing.sewing_assignments import internal_sewing_products, sewing_part_scope
+        response = self.sewing_assignment(external=True)
+        self.assertEqual(response.status_code, 201, response.data)
+        order = response.data['data']
+        self.assertEqual([row['part_name'] for row in order['lines']], ['外袋'])
+        self.assertEqual({row['component_identity'] for row in order['inputs']}, {str(self.parts[1].component_identity)})
+        own = order['internal_sewing_parts'][0]
+        self.assertEqual((own['part_name'], Decimal(own['unit_price'])), ('床面', Decimal('2.25')))
+        self.assertEqual(order['plan_summary']['planned_quantity'], str(int(self.product_line.quantity)))
+        self.assertTrue(internal_sewing_products().filter(pk=self.schedule_product.pk).exists())
+        self.assertEqual(sewing_part_scope(product_line_id=self.product_line.pk),
+                         {str(self.part.component_identity): int(self.product_line.quantity)})
+        warehouse = self.client.get(BASE + order['id'] + '/', {'warehouse_stage': 'all'})
+        self.assertEqual(warehouse.status_code, 200, warehouse.data)
+        self.assertNotIn('internal_sewing_parts', warehouse.data['data'])
+        for params, visible in (({}, True), ({'warehouse_stage': 'all'}, False)):
+            preview = self.client.get(BASE + order['id'] + '/receipt-preview/', params)
+            self.assertEqual(preview.status_code, 200, preview.data)
+            self.assertEqual('internal_sewing_parts' in preview.data['data']['order'], visible)
+        available = self.part_context(order=order)
+        self.assertEqual({row['component_identity'] for row in available['inputs']}, {str(self.parts[1].component_identity)})
+        rejected = self.client.post(BASE + order['id'] + '/plan-dispatch/', {
+            'client_request_id': str(uuid.uuid4()), 'actual_dispatch_date': str(timezone.localdate()),
+            'source_kind': 'CUTTING', 'inputs': [{'component_identity': str(self.parts[0].component_identity), 'quantity': 1}]},
+            format='json', HTTP_IF_MATCH=order['etag'])
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        returned = self.receive_part(order, 2)
+        self.assertEqual(Decimal(returned['plan_summary']['received_amount']), Decimal('3'))
+
+    def test_all_internal_assignment_has_no_warehouse_order(self):
+        response = self.sewing_assignment()
+        self.assertEqual(response.status_code, 201, response.data)
+        order = response.data['data']
+        self.assertEqual((order['lines'], order['inputs']), ([], []))
+        self.assertFalse(order['permissions']['can_dispatch'])
+        self.assertFalse(order['permissions']['can_receive'])
+        self.assertEqual(len(order['internal_sewing_parts']), 1)
+        self.assertEqual(self.client.get(BASE + order['id'] + '/', {'warehouse_stage': 'all'}).status_code, 404)
+        cancelled = self.client.post(BASE + order['id'] + '/cancel/', {'client_request_id': str(uuid.uuid4())},
+                                     format='json', HTTP_IF_MATCH=order['etag'])
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertEqual(cancelled.data['data']['status'], 'CANCELLED')
+
+    def test_used_internal_sewing_assignment_cannot_cancel(self):
+        from apps.material_issues.models import MaterialIssueAuditEvent
+        order = self.sewing_assignment(external=True).data['data']
+        MaterialIssueAuditEvent.objects.create(issue=self.fabric_issue, action='CREATED', issue_version=2,
+            actor_employee=self.employee, snapshot={'plan_source': {'plan_category': 'SEWING'}})
+        detail = self.client.get(BASE + order['id'] + '/').data['data']
+        self.assertFalse(detail['permissions']['can_cancel'])
+        result = self.client.post(BASE + order['id'] + '/cancel/', {'client_request_id': str(uuid.uuid4())},
+                                  format='json', HTTP_IF_MATCH=order['etag'])
+        self.assertEqual(result.status_code, 409, result.data)
+
+    def test_internal_assignment_requires_scheduled_internal_sewing(self):
+        response = self.sewing_assignment(schedule_internal=False)
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('补选厂内车缝', str(response.data))
+
     @override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True,
         SALES_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_sewing_workshop_scope_can_create_and_dispatch_cutting_without_stock_grant(self):
@@ -183,11 +271,6 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
         self.assertEqual({row.balance.identity_snapshot['semi_kind'] for row in returns}, {'SEWN_PART'})
         self.assertEqual({row.balance.unit_id for row in returns}, {self.part_unit.pk})
         self.assertFalse(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').exists())
-        cutting = public_semi_inventory_page(page=1, page_size=20, bom_section='FABRIC_SEMI')
-        parts = public_semi_inventory_page(page=1, page_size=20, bom_section='SEWN_PART')
-        self.assertEqual(cutting['count'], 0)
-        row, = parts['results']
-        self.assertEqual(row['inventory_quantity'], 10002)
 
     def test_stock_pieces_debit_without_first_output_recount_and_dispatch_can_be_reduced(self):
         order = self.create_part_plan('PUBLIC_PIECE')

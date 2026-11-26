@@ -149,6 +149,16 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         context['inputs'] = [{key: value for key, value in row.items() if key not in {'input_identity', 'snapshot'}}
                              for row in context.get('inputs', [])]
         if context.get('part_flow'):
+            if data.get('is_plan') and context.get('sewing_inputs'):
+                from ..sewing_assignments import internal_sewing_factory_id
+                own_id = internal_sewing_factory_id()
+                context['internal_sewing_factory_id'] = str(own_id) if own_id else None
+            if data.get('plan_id') and 'sewing_part_assignments' in plan.source_snapshot:
+                external = {str(value) for value in plan.lines.values_list('component_identity', flat=True)}
+                context['rows'] = [row for row in context['rows'] if row['component_identity'] in external]
+                context['inputs'] = [row for row in context['inputs'] if row['parent_component_identity'] in external]
+                own_id = plan.source_snapshot['sewing_part_assignments'].get('internal_factory_id')
+                context['factories'] = [row for row in context['factories'] if row['id'] != own_id]
             units = {row['unit'] for row in context['rows']}
             context['output_unit'] = next(iter(units)) if len(units) == 1 else ''
         if data.get('is_plan'):

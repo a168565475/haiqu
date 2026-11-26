@@ -72,4 +72,6 @@ SPRAY_FIELDS = [field("color", "颜色"), field("length", "长度"), field("unit
 CATEGORY_CHOICES = [(item["key"], item["label"]) for item in CATEGORIES]
 TEMPLATES = {item["key"]: item for category in CATEGORIES for item in category["templates"]}
 TEMPLATE_CHOICES = [(key, item["label"]) for key, item in TEMPLATES.items()]
+fabric_templates = next(category["templates"] for category in CATEGORIES if category["key"] == "FABRIC")
+fabric_templates.extend([TEMPLATES["COTTON"], {**TEMPLATES["AUXILIARY_GENERAL"], "label": "网布"}])
 CATEGORY_TEMPLATES = {item["key"]: {row["key"] for row in item["templates"]} for item in CATEGORIES}

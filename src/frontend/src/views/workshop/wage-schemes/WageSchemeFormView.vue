@@ -101,7 +101,7 @@ function requiredQuantity(line: WageSchemeLineInput) {
     if (!option.parts_per_product || !option.pieces_per_part) return null
     return orderQuantity * option.parts_per_product * option.pieces_per_part
   }
-  return option.parts_per_product ? orderQuantity * option.parts_per_product : null
+  return option.internal_sewing_quantity ?? (option.parts_per_product ? orderQuantity * option.parts_per_product : null)
 }
 function quantityText(value: number | null) { return value === null ? '待完善 BOM' : value.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }
 async function openHistory() {

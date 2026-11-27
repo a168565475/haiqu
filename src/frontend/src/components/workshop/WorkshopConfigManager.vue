@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { MoreFilled, Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { CopyDocument, Delete, MoreFilled, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import {
+  copyOperationScheme,
   createWorkshopConfig,
   deleteWorkshopEmployee,
   fetchWorkshopConfigDetail,
@@ -23,6 +24,7 @@ import type {
   RecordStatus,
   Workshop,
   WorkshopConfigInput,
+  WorkshopConfigQuery,
   WorkshopConfigRecord,
   WorkshopEmployee,
   WorkshopEmployeeStatus,
@@ -33,10 +35,16 @@ const props = defineProps<{
   kind: EditableResourceKind
   createDialogWidth?: number | string
   initialWorkshop?: string
-  initialCraftType?: CraftType
+  lockWorkshop?: boolean
   initialCraft?: string
+  initialSchemeName?: string
+  selectableSchemeNames?: readonly string[]
 }>()
-const emit = defineEmits<{ (event: 'saved'): void }>()
+const emit = defineEmits<{
+  saved: []
+  'select-scheme': [name: string]
+  'schemes-changed': []
+}>()
 
 const auth = useAuthStore()
 const permissionModel = computed(() => ({
@@ -53,11 +61,10 @@ const canChange = computed(() => can('change'))
 const canChangeRow = (row: WorkshopConfigRecord) => canChange.value && (
   props.kind !== 'employees' || (row as WorkshopEmployee).can_edit === true
 )
-
 const metadata = computed(() => ({
   employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名、角色或岗位' },
   crafts: { title: '工艺信息管理', createLabel: '新增工艺', search: '搜索工艺或车间' },
-  operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索品名、工艺或工序' },
+  operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索方案名称或工序' },
 })[props.kind])
 
 const rows = ref<WorkshopConfigRecord[]>([])
@@ -76,12 +83,59 @@ let requestSequence = 0
 
 const filters = reactive({
   keyword: '',
-  status: '',
+  status: props.kind === 'crafts' ? 'ACTIVE' : '',
   workshop: props.initialWorkshop || '',
   position: '',
   isSupervisor: '' as '' | boolean,
-  craftType: props.initialCraftType || '' as '' | CraftType,
+  craftType: '' as '' | CraftType,
   craft: props.initialCraft || '',
+})
+const operationCrafts = computed(() => crafts.value.filter(item => (
+  item.status === 'ACTIVE' && (!filters.workshop || item.workshop === filters.workshop)
+)))
+const selectedOperationCraft = computed(() => operationCrafts.value.find(item => item.id === filters.craft))
+const isTubeOperationView = computed(() => selectedOperationCraft.value?.name === '管材加工')
+const canChooseScheme = computed(() => props.selectableSchemeNames !== undefined && filters.craft === props.initialCraft)
+const isGroupedOperationView = computed(() => (
+  canChooseScheme.value || ['CUTTING', 'SEWING', 'ASSEMBLY'].includes(selectedOperationCraft.value?.plan_category ?? '')
+))
+const isTagOperationView = computed(() => isTubeOperationView.value || isGroupedOperationView.value)
+const statusFilter = computed({
+  get: () => filters.status || (isTagOperationView.value ? 'ACTIVE' : ''),
+  set: value => { filters.status = value },
+})
+const selectableSchemes = computed(() => new Set(
+  canChooseScheme.value && statusFilter.value === 'ACTIVE' ? props.selectableSchemeNames : [],
+))
+const operationTagGroups = computed(() => {
+  if (!isGroupedOperationView.value) return [{ name: '', operations: operationRows.value }]
+  const groups = new Map<string, Operation[]>()
+  for (const row of operationRows.value) {
+    const group = groups.get(row.product_name)
+    if (group) group.push(row)
+    else groups.set(row.product_name, [row])
+  }
+  return Array.from(groups, ([name, operations]) => ({ name, operations }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+})
+const operationTagRegion = ref<HTMLElement | null>(null)
+const selectedSchemeName = computed(() => {
+  if (!isGroupedOperationView.value || filters.craft !== props.initialCraft || !props.initialSchemeName) return undefined
+  return operationTagGroups.value.find(group => group.name === props.initialSchemeName)?.name
+})
+
+watch(selectedSchemeName, name => {
+  const region = operationTagRegion.value
+  const card = name ? region?.querySelector<HTMLElement>('.operation-scheme-card--selected') : undefined
+  if (!region || !card) return
+  const viewport = region.getBoundingClientRect()
+  const bounds = card.getBoundingClientRect()
+  if (bounds.top < viewport.top || bounds.bottom > viewport.bottom) region.scrollTop += bounds.top - viewport.top
+}, { flush: 'post' })
+
+watch(() => filters.craft, () => {
+  rows.value = []
+  total.value = 0
 })
 
 const editorVisible = ref(false)
@@ -135,32 +189,54 @@ function employeeLabel(employee: WorkshopEmployee): string {
   return employee.employee_name || employee.name
 }
 
-
-
-
-function buildQuery(): Record<string, string | number | boolean | undefined> {
-  const query: Record<string, string | number | boolean | undefined> = {
+function buildQuery(): WorkshopConfigQuery {
+  const query: WorkshopConfigQuery = {
     page: page.value,
     page_size: pageSize.value,
     q: filters.keyword.trim() || undefined,
-    status: filters.status || undefined,
+    status: statusFilter.value || undefined,
   }
   query.workshop = filters.workshop || undefined
   if (props.kind === 'employees') {
     query.position = filters.position.trim() || undefined
     query.is_supervisor = filters.isSupervisor === '' ? undefined : filters.isSupervisor
   }
-  if (props.kind === 'crafts' || props.kind === 'operations') query.craft_type = filters.craftType || undefined
-  if (props.kind === 'operations') query.craft = filters.craft || undefined
+  if (props.kind === 'crafts') query.craft_type = filters.craftType || undefined
+  if (props.kind === 'operations') {
+    query.craft_type = 'INTERNAL'
+    query.craft = filters.craft
+  }
   return query
+}
+
+async function fetchAllConfigRows<T extends WorkshopConfigRecord>(kind: 'crafts' | 'operations', query: WorkshopConfigQuery) {
+  const pageQuery = { ...query, page_size: 100 }
+  const first = await fetchWorkshopConfigList<T>(kind, { ...pageQuery, page: 1 })
+  const remaining = await Promise.all(Array.from({ length: first.meta.total_pages - 1 }, (_, index) => (
+    fetchWorkshopConfigList<T>(kind, { ...pageQuery, page: index + 2 })
+  )))
+  return { ...first, data: [first, ...remaining].flatMap(result => result.data) }
 }
 
 async function loadList(): Promise<void> {
   const currentSequence = ++requestSequence
-  loading.value = true
   loadError.value = ''
+  if (props.kind === 'operations') {
+    const options = operationCrafts.value
+    if (!options.some(item => item.id === filters.craft)) filters.craft = options[0]?.id || ''
+    if (!filters.craft) {
+      rows.value = []
+      total.value = 0
+      loading.value = false
+      return
+    }
+  }
+  loading.value = true
   try {
-    const response = await fetchWorkshopConfigList(props.kind, buildQuery())
+    const query = buildQuery()
+    const response = isTagOperationView.value
+      ? await fetchAllConfigRows<Operation>('operations', query)
+      : await fetchWorkshopConfigList(props.kind, query)
     if (currentSequence !== requestSequence) return
     rows.value = response.data
     total.value = response.meta.total
@@ -178,30 +254,31 @@ async function loadDependencies(): Promise<void> {
   if (props.kind === 'employees') {
     const options = await fetchWorkshopEmployeeOptions()
     workshops.value = options.workshops
-    editableEmployeeWorkshops.value = options.editable_workshops
+    editableEmployeeWorkshops.value = options.editable_workshops.filter(item => !props.lockWorkshop || item.id === props.initialWorkshop)
     return
   }
-  const tasks: Promise<unknown>[] = [
-    fetchWorkshopConfigList<Workshop>('workshops', { page: 1, page_size: 100 }).then((result) => {
-      workshops.value = result.data
-    }),
-  ]
   if (props.kind === 'operations') {
-    tasks.push(fetchWorkshopConfigList<Craft>('crafts', { page: 1, page_size: 100 }).then((result) => {
-      crafts.value = result.data
-    }))
+    crafts.value = (await fetchAllConfigRows<Craft>('crafts', { craft_type: 'INTERNAL' })).data
+    return
   }
-  await Promise.all(tasks)
+  workshops.value = (await fetchWorkshopConfigList<Workshop>('workshops', { page: 1, page_size: 100 })).data
 }
 
 async function reloadAll(): Promise<void> {
   if (!canView.value) return
   try {
+    if (props.kind === 'operations') {
+      loading.value = true
+      await loadDependencies()
+      await loadList()
+      return
+    }
     await Promise.all([
       loadList(),
       loadDependencies(),
     ])
   } catch (error) {
+    if (props.kind === 'operations') loading.value = false
     loadError.value = apiErrorMessage(error, `${metadata.value.title}加载失败，请稍后重试。`)
   }
 }
@@ -213,8 +290,8 @@ function search(): void {
 
 function resetFilters(): void {
   filters.keyword = ''
-  filters.status = ''
-  filters.workshop = ''
+  filters.status = props.kind === 'crafts' ? 'ACTIVE' : ''
+  filters.workshop = props.lockWorkshop || props.kind === 'operations' ? props.initialWorkshop || '' : ''
   filters.position = ''
   filters.isSupervisor = ''
   filters.craftType = ''
@@ -297,7 +374,7 @@ function validateForm(): string {
   }
   if (props.kind === 'operations') {
     if (!form.craft) return '请选择工艺。'
-    if (!isMetalCraft(selectedFormCraft.value) && !form.productName.trim()) return '请输入品名。'
+    if (!isMetalCraft(selectedFormCraft.value) && !form.productName.trim()) return '请输入方案名称。'
     if (!form.name.trim()) return '请输入工序名称。'
   }
   return ''
@@ -349,6 +426,46 @@ async function save(): Promise<void> {
     await reloadAll()
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '保存失败，请检查填写内容后重试。'))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function editSchemeOperations(schemeName: string, action: 'copy' | 'add'): Promise<void> {
+  if (!canAdd.value || saving.value) return
+  const craft = filters.craft
+  const copy = action === 'copy'
+  const actionLabel = copy ? '复制方案' : '新增工序'
+  const fieldLabel = copy ? '新方案名称' : '工序名称'
+  const maxLength = copy ? 200 : 150
+  try {
+    const { value } = await ElMessageBox.prompt(`当前方案 ${schemeName}`, actionLabel, {
+      confirmButtonText: copy ? '复制' : '添加',
+      inputPlaceholder: `请输入${fieldLabel}`,
+      inputValidator: (input) => {
+        const name = input?.trim()
+        if (!name) return `请输入${fieldLabel}。`
+        if (name.length > maxLength) return `${fieldLabel}不能超过 ${maxLength} 字。`
+        if (copy && name === schemeName) return '请输入不同的新方案名称。'
+        return true
+      },
+    })
+    saving.value = true
+    const name = value.trim()
+    if (copy) {
+      await copyOperationScheme(craft, schemeName, name)
+      filters.keyword = name
+    } else {
+      await createWorkshopConfig('operations', { craft, product_name: schemeName, name, status: 'ACTIVE' })
+      filters.keyword = schemeName
+      filters.status = 'ACTIVE'
+    }
+    ElMessage.success(`${actionLabel}成功。`)
+    await reloadAll()
+    emit('schemes-changed')
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(apiErrorMessage(error, `${actionLabel}失败，请稍后重试。`))
   } finally {
     saving.value = false
   }
@@ -429,7 +546,7 @@ onMounted(() => { void reloadAll() })
 </script>
 
 <template>
-  <section class="manager" :data-testid="`workshop-manager-${kind}`">
+  <section class="manager" :class="{ 'manager--operations': kind === 'operations' }" :data-testid="`workshop-manager-${kind}`">
     <div v-if="!canView" class="manager-state">
       <h2>无权查看{{ metadata.title }}</h2>
       <p>请联系管理员开通对应的模型查看权限。</p>
@@ -440,10 +557,10 @@ onMounted(() => { void reloadAll() })
 
       <div class="filter-panel">
         <div class="field field--search">
-          <ElInput v-model="filters.keyword" clearable :prefix-icon="Search" :placeholder="metadata.search" aria-label="关键词" @keyup.enter="search" />
+          <ElInput v-model="filters.keyword" clearable :prefix-icon="Search" :placeholder="isTubeOperationView ? '搜索工序' : metadata.search" aria-label="关键词" @keyup.enter="search" />
         </div>
-        <div class="field">
-          <ElSelect v-model="filters.workshop" clearable placeholder="全部车间" aria-label="车间" @change="search">
+        <div v-if="kind !== 'operations'" class="field">
+          <ElSelect v-model="filters.workshop" :disabled="lockWorkshop" clearable placeholder="全部车间" aria-label="车间" @change="search">
             <ElOption v-for="item in workshops" :key="item.id" :label="item.name" :value="item.id" />
           </ElSelect>
         </div>
@@ -455,18 +572,13 @@ onMounted(() => { void reloadAll() })
             <ElOption label="是" :value="true" /><ElOption label="否" :value="false" />
           </ElSelect>
         </div>
-        <div v-if="kind === 'crafts' || kind === 'operations'" class="field field--small">
+        <div v-if="kind === 'crafts'" class="field field--small">
           <ElSelect v-model="filters.craftType" clearable placeholder="全部类型" aria-label="类型" @change="search">
             <ElOption label="厂内" value="INTERNAL" /><ElOption label="厂外" value="EXTERNAL" />
           </ElSelect>
         </div>
-        <div v-if="kind === 'operations'" class="field">
-          <ElSelect v-model="filters.craft" clearable filterable placeholder="全部工艺" aria-label="工艺" @change="search">
-            <ElOption v-for="item in crafts" :key="item.id" :label="item.name" :value="item.id" />
-          </ElSelect>
-        </div>
         <div class="field field--small">
-          <ElSelect v-model="filters.status" clearable placeholder="全部状态" :aria-label="kind === 'employees' ? '车间任职状态' : '状态'" @change="search">
+          <ElSelect v-model="statusFilter" :clearable="!isTagOperationView" placeholder="全部状态" :aria-label="kind === 'employees' ? '车间任职状态' : '状态'" @change="search">
             <ElOption :label="kind === 'employees' ? '任职中' : '启用'" value="ACTIVE" />
             <ElOption :label="kind === 'employees' ? '已离岗' : '停用'" :value="kind === 'employees' ? 'LEFT' : 'INACTIVE'" />
           </ElSelect>
@@ -480,6 +592,10 @@ onMounted(() => { void reloadAll() })
       </div>
 
       <div class="table-card">
+        <ElTabs v-if="kind === 'operations' && operationCrafts.length" v-model="filters.craft"
+          class="operation-tabs operation-craft-tabs" aria-label="工艺" @tab-change="search">
+          <ElTabPane v-for="item in operationCrafts" :key="item.id" :name="item.id" :label="item.name" />
+        </ElTabs>
         <div class="table-region">
         <ElTable v-if="kind === 'employees'" v-loading="loading" :data="employeeRows" row-key="id" height="100%">
           <ElTableColumn prop="workshop_name" label="车间" min-width="180" fixed />
@@ -508,20 +624,50 @@ onMounted(() => { void reloadAll() })
           <template #empty><ElEmpty description="暂无工艺资料" /></template>
         </ElTable>
 
+        <div v-else-if="isTagOperationView" ref="operationTagRegion" v-loading="loading" class="operation-tag-region"
+          :class="{ 'operation-tag-region--schemes': isGroupedOperationView }">
+          <ElEmpty v-if="!loading && !operationRows.length" description="暂无工序资料" />
+          <template v-else>
+            <div v-for="group in operationTagGroups" :key="group.name" :class="{
+              'operation-scheme-card': isGroupedOperationView,
+              'operation-scheme-card--selected': selectedSchemeName === group.name,
+            }" :aria-current="selectedSchemeName === group.name ? 'true' : undefined">
+              <div v-if="isGroupedOperationView" class="operation-scheme-card__title">
+                <h3 :title="group.name">{{ group.name || '未填写方案名称' }}</h3>
+                <button v-if="group.name && selectableSchemes.has(group.name)" type="button" class="operation-scheme-card__action"
+                  :aria-label="`选用工价方案 ${group.name}`" @click="emit('select-scheme', group.name)">选用</button>
+                <template v-if="canAdd && group.name">
+                  <button type="button" class="operation-scheme-card__action" title="复制方案" :aria-label="`复制方案 ${group.name}`"
+                    :disabled="saving" @click="editSchemeOperations(group.name, 'copy')"><ElIcon><CopyDocument /></ElIcon></button>
+                  <button type="button" class="operation-scheme-card__action" title="新增工序" :aria-label="`新增工序 ${group.name}`"
+                    :disabled="saving" @click="editSchemeOperations(group.name, 'add')"><ElIcon><Plus /></ElIcon></button>
+                </template>
+              </div>
+              <ul class="operation-tags">
+                <li v-for="row in group.operations" :key="row.id" class="operation-tag">
+                  <button v-if="canChangeRow(row)" type="button" class="operation-tag__name" title="编辑工序" @click="openEdit(row)">{{ row.name }}</button>
+                  <span v-else>{{ row.name }}</span>
+                  <button v-if="canChangeRow(row) && row.status === 'ACTIVE'" type="button" class="operation-tag__remove"
+                    :aria-label="`删除工序 ${row.name}`" title="删除工序" @click="toggleStatus(row)">
+                    <ElIcon><Delete /></ElIcon>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </template>
+        </div>
+
         <ElTable v-else v-loading="loading" :data="operationRows" row-key="id" height="100%">
-          <ElTableColumn prop="product_name" label="品名" min-width="210" show-overflow-tooltip />
-          <ElTableColumn prop="craft_name" label="工艺" min-width="160" />
-          <ElTableColumn prop="craft_type_display" label="类型" width="90" />
-          <ElTableColumn label="车间" min-width="150"><template #default="{ row }">{{ row.workshop_name || '—' }}</template></ElTableColumn>
+          <ElTableColumn prop="product_name" label="方案名称" min-width="210" show-overflow-tooltip />
           <ElTableColumn prop="name" label="工序名称" min-width="210" show-overflow-tooltip />
           <ElTableColumn label="状态" width="90"><template #default="{ row }"><ElTag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="dark">{{ row.status_display }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
           <ElTableColumn v-if="canChange" label="操作" width="80" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" @command="handleRowAction($event, row)"><ElButton text circle :icon="MoreFilled" aria-label="更多操作" class="row-action-trigger" /><template #dropdown><ElDropdownMenu><ElDropdownItem command="edit">编辑</ElDropdownItem><ElDropdownItem command="toggle">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
-          <template #empty><ElEmpty description="暂无工序资料" /></template>
+          <template #empty><ElEmpty :description="operationCrafts.length ? '暂无工序资料' : '暂无厂内工艺'" /></template>
         </ElTable>
         </div>
 
-        <footer v-if="total > 0" class="pagination-bar"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" @current-change="loadList" @size-change="page = 1; loadList()" /></footer>
+        <footer v-if="total > 0 && !isTagOperationView" class="pagination-bar"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" @current-change="loadList" @size-change="page = 1; loadList()" /></footer>
       </div>
     </template>
 
@@ -548,10 +694,8 @@ onMounted(() => { void reloadAll() })
           <ElAlert title="厂内必须选择车间，计划分类用于归入金工、裁剪、车缝或装配计划；厂外工艺不参与四类计划。" type="warning" :closable="false" />
         </template>
         <template v-else>
-          <ElFormItem label="工艺" required><ElSelect v-model="form.craft" filterable placeholder="请选择工艺"><ElOption v-for="item in crafts" :key="item.id" :label="`${item.name}（${item.craft_type_display}）`" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
-          <ElFormItem v-if="!isMetalCraft(selectedFormCraft)" label="品名" required><ElInput v-model="form.productName" maxlength="200" placeholder="本期使用独立文本" /></ElFormItem>
-          <ElFormItem label="类型（自动）"><ElInput :model-value="selectedFormCraft?.craft_type_display || ''" disabled /></ElFormItem>
-          <ElFormItem label="车间（自动）"><ElInput :model-value="selectedFormCraft?.workshop_name || '—'" disabled /></ElFormItem>
+          <ElFormItem label="工艺" required><ElSelect v-model="form.craft" filterable placeholder="请选择工艺"><ElOption v-for="item in crafts" :key="item.id" :label="item.name" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
+          <ElFormItem v-if="!isMetalCraft(selectedFormCraft)" label="方案名称" required><ElInput v-model="form.productName" maxlength="200" placeholder="请输入方案名称" /></ElFormItem>
           <ElFormItem label="工序名称" required><ElInput v-model="form.name" maxlength="150" placeholder="请输入工序名称" /></ElFormItem>
           <ElFormItem label="状态" required><ElSelect v-model="form.status"><ElOption label="启用" value="ACTIVE" /><ElOption label="停用" value="INACTIVE" /></ElSelect></ElFormItem>
         </template>
@@ -632,8 +776,156 @@ onMounted(() => { void reloadAll() })
 
 .load-error { flex: none; margin: 0 0 10px; }
 .table-card { display: flex; min-height: 0; flex: 1; flex-direction: column; margin-top: 14px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
+.manager--operations {
+  .filter-panel, .table-card {
+    border-color: var(--erp-glass-border);
+    border-radius: var(--erp-glass-radius);
+    background: var(--erp-glass-background);
+  }
+  .filter-panel { flex-wrap: wrap; padding: 8px 12px; overflow: visible; }
+  .table-card { margin-top: var(--erp-toolbar-table-gap); }
+}
+.operation-tabs {
+  min-width: 0;
+  flex: none;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--erp-color-border-subtle);
+
+  :deep(.el-tabs__header), :deep(.el-tabs__nav-wrap) { margin: 0; }
+  :deep(.el-tabs__content), :deep(.el-tabs__nav-wrap::after) { display: none; }
+  :deep(.el-tabs__nav-next), :deep(.el-tabs__nav-prev) { line-height: 32px; }
+  :deep(.el-tabs__item) { height: 32px; padding: 0 12px; color: var(--erp-color-text-regular); font-size: 13px; }
+  :deep(.el-tabs__item:hover), :deep(.el-tabs__item.is-active) { color: var(--erp-color-brand); }
+  :deep(.el-tabs__item.is-active) { font-weight: 600; }
+  :deep(.el-tabs__active-bar) { height: 3px; border-radius: 4px 4px 1px 1px; background: var(--erp-tab-active-indicator); }
+}
 .table-region { min-height: 0; flex: 1; }
 .table-region > :deep(.el-table) { height: 100%; }
+.operation-tag-region {
+  box-sizing: border-box;
+  height: 100%;
+  padding: 14px 16px;
+  overflow: auto;
+}
+.operation-tag-region--schemes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  align-items: start;
+  gap: 14px;
+
+  > :deep(.el-empty) { grid-column: 1 / -1; }
+}
+.operation-scheme-card {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 0;
+  height: 384px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-color-surface);
+}
+.operation-scheme-card--selected { border: 2px solid var(--erp-color-brand); }
+.operation-scheme-card__title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--erp-table-grid);
+  background: var(--erp-table-header-fill);
+  color: var(--erp-table-header-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+.operation-scheme-card__title h3 {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.operation-scheme-card__action {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 0;
+  border-radius: var(--erp-radius-control);
+  background: transparent;
+  color: var(--erp-color-brand);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.operation-scheme-card__action:hover:not(:disabled) { background: var(--erp-color-hover); }
+.operation-scheme-card__action:disabled { opacity: .5; cursor: not-allowed; }
+.operation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operation-scheme-card .operation-tags {
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  padding: 12px;
+  overflow: auto;
+}
+.operation-tag {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  min-height: 34px;
+  max-width: 100%;
+  align-items: center;
+  padding: 6px 29px 6px 12px;
+  border: 1px solid var(--erp-table-grid);
+  border-radius: token.$crm-radius-2;
+  background: var(--erp-color-hover);
+  color: var(--erp-table-text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.operation-tag__name, .operation-tag__remove {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.operation-tag__name { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.operation-tag__remove {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: token.$crm-radius-2;
+  color: var(--el-color-danger);
+  opacity: 0;
+  pointer-events: none;
+}
+.operation-tag:hover .operation-tag__remove, .operation-tag:focus-within .operation-tag__remove { opacity: 1; pointer-events: auto; }
+.operation-tag__remove:hover { background: var(--el-color-danger-light-9); }
+@media (hover: none) {
+  .operation-tag__remove { opacity: 1; pointer-events: auto; }
+}
 .table-card :deep(.el-table) { --el-table-border-color: var(--erp-table-grid); --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-tr-bg-color: var(--erp-table-body-fill); --el-table-row-hover-bg-color: var(--erp-color-hover); color: var(--erp-table-text); font-size: 12px; }
 .table-card :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; padding: 0; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; line-height: 16px; }
 .table-card :deep(.el-table__body-wrapper td.el-table__cell) { height: 40px; padding: 0; }

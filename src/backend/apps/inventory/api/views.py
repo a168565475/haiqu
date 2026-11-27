@@ -1,5 +1,6 @@
 from apps.procurement.source_access import purchase_order_access
 from ..selectors import scoped_finished_receipts, scoped_finished_outbounds, scoped_inventory_records, require_inventory_overview
+from ..receipt_permissions import receipt_record_workshops
 from uuid import UUID
 from collections.abc import Mapping
 from pathlib import Path
@@ -315,6 +316,9 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
 
     @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     def list(self, request):
+        permission = 'inventory.view_finishedgoodsreceipt'
+        if receipt_record_workshops(request, permission) is not None:
+            require_inventory_overview(request, permission)
         scope = FinishedGoodsInventoryScopeSerializer(data=request.query_params)
         scope.is_valid(raise_exception=True)
         warehouse_id = request.query_params.get("warehouse_id", "").strip()

@@ -9,7 +9,7 @@ type Operation = 'switch' | 'return' | 'verify'
 type AuthStore = ReturnType<typeof useAuthStore>
 type ConfirmTransition = (operation: Operation) => Promise<boolean>
 const transitionRouteName = 'account-switch-transition'
-const homeRouteNames = new Set(['home', 'production-overview', 'workshop-workbench'])
+const homeRouteNames = new Set(['home', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench'])
 
 async function confirmTransition(operation: Operation): Promise<boolean> {
   const action = operation === 'switch' ? '切换员工' : operation === 'return' ? '返回管理员' : '重新核验身份'

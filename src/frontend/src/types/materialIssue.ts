@@ -32,7 +32,7 @@ export interface MaterialRequirement {
   public_stock_allocations?: MaterialIssuePublicAllocation[]
   conversion_snapshot?: {
     source_kind?: 'STOCK' | 'CUTTING_DIRECT'
-    kind: string; part_name?: string; pieces_per_bar?: number; raw_bar_length_m?: string
+    kind: string; part_name?: string; pieces_per_bar?: number; raw_bar_length_m?: string; cutting_length_mm?: number | string
     whole_bar_required?: boolean; integer_required?: boolean; issued_pieces?: number | string
     raw_deducted_bar_count?: string; raw_deducted_meters?: string
     component_identity?: string
@@ -69,7 +69,12 @@ export interface MaterialIssueBatch {
   raw_bar_length_m?: string; available_quantity?: string; available_meters?: string
   requested_pieces?: string; bar_count?: string; meters?: string; after_bar_count?: string; after_meters?: string
 }
-export interface MaterialIssueLine extends Omit<MaterialRequirement, 'requirement_id' | 'stock_item_id' | 'bom_version' | 'validation_errors'> {
+type MaterialIssueQuantityField = 'required_quantity' | 'internal_issued_quantity' | 'outsourcing_issued_quantity'
+  | 'order_remaining' | 'available_stock' | 'max_issue_quantity'
+
+export type MaterialIssueLine = Omit<MaterialRequirement,
+  'requirement_id' | 'stock_item_id' | 'bom_version' | 'validation_errors' | MaterialIssueQuantityField
+> & Record<MaterialIssueQuantityField, string | null> & {
   id: string; line_number: number; requirement_id: string; raw_material_id: string | null
   semi_finished_balance_id?: string
   requested_quantity: string; issued_quantity: string | null
@@ -80,6 +85,7 @@ export interface MaterialIssueEvent {
 }
 export interface MaterialIssue {
   stock_mode?: MaterialIssueStockMode
+  stock_quantities_unavailable?: boolean
   id: string; issue_number: string; status: MaterialIssueStatus; status_display: string; version: number
   production_task: (MaterialIssueTaskOption & { customer_name: string }) | null
   product: MaterialIssueProduct | null; workshop: NamedOption | null; recipient: { id: string | null; name: string } | null

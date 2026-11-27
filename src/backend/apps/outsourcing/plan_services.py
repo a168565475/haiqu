@@ -1,5 +1,6 @@
 """委外总单、实际外发与独立入库；共同产品锁后锁总单，数量在同一事务累加。"""
 from decimal import Decimal
+from uuid import uuid4
 
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import ValidationError
@@ -319,13 +320,24 @@ def dispatch_plan(*, order_id, data, request):
         require_saved_order_access(request, existing.plan, DISPATCH_PERMISSION)
         return existing.plan, False
     order = _lock_plan(order_id, request, DISPATCH_PERMISSION)
-    if order.source_snapshot.get('part_flow'):
-        from .part_flow_services import dispatch_parts
-        return dispatch_parts(order=order, data=data, request=request, payload_hash=payload_hash)
-    if data.get('inputs') or not data.get('lines'):
-        raise ValidationError({'lines': '该历史总单须提交原部件发货明细。'})
+    for index, batch in enumerate(data.get('batches', [data])):
+        # 首批保留整次请求编号，重试时从首批确认整笔事务。
+        _dispatch_plan_batch(order, {
+            **batch, 'client_request_id': uuid4() if index else data['client_request_id'],
+            'actual_dispatch_date': data['actual_dispatch_date'], 'remark': data.get('remark', ''),
+        }, request, payload_hash)
+    return order, True
+
+
+def _dispatch_plan_batch(order, data, request, payload_hash):
     if source_category(order.source_kind) != source_category(data['source_kind']):
         raise ValidationError({'source_kind': '实际发货来源与总单加工类别不一致。'})
+    if order.source_snapshot.get('part_flow'):
+        from .part_flow_services import dispatch_parts
+        dispatch_parts(order=order, data=data, request=request, payload_hash=payload_hash)
+        return
+    if data.get('inputs') or not data.get('lines'):
+        raise ValidationError({'lines': '该历史总单须提交原部件发货明细。'})
     expected = {str(line.component_identity): line for line in order.lines.all()}
     if any(str(line['component_identity']) not in expected for line in data['lines']):
         raise ValidationError({'lines': '只能发出本委外总单包含的部件。'})
@@ -357,7 +369,6 @@ def dispatch_plan(*, order_id, data, request):
     confirm_tube_action(order_id=batch.pk, kind='DISPATCH', data={'client_request_id': data['client_request_id'],
         'actual_dispatch_date': data['actual_dispatch_date'], 'remark': data.get('remark', '')}, request=request, plan_dispatch=True)
     _update_plan(order, request)
-    return order, True
 
 
 @stock_write_transaction

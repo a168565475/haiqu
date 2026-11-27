@@ -66,9 +66,9 @@ const glassDetailRoute = computed(() => (glassDetailRouteNames as readonly strin
 const glassFormRoute = computed(() => (glassFormRouteNames as readonly string[]).includes(String(route.name || '')))
 const compactBusinessRoute = computed(() => !glassDetailRoute.value && !glassFormRoute.value && compactBusinessRoutes.includes(String(route.name || '')))
 const glassListRoute = computed(() => (glassListRouteNames as readonly string[]).includes(String(route.name || '')))
-const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop-outsourcing-tube-detail', 'warehouse-outsourcing-tube-detail', 'material-issue-detail'].includes(String(route.name))) && (glassListRoute.value || [
-  'assembly-finished-receipt', 'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records',
-  'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return',
+const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop-outsourcing-tube-detail', 'cut-piece-printing-detail', 'warehouse-outsourcing-tube-detail', 'material-issue-detail'].includes(String(route.name))) && (glassListRoute.value || [
+  'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records',
+  'workshop-outsourcing-tube-new', 'cut-piece-printing-new', 'workshop-outsourcing-tube-detail', 'cut-piece-printing-detail', 'workshop-outsourcing-tube-return',
   'warehouse-outsourcing-tube-detail', 'warehouse-outsourcing-tube-return',
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',

@@ -331,6 +331,11 @@ class SamplePurchaseApiTests(APITestCase):
         returned = PurchaseReturn.objects.get(purchase_order_id=self.sample_order_id)
         return_url = '/api/v1/purchase-returns/' + str(returned.pk) + '/'
         detail = self.client.get(return_url)
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['sample_number'], self.sample.request_number)
+        listing = self.client.get('/api/v1/purchase-returns/', {'purchase_order_id': self.sample_order_id})
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertEqual([row['sample_number'] for row in listing.data['data']], [self.sample.request_number])
         result = self.client.post(return_url + 'confirm/', {}, format='json', HTTP_IF_MATCH=detail['ETag'])
         self.assertEqual(result.status_code, 200, result.data)
         result = self.client.post(return_url + 'complete/', {}, format='json', HTTP_IF_MATCH=result['ETag'])

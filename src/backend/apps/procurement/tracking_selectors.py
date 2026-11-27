@@ -318,6 +318,7 @@ def arrival_rows(*, task_ids=None, today=None, include_history=False, purchase_s
             statuses = publications.get((order.pk, line.supplier_id), [])
             publication = '已发布' if statuses and all(value == 'PUBLISHED' for value in statuses) else '待发布' if statuses else '未生成采购表'
             row.update(purchase_scope=purchase_scope, source_reliable=not notes, verification_notes=notes, is_history=history,
+                source_product_ids=list(names) or ([str(line.product_line_id_snapshot)] if line.product_line_id_snapshot else []),
                 purchase_order_id=str(order.pk), purchase_order_line_id=str(line.pk), purchase_order_no=order.order_number,
                 batch_number=order.batch_number, publication_status=publication, supplier_name=line.supplier_name_snapshot,
                 material_selection_snapshot=line.material_selection_snapshot if isinstance(line.material_selection_snapshot, dict) else {},

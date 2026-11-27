@@ -355,12 +355,15 @@ class NotificationRuleApiTests(NotificationFixture, TestCase):
         self.assertEqual(self.client.post(read).status_code, 404)
         self.client.force_login(self.member.user)
         self.assertEqual(self.client.get(INBOX_URL).data["count"], 1)
+        self.assertEqual(self.client.get(INBOX_URL, {"unread_only": "true"}).data["count"], 1)
         self.assertEqual(self.client.get(INBOX_URL + "unread-count/").data["unread_count"], 1)
         self.assertEqual(self.client.get(target).status_code, 200)
         first, second = self.client.post(read), self.client.post(read)
         self.assertEqual(first.status_code, 200, first.data)
         self.assertEqual(first.data["data"]["read_at"], second.data["data"]["read_at"])
         self.assertEqual(self.client.get(INBOX_URL + "unread-count/").data["unread_count"], 0)
+        self.assertEqual(self.client.get(INBOX_URL, {"unread_only": "true"}).data["data"], [])
+        self.assertEqual(self.client.get(INBOX_URL).data["count"], 1)
         self.assertEqual(self.client.get(INBOX_URL, {"page": "bad"}).status_code, 400)
 
 

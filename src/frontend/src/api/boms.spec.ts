@@ -82,7 +82,7 @@ describe('BOM API', () => {
     await saveBomDraft('bom-1', sections, fetched.etag, { intent: 'draft' })
     for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
       expect(call[1]).toMatchObject({ intent: 'draft', sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
-      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' }, timeout: 60_000 })
     }
     expect(detail.sections[0]!.lines[0]!.raw_values.import_material_matching_deferred).toBe(true)
   })
@@ -110,7 +110,7 @@ describe('BOM API', () => {
     await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
     for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
       expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
-      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' }, timeout: 60_000 })
     }
   })
 
@@ -119,7 +119,7 @@ describe('BOM API', () => {
     const payload = { product_catalog_id: null, product_selection: { draft: { ...emptyProductEntry(), name: '新椅', unit_name: '新单位', color_name: '酒红' } } }
     await confirmBomProduct('bom-1', payload, 'v1')
     expect(mockedPost).toHaveBeenCalledTimes(1)
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/confirm-product/', payload, { headers: { 'If-Match': 'v1' } })
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/confirm-product/', payload, { headers: { 'If-Match': 'v1' }, timeout: 60_000 })
     expect(mockedPatch).not.toHaveBeenCalled()
   })
 
@@ -133,9 +133,9 @@ describe('BOM API', () => {
     expect(await previewBomMaterialSave('bom-1', sections as never, 'v1', intent)).toEqual(preview)
     expect(mockedPatch).not.toHaveBeenCalled()
     const body = { ...intent, sections: [{ title: '裁剪明细', section_type: 'FABRIC', lines: [{ client_key: 'draft-id', source_cutting_material_id: null, pending_raw_material: pending, draft_image_ids: ['image-1'] }] }] }
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/material-save-preview/', body, { headers: { 'If-Match': 'v1' } })
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/material-save-preview/', body, { headers: { 'If-Match': 'v1' }, timeout: 60_000 })
     await saveBomDraft('bom-1', sections as never, 'v1', { ...intent, confirmation_token: 'approved' })
-    expect(mockedPatch).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { ...body, confirmation_token: 'approved' }, { headers: { 'If-Match': 'v1' } })
+    expect(mockedPatch).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { ...body, confirmation_token: 'approved' }, { headers: { 'If-Match': 'v1' }, timeout: 60_000 })
     expect(mockedPost).toHaveBeenCalledTimes(1)
     expect(sections[0]!.lines[0]!.draft_images).toEqual([{ id: 'image-1' }])
   })
@@ -178,7 +178,7 @@ describe('BOM API', () => {
         { title: '面料类', section_type: 'FABRIC', lines: [{ part_name: '牛津布', client_key: key }] },
         sections[1],
       ],
-    }, { headers: { 'If-Match': 'v1' } })
+    }, { headers: { 'If-Match': 'v1' }, timeout: 60_000 })
   })
 
   it('列表筛选参数原样交给后端', async () => {
@@ -294,7 +294,7 @@ describe('BOM API', () => {
 
     expect(detail.etag).toBe('"bom-etag"')
     expect(mockedPatch).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { sections: [] }, {
-      headers: { 'If-Match': '"bom-etag"' },
+      headers: { 'If-Match': '"bom-etag"' }, timeout: 60_000,
     })
     expect(mockedPost).toHaveBeenNthCalledWith(1, '/api/v1/boms/bom-1/sync-order-quantity/', {}, {
       headers: { 'If-Match': '"bom-etag"' },
@@ -302,7 +302,7 @@ describe('BOM API', () => {
     expect(mockedPost).toHaveBeenNthCalledWith(2, '/api/v1/boms/bom-1/verify/', {
       quantity_confirmation_reason: '按订单数量执行',
     }, {
-      headers: { 'If-Match': '"bom-etag"' },
+      headers: { 'If-Match': '"bom-etag"' }, timeout: 60_000,
     })
   })
 
@@ -430,7 +430,7 @@ describe('BOM API', () => {
           part_name: '已保存裁片',
         }],
       }],
-    }, { headers: { 'If-Match': '"v1"' } })
+    }, { headers: { 'If-Match': '"v1"' }, timeout: 60_000 })
   })
 
   it('未保存的管材用料行也会提交暂存图片 ID', async () => {
@@ -457,6 +457,6 @@ describe('BOM API', () => {
           draft_image_ids: ['profile-draft-image-1'],
         }],
       }],
-    }, { headers: { 'If-Match': '"v1"' } })
+    }, { headers: { 'If-Match': '"v1"' }, timeout: 60_000 })
   })
 })

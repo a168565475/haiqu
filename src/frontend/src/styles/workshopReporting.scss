@@ -134,12 +134,13 @@
 .wr-report-records__heading { justify-content: space-between; }
 .wr-report-records__create.el-button { width: 140px; }
 .wr-report-context__items { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; }
-.wr-report-context__items > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wr-report-context b { font-weight: 500; }
-.wr-report-context__items > i, .wr-report-group__header i { width: 1px; height: 18px; flex: 0 0 1px; background: var(--erp-color-border); }
-.wr-report-context__workshop { display: flex; align-items: center; }
+.wr-report-group__header i { width: 1px; height: 18px; flex: 0 0 1px; background: var(--erp-color-border); }
+.wr-report-context__field { display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.wr-report-context__field > b { white-space: nowrap; }
+.wr-report-context__field .el-select { width: 220px; min-width: 0; }
+.wr-report-context__product .el-select { width: 310px; }
 .wr-report-context__workshop .el-select { width: 150px; }
-.wr-report-context__refresh.el-button { width: 110px; }
 .wr-report-records__layout { min-height: 0; display: grid; flex: 1; grid-template-columns: minmax(360px, 30%) minmax(0, 1fr); gap: 14px; }
 .wr-report-days-panel__header, .wr-report-details-panel__header { justify-content: space-between; }
 .wr-report-days-panel__header h2, .wr-report-details-panel__header h2 { margin: 0; font-size: 18px; font-weight: 600; line-height: 24px; }

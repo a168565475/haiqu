@@ -45,6 +45,7 @@ export interface TubeOptions {
 }
 export interface TubeSourceRow extends CuttingAttributes, ProcessingMaterialPair {
   parent_name?: string
+  stock_zones?: Array<{ zone_id: string; available_quantity: string }>
   purchase_reference?: {
     quantity: string | null; unit: '支' | '套'
     purchased_quantity: string | null; purchase_unit: string; conversion_note: string
@@ -80,6 +81,7 @@ export interface TubeMaterialDetail extends Omit<TubeMaterialRow, 'required_quan
 }
 export interface TubeSourceContext {
   screen_print_pieces?: boolean
+  sewing_print_sources?: boolean
   internal_sewing_factory_id?: string | null
   part_flow?: boolean; sewing_inputs?: boolean; fees_deferred?: boolean
   inputs?: TubePieceSource[]
@@ -185,11 +187,14 @@ export interface TubeOrderDetail extends TubeOrderResult {
       source_factory_id: string; source_factory_name: string; factory_id: string; factory_name: string }>
   }>
   screen_print_pieces?: boolean
-  internal_sewing_parts?: Array<{ component_identity: string; part_name: string; quantity: number; unit: string; unit_price: string; factory_name: string }>
+  internal_sewing_parts?: Array<ProcessingMaterialPair & {
+    component_identity: string; part_name: string; specification: string; unit: string
+    bom_quantity: string; quantity: number; unit_price: string; factory_name: string
+  }>
   part_flow?: boolean; sewing_inputs?: boolean; fees_deferred?: boolean
   inputs?: TubePieceTarget[]
   plan_summary?: TubePlanSummary
-  plan_options?: Pick<TubeOptions, 'source_kinds' | 'factories' | 'zones'>
+  plan_options?: Pick<TubeOptions, 'source_kinds' | 'factories' | 'zones'> & { per_line_sources?: boolean }
   dispatch_records?: TubePlanDispatchRecord[]
   receipt_records?: TubePlanReceiptRecord[]
   record_correction?: TubePlanRecordCorrectionReceipt
@@ -237,6 +242,7 @@ export interface TubePendingAction {
 }
 
 export interface TubePlanSummary {
+  receivable_quantity?: string
   received_amount?: string | null
   has_unknown_receipt_amount?: boolean
   quantity_totals?: Array<{ unit: string; bom_quantity: string; planned_quantity: string; dispatched_quantity: string; received_quantity: string; transferred_quantity?: string; receivable_quantity?: string }>
@@ -248,17 +254,17 @@ export interface TubePlanSummary {
   input_totals?: Array<{ unit: string; dispatched_quantity: string }>
   receipt_progress: number | string
 }
-export interface TubePlanDispatchInput {
+export interface TubePlanDispatchBatch {
   inputs?: Array<{ component_identity: string; quantity: string; print_order_line_id?: string }>
-  client_request_id: string
   source_kind: TubeSourceKind
   zone_id: string | null
-  actual_dispatch_date: string
-  remark: string
   lines: Array<{ component_identity: string; quantity: string; factory_id: string; unit_price?: string }>
   materials?: TubeMaterialInput[]
   material_source_revision?: string
 }
+export type TubePlanDispatchInput = {
+  client_request_id: string; actual_dispatch_date: string; remark: string
+} & (TubePlanDispatchBatch & { batches?: never } | { batches: TubePlanDispatchBatch[]; inputs?: never; lines?: never })
 export interface TubePlanReceiptInput {
   client_request_id: string
   receipt_date: string
@@ -284,7 +290,6 @@ export interface TubePieceSource extends Partial<TubeSourceRow> {
   processor_source?: { factory_id: string; factory_name: string; order_id: string; order_number: string; order_line_id: string; available_quantity: string }
   screen_print_required?: boolean
   printed_available_quantity?: string
-  stock_zones?: Array<{ zone_id: string; available_quantity: string }>
   component_identity: string; bom_line_id: string; parent_component_identity: string; parent_name: string
   part_name: string; specification: string; unit: string; pieces_per_part: number
   order_required: string; max_quantity: string; stock_quantity: string | null; blockers: string[]

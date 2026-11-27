@@ -3,13 +3,13 @@ import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { fetchMaterialIssueOptions, fetchMaterialIssues } from '@/api/materialIssues'
-import { router } from '@/router'
 import type { MaterialIssue, MaterialIssueOptions, MaterialIssueStatus } from '@/types/materialIssue'
 
 const route = useRoute()
+const router = useRouter()
 const rows = ref<MaterialIssue[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -95,9 +95,9 @@ onMounted(async () => {
     <section class="mi-toolbar erp-list-toolbar" aria-label="列表工具栏"><span>领料申请从金工、裁剪、车缝或装配作业计划发起。</span><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></section>
     <section class="mi-table-panel erp-list-table-frame">
       <ElTable v-loading="loading" :data="rows" row-key="id" height="100%" empty-text="暂无车间领料单" @row-dblclick="open">
+        <ElTableColumn label="生产任务单号" min-width="160"><template #default="{ row }"><strong>{{ row.production_task?.task_number || '—' }}</strong></template></ElTableColumn>
         <ElTableColumn prop="issue_number" label="领料单号" min-width="160" />
         <ElTableColumn label="状态" width="116"><template #default="{ row }"><span class="mi-status-tag erp-list-tag" :class="statusTone(row.status).replace('is-', 'erp-list-tag--')">{{ row.status_display }}</span></template></ElTableColumn>
-        <ElTableColumn label="生产订单" min-width="160"><template #default="{ row }">{{ row.production_task?.task_number || '—' }}</template></ElTableColumn>
         <ElTableColumn label="产品" min-width="180"><template #default="{ row }">{{ row.product?.product_name || '—' }}</template></ElTableColumn>
         <ElTableColumn label="规格" min-width="160"><template #default="{ row }">{{ (row.product?.specification_display ?? row.product?.specification) || '—' }}</template></ElTableColumn>
         <ElTableColumn label="颜色" min-width="110"><template #default="{ row }">{{ row.product?.color || '—' }}</template></ElTableColumn>

@@ -26,7 +26,7 @@ const receivedAny = computed(() => result.value.received !== null ? Number(resul
 const warehouse = computed(() => receivedAny.value === false ? '未入库' : props.receipt?.warehouse_name || '—')
 const sourcePosition = computed(() => isDirectSource(props.order.source_kind) ? `${cutting.value ? '车缝' : '金工'}车间 · 已报工未入库` : [props.order.warehouse_name, props.order.zone_name].filter(Boolean).join(' / ') || '—')
 const info = computed<[string, string | null | undefined][]>(() => [
-  ['生产任务单', props.order.task_number], ['订单号', props.order.task_order_number], ['排产单号', props.order.schedule_number],
+  ['生产任务单', props.order.task_number], ['外发单号', props.order.order_number], ['订单号', props.order.task_order_number], ['排产单号', props.order.schedule_number],
   ['当前订单量', `${format(props.order.quantity)} ${props.order.unit || ''}`], ['计划发出日', props.order.planned_dispatch_date], ['预计回货日', props.order.expected_return_date],
   ['产品名称', props.order.product_name], ['品号', props.order.product_number], ['货号', props.order.item_number],
   [cutting.value ? '外发工艺' : '订单颜色', cutting.value ? props.order.craft_name : props.order.color], ['建单日期', dateText(props.order.created_at)], ['建单人', props.order.created_by_name],
@@ -84,8 +84,8 @@ function dateTime(value: string | null | undefined): string {
 </script>
 
 <template>
+  <div class="panel d4-ended-context"><div class="info-grid"><div v-for="[label, value] in (result.available ? info : info.slice(0, 2))" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div></div>
   <template v-if="result.available">
-    <div class="panel d4-ended-context"><div class="info-grid"><div v-for="[label, value] in info" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div></div>
     <div class="panel workspace d4-ended-workspace">
       <div class="section-heading"><div><h2>整单回货结果</h2><span class="muted">{{ receivedAny === null ? '历史结果待核对' : receivedAny ? `${receivedStage} · 全部部位保留` : `实收0${quantityUnit} · 未新增库存` }}</span></div><ElButton :icon="Refresh" @click="emit('refresh')">刷新</ElButton></div>
       <div class="d4-ended-meta info-grid"><div v-for="[label, value] in meta" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div>

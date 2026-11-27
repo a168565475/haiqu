@@ -55,20 +55,23 @@ describe('车缝半成品入库', () => {
     expect(wrapper.get('.footer-bar').text()).toContain('2 个、3 件')
     expect(wrapper.get('.footer-bar').text()).not.toContain('5 套')
   })
-  it('裁剪来源按行单位汇总，整数数量原样按CUTTING提交', async () => {
+  it('裁剪按行单位汇总，不选库区也能提交待仓库确认', async () => {
     route.query.plan_category = 'CUTTING'
     const data = structuredClone(preview); data.plan_category = 'CUTTING'
+    data.zones = []
     data.lines.forEach((line, index) => { line.unit = ['件', '片', '个'][index]!; line.attributes.unit_name = line.unit })
     api.preview.mockResolvedValueOnce(data)
     const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
     await flushPromises()
     expect(wrapper.text()).toContain('厂内裁剪')
+    expect(wrapper.find('[aria-label="库区"]').exists()).toBe(false)
     await wrapper.get('input[aria-label="椅套本次入库"]').setValue('7')
     await wrapper.get('input[aria-label="靠背套本次入库"]').setValue('3')
     expect(wrapper.get('.footer-bar').text()).toContain('7 件、3 片')
     expect(wrapper.get('.footer-bar').text()).not.toContain('10 片')
     await (wrapper.vm as any).submit()
     expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({ plan_category: 'CUTTING', lines: [{ bom_line_id: 'line-1', quantity: '7' }, { bom_line_id: 'line-2', quantity: '3' }] }), '"receipt-1"')
+    expect(api.confirm.mock.calls[0]![0]).not.toHaveProperty('zone_id')
   })
   it.each(['', '{broken', '{"payload":{"request_id":"historical-uuid","lines":[{"quantity":2}]},"etag":"old"}'])('无主历史pending隔离保留且不回查或新提交 %j', async raw => {
     const key = 'internal-receipt-pending:plan-1:SEWING'
@@ -125,7 +128,6 @@ describe('车缝半成品入库', () => {
     expect((wrapper.get('input[aria-label="椅套本次入库"]').element as HTMLInputElement).value).toBe('5')
     expect(vm.remark).toBe('保留草稿')
     expect(vm.receiptDate).toBe('2026-09-29')
-    expect(vm.zoneId).toBe('zone-1')
     expect(wrapper.findAll('button').find(button => button.text() === '提交待入库')!.attributes('disabled')).toBeDefined()
     await vm.submit()
     expect(api.confirm).not.toHaveBeenCalled()
@@ -256,7 +258,7 @@ describe('车缝半成品入库', () => {
     expect(api.confirm).toHaveBeenCalledTimes(1)
   })
 
-  it('重填只清空入库数量，保留日期、仓库和备注，不提交请求', async () => {
+  it('重填只清空入库数量，保留日期和备注，不提交请求', async () => {
     const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
     wrappers.push(wrapper)
     await flushPromises()
@@ -266,7 +268,6 @@ describe('车缝半成品入库', () => {
 
     expect((wrapper.get('input[aria-label="椅套本次入库"]').element as HTMLInputElement).value).toBe('')
     expect((wrapper.vm as any).receiptDate).toBe('2026-09-29')
-    expect((wrapper.vm as any).zoneId).toBe('zone-1')
     expect((wrapper.vm as any).remark).toBe('放入一楼')
     expect(api.confirm).not.toHaveBeenCalled()
   })
@@ -282,25 +283,22 @@ describe('车缝半成品入库', () => {
     expect(wrapper.findAll('button').find(button => button.text() === '提交待入库')!.attributes('disabled')).toBeDefined()
   })
 
-  it('共享日期与库区组件仍提交日期字符串，切换仓库时选择对应库区', async () => {
-    const data = structuredClone(preview)
-    data.zones.push({ id: 'zone-2', warehouse: '二号仓', name: '二楼' })
-    api.preview.mockResolvedValue(data)
+  it('车缝申请没有库区时仍提交所选日期', async () => {
+    api.preview.mockResolvedValue({ ...structuredClone(preview), zones: [] })
     const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
     wrappers.push(wrapper)
     await flushPromises()
 
     wrapper.getComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-10-20')
-    const warehouseSelect = wrapper.findAllComponents(ElSelect)[0]!
-    warehouseSelect.vm.$emit('update:modelValue', '二号仓')
-    warehouseSelect.vm.$emit('change', '二号仓')
+    expect(wrapper.findAllComponents(ElSelect)).toHaveLength(0)
     await wrapper.get('input[aria-label="椅套本次入库"]').setValue('5')
     await (wrapper.vm as any).submit()
 
-    expect(api.confirm.mock.calls[0]![0]).toMatchObject({ receipt_date: '2026-10-20', zone_id: 'zone-2' })
+    expect(api.confirm.mock.calls[0]![0]).toMatchObject({ plan_category: 'SEWING', receipt_date: '2026-10-20' })
+    expect(api.confirm.mock.calls[0]![0]).not.toHaveProperty('zone_id')
   })
 
-  it('待核对请求时共享日期和下拉仍锁定，避免修改原提交', async () => {
+  it('待核对请求时锁定日期、备注和数量，避免修改原提交', async () => {
     sessionStorage.setItem('internal-receipt-pending:plan-1:SEWING:user:7', JSON.stringify({
       etag: '"receipt-1"', payload: { request_id: 'pending-1', schedule_product_id: 'plan-1',
         plan_category: 'SEWING', zone_id: 'zone-1', receipt_date: '2026-09-29', remark: '',
@@ -311,7 +309,7 @@ describe('车缝半成品入库', () => {
     await flushPromises()
 
     expect(wrapper.getComponent(ElDatePicker).props('disabled')).toBe(true)
-    expect(wrapper.findAllComponents(ElSelect).every(select => select.props('disabled'))).toBe(true)
+    expect(wrapper.get('textarea[aria-label="入库备注"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('input[aria-label="椅套本次入库"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('核对本次提交')
     expect(api.confirm).not.toHaveBeenCalled()

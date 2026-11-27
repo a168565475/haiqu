@@ -21,6 +21,7 @@ import type {
 } from '@/types/productionTask'
 
 const basePath = '/api/v1/production-tasks/'
+const taskSaveTimeout = 60_000
 
 function versioned(response: AxiosResponse<DataResponse<ProductionTask>>): VersionedProductionTask {
   return { data: response.data.data, etag: typeof response.headers.etag === 'string' ? response.headers.etag : '' }
@@ -81,7 +82,7 @@ export async function exportProductionTasks(query: ProductionTaskQuery, ids: str
 export async function createProductionOrderFromSalesOrder(
   payload: ProductionOrderFromSalesInput,
 ): Promise<VersionedProductionTask> {
-  const response = await apiClient.post<DataResponse<ProductionTask>>(`${basePath}create-from-sales-order/`, payload)
+  const response = await apiClient.post<DataResponse<ProductionTask>>(`${basePath}create-from-sales-order/`, payload, { timeout: taskSaveTimeout })
   return versioned(response)
 }
 
@@ -109,7 +110,8 @@ export async function createProductionTask(
   detailImages: Record<string, File | null>,
   etag?: string,
 ): Promise<VersionedProductionTask> {
-  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages), etag ? { headers: { 'If-Match': etag } } : undefined)
+  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages),
+    { timeout: taskSaveTimeout, ...(etag ? { headers: { 'If-Match': etag } } : {}) })
   return versioned(response)
 }
 
@@ -123,14 +125,14 @@ export async function updateProductionTask(
   const response = await apiClient.patch<DataResponse<ProductionTask>>(
     `${basePath}${encodeURIComponent(id)}/`,
     multipartPayload(payload, productImages, detailImages),
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: taskSaveTimeout },
   )
   return versioned(response)
 }
 
 export async function submitProductionTask(id: string, etag: string): Promise<VersionedProductionTask> {
   const response = await apiClient.post<DataResponse<ProductionTask>>(
-    `${basePath}${encodeURIComponent(id)}/submit/`, {}, { headers: { 'If-Match': etag } },
+    `${basePath}${encodeURIComponent(id)}/submit/`, {}, { headers: { 'If-Match': etag }, timeout: taskSaveTimeout },
   )
   return versioned(response)
 }
@@ -143,7 +145,7 @@ export async function decideProductionTaskByPmc(
   const response = await apiClient.post<DataResponse<ProductionTask>>(
     `${basePath}${encodeURIComponent(id)}/pmc-decision/`,
     payload,
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: taskSaveTimeout },
   )
   return versioned(response)
 }

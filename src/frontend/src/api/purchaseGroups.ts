@@ -44,7 +44,7 @@ export async function fetchVersionedPurchaseGroup(id: string, batchSessionId?: s
 }
 
 export async function createPurchaseGroup(payload: PurchaseGroupInput): Promise<VersionedPurchaseGroup> {
-  return versionedGroup(await apiClient.post<DataResponse<PurchaseGroup>>(basePath, payload))
+  return versionedGroup(await apiClient.post<DataResponse<PurchaseGroup>>(basePath, payload, { timeout: 60000 }))
 }
 
 export async function deletePurchaseGroup(id: string, etag: string, packaging?: boolean): Promise<void> {

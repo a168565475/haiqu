@@ -270,7 +270,7 @@ async function submit() {
     <ElButton v-if="actionAllowed('record')" @click="open('record')">投入与损耗</ElButton>
     <ElButton v-if="actionAllowed('complete')" @click="open('complete')">结清检查</ElButton>
   </div>
-  <AppWindowDialog v-model="visible" :title="title" :width="warehouseWorkspace ? 1800 : mode === 'dispatch' ? 1700 : 1320" :height="820" :close-on-click-modal="false" :close-on-press-escape="!busy" :before-close="done => { if (!busy) done() }" destroy-on-close @closed="emit('closed')">
+  <AppWindowDialog v-model="visible" :title="title" :fullscreen="warehouseWorkspace && (mode === 'dispatch' || mode === 'return')" :width="warehouseWorkspace ? 1800 : mode === 'dispatch' ? 1700 : 1320" :height="820" :close-on-click-modal="false" :close-on-press-escape="!busy" :before-close="done => { if (!busy) done() }" destroy-on-close @closed="emit('closed')">
     <div v-loading="loading" class="flow-body" :class="{ 'flow-body--dispatch': mode === 'dispatch' }">
       <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon><ElButton v-if="!context && !state" @click="load">重试</ElButton></ElAlert>
       <template v-if="mode === 'dispatch' && context">

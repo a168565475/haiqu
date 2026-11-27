@@ -332,9 +332,9 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
         <section class="detail-card order-basic-card">
           <div class="detail-card-heading"><h2>基本信息</h2></div>
           <dl class="order-basic-grid">
+            <div><dt>任务单号</dt><dd><strong>{{ detail.production_task_number }}</strong></dd></div>
             <div><dt>外发单号</dt><dd>{{ detail.order_number }}</dd></div>
             <div><dt>计划单号</dt><dd>{{ detail.schedule_number }}</dd></div>
-            <div><dt>任务单号</dt><dd>{{ detail.production_task_number }}</dd></div>
             <div><dt>创建日期</dt><dd>{{ dateOnly(detail.created_at) }}</dd></div>
             <div><dt>创建人</dt><dd>{{ detail.created_by?.name || '—' }}</dd></div>
             <div><dt>加工工艺</dt><dd><span class="craft-tag" :class="`craft-${craftTone(detail.craft.outsourcing_code)}`">{{ detail.craft.name }}</span></dd></div>

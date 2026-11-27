@@ -56,6 +56,30 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('整份 BOM 原料自动保存', () => {
+  it('草稿超时保留填写，提示核对保存结果，且只提交一次', async () => {
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const success = vi.spyOn(ElMessage, 'success')
+    const { vm, auxiliary } = await open()
+    vi.mocked(api.saveBomDraft).mockRejectedValueOnce(new AxiosError('timeout', 'ECONNABORTED'))
+    expect(await vm.persistDraft()).toBe(false)
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('保存结果'))
+    expect(success).not.toHaveBeenCalled()
+    expect(auxiliary.lines[0]?.part_name).toBe('织带')
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['VERIFIED', 'PENDING_CONFIRMATION'])('未收到确认答复时只读核对 %s，保留当前填写', async status => {
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const { vm, auxiliary } = await open()
+    vi.mocked(api.fetchBomForEdit).mockResolvedValueOnce({ data: { ...versioned.data, status }, etag: 'v2' } as never)
+    vi.mocked(api.saveBomDraft).mockRejectedValueOnce(new AxiosError('timeout', 'ECONNABORTED'))
+    await vm.submitVerification()
+    expect(api.fetchBomForEdit).toHaveBeenCalledTimes(2)
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining(status === 'VERIFIED' ? '服务器上的 BOM 已确认' : '确认结果'))
+    expect(auxiliary.lines[0]?.part_name).toBe('织带')
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
+  })
+
   it.each([true, false])('面料及部位 BOM 读取空管材分区（接口含分区：%s）后可保存，回读不会再插入空行', async includeEmptyTube => {
     const sections = [
       ...(includeEmptyTube ? [{ id: 'tube', title: '管材类', section_type: 'PROFILE', lines: [] }] : []),
@@ -154,7 +178,7 @@ describe('整份 BOM 原料自动保存', () => {
 
   it.each([
     [412, '原料品名选项已变化，请刷新该品名后重选；BOM草稿仍保留。', '原料品名选项已变化'],
-    [412, '数据已被其他人修改，请刷新后重试。', '该 BOM 已被其他人修改'],
+    [412, '数据已被其他人修改，请刷新后重试。', '该 BOM 的版本已更新'],
     [428, '请选择带内容版本的原料品名。', '请选择带内容版本的原料品名'],
     [428, '修改请求必须携带 If-Match。', '版本信息'],
   ])('版本错误%s按真实服务端原因显示且保留草稿：%s', async (status, message, expected) => {

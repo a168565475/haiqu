@@ -68,9 +68,11 @@ export function notificationError(error: unknown, fallback: string): string {
   return messages.join('；') || fallback
 }
 
-export async function getNotificationInbox(page = 1, signal?: AbortSignal): Promise<NotificationInboxResponse> {
+export async function getNotificationInbox(page = 1, signal?: AbortSignal, unreadOnly = false): Promise<NotificationInboxResponse> {
   if (!Number.isSafeInteger(page) || page < 1) throw new Error('消息页码无效')
-  const { data } = await apiClient.get<NotificationInboxResponse>(`${root}inbox/`, { ...options(), params: { page, page_size: 10 }, signal })
+  const { data } = await apiClient.get<NotificationInboxResponse>(`${root}inbox/`, {
+    ...options(), params: { page, page_size: 10, ...(unreadOnly ? { unread_only: true } : {}) }, signal,
+  })
   if (!data || !Array.isArray(data.data) || !Number.isSafeInteger(data.count) || data.count < 0
     || !Number.isSafeInteger(data.page) || data.page < 1 || !Number.isSafeInteger(data.page_size) || data.page_size < 1 || data.page_size > 50) {
     throw new Error('消息列表响应无效')

@@ -1,0 +1,140 @@
+.sewing-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  color: var(--erp-color-text-primary);
+  font-family: var(--erp-font-body);
+  font-variant-numeric: tabular-nums;
+  > * { flex: none; }
+  h1, h2, h3, p { margin: 0; }
+  .page-heading, .section-head, .panel-head, .rank-head, .totals {
+    display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  .page-heading h1 { font-size: 27px; line-height: 34px; font-weight: 600; }
+  .page-heading time { font-size: 13px; color: var(--erp-color-text-secondary); }
+  h2, h3 { display: flex; align-items: center; gap: 8px; }
+  h2 { font-size: 18px; line-height: 1.4; font-weight: 650; }
+  h3 { font-size: 15px; font-weight: 600; }
+  h2 svg, h3 svg { width: 20px; height: 20px; flex: none; color: var(--erp-color-text-secondary); }
+  h3 svg { width: 18px; height: 18px; }
+  .glass { min-width: 0; background: var(--erp-glass-surface); border: 1px solid var(--erp-glass-border); border-radius: 14px; box-shadow: var(--erp-glass-shadow); }
+  .load-state { padding: 22px; }
+  .activity .load-state { display: flex; align-items: center; gap: 8px; min-height: 144px; }
+  button:focus-visible { outline: 2px solid var(--erp-menu-accent); outline-offset: 1px; }
+  .todo, .period-toggle button, .week-bars button, .follow-row, .totals button {
+    border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer;
+  }
+  small, .subtitle, .empty { font-size: 12px; color: var(--erp-color-text-secondary); }
+  .todo-panel { padding: 15px 22px 18px; }
+  .todos { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 12px; }
+  .todo { display: grid; grid-template-columns: 60px minmax(0, 1fr) 10px; align-items: center; gap: 14px; text-align: left; padding: 6px 20px; border-right: 1px solid var(--erp-color-border-subtle); }
+  .todo:first-child { padding-left: 0; }
+  .todo:last-child { padding-right: 0; border-right: 0; }
+  .todo img { width: 60px; height: 60px; object-fit: contain; }
+  .todo-title, .hint { display: block; }
+  .todo-title { font-size: 15px; }
+  .hint { margin-top: 3px; }
+  .todo strong { font: 600 34px/1.25 "Segoe UI", sans-serif; margin-right: 7px; }
+  .chevron { width: 12px; color: var(--erp-color-text-muted); }
+  .todo:hover, .follow-row:hover, .week-bars button:hover { background: var(--erp-glass-inner-background); }
+  .section-head { align-items: center; margin-bottom: 10px; }
+  .period-toggle { display: flex; gap: 6px; }
+  .period-toggle button { min-height: 30px; padding: 0 10px; border-radius: var(--erp-radius-control); color: var(--erp-color-text-secondary); font-size: 12px; }
+  .period-toggle button:hover { background: var(--erp-menu-hover-background); }
+  .period-toggle button[aria-pressed=true] { background: var(--erp-menu-selected-background); color: var(--erp-menu-accent); font-weight: 600; }
+  .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .metric { position: relative; overflow: hidden; min-height: 144px; padding: 18px 23px; }
+  .machine-art { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); width: 31%; height: 86%; max-width: 190px; object-fit: contain; }
+  .metric:first-child .metric-value { color: var(--erp-menu-accent); }
+  .metric-value { position: relative; display: block; margin-top: 8px; font: 600 40px/1.17 "Segoe UI", sans-serif; letter-spacing: -.04em; }
+  .metric-value small { margin-left: 8px; font: 400 13px var(--erp-font-body); color: inherit; letter-spacing: 0; }
+  .metric-note { position: relative; display: flex; flex-wrap: wrap; gap: 0 14px; margin-top: 13px; font-size: 13px; color: var(--erp-color-text-secondary); }
+  .metric-note span + span { padding-left: 14px; border-left: 1px solid var(--erp-color-border); }
+  .metric .range { position: absolute; right: 20px; top: 18px; }
+  .metric-icon { position: absolute; bottom: 18px; right: 20px; width: 42px; height: 42px; padding: 9px; border-radius: 10px; background: var(--erp-menu-selected-background); color: var(--erp-menu-accent); }
+  .quantities { display: flex; flex-wrap: wrap; column-gap: 12px; padding-right: 40px; }
+  .quantities.multiple .metric-value { font-size: 26px; line-height: 1.8; }
+  .lower { display: grid; grid-template-columns: minmax(0, 1.03fr) minmax(0, 1.08fr) minmax(220px, .78fr); align-items: stretch; gap: 14px; }
+  .panel { min-height: 308px; padding: 20px 23px; }
+  .subtitle { margin-top: 5px; }
+  .empty { margin-top: 26px; }
+  .ranks { display: grid; gap: 15px; margin-top: 18px; }
+  .rank-head { flex-wrap: nowrap; }
+  .rank-head strong, .rank-head b { overflow-wrap: anywhere; font-size: 14px; }
+  .rank-head small { margin-left: 8px; font-weight: 400; }
+  .track { height: 6px; margin-top: 6px; border-radius: 6px; overflow: hidden; background: var(--erp-color-subtle); }
+  .track i { display: block; height: 100%; background: #64a7b2; border-radius: inherit; }
+  .rank:first-child .track i { background: #216c80; }
+  .totals { margin-top: 21px; padding-top: 12px; border-top: 1px solid var(--erp-color-border-subtle); font-size: 12px; color: var(--erp-color-text-secondary); }
+  .totals b { color: var(--erp-color-text-primary); }
+  .totals button { padding: 0; color: var(--erp-menu-accent); }
+  .week-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); margin-top: 12px; }
+  .week-bars button { min-width: 0; padding: 0; text-align: center; font-size: 12px; color: var(--erp-color-text-secondary); }
+  .bar-frame { height: 186px; min-width: 0; margin-bottom: 7px; border-bottom: 1px solid var(--erp-color-border); display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 5px; }
+  .bar-frame b { color: var(--erp-color-text-primary); font-size: 14px; }
+  .bar-frame i { width: 46%; min-height: 2px; border-radius: 4px 4px 0 0; background: linear-gradient(#6199bc, #90b4cc); }
+  .week-bars button:first-child { color: var(--erp-menu-accent); font-weight: 600; }
+  .week-bars button:first-child i { background: linear-gradient(#427f94, #6cabb8); }
+  .rail { display: grid; gap: 12px; align-content: start; min-width: 0; }
+  .sidepanel { padding: 16px 19px; }
+  .sidepanel h2 { font-size: 16px; }
+  .sidepanel p { margin-top: 12px; }
+  .follow-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 11px 0; font-size: 13px; text-align: left; }
+  .follow-row:first-of-type { margin-top: 6px; }
+  .follow-row + .follow-row { border-top: 1px solid var(--erp-color-border-subtle); }
+  .follow-row b { margin-left: auto; font-size: 15px; }
+}
+@media (min-width: 1700px) {
+  .sewing-workbench {
+    gap: 19px;
+    .todo-panel { padding: 17px 24px 21px; }
+    .todos { margin-top: 15px; }
+    .metric { min-height: 154px; padding: 21px 25px; }
+    .activity .load-state { min-height: 154px; }
+    .panel { min-height: 330px; padding: 21px 24px; }
+    .sidepanel { padding: 18px 21px; }
+  }
+}
+@media (max-width: 1350px) {
+  .sewing-workbench {
+    .todo { grid-template-columns: 42px minmax(0, 1fr) 8px; gap: 8px; padding-inline: 11px; }
+    .todo img { width: 42px; height: 42px; }
+    .metric .range { display: none; }
+  }
+}
+@media (max-width: 1130px) {
+  .sewing-workbench {
+    .lower { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rail { grid-column: 1/-1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hint { font-size: 11px; }
+  }
+}
+@media (max-width: 930px) {
+  .sewing-workbench {
+    .todo { grid-template-columns: 1fr; gap: 4px; }
+    .todo img { width: 38px; height: 38px; }
+    .todo .chevron, .metric-icon { display: none; }
+    .metric, .panel { padding: 14px; }
+    .metric-value { font-size: 32px; }
+    .metric-note { font-size: 12px; }
+  }
+}
+@media (max-width: 760px) {
+  .sewing-workbench {
+    .page-heading h1 { font-size: 23px; }
+    .lower, .metrics, .rail { grid-template-columns: minmax(0, 1fr); }
+    .todo-panel { padding: 12px; }
+    .todos { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .todo-title { font-size: 13px; }
+    .todo strong { font-size: 25px; }
+    .todo .hint { display: none; }
+    .todo:nth-child(3) { border-right: 0; }
+    .todo:first-child { padding-left: 11px; }
+    .metric { min-height: 99px; }
+    .machine-art { width: 25%; }
+    .factory-panel { min-height: auto; }
+  }
+}

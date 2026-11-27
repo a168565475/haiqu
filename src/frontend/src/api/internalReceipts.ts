@@ -12,8 +12,9 @@ export async function confirmInternalReceipt(payload: ReceiptPayload | MetalRece
     { headers: { 'If-Match': etag }, timeout: 30000 })
   return response.data.data
 }
-export async function confirmInternalReceiptRecord(id: string, etag?: string) {
-  const response = await apiClient.post<{ data: { receipt_id: string; record_ids: string[]; receipt_number: string; status: string; replayed: boolean } }>(`${root}${encodeURIComponent(id)}/confirm/`, undefined, { headers: etag ? { 'If-Match': etag } : undefined, timeout: 30000 })
+export async function confirmInternalReceiptRecord(id: string, etag?: string, zoneId?: string) {
+  const response = await apiClient.post<{ data: InternalReceiptResult }>(`${root}${encodeURIComponent(id)}/confirm/`,
+    zoneId ? { zone_id: zoneId } : undefined, { headers: etag ? { 'If-Match': etag } : undefined, timeout: 30000 })
   return response.data.data
 }
 export async function deleteInternalReceiptRecord(id: string, etag: string): Promise<void> {

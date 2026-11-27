@@ -19,7 +19,7 @@ vi.mock('vant', async importOriginal => {
   const vant = await importOriginal<typeof import('vant')>()
   return { ...vant, showConfirmDialog: vi.fn(vant.showConfirmDialog), showDialog: vi.fn().mockResolvedValue('confirm') }
 })
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { employee: { id: 'person' } }, hasPermission: () => true }) }))
 vi.mock('@/utils/requestId', () => ({ createRequestId: () => 'request-one' }))
 vi.mock('@/components/WorkPage.vue', () => ({ default: { template: '<div><slot /><slot name="footer" /></div>' } }))
 vi.mock('@/api/materialIssues', () => ({
@@ -248,25 +248,26 @@ describe('领料申请两步保存恢复', () => {
     expect(tags[1]!.classes()).toContain('material-kind--semi')
     wrapper.unmount()
   })
-  it('领料人使用同车间手机选择面板，取消不写回，确认后沿用原保存字段', async () => {
+  it('领料人默认登录员工，允许从同车间名单改选，取消时保留原选择', async () => {
     vi.mocked(api.fetchMaterialIssueOptions).mockResolvedValue({
       production_tasks: [{ id: ids.production_task_id, task_number: 'TEST-TASK', order_number: '' }],
       workshops: [{ id: ids.workshop_id, name: '金工车间' }],
       recipients: [
-        { id: 'person', name: '测试员工', workshop_id: ids.workshop_id },
         { id: 'person-two', name: '另一位员工', workshop_id: ids.workshop_id },
+        { id: 'person', name: '测试员工', workshop_id: ids.workshop_id },
         { id: 'other-workshop', name: '其他车间员工', workshop_id: 'other' },
       ],
     })
     const wrapper = await preparedPage()
+    expect(wrapper.get('.recipient-trigger').text()).toContain('测试员工')
     expect(wrapper.find('select').exists()).toBe(false)
     await wrapper.get('.recipient-trigger').trigger('click'); await flushPromises()
     const picker = wrapper.getComponent(Picker)
-    expect(picker.props('columns')).toEqual([{ text: '测试员工', value: 'person' }, { text: '另一位员工', value: 'person-two' }])
+    expect(picker.props('columns')).toEqual([{ text: '另一位员工', value: 'person-two' }, { text: '测试员工', value: 'person' }])
     expect(picker.props('visibleOptionNum')).toBe(2)
     picker.vm.$emit('update:modelValue', ['person-two']); await flushPromises()
     await picker.get('.van-picker__cancel').trigger('click'); await flushPromises()
-    expect(wrapper.get('.recipient-trigger').text()).toContain('请选择领料人')
+    expect(wrapper.get('.recipient-trigger').text()).toContain('测试员工')
     await wrapper.get('.recipient-trigger').trigger('click'); await flushPromises()
     picker.vm.$emit('update:modelValue', ['person-two']); await flushPromises()
     await picker.get('.van-picker__confirm').trigger('click'); await flushPromises()
@@ -275,8 +276,17 @@ describe('领料申请两步保存恢复', () => {
     expect(api.createMaterialIssue).toHaveBeenCalledWith(expect.objectContaining({ recipient_workshop_employee_id: 'person-two' }))
     wrapper.unmount()
   })
-  it('单个领料人不撑出多余选择行，空名单禁用入口并保留配置提示', async () => {
+  it('账号不在车间名单时需要手选，空名单禁用入口并保留配置提示', async () => {
+    const options = await api.fetchMaterialIssueOptions(ids.production_task_id)
+    vi.mocked(api.fetchMaterialIssueOptions).mockResolvedValue({
+      ...options,
+      recipients: [
+        { id: 'person-two', name: '本车间员工', workshop_id: ids.workshop_id },
+        { id: 'person', name: '登录员工', workshop_id: 'other-workshop' },
+      ],
+    })
     const wrapper = await preparedPage()
+    expect(wrapper.get('.recipient-trigger').text()).toContain('请选择领料人')
     await wrapper.get('.recipient-trigger').trigger('click'); await flushPromises()
     expect(wrapper.getComponent(Picker).props('visibleOptionNum')).toBe(1)
     wrapper.unmount()

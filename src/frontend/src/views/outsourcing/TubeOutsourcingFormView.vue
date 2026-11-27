@@ -411,13 +411,16 @@ async function recoverPending(allowRetry: boolean) {
     owned.assertCurrent()
   } catch (cause) {
     if (isCancel(cause) || !owned.isCurrent()) return
-    if (isAxiosError(cause) && cause.response?.status === 404 && allowRetry) {
-      owned.assertCurrent()
-      await postPending()
-      return
+    if (isAxiosError(cause) && cause.response?.status === 404) {
+      if (allowRetry) {
+        owned.assertCurrent()
+        await postPending()
+      } else {
+        error.value = '暂未查到这笔外发单，填写内容已保留。点右下角“核对本次提交”，系统会先查单，再按原编号重试。'
+      }
+    } else {
+      error.value = '暂时无法查询这笔外发单的保存结果，填写内容已保留。稍后点右下角“核对本次提交”。'
     }
-    error.value = '提交结果尚未确认，填写内容已锁定。请点击“核对本次提交”，继续使用原请求编号核对，避免重复建单。'
-    warn(error.value)
   }
 }
 async function save() {
@@ -517,34 +520,19 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
     <ElAlert v-if="identityBlocked" title="身份尚未核验或已变化，已暂停本页操作。请核验身份后重新打开本页。" type="warning" :closable="false" show-icon />
     <ElAlert v-if="storageError" :title="storageReason" type="warning" :closable="false" show-icon />
     <ElAlert v-if="!canCreate" title="当前账号没有新建外发单权限。" type="warning" :closable="false" show-icon />
-    <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon><ElButton v-if="!pending && !storageError" link @click="initialize">重新加载</ElButton></ElAlert>
+    <ElAlert v-if="error" :title="error" :type="pending ? 'warning' : 'error'" :closable="false" show-icon><ElButton v-if="!pending && !storageError" link @click="initialize">重新加载</ElButton></ElAlert>
     <section class="panel">
-      <div class="dispatch-layout" :class="{ 'dispatch-layout--sewing': cutting && planMode }">
-      <div class="field-grid">
+      <div class="field-grid dispatch-fields">
         <label class="form-field" title="生产任务单"><ElSelect :model-value="taskId" :disabled="locked || !canCreate" :loading="loading" @update:model-value="requestChange('task', $event)" filterable clearable aria-label="生产任务单" placeholder="选择生产任务单" :no-data-text="printEntry ? '暂无可办理丝印的生产任务' : cutting ? '暂无可办理车缝外发的生产任务' : '暂无可用喷塑排产任务'"><ElOption v-for="item in tasks" :key="item.id" :label="item.task_number" :value="item.id" /></ElSelect></label>
         <label class="form-field" title="产品"><ElSelect :model-value="productId" @update:model-value="requestChange('product', $event)" :disabled="!taskId || locked || !canCreate" filterable clearable aria-label="产品" placeholder="选择产品"><ElOption v-for="item in products" :key="item.id" :label="`${item.product_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
         <label v-if="!planMode" class="form-field" title="材料来源"><ElSelect :model-value="source" :disabled="locked || !canCreate" @update:model-value="requestChange('source', $event)" aria-label="材料来源" placeholder="选择材料来源"><ElOption v-for="item in options?.source_kinds || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
-        <label v-if="!cutting" class="form-field" title="关联排产"><ElInput :model-value="product ? product.schedule_number || '暂无可用排产' : ''" aria-label="关联排产" placeholder="关联排产（选择产品后带入）" readonly /></label>
         <label class="form-field" title="计划发出日期"><ElDatePicker v-model="sendDate" :disabled="locked || !canCreate" aria-label="计划发出日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="计划发出日期" /></label>
         <label class="form-field" title="预计回货日期"><ElDatePicker v-model="returnDate" :disabled="locked || !canCreate" aria-label="预计回货日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="预计回货日期" /></label>
         <template v-if="!planMode && !direct">
           <label class="form-field" title="来源仓库"><ElSelect :model-value="warehouseId" :disabled="locked || !canCreate" @update:model-value="requestChange('warehouse', $event)" aria-label="来源仓库" placeholder="选择来源仓库"><ElOption v-for="item in warehouses" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></label>
           <label class="form-field" title="库区"><ElSelect :model-value="zoneId" :disabled="locked || !canCreate" @update:model-value="requestChange('zone', $event)" aria-label="库区" placeholder="选择库区"><ElOption v-for="item in zones" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></label>
         </template>
-        <template v-else-if="!planMode"><label class="form-field" :title="`${cutting ? '车缝' : '金工'}来源计划`"><ElInput :model-value="product?.schedule_number || ''" :aria-label="`${cutting ? '车缝' : '金工'}来源计划`" :placeholder="`${cutting ? '车缝' : '金工'}来源计划`" readonly /></label><label class="form-field" title="数量单位"><ElInput :model-value="source === 'CUTTING' ? '车间裁片 · 按行单位' : partFlow ? '车缝完成部位 · 按行单位' : cutting ? '车缝完成裁片 · 套' : '已加工短管 · 支'" aria-label="数量单位" disabled /></label></template>
-      </div>
-      <aside class="product-overview" aria-label="产品资料">
-        <div class="product-overview__image" @error.capture="productImageFailed = true">
-          <ProductImage v-if="product?.image_url && !productImageFailed" :src="product.image_url" :name="`${product.product_name}图片`" large />
-          <span v-else class="product-overview__empty">{{ !product ? '选择产品后显示图片' : productImageFailed ? '图片加载失败' : '暂无产品图片' }}</span>
-        </div>
-        <dl class="product-overview__details">
-          <dt>颜色</dt><dd>{{ product?.color || '—' }}</dd>
-          <dt>规格</dt><dd>{{ product?.specification_display || product?.specification || '—' }}</dd>
-          <dt>材质</dt><dd>{{ product?.material || '—' }}</dd>
-          <dt>产品编码</dt><dd>{{ product?.product_number || '—' }}</dd>
-        </dl>
-      </aside>
+        <label v-else-if="!planMode" class="form-field" title="数量单位"><ElInput :model-value="source === 'CUTTING' ? '车间裁片 · 按行单位' : partFlow ? '车缝完成部位 · 按行单位' : cutting ? '车缝完成裁片 · 套' : '已加工短管 · 支'" aria-label="数量单位" disabled /></label>
       </div>
     </section>
     <section class="panel workspace" v-loading="sourceLoading">
@@ -584,7 +572,21 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
           </tr></tbody>
         </table>
       </div>
-      <label class="form-field dispatch-remark"><span>外发备注 <span class="muted">选填</span></span><ElInput v-model="remark" :disabled="locked || !canCreate" type="textarea" :rows="2" :maxlength="2000" placeholder="填写加工、交接或送货说明" /></label>
+      <div class="dispatch-notes">
+        <aside class="product-overview" aria-label="产品资料">
+          <div class="product-overview__image" @error.capture="productImageFailed = true">
+            <ProductImage v-if="product?.image_url && !productImageFailed" :src="product.image_url" :name="`${product.product_name}图片`" large />
+            <span v-else class="product-overview__empty">{{ !product ? '选择产品后显示图片' : productImageFailed ? '图片加载失败' : '暂无产品图片' }}</span>
+          </div>
+          <dl class="product-overview__details">
+            <dt>颜色</dt><dd>{{ product?.color || '—' }}</dd>
+            <dt>规格</dt><dd>{{ product?.specification_display || product?.specification || '—' }}</dd>
+            <dt>材质</dt><dd>{{ product?.material || '—' }}</dd>
+            <dt>产品编码</dt><dd>{{ product?.product_number || '—' }}</dd>
+          </dl>
+        </aside>
+        <label class="form-field dispatch-remark"><span>外发备注 <span class="muted">选填</span></span><ElInput v-model="remark" :disabled="locked || !canCreate" type="textarea" :rows="2" :maxlength="2000" placeholder="填写加工、交接或送货说明" /></label>
+      </div>
     </section>
     <footer class="footer-bar"><div>{{ planMode && context?.sewing_inputs ? '本单车缝计划' : '本单计划外发' }} <strong>{{ totalText }}</strong><span v-if="!cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(totalArea, '—') }}</strong> ㎡</span><span v-if="feesDeferred" class="planned-amount"> · 加工费暂缓</span><span v-else class="planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(plannedAmount) }}</strong> 元</span><small v-if="!printEntry">{{ planMode ? '计划默认取BOM数量，可手填；进度仍按BOM计算。保存总单不预留库存，实际发出时才交接或扣库。' : '保存后预留数量，实物尚未发出；确认发出时才交接或扣库。' }}</small></div><ElButton :disabled="saving" @click="router.push({ name: 'workshop-outsourcing' })">返回</ElButton><ElButton :disabled="locked" @click="clearRows">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || (!pending && (locked || !canCreate))" @click="pending ? save() : checkDispatch()">{{ pending ? '核对本次提交' : printEntry ? '保存丝印外发单' : sewingEntry ? '保存车缝外发单' : '保存委外加工单' }}</ElButton></footer>
   </section>

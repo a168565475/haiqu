@@ -3,7 +3,7 @@ from uuid import UUID
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from django.db.models import Case, Count, IntegerField, Q, Value, When
-from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view, inline_serializer
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -16,9 +16,9 @@ from apps.organizations.models import Employee
 
 from ..constants import FIXED_WORKSHOP_NAMES
 from ..models import Craft, CraftType, Operation, RecordStatus, Workshop
-from ..selectors import accessible_role_workshop_employees, accessible_workshop_employees, crafts_with_context, employee_workshop_ids, employees_with_context, operations_with_context, workshops_with_statistics
-from ..services import create_config, update_config, update_employee_workshop
-from .serializers import CraftSerializer, OperationSerializer, WorkshopEmployeeOptionsResponseSerializer, WorkshopEmployeeOptionsSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
+from ..selectors import accessible_role_workshop_employees, accessible_workshop_employees, crafts_with_context, employee_workshop_ids, employees_with_context, operations_with_context, workshop_config_rows, workshops_with_statistics
+from ..services import copy_operation_scheme, create_config, update_config, update_employee_workshop
+from .serializers import CraftSerializer, OperationSchemeCopyResultSerializer, OperationSchemeCopySerializer, OperationSerializer, WorkshopEmployeeOptionsResponseSerializer, WorkshopEmployeeOptionsSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
 
 
 def _parse_uuid(value, field_name):
@@ -264,7 +264,8 @@ class CraftViewSet(BaseConfigViewSet):
     }
 
     def get_queryset(self):
-        queryset = Craft.objects.all()
+        permission = self.action_permission_map.get(self.action, "workshop_config.view_craft")
+        queryset = workshop_config_rows(Craft.objects.all(), self.request, permission, "workshop_id")
         craft_type = self.request.query_params.get("craft_type", "").strip().upper()
         if craft_type:
             if craft_type not in CraftType.values:
@@ -285,7 +286,7 @@ class CraftViewSet(BaseConfigViewSet):
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
-        counts = Craft.objects.aggregate(
+        counts = workshop_config_rows(Craft.objects.all(), request, "workshop_config.view_craft", "workshop_id").aggregate(
             total=Count("id"),
             internal=Count("id", filter=Q(craft_type=CraftType.INTERNAL)),
             external=Count("id", filter=Q(craft_type=CraftType.EXTERNAL)),
@@ -302,12 +303,14 @@ class OperationViewSet(BaseConfigViewSet):
         "retrieve": "workshop_config.view_operation",
         "summary": "workshop_config.view_operation",
         "create": "workshop_config.add_operation",
+        "copy_scheme": "workshop_config.add_operation",
         "update": "workshop_config.change_operation",
         "partial_update": "workshop_config.change_operation",
     }
 
     def get_queryset(self):
-        queryset = Operation.objects.all()
+        permission = self.action_permission_map.get(self.action, "workshop_config.view_operation")
+        queryset = workshop_config_rows(Operation.objects.all(), self.request, permission, "craft__workshop_id")
         craft_id = _parse_uuid(self.request.query_params.get("craft", "").strip(), "craft")
         if craft_id:
             queryset = queryset.filter(craft_id=craft_id)
@@ -334,9 +337,25 @@ class OperationViewSet(BaseConfigViewSet):
             )
         return operations_with_context(queryset).order_by("operation_number", "id")
 
+    @extend_schema(
+        request=OperationSchemeCopySerializer,
+        responses={201: inline_serializer(name="OperationSchemeCopyResponse", fields={"data": OperationSchemeCopyResultSerializer()})},
+    )
+    @action(detail=False, methods=["post"], url_path="copy-scheme")
+    def copy_scheme(self, request):
+        serializer = OperationSchemeCopySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            count = copy_operation_scheme(**serializer.validated_data, actor_employee=self.actor_employee(), request=request)
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_validation_details(exc)) from exc
+        except IntegrityError as exc:
+            raise ValidationError({"detail": "复制方案时遇到重复工序，请刷新后重试。"}) from exc
+        return Response({"data": {"copied_count": count}}, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=["get"])
     def summary(self, request):
-        counts = Operation.objects.aggregate(
+        counts = workshop_config_rows(Operation.objects.all(), request, "workshop_config.view_operation", "craft__workshop_id").aggregate(
             total=Count("id"),
             active=Count("id", filter=Q(status=RecordStatus.ACTIVE)),
             inactive=Count("id", filter=Q(status=RecordStatus.INACTIVE)),

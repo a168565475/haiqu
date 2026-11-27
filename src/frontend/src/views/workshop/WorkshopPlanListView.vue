@@ -12,6 +12,7 @@ import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import type { PlanCategory, ScheduleItem } from '@/types/productionScheduling'
 import type { PlanWageStatus } from '@/types/workshopReporting'
 import { formatWageMoney } from '@/utils/wageMoney'
+import AssemblyFinishedReceiptDialog from '@/views/inventory/AssemblyFinishedReceiptDialog.vue'
 import WageSchemeDetailDialog from '@/views/workshop/wage-schemes/WageSchemeDetailDialog.vue'
 
 const route = useRoute()
@@ -66,6 +67,7 @@ const errorMessage = ref('')
 const wageStatusError = ref('')
 const wageDetailVisible = ref(false)
 const wageDetailSchemeId = ref<string | null>(null)
+const finishedReceiptPlanId = ref<string | null>(null)
 const shanghaiToday = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date())
@@ -91,7 +93,7 @@ async function load() {
       rows.value = []; total.value = 0; wageStatuses.value = {}; wageStatusError.value = ''; errorMessage.value = ''
       const first = availablePlanTabs.value[0]
       if (first && await router.replace({ name: first.routeName, query: route.query })) {
-        errorMessage.value = '无法打开已授权的内部计划，请重试。'
+        errorMessage.value = '无法打开已授权的作业计划，请重试。'
       }
       return
     }
@@ -138,6 +140,13 @@ function receiptEntryBlockReason(row: ScheduleItem): string {
   }
 }
 function receiptEntryDisabled(row: ScheduleItem) { return !!receiptEntryBlockReason(row) }
+function closeFinishedReceipt() {
+  finishedReceiptPlanId.value = null
+  if (route.query.receipt_plan_id === undefined) return
+  const query = { ...route.query }
+  delete query.receipt_plan_id
+  void router.replace({ query })
+}
 function changePlan(name: string | number) {
   const target = availablePlanTabs.value.find(item => item.routeName === String(name))
   if (!target || target.routeName === activePlanName.value) return
@@ -218,13 +227,17 @@ function progressLabel(row: ScheduleItem) {
     : `${status.progress_percent}%`
 }
 watch(() => route.name, () => { search.value = ''; dateRange.value = []; apply() })
+watch([() => route.query.receipt_plan_id, () => config.value.category, canReceiveFinished],
+  ([id, category, allowed]) => {
+    finishedReceiptPlanId.value = allowed && category === 'ASSEMBLY' && typeof id === 'string' ? id : null
+  }, { immediate: true })
 onMounted(() => { void load() })
 </script>
 
 <template>
   <section class="schedule-page workshop-plan-list erp-glass-list" :data-testid="`workshop-plan-${config.category.toLowerCase()}`">
     <section v-glass-spotlight class="erp-list-filter">
-    <header class="schedule-heading erp-list-heading"><div class="erp-list-title-row"><h1>内部计划</h1></div></header>
+    <header class="schedule-heading erp-list-heading"><div class="erp-list-title-row"><h1>作业计划</h1></div></header>
     <div class="schedule-filter-bar plan-filter-bar erp-list-filters"><ElInput v-model="search" class="schedule-search" :prefix-icon="Search" clearable placeholder="搜索排产单号、生产任务单号、产品" @keyup.enter="apply" @clear="apply" /><div class="plan-date-filter"><span>{{ config.date.replace('日期', '时间') }}</span><ElDatePicker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="schedule-date-popper" @change="apply" /></div><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton><ElButton class="erp-button-motion" @click="search=''; dateRange=[]; apply()">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="apply">应用筛选</ElButton></div></div>
     <ElAlert v-if="route.query.schedule_id" class="plan-context" type="info" :closable="false" show-icon title="已从主计划带入筛选上下文"><ElButton link type="primary" @click="router.replace({ path: route.path })">清除筛选</ElButton></ElAlert>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
@@ -248,11 +261,13 @@ onMounted(() => { void load() })
       <ElTableColumn label="完成进度" width="108" align="center"><template #default="{ row }">{{ progressLabel(row) }}</template></ElTableColumn>
       <ElTableColumn label="预计工价" width="110" align="right"><template #default="{ row }">{{ formatWageMoney(wageStatus(row)?.estimated_wage) }}</template></ElTableColumn>
       <ElTableColumn label="工价状态" width="120"><template #default="{ row }"><span class="plan-status-tag erp-list-tag" :class="wageStatusTone(row).replace('status-', 'erp-list-tag--')">{{ wageStatusLabel(row) }}</span></template></ElTableColumn>
-      <ElTableColumn label="操作" width="100" fixed="right"><template #default="{ row }"><div class="plan-row-actions"><ElDropdown trigger="click"><ElButton link type="primary">更多<ElIcon class="el-icon--right"><ArrowDown /></ElIcon></ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-if="canReceiveFinished && config.category==='ASSEMBLY'" :disabled="receiptEntryDisabled(row)" :title="receiptEntryBlockReason(row) || undefined" @click="router.push({name:'assembly-finished-receipt',query:{schedule_product_id:row.id}})">成品入库</ElDropdownItem><ElDropdownItem v-if="canReceiveSemi &amp;&amp; ['METAL','CUTTING','SEWING'].includes(config.category)" :disabled="receiptEntryDisabled(row)" :title="receiptEntryBlockReason(row) || undefined" @click="router.push({name: 'internal-semi-receipt', query: {schedule_product_id: row.id, plan_category: config.category}})">半成品入库</ElDropdownItem><ElDropdownItem v-if="canCreateMaterialIssue" @click="createMaterialIssue(row)">生产领料</ElDropdownItem><ElDropdownItem v-if="canViewMaterialIssue" @click="openMaterialIssueRecords(row)">查看领料记录</ElDropdownItem><ElDropdownItem v-if="config.category === 'METAL' && canViewMetalProcessing" data-testid="plan-metal-processing-entry" @click="openMetalProcessing(row)">金工完成登记</ElDropdownItem><ElDropdownItem v-if="canManageWageScheme && (wageStatus(row)?.scheme_id || canCreateWageScheme)" @click="openWageScheme(row)">{{ wageStatus(row)?.scheme_id ? '查看工价' : '新建工价' }}</ElDropdownItem><ElDropdownItem v-if="canCreateWorkReport" :disabled="!wageStatus(row)?.can_report" @click="openWorkReport(row)">计件报工</ElDropdownItem><ElDropdownItem v-if="canViewWorkReport" :disabled="!wageStatus(row)?.workshop_id" @click="openWorkReportRecords(row)">查看报工记录</ElDropdownItem></ElDropdownMenu></template></ElDropdown></div></template></ElTableColumn>
+      <ElTableColumn label="操作" width="100" fixed="right"><template #default="{ row }"><div class="plan-row-actions"><ElDropdown trigger="click"><ElButton link type="primary">更多<ElIcon class="el-icon--right"><ArrowDown /></ElIcon></ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-if="canReceiveFinished && config.category==='ASSEMBLY'" :disabled="receiptEntryDisabled(row)" :title="receiptEntryBlockReason(row) || undefined" @click="finishedReceiptPlanId = row.id">成品入库</ElDropdownItem><ElDropdownItem v-if="canReceiveSemi &amp;&amp; ['METAL','CUTTING','SEWING'].includes(config.category)" :disabled="receiptEntryDisabled(row)" :title="receiptEntryBlockReason(row) || undefined" @click="router.push({name: 'internal-semi-receipt', query: {schedule_product_id: row.id, plan_category: config.category}})">半成品入库</ElDropdownItem><ElDropdownItem v-if="canCreateMaterialIssue" @click="createMaterialIssue(row)">生产领料</ElDropdownItem><ElDropdownItem v-if="canViewMaterialIssue" @click="openMaterialIssueRecords(row)">查看领料记录</ElDropdownItem><ElDropdownItem v-if="config.category === 'METAL' && canViewMetalProcessing" data-testid="plan-metal-processing-entry" @click="openMetalProcessing(row)">金工完成登记</ElDropdownItem><ElDropdownItem v-if="canManageWageScheme && (wageStatus(row)?.scheme_id || canCreateWageScheme)" @click="openWageScheme(row)">{{ wageStatus(row)?.scheme_id ? '查看工价' : '新建工价' }}</ElDropdownItem><ElDropdownItem v-if="canCreateWorkReport" :disabled="!wageStatus(row)?.can_report" @click="openWorkReport(row)">计件报工</ElDropdownItem><ElDropdownItem v-if="canViewWorkReport" :disabled="!wageStatus(row)?.workshop_id" @click="openWorkReportRecords(row)">查看报工记录</ElDropdownItem></ElDropdownMenu></template></ElDropdown></div></template></ElTableColumn>
     </ElTable></div>
     <footer class="schedule-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
     </section>
     <WageSchemeDetailDialog v-model="wageDetailVisible" :scheme-id="wageDetailSchemeId" />
+    <AssemblyFinishedReceiptDialog v-if="finishedReceiptPlanId" :key="finishedReceiptPlanId"
+      :schedule-product-id="finishedReceiptPlanId" @closed="closeFinishedReceipt" />
   </section>
 </template>
 

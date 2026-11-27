@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { DOMWrapper, flushPromises, mount, shallowMount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import { AxiosError } from 'axios'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as groupsApi from '@/api/purchaseGroups'
 import * as ordersApi from '@/api/purchaseOrders'
@@ -162,6 +163,84 @@ describe('同一生产任务合并采购', () => {
     await rows[0]!.trigger('click')
     await vm.goToDetails()
     expect(groupsApi.createPurchaseGroup).toHaveBeenCalledWith({ production_task_id: 'task-1', bom_id: 'b0', source_revision: 'fresh' })
+  })
+  it('建单等待期间不重复提交，收到较慢的成功回执仍跳到采购明细', async () => {
+    const vm = await openProducts()
+    let complete!: (result: Awaited<ReturnType<typeof groupsApi.createPurchaseGroup>>) => void
+    vi.mocked(groupsApi.createPurchaseGroup).mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    const pending = vm.goToDetails()
+    expect(vm.saving).toBe(true)
+    await vm.goToDetails()
+    complete({ data: groupFixture(), etag: 'v1' })
+    await pending
+    expect(groupsApi.createPurchaseGroup).toHaveBeenCalledTimes(1)
+    expect(groupsApi.fetchPurchaseGroups).not.toHaveBeenCalled()
+    expect(state.push).toHaveBeenCalledWith({ name: 'purchase-batch-create', params: { groupId: 'group-1' } })
+  })
+  it.each(['ECONNABORTED', 'ERR_NETWORK'])('%s 后仅查当前任务，勾选的两个 BOM 同属一张需求才进入', async code => {
+    const vm = await openProducts()
+    const group = groupFixture()
+    group.source_bom_id_snapshot = null
+    group.progress.lines[0]!.source_snapshot.source_contributions = ['b0', 'b1'].map(bom_id =>
+      ({ bom_id, bom_line_id: bom_id, product_line_id: bom_id, product_name: '', product_color: '', required_quantity: '1', source_unit_text: '个' }))
+    vi.mocked(groupsApi.fetchPurchaseGroups).mockResolvedValueOnce({ data: [group], meta: { total_pages: 1 } } as never)
+    vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce(new AxiosError('连接中断', code))
+    const info = vi.spyOn(ElMessage, 'success')
+    await vm.goToDetails()
+    expect(groupsApi.fetchPurchaseGroups).toHaveBeenCalledWith(expect.objectContaining({ production_task_id: 'task-1' }))
+    expect(state.push).toHaveBeenCalledWith({ name: 'purchase-group-detail', params: { id: group.id } })
+    expect(info).toHaveBeenCalledWith(expect.stringContaining(group.group_number))
+    expect(groupsApi.createPurchaseGroup).toHaveBeenCalledTimes(1)
+  })
+  it.each(['查不到', '另一任务', '不同需求', '读回失败'])('建单响应中断且%s，保留选择并提示按任务号核对', async reason => {
+    const vm = await openProducts()
+    const group = groupFixture()
+    const groups = reason === '查不到' ? [] : ['b0', 'b1'].map(bom_id =>
+      ({ ...group, id: bom_id, production_task_id: reason === '另一任务' ? 'other-task' : 'task-1', source_bom_id_snapshot: bom_id }))
+    if (reason === '读回失败') vi.mocked(groupsApi.fetchPurchaseGroups).mockRejectedValueOnce(new AxiosError('断开', 'ERR_NETWORK'))
+    else vi.mocked(groupsApi.fetchPurchaseGroups).mockResolvedValueOnce({ data: groups, meta: { total_pages: 1 } } as never)
+    vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce(new AxiosError('超时', 'ECONNABORTED'))
+    await vm.goToDetails()
+    expect(state.push).not.toHaveBeenCalled()
+    expect(vm.sourceError).toContain('SC-1')
+    expect(vm.selectedBomIds).toEqual(['b0', 'b1'])
+    expect(groupsApi.createPurchaseGroup).toHaveBeenCalledTimes(1)
+  })
+  it('仅空白 500 回读采购需求，后端明确返回的 500 和 409 提示照常显示', async () => {
+    const vm = await openProducts()
+    const error = vi.spyOn(ElMessage, 'error')
+    vi.mocked(groupsApi.fetchPurchaseGroups).mockResolvedValueOnce({ data: [], meta: { total_pages: 0 } } as never)
+    vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce({ isAxiosError: true, response: { status: 500, data: '' } })
+    await vm.goToDetails()
+    expect(groupsApi.fetchPurchaseGroups).toHaveBeenCalledTimes(1)
+    for (const status of [500, 409]) {
+      vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce({ isAxiosError: true, response: {
+        status, data: { error: { message: '采购来源无法使用' } },
+      } })
+      await vm.goToDetails()
+      expect(error).toHaveBeenCalledWith('采购来源无法使用')
+    }
+    expect(groupsApi.fetchPurchaseGroups).toHaveBeenCalledTimes(1)
+  })
+  it('保留服务端校验提示；建好后的页面跳转失败单独提示', async () => {
+    const vm = await openProducts()
+    const error = vi.spyOn(ElMessage, 'error')
+    vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce({ response: { status: 400, data: { error: { field_errors: { bom_id: ['所选 BOM 不可采购'] } } } } })
+    await vm.goToDetails()
+    expect(error).toHaveBeenCalledWith('所选 BOM 不可采购')
+    expect(groupsApi.fetchPurchaseGroups).not.toHaveBeenCalled()
+    vi.mocked(groupsApi.createPurchaseGroup).mockRejectedValueOnce({ isAxiosError: true, response: { status: 403 } })
+    await vm.goToDetails()
+    expect(error).toHaveBeenCalledWith('当前账号没有新建采购订单的权限。')
+    expect(groupsApi.fetchPurchaseGroups).not.toHaveBeenCalled()
+    const navigationError = new Error('页面加载失败')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    state.push.mockRejectedValueOnce(navigationError)
+    await vm.goToDetails()
+    expect(vm.sourceError).toContain('CGZD-1')
+    expect(vm.sourceError).toContain('页面')
+    expect(log).toHaveBeenCalledWith('打开采购需求页面失败', navigationError)
+    expect(groupsApi.fetchPurchaseGroups).not.toHaveBeenCalled()
   })
   it('用包含旧单、草稿的服务器剩余量带入新批次，同色名布料显示独立色号', async () => {
     const group = groupFixture()
@@ -517,7 +596,7 @@ describe('采购总单手动完成', () => {
     expect(JSON.stringify(vm.group.progress)).toBe(progressBefore); expect(JSON.stringify(vm.group.batches)).toBe(batchesBefore)
     expect(wrapper!.get('.group-summary').text()).toContain('0/2 项 · 采购完成')
     expect(wrapper!.get('.group-completion-record').text()).toContain('采购员 · 2026-11-02 10:30 · 按实际需求结束')
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(6).map(cell => cell.text())).toEqual(['50.0001 个', '50 个', '50%'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(6).map(cell => cell.text())).toEqual(['50.0001 个', '—', '50 个', '50%'])
     expect(wrapper!.get('[data-testid="purchase-group-add-batch"]').attributes('disabled')).toBe('false')
     expect(wrapper!.get('[data-testid="purchase-group-complete"]').attributes('disabled')).toBe('true')
     await vm.openCompletion(); await vm.submitCompletion()
@@ -734,7 +813,7 @@ describe('总单与批次页面契约', () => {
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '4.29', suggested_bar_count: 234, suggested_purchase_meters: '1003.86' })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['1000 米', '1716 米', '1029.6 米', '686.4 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 9).map(cell => cell.text())).toEqual(['1000 米', '1716 米', '1029.6 米', '—', '686.4 米'])
   })
   it.each([undefined, null])('总单管材根数缺失%s不影响采购米数', async missing => {
     const group = groupFixture()
@@ -743,27 +822,30 @@ describe('总单与批次页面契约', () => {
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', raw_bar_length_m: '6', suggested_bar_count: missing })
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['60 米', '60 米', '30 米', '30 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 9).map(cell => cell.text())).toEqual(['60 米', '60 米', '30 米', '—', '30 米'])
   })
   it('总单零值维持原采购单位，不显示根数参考', async () => {
     const group = groupFixture()
     const line = group.progress.lines[0]!
-    Object.assign(line, { source_unit_text: '米', required_quantity: '0', purchased_quantity: '1', accepted_quantity: '0', purchased_bar_count: '9007199254740993', accepted_bar_count: '0', in_progress_quantity: '1', in_progress_bar_count: '9007199254740993' })
+    Object.assign(line, { source_unit_text: '米', required_quantity: '0', purchased_quantity: '1', accepted_quantity: '0', purchased_bar_count: '9007199254740993', accepted_bar_count: '0', in_progress_quantity: '1', in_progress_bar_count: '9007199254740993', remaining_purchase_quantity: '0.0000' })
     Object.assign(line.source_snapshot, { section_type_snapshot: 'PROFILE', suggested_bar_count: 0, raw_bar_length_m: null })
     group.progress.lines[1]!.purchased_bar_count = '10'
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'v1' })
     await mountDetailWithAttributes()
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['0 米', '1 米', '1 米', '0 米'])
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4, 9).map(cell => cell.text())).toEqual(['0 米', '1 米', '1 米', '0 米', '0 米'])
     expect(wrapper!.get('[data-line-id="group-line-1"] .material-attribute-tooltip').text()).toContain('采购原长待核对')
-    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td').slice(4, 8).map(cell => cell.text())).toEqual(['100 个', '150 个', '50.0001 个', '99.9999 个'])
+    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td').slice(4, 9).map(cell => cell.text())).toEqual(['100 个', '150 个', '50.0001 个', '—', '99.9999 个'])
   })
-  it('正在采购置于累计采购与合格入库之间，只显示后端值而不改原进度', async () => {
-    const group = groupFixture(); group.progress.lines[0]!.in_progress_quantity = '12.3000'
+  it('还差数量单独成列，采购和入库各列显示后端数量', async () => {
+    const group = groupFixture()
+    Object.assign(group.progress.lines[0]!, { in_progress_quantity: '12.3000', remaining_purchase_quantity: '8.5000' })
+    group.progress.lines[1]!.remaining_purchase_quantity = null
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.findAll('.progress-table th').map(cell => cell.text())).toEqual(['序号', '分类', '物料信息', '规格', 'BOM 建议量', '累计采购', '正在采购', '合格入库', '入库进度'])
-    expect(wrapper!.findAll('.progress-table col')).toHaveLength(9)
-    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(5).map(cell => cell.text())).toEqual(['150 个', '12.3 个', '99.9999 个', '100%'])
+    expect(wrapper!.findAll('.progress-table th').map(cell => cell.text())).toEqual(['序号', '分类', '物料信息', '规格', 'BOM 建议量', '累计采购', '正在采购', '还差数量', '合格入库', '入库进度'])
+    expect(wrapper!.findAll('.progress-table col')).toHaveLength(10)
+    expect(wrapper!.get('[data-line-id="group-line-1"]').findAll('td').slice(4).map(cell => cell.text())).toEqual(['100 个', '150 个', '12.3 个', '8.5 个', '99.9999 个', '100%'])
+    expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[7]!.text()).toBe('待核对 个')
     expect(wrapper!.get('.group-summary').text()).toContain('采购中')
     expect(wrapper!.find('[data-line-id="group-line-1"] td:last-child small').exists()).toBe(false)
   })
@@ -790,11 +872,11 @@ describe('总单与批次页面契约', () => {
     Object.assign(vm.group.progress.lines[1], { in_progress_quantity: null, in_progress_bar_count: '9' }); await flushPromises()
     expect(wrapper!.get('[data-line-id="group-line-2"]').findAll('td')[6]!.text()).toBe('待核对 米')
   })
-  it('材料空表仍覆盖九列', async () => {
+  it('材料空表覆盖全部十列', async () => {
     const group = groupFixture(); group.progress.lines = []; group.progress.line_count = 0
     vi.mocked(groupsApi.fetchVersionedPurchaseGroup).mockResolvedValue({ data: group, etag: 'parent-v1' })
     await mountPage(PurchaseGroupDetailView)
-    expect(wrapper!.get('.progress-table .empty').attributes('colspan')).toBe('9')
+    expect(wrapper!.get('.progress-table .empty').attributes('colspan')).toBe('10')
   })
   it('总单详情首卡产品字段与列表同格式，保留其他信息但不显示BOM编号', async () => {
     const group = groupFixture(); group.progress.lines[0]!.source_snapshot.product_name_snapshot = '错误的第一款产品'
@@ -856,10 +938,12 @@ describe('总单与批次页面契约', () => {
     Object.assign(group.progress.lines[0]!.source_snapshot, { product_name_snapshot: '错误的第一款产品', product_specification_snapshot: '材料规格', material_snapshot: '材料材质', material_attributes_snapshot: { color: '材料颜色' } })
     vi.mocked(groupsApi.fetchPurchaseGroups).mockResolvedValue({ data: [group], meta: { total: 1 } } as never)
     await mountPage(PurchaseGroupList)
-    expect(wrapper!.findAll('.group-table th').map(cell => cell.text())).toEqual(['采购需求', '来源订单', '产品', '规格', '颜色', '材质', '订单量', '订单交期', '总采购进度', '材料进度', '批次', '状态', '操作'])
+    expect(wrapper!.findAll('.group-table th').map(cell => cell.text())).toEqual(['生产任务单号', '采购需求单号', '产品', '规格', '颜色', '材质', '订单量', '订单交期', '总采购进度', '材料进度', '批次', '状态', '操作'])
     const cells = wrapper!.findAll('.group-table tbody tr:first-child td')
     expect(cells).toHaveLength(13)
-    expect(cells.slice(0, 12).map(cell => cell.text())).toEqual(['CGZD-1', 'SC-1', '订单产品', '180×80', '色卡A / 深蓝 / B12', '铝合金', '240.0000 套', '2026-11-20', '99.9%', '0 / 2 项达标', '0', '采购中'])
+    expect(cells.slice(0, 12).map(cell => cell.text())).toEqual(['SC-1', 'CGZD-1', '订单产品', '180×80', '色卡A / 深蓝 / B12', '铝合金', '240.0000 套', '2026-11-20', '99.9%', '0 / 2 项达标', '0', '采购中'])
+    expect(cells[0]!.get('strong').text()).toBe('SC-1')
+    expect(cells[1]!.find('strong').exists()).toBe(false)
     expect(wrapper!.find('.group-table small').exists()).toBe(false)
     for (const hidden of ['XS-1', '测试客户', 'BOM-1', '错误的第一款产品', '材料规格', '材料材质', '材料颜色']) expect(wrapper!.get('.group-table').text()).not.toContain(hidden)
   })
@@ -1567,7 +1651,7 @@ describe('总单与批次页面契约', () => {
   })
   it('编辑草稿只传原批次行和类型，不提供新增材料集合', async () => {
     const vm = await mountPage(PurchaseOrderConfirmView)
-    vm.order.batch_type = 'SUPPLEMENT'; vm.order.lines = [{ id: 'existing-line', supplier_id: null, delivery_date: null, actual_purchase_quantity: '150', unit_price: '2' }]
+    vm.order.batch_type = 'SUPPLEMENT'; vm.order.lines = [{ id: 'existing-line', supplier_id: null, delivery_date: null, actual_purchase_quantity: '150', unit_price: null }]
     await vm.saveChanges()
     expect(ordersApi.updatePurchaseOrder).toHaveBeenCalledWith('batch-1', expect.objectContaining({ batch_type: 'SUPPLEMENT', lines: [expect.objectContaining({ id: 'existing-line' })] }), 'child-v1')
     expect(groupsApi.fetchVersionedPurchaseGroup).not.toHaveBeenCalled()

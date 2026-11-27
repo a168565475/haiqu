@@ -41,7 +41,7 @@ const result: InternalReceiptResult = { receipt_id: 'receipt-real', receipt_numb
 const httpError = (status: number) => Object.assign(new AxiosError('接口错误'), { response: { status, data: { error: { message: `状态 ${status}` } } } })
 interface ViewModel {
   rows: Array<MetalReceiptLine & { quantity: string }>; remark: string; dialog: string; error: string
-  preview: MetalReceiptPreview | null; warehouseId: string; zoneId: string
+  preview: MetalReceiptPreview | null
   pending: { payload: MetalReceiptPayload; etag: string } | null
   confirmReceipt: () => void; save: () => Promise<void>; reset: () => void; load: (preserve?: boolean) => Promise<void>
 }
@@ -152,9 +152,20 @@ describe('金工半成品入库', () => {
     vm.reset(); expect(vm.rows[0]!.quantity).toBe(''); expect(vm.remark).toBe('放一楼右侧')
   })
 
-  it('仓库变化后未重新选库区不能提交', async () => {
-    const { vm } = await mountPage(); vm.rows[0]!.quantity = '20'; vm.warehouseId = 'warehouse-2'
-    vm.confirmReceipt(); expect(vm.dialog).toBe(''); expect(api.confirmInternalReceipt).not.toHaveBeenCalled()
+  it('金工申请没有库区也可从确认弹窗提交，由仓库分配', async () => {
+    vi.mocked(api.fetchMetalReceiptPreview).mockResolvedValue({ ...structuredClone(preview), zones: [] })
+    const { wrapper } = await mountPage()
+    expect(wrapper.find('[aria-label="库区"]').exists()).toBe(false)
+    await wrapper.get('input[aria-label="前腿管本次入库"]').setValue('20')
+    await wrapper.findAll('button').find(button => button.text() === '提交待入库')!.trigger('click')
+    const dialog = wrapper.get('[aria-label="确认提交半成品入库申请"]')
+    expect(dialog.text()).toContain('仓库分配库区并确认后')
+    await dialog.findAll('button').find(button => button.text() === '提交申请')!.trigger('click')
+    await flushPromises()
+    const submit = vi.mocked(api.confirmInternalReceipt)
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(submit.mock.calls[0]![0]).toMatchObject({ plan_category: 'METAL', lines: [{ bom_line_id: 'front', quantity: '20' }] })
+    expect(submit.mock.calls[0]![0]).not.toHaveProperty('zone_id')
   })
 
   it('服务端400只显示气泡，保留输入且清除待核对记录', async () => {
@@ -213,7 +224,7 @@ describe('金工半成品入库', () => {
     const payload: ReceiptPayload = { request_id: 'original-request', schedule_product_id: 'plan-1', plan_category: 'METAL', zone_id: 'zone-2', receipt_date: '2026-09-28', remark: '旧备注', lines: [{ bom_line_id: 'front', quantity: '20' }] }
     sessionStorage.setItem(pendingKey, JSON.stringify({ payload, etag: 'original-etag' }))
     const { vm } = await mountPage()
-    expect(vm.pending?.payload).toEqual(payload); expect(vm.zoneId).toBe('zone-2'); expect(vm.warehouseId).toBe('warehouse-2')
+    expect(vm.pending?.payload).toEqual(payload)
     expect(vm.remark).toBe('旧备注'); expect(vm.rows[0]!.quantity).toBe('20')
     expect(api.findInternalReceipt).toHaveBeenCalledWith('original-request'); expect(api.confirmInternalReceipt).not.toHaveBeenCalled()
   })

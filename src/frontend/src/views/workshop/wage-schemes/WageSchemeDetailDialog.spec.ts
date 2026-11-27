@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import WageSchemeDetailDialog from './WageSchemeDetailDialog.vue'
 
-const api = vi.hoisted(() => ({ detail: vi.fn() }))
+const api = vi.hoisted(() => ({ detail: vi.fn(), withdraw: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 const auth = vi.hoisted(() => ({
   isSuperuser: false,
@@ -26,6 +26,7 @@ vi.mock('@/stores/auth', () => ({
 
 vi.mock('@/api/workshopReporting', () => ({
   fetchWageScheme: api.detail,
+  withdrawWageScheme: api.withdraw,
 }))
 
 const scheme = {
@@ -36,7 +37,8 @@ const scheme = {
   can_create_change: true,
   lines: [{
     id: 'line-1', line_number: 1, operation_name: '下料', operation_number: 'GX-001',
-    display_name: '桌腿', production_description: '按定位线精准下料', unit_name: '件',
+    display_name: '床头管', display_label: '床头管-铁-硬管-25*25-770mm',
+    production_description: '按定位线精准下料', unit_name: '件',
     previous_price: '2.0000', revised_price: '2.2000', declared_price: '2.2000',
     required_quantity: '10.0000', completed_quantity: '3.0000',
     completed_amount: '5.5000', estimated_amount: '22.0000',
@@ -63,6 +65,36 @@ afterEach(() => {
 })
 
 describe('工价详情弹窗', () => {
+  it('待审批的原提交人从详情直接打开原申请修改', async () => {
+    api.detail.mockResolvedValueOnce({
+      data: { ...scheme, status: 'PENDING_APPROVAL', can_withdraw: true, can_create_change: false, scope_craft: { plan_category: 'CUTTING' }, lines: [{
+        ...scheme.lines[0], counting_mode: 'GROUP', counting_mode_display: '按组', cutting_components: [
+          { component_identity: 'front', name: '床面', quantity_per_group: 1, unit: '片' },
+          { component_identity: 'side', name: '侧片', quantity_per_group: 2, unit: '片' },
+        ],
+      }] }, etag: '"2"',
+    })
+    api.withdraw.mockResolvedValueOnce({
+      data: { ...scheme, status: 'DRAFT', can_withdraw: false, can_create_change: false }, etag: '"3"',
+    })
+    const wrapper = mount(WageSchemeDetailDialog, {
+      attachTo: document.body,
+      props: { modelValue: true, schemeId: 'scheme-1' },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(document.body.querySelector('.cutting-group-cell')?.textContent?.trim()).toBe('床面+1')
+    expect(document.body.querySelector('.wage-detail-dialog__table')?.textContent).toContain('按套')
+    const edit = [...document.body.querySelectorAll<HTMLButtonElement>('.wage-detail-dialog__footer button')]
+      .find(button => button.textContent?.trim() === '修改')
+    expect(edit).toBeDefined()
+    edit!.click()
+    await flushPromises()
+    expect(api.withdraw).toHaveBeenCalledExactlyOnceWith('scheme-1', '"2"')
+    expect(router.push).toHaveBeenCalledExactlyOnceWith({ name: 'wage-scheme-change', params: { schemeId: 'scheme-1' } })
+    wrapper.unmount()
+  })
+
   it('将表格颜色与超紧凑行高直接覆盖到 ElTable', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/workshop/wage-schemes/WageSchemeDetailDialog.vue'), 'utf8')
     expect(source).toMatch(/\.wage-detail-dialog__table\s*\{[\s\S]*?--el-table-header-bg-color:\s*var\(--erp-table-header-fill\);/)
@@ -124,6 +156,9 @@ describe('工价详情弹窗', () => {
       '需完成次数', '已完成次数', '已完成金额', '金额总计', '状态',
       '以往工价', '修改工价', '备注',
     ])
+    const nameCell = dialog?.querySelector('.el-table__body tbody tr:first-child td:first-child .cell')
+    expect(nameCell?.textContent?.trim()).toBe(scheme.lines[0]!.display_label)
+    expect(nameCell?.classList.contains('el-tooltip')).toBe(false)
     const rowCells = Array.from(dialog?.querySelectorAll('.el-table__body tbody tr:first-child td') || [])
       .map(cell => cell.textContent?.trim())
     expect(rowCells.slice(4, 8)).toEqual(['10', '3', '¥5.5', '¥22'])

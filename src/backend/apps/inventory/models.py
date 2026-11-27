@@ -181,7 +181,9 @@ class FinishedGoodsReceipt(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="finished_goods_receipt",
     )
-    location = models.ForeignKey(WarehouseLocation, on_delete=models.PROTECT, related_name="finished_goods_receipts")
+    location = models.ForeignKey(
+        WarehouseLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="finished_goods_receipts",
+    )
     supplier = models.ForeignKey(
         "procurement.Supplier", null=True, blank=True, on_delete=models.PROTECT, related_name="finished_goods_receipts"
     )
@@ -235,6 +237,10 @@ class FinishedGoodsReceipt(TimeStampedModel):
             models.CheckConstraint(
                 condition=Q(status__in=FinishedGoodsReceiptStatus.values),
                 name="inv_receipt_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(location__isnull=False) | Q(status="PENDING", source_type="PRODUCTION_ORDER"),
+                name="inv_receipt_confirmed_location",
             ),
             models.CheckConstraint(condition=Q(received_quantity__gt=0), name="inv_receipt_qty_positive"),
             models.CheckConstraint(

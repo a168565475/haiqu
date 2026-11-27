@@ -14,6 +14,19 @@ function mountHistory(overrides: Partial<PurchaseReadInboundLine> = {}, showPipe
     global: { stubs: { ElIcon: true, ElButton: true, ElTag: true, ElTooltip: true }, renderStubDefaultSlot: true } })
 }
 
+it.each([['生产任务单号', 'HT-001'], ['打样单号', 'DY-001']])('仓库弹窗在原批次摘要先显示%s', async (label, number) => {
+  const wrapper = mountHistory()
+  const [record] = wrapper.props('inbounds')!
+  await wrapper.setProps({ inbounds: [{ ...record!, inbound_number: 'RK-001' }] })
+  expect(wrapper.get('.summary-main > strong:nth-child(2)').text()).toBe('RK-001')
+  await wrapper.setProps({ embedded: true, expandSingle: true, receiptReference: { label, number, purchaseOrderNumber: 'CG-001' } })
+  expect(wrapper.findAll('.summary-main > span').slice(0, 3).map(field => field.text())).toEqual([
+    `${label} ${number}`, '入库单号 RK-001', '采购单号 CG-001',
+  ])
+  expect(wrapper.findAll('.summary-main strong').map(field => field.text())).toEqual([number])
+  wrapper.unmount()
+})
+
 describe('采购入库历史重量口径', () => {
   it('逐次显示已登记分区，历史未登记的记录明确标示', async () => {
     const wrapper = mountHistory()

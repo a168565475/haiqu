@@ -231,16 +231,21 @@ onBeforeUnmount(() => { version++ })
       </dl>
       <ElAlert v-if="group.progress.status === 'UNKNOWN'" title="历史来源或数量存在缺口，进度待核对，暂不能追加批次。" type="warning" :closable="false" />
       <section class="group-content-card"><h2>材料采购进度</h2>
-        <div class="group-table-frame"><table class="group-table progress-table"><colgroup><col v-for="(width, index) in [48,106,208,220,180,140,140,140,150]" :key="index" :style="{ width: `${width}px` }" /></colgroup>
-          <thead><tr><th>序号</th><th>分类</th><th>物料信息</th><th>规格</th><th>BOM 建议量</th><th>累计采购</th><th>正在采购</th><th>合格入库</th><th>入库进度</th></tr></thead>
+        <div class="group-table-frame"><table class="group-table progress-table"><colgroup><col v-for="(width, index) in [48,106,208,220,180,140,140,140,140,150]" :key="index" :style="{ width: `${width}px` }" /></colgroup>
+          <thead><tr><th>序号</th><th>分类</th><th>物料信息</th><th>规格</th><th>BOM 建议量</th><th>累计采购</th><th>正在采购</th><th>还差数量</th><th>合格入库</th><th>入库进度</th></tr></thead>
           <tbody><tr v-for="line in group.progress.lines" :key="line.id" :data-line-id="line.id" @mouseenter="hoveredLineId = line.id" @mouseleave="hoveredLineId = ''">
             <td>{{ line.line_number }}</td><td>{{ line.source_snapshot.category_snapshot || '—' }}</td><td><strong>{{ line.source_snapshot.part_name_snapshot || line.source_snapshot.material_snapshot || line.source_snapshot.raw_material_snapshot }}</strong><small>{{ purchaseFabricColor(line.source_snapshot) || line.source_snapshot.raw_material_snapshot }}</small></td>
             <td><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === line.id || focusedLineId === line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(line.source_snapshot)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div><div v-if="!materialAttributeFields(line.source_snapshot).length">暂无物料属性</div><div v-if="line.source_snapshot.section_type_snapshot === 'PROFILE' && isWeightPipeLine(line)"><span>每根标准重量</span><strong>{{ line.source_snapshot.raw_bar_weight_kg == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_weight_kg)} kg/根` }}</strong></div><div v-else-if="line.source_snapshot.section_type_snapshot === 'PROFILE'"><span>采购原长</span><strong>{{ line.source_snapshot.raw_bar_length_m == null ? '待核对' : `${compactDecimal(line.source_snapshot.raw_bar_length_m)} 米/根` }}</strong></div><div v-else-if="isWeightLine(line) && line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg"><span>单个材料重量</span><strong>{{ compactDecimal(String(line.source_snapshot.calculation_snapshot.hardware_unit_weight_kg)) }} kg/个</strong></div></div></template><span class="material-detail" tabindex="0" :aria-label="`查看材料属性：${line.source_snapshot.part_name_snapshot || line.source_snapshot.material_snapshot || line.source_snapshot.raw_material_snapshot || '未命名物料'}`" @focus="focusedLineId = line.id" @blur="focusedLineId = ''" @keydown.esc="focusedLineId = ''; hoveredLineId = ''">{{ materialSpecificationValue(line.source_snapshot) }}</span></ElTooltip></td>
-            <td><PurchaseQuantitySources v-if="line.source_snapshot.source_contributions?.length" :contributions="line.source_snapshot.source_contributions">{{ quantityText(line, line.required_quantity) }}</PurchaseQuantitySources><template v-else>{{ quantityText(line, line.required_quantity) }}</template>
-              <small v-if="line.remaining_purchase_quantity !== undefined">还差 {{ compactDecimal(line.remaining_purchase_quantity, '待核对') }} {{ line.source_unit_text }}</small>
-            </td><td>{{ quantityText(line, line.purchased_quantity) }}</td><td>{{ quantityText(line, line.in_progress_quantity ?? '待核对', line.in_progress_bar_count) }}</td><td>{{ quantityText(line, line.accepted_quantity, line.accepted_bar_count) }}</td>
+            <td><PurchaseQuantitySources v-if="line.source_snapshot.source_contributions?.length" :contributions="line.source_snapshot.source_contributions">{{ quantityText(line, line.required_quantity) }}</PurchaseQuantitySources><template v-else>{{ quantityText(line, line.required_quantity) }}</template></td>
+            <td>{{ quantityText(line, line.purchased_quantity) }}</td>
+            <td>{{ quantityText(line, line.in_progress_quantity ?? '待核对', line.in_progress_bar_count) }}</td>
+            <td>
+              <template v-if="line.remaining_purchase_quantity !== undefined">{{ compactDecimal(line.remaining_purchase_quantity, '待核对') }} {{ line.source_unit_text }}</template>
+              <template v-else>—</template>
+            </td>
+            <td>{{ quantityText(line, line.accepted_quantity, line.accepted_bar_count) }}</td>
             <td :class="{ satisfied: line.is_satisfied, unknown: line.progress_percent === null }"><strong>{{ line.progress_percent === null ? '来源待核对' : `${compactDecimal(line.progress_percent)}%` }}</strong></td>
-          </tr><tr v-if="!group.progress.lines.length"><td colspan="9" class="empty">{{ group.progress.status === 'COMPLETED' ? '本单材料已全部改为外供' : '暂无材料明细，来源待核对' }}</td></tr></tbody>
+          </tr><tr v-if="!group.progress.lines.length"><td colspan="10" class="empty">{{ group.progress.status === 'COMPLETED' ? '本单材料已全部改为外供' : '暂无材料明细，来源待核对' }}</td></tr></tbody>
         </table></div>
       </section>
       <section class="group-content-card"><h2>采购批次 <small>{{ batchCount }} 批</small></h2><div class="group-table-frame"><table class="group-table batch-table"><thead><tr><th>批次</th><th>采购单号</th><th>批次类型</th><th>履约状态</th><th>采购金额</th><th>操作</th></tr></thead><tbody>
@@ -287,7 +292,7 @@ h2 { margin: 0 0 10px; font-size: 16px; } h2 small { font-size: 12px; font-weigh
 .group-completion-form { display: flex; flex-direction: column; gap: 16px; }
 .group-completion-form p { margin: 0; line-height: 24px; }
 dt { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 18px; margin-bottom: 4px; } dd { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.progress-table { width: 1332px; min-width: 100%; }
+.progress-table { width: 1472px; min-width: 100%; }
 .progress-table th:first-child, .progress-table td:first-child { padding-inline: 8px; white-space: nowrap; text-align: center; }
 .material-detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--erp-color-text-secondary); }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }

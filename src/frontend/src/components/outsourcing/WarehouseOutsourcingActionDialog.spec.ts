@@ -44,7 +44,7 @@ vi.mock('@/views/outsourcing/MetalProcessingP4View.vue', () => ({ default: {
 vi.mock('@/components/common/AppWindowDialog.vue', async () => {
   const { defineComponent } = await import('vue')
   return { default: defineComponent({
-    name: 'AppWindowDialog', props: ['modelValue', 'title', 'width', 'beforeClose'], emits: ['update:modelValue'],
+    name: 'AppWindowDialog', props: { modelValue: Boolean, title: String, width: Number, fullscreen: Boolean, beforeClose: Function }, emits: ['update:modelValue'],
     setup(props, { emit }) {
       const requestClose = () => {
         const done = () => emit('update:modelValue', false)
@@ -123,11 +123,11 @@ describe('仓库列表委外动作宿主', () => {
     expect(wrapper.getComponent({ name: 'TubeOutsourcingDetailView' }).props()).toMatchObject({ orderId: 'order-1', entryAction: 'dispatch', actionOnly: true })
     expect(calls.tube).not.toHaveBeenCalled(); expect(calls.regular).not.toHaveBeenCalled()
   })
-  it('旧管材入库使用宽窗口和原入库页，提交中阻止关闭', async () => {
+  it('旧管材入库最大化打开原入库页，提交中阻止关闭', async () => {
     const wrapper = mountHost({ is_plan: false }, 'return')
     await flushPromises()
     expect(wrapper.getComponent({ name: 'TubeCoatingReceiptView' }).props()).toMatchObject({ orderId: 'order-1', embedded: true })
-    expect(wrapper.getComponent({ name: 'AppWindowDialog' }).props()).toMatchObject({ width: 1800, title: '外发入库' })
+    expect(wrapper.getComponent({ name: 'AppWindowDialog' }).props()).toMatchObject({ width: 1800, title: '外发入库', fullscreen: true })
     calls.receiptCanClose = false
     await wrapper.get('[data-testid="window-close"]').trigger('click')
     expect(wrapper.emitted('closed')).toBeUndefined()

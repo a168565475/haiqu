@@ -12,7 +12,7 @@ export interface PurchaseReturnLine {
 }
 export interface PurchaseReturn {
   id: string; return_number: string; purchase_order_id: string; order_number: string
-  production_task_number: string; inbound_id: string; inbound_number: string
+  production_task_number: string; sample_number: string; inbound_id: string; inbound_number: string
   purchase_scope?: 'STANDARD' | 'PACKAGING'
   supplier_id: string; supplier_number: string; supplier_name: string
   return_amount: string | null; currency_code: string

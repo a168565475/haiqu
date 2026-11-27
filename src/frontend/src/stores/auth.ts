@@ -106,6 +106,9 @@ export const useAuthStore = defineStore('auth', {
       return this.identityReady && this.accountSwitch?.can_return === true
     },
     isAuthenticated: (state) => state.user !== null,
+    isWorkshopDirector: (state) => state.user?.effective_access?.roles.some(
+      role => ['METAL_DIRECTOR', 'SEWING_DIRECTOR', 'ASSEMBLY_DIRECTOR'].includes(role.code),
+    ) === true,
     waitingForRole: (state) => state.user?.waiting_for_role === true,
     managementCan: (state) => (permission: string) => {
       const user = state.user

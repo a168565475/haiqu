@@ -10,11 +10,12 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
 vi.mock('@/api/inventory', () => ({ fetchProcurementInboundOrders: vi.fn() }))
 
-async function renderProgress(percent: string | null | undefined, receivingSections: { id: PurchaseReceivingSection; name: string }[] = [], workflowStatus = 'PENDING_QUALITY') {
+async function renderProgress(percent: string | null | undefined, receivingSections: { id: PurchaseReceivingSection; name: string }[] = [], workflowStatus = 'PENDING_QUALITY', sourceType = 'PRODUCTION') {
   vi.mocked(fetchProcurementInboundOrders).mockResolvedValue([{
-    id: 'order', order_number: 'CGDD-1', supplier_names: [], product_summary: [], supplier_summary: [],
+    id: 'order', order_number: 'CGDD-1', production_task_number: 'SC-1', source_number: 'DY-1', batch_number: 2,
+    supplier_names: [], product_summary: [], supplier_summary: [],
     quantity_unit: 'MIXED', received_quantity: '1020', receipt_progress_percent: percent,
-    receiving_sections: receivingSections, source_type: 'PRODUCTION', remaining_line_count: workflowStatus === 'COMPLETED' ? 0 : 1, return_status: 'NONE',
+    receiving_sections: receivingSections, source_type: sourceType, remaining_line_count: workflowStatus === 'COMPLETED' ? 0 : 1, return_status: 'NONE',
     receiving_status: workflowStatus === 'COMPLETED' ? 'COMPLETED' : 'PARTIAL_RECEIVED',
     workflow_status: workflowStatus, pending_quality_count: workflowStatus === 'PENDING_QUALITY' ? 1 : 0,
     workflow_status_display: workflowStatus === 'COMPLETED' ? '已完成' : '待品质确认', updated_at: '2026-11-14T00:00:00Z',
@@ -25,6 +26,15 @@ async function renderProgress(percent: string | null | undefined, receivingSecti
 }
 
 describe('采购入库列表显示到货进度', () => {
+  it.each([['PRODUCTION', 'SC-1'], ['SAMPLE', 'DY-1']])('采购入库先显示 %s 来源单号，再显示采购单号和采购批次', async (sourceType, number) => {
+    const wrapper = await renderProgress('25.0', [], 'PENDING_QUALITY', sourceType)
+    try {
+      const cells = wrapper.get('.el-table__body tbody tr').findAll('td').slice(0, 3)
+      expect(cells.map(cell => cell.text())).toEqual([number, 'CGDD-1', '第 2 批'])
+      expect(cells[0]!.get('strong').text()).toBe(number)
+      expect(cells[1]!.find('strong').exists()).toBe(false)
+    } finally { wrapper.unmount() }
+  })
   it('采购入库有待质检批次时仍只显示详情和分区收货操作', async () => {
     const wrapper = await renderProgress('25.0', [{ id: 'D', name: '包材' }])
     try {

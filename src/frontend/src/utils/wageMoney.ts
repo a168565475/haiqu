@@ -49,6 +49,15 @@ export function isPlainWageMoney(value: WageMoneyValue) {
   return decimalParts(value) !== null
 }
 
+export function reportLineAmount(price: WageMoneyValue, quantity: string): string {
+  const parts = decimalParts(price)
+  if (!parts || parts.negative || !/^\d{1,14}$/.test(quantity.trim())) return '0'
+  const product = BigInt(parts.integer + parts.fraction) * BigInt(quantity) * 100n
+  const scale = 10n ** BigInt(parts.fraction.length)
+  const cents = (product + scale / 2n) / scale
+  return `${cents / 100n}.${(cents % 100n).toString().padStart(2, '0')}`
+}
+
 export function sumWageAmounts(values: WageMoneyValue[]) {
   const validParts = values.map(decimalParts).filter((item): item is DecimalParts => Boolean(item))
   if (!validParts.length) return '0'

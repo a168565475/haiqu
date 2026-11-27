@@ -40,7 +40,7 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; document.body.innerHTML = ''; vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('页头消息组件（隔离替身）', () => {
-  it.each(['/workbench/production-overview', '/workbench/workshop'])('岗位首页 %s 能打开原卡片通知，仍只读加载正文', async path => {
+  it.each(['/workbench/production-overview', '/workbench/workshop', '/workbench/purchase', '/workbench/sewing-outsourcing', '/workbench/merchandiser', '/workbench/warehouse'])('岗位首页 %s 能打开原卡片通知，仍只读加载正文', async path => {
     route.path = path; route.query = { notification: id }
     render(); await flushPromises()
     expect(api.detail.mock.calls[0]?.[0]).toBe(id)

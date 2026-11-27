@@ -112,6 +112,20 @@ def _can_view_sewing_assignment(order, request):
     return True
 
 
+def _internal_sewing_details(source_snapshot, parts):
+    rows = {row['component_identity']: row for row in source_snapshot.get('rows', [])}
+    details = []
+    for part in parts:
+        row = rows.get(part['component_identity'], {})
+        snapshot = {**row.get('snapshot', {}), **row}
+        details.append({**part, 'specification': snapshot.get('specification') or '',
+            'component_material_selection_snapshot': snapshot.get('component_material_selection_snapshot', {}),
+            'component_source_materials': frozen_component_source_materials(snapshot),
+            # 本厂承接整个部位，保存时已校验计划量等于该部位的 BOM 需求。
+            'bom_quantity': str(part['quantity'])})
+    return details
+
+
 def plan_detail_data(order, data, request):
     quantities = plan_quantities([order])[str(order.pk)]
     purchases = plan_purchase_references(order)
@@ -124,7 +138,7 @@ def plan_detail_data(order, data, request):
     data['inputs'] = []
     assignment = order.source_snapshot.get('sewing_part_assignments')
     if assignment is not None and _can_view_sewing_assignment(order, request):
-        data['internal_sewing_parts'] = assignment['internal']
+        data['internal_sewing_parts'] = _internal_sewing_details(order.source_snapshot, assignment['internal'])
     if data['sewing_inputs']:
         from .part_flow_sources import input_dispatched
         from .printed_pieces import printed_pieces_for_sewing
@@ -204,20 +218,21 @@ def plan_detail_data(order, data, request):
         from .printed_pieces import processor_transfer_records
         data['transferred_records'] = processor_transfer_records(order)
     if request is not None:
+        from .source_access import allowed_source_kinds
         from .tube_selectors import SOURCE_LABELS
+        allowed = allowed_source_kinds(request, DISPATCH_PERMISSION)
         zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE').select_related('warehouse')
-        kinds = ['PUBLIC_CUTTING', 'SEWING'] if order.source_kind in CUTTING_SOURCES else ['RAW_PIPE', 'PUBLIC_SEMI', 'METAL']
+        kinds = ['PUBLIC_CUTTING', 'SEWING'] if order.source_kind in CUTTING_SOURCES else ['METAL', 'PUBLIC_SEMI']
         if data['part_flow']:
             kinds = ['CUTTING', 'PUBLIC_PIECE'] if data['sewing_inputs'] or data['screen_print_pieces'] else ['PUBLIC_PART', 'SEWING']
-            if data['sewing_inputs'] and permissions['can_dispatch']:
+            if data['sewing_inputs'] and permissions['can_dispatch'] and 'PROCESSOR' in allowed:
                 from .printed_pieces import processor_sources
-                from .source_access import allowed_source_kinds
-                if 'PROCESSOR' in allowed_source_kinds(request, DISPATCH_PERMISSION):
-                    sources = processor_sources(order.product_line_id, request)
-                    if any(int(sources[row['component_identity']]['available_quantity']) > 0
-                           for row in data['inputs'] if row['component_identity'] in sources):
-                        kinds.append('PROCESSOR')
-        data['plan_options'] = {'source_kinds': [{'value': value, 'label': SOURCE_LABELS[value]} for value in kinds],
+                sources = processor_sources(order.product_line_id, request)
+                if any(int(sources[row['component_identity']]['available_quantity']) > 0
+                       for row in data['inputs'] if row['component_identity'] in sources):
+                    kinds.append('PROCESSOR')
+        data['plan_options'] = {'per_line_sources': True,
+            'source_kinds': [{'value': value, 'label': SOURCE_LABELS[value]} for value in kinds if value in allowed],
             'factories': [{'id': str(value.pk), 'name': value.name} for value in source_factories(request, order.craft, DISPATCH_PERMISSION)],
             'zones': [{'id': str(zone.pk), 'name': zone.zone_name, 'warehouse_id': str(zone.warehouse_id),
                 'warehouse_name': zone.warehouse.warehouse_name, 'warehouse_type': zone.warehouse.warehouse_type} for zone in zones]}

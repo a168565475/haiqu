@@ -53,6 +53,22 @@ async function render() {
 }
 
 describe('生产任务产品排产弹窗', () => {
+  it('保存回执不明时保留填写，不显示会清空草稿的重新加载入口', async () => {
+    api.create.mockRejectedValueOnce(new Error('尚未核实本次排产结果。填写已保留'))
+    const wrapper = await render()
+    wrapper.findComponent(BatchScheduleFillDialog).vm.$emit('apply', {
+      material_inbound_date: '2026-11-06', metal_return_date: '2026-11-07',
+      sewing_return_date: '2026-11-08', finished_inbound_date: '2026-11-09', internal_craft_ids: ['metal'],
+    })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '保存排产')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('填写已保留')
+    expect(wrapper.text()).not.toContain('重新加载')
+    expect(wrapper.findComponent(ElInputNumber).props('modelValue')).toBe(10)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(api.create).toHaveBeenCalledTimes(1)
+  })
   it('部分 BOM 确认时只默认选择可排产品，保留不可排产品并显示原因', async () => {
     const wrapper = await render()
     expect(wrapper.findAll('.schedule-product-row')).toHaveLength(3)

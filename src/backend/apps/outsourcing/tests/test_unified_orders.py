@@ -188,6 +188,7 @@ class UnifiedOutsourcingOrderApiTests(MetalProcessingP4Fixture, APITestCase):
         self.assertIsNone(original["planned_amount"])
         self.assertIsNone(original["delivery_date"])
         self.assertEqual(original["schedule_number"], "")
+        self.assertEqual(original["production_task_number"], self.line.issue.production_task.task_number)
         options = self.client.get(URL + "options/")
         self.assertEqual(options.status_code, 200, options.data)
         self.assertTrue(all(row["outsourcing_code"] == "POWDER_COATING" for row in options.data["data"]["crafts"]))

@@ -159,6 +159,25 @@ describe('五金分区表格按品名喷塑开关显示下拉', () => {
     expect(faceSelect.props('disabled')).toBe(true)
     wrapper.unmount()
   })
+  it('表格的裁片和部位只列可选面料，历史辅料仍显示其名称和规格', async () => {
+    const { wrapper } = open()
+    const fabric = { ...blankLine('米'), id: 'fabric', part_name: '布料', specification: '600D' }
+    const tape = { ...blankLine('米'), id: 'old-tape', part_name: '织带', specification: '25mm' }
+    const part = { ...blankLine('套'), component_kind: 'SEWN_PART' as const, part_name: '床面' }
+    const piece = { ...blankLine('片'), component_kind: 'CUT_PIECE' as const, part_name: '旧裁片', fabric_source_line_id: tape.id }
+    try {
+      await wrapper.setProps({ activeSection: { title: '裁剪明细', section_type: 'FABRIC', lines: [part, piece] },
+        isHardwareSection: false, isCuttingSection: true, componentSources: [fabric, tape], sourceOptions: [fabric] } as never)
+      await flushPromises()
+      const selects = wrapper.findAllComponents({ name: 'ElSelect' }).filter(item => ['归属面布', '来源原料'].includes(item.props('ariaLabel')))
+      expect(selects).toHaveLength(2)
+      for (const select of selects) {
+        expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual([fabric.id])
+      }
+      expect(selects[1]!.text()).toContain('织带 · 25mm')
+      expect(piece.fabric_source_line_id).toBe(tape.id)
+    } finally { wrapper.unmount() }
+  })
   it('表格手动修改单重立即退出自动计算', async () => {
     const { wrapper, lines } = open()
     const line = lines[0]!

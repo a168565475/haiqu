@@ -1,0 +1,172 @@
+.workshop-director-workbench, .director-dialog {
+  font-variant-numeric: tabular-nums;
+  .late { color: #954737; }
+  .today { color: #89621f; }
+  .clear { color: #277360; }
+  .action { padding: 0; border: 0; background: transparent; color: var(--erp-menu-accent); cursor: pointer; font: inherit; font-size: 13px; }
+  .action:hover { text-decoration: underline; }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--erp-menu-accent); outline-offset: 1px; }
+}
+.workshop-director-workbench {
+  height: 100%; min-height: 0; overflow: auto; font-family: var(--erp-font-body); color: #1b3948;
+  h1, h2, h3, p { margin: 0; }
+  button { font-family: inherit; }
+  svg { width: 18px; height: 18px; flex: none; }
+  h2 { display: flex; align-items: center; gap: 9px; font-size: 19px; font-weight: 650; line-height: 1.4; }
+  h2 svg { width: 21px; height: 21px; color: #30596e; }
+  .glass { min-width: 0; border: 1px solid rgba(255,255,255,.78); border-radius: 14px; background: rgba(243,250,255,.76); box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 6px 23px #4678950e; }
+  .director-mast, .mast-title, .lead, .section-heading, .lead-actions, .card-head, .task-code, .jump, .workstep, .deadline, .deadline strong, .meter-head, .counts, .summary-top, .kpi-row, .board-foot, .day-head, .follow-row {
+    display: flex; align-items: center;
+  }
+  .director-mast, .lead, .card-head, .deadline, .meter-head, .counts, .summary-top, .kpi-row, .board-foot, .day-head { justify-content: space-between; }
+  .director-mast { min-height: 56px; gap: 12px; padding-bottom: 8px; }
+  .mast-title { gap: 17px; flex-wrap: wrap; }
+  h1 { color: var(--erp-color-text-primary); font-size: 28px; font-weight: 650; line-height: 1.3; }
+  .director-mast time { color: #526c7b; font-size: 14px; }
+  .current-workshop, .mast-title select { padding: 5px 10px; border: 1px solid #b5ccda; border-radius: 6px; background: #e7f1f8; color: #345b71; font: inherit; font-size: 13px; }
+  .mast-title select { cursor: pointer; }
+  .jobs-section { padding: 12px 0 20px; }
+  .lead { gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .section-heading, .lead-actions { gap: 9px; }
+  .count-label { padding: 2px 7px; border-radius: 5px; background: #d8e8f1; color: #446776; font-size: 13px; }
+  .sort-note { display: inline-flex; align-items: center; gap: 6px; padding: 3px; color: #526c7b; font-size: 13px; border: 0; background: transparent; cursor: pointer; }
+  .sort-note svg { width: 15px; height: 15px; color: var(--erp-menu-accent); }
+  .job-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 15px; }
+  .job-card { display: flex; flex-direction: column; width: 100%; padding: 23px 25px 18px; text-align: left; cursor: pointer; color: inherit; }
+  .job-card:hover, .day-job:hover, .follow-row:not(:disabled):hover, .day-selector button:hover { background: #ecf6fd; }
+  .job-card:hover { border-color: #a7c3d5; }
+  .card-head { gap: 10px; width: 100%; }
+  .task-code { gap: 7px; overflow-wrap: anywhere; font: 600 23px/1.3 "Segoe UI",var(--erp-font-body); color: #1c4f6b; }
+  .task-code svg { width: 19px; height: 19px; color: #6f8d9d; }
+  .jump { gap: 3px; flex: none; font-size: 13px; color: var(--erp-menu-accent); }
+  .jump svg, .follow-row svg, .day-job svg { width: 13px; height: 13px; }
+  .product { margin-top: 8px; font-size: 20px; line-height: 1.35; font-weight: 620; overflow-wrap: anywhere; }
+  .workstep { gap: 6px; margin-top: 9px; color: #416474; font-size: 14px; }
+  .workstep svg { width: 16px; height: 16px; }
+  .deadline { width: 100%; gap: 8px; margin: 18px 0 16px; padding: 14px 0; border-block: 1px solid #d2e1e9; }
+  .deadline small, .meter-head small { font-size: 12px; font-weight: 400; color: #536d7d; }
+  .deadline strong { gap: 5px; margin-top: 4px; font-weight: 580; font-size: 17px; }
+  .deadline strong svg { width: 16px; height: 16px; }
+  .deadline > b { font: 650 30px/1.1 "Segoe UI",var(--erp-font-body); white-space: nowrap; }
+  .meter-head, .counts { width: 100%; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+  .meter-head > strong { font-size: 17px; }
+  .meter { display: block; width: 100%; height: 7px; margin: 8px 0 10px; border-radius: 5px; background: #d7e6ee; overflow: hidden; }
+  .meter i { display: block; height: 100%; border-radius: inherit; background: #5c92a9; }
+  .counts, .quantity-note { font-size: 13px; color: #4f6b7d; }
+  .counts b { font-size: 14px; color: #2e566b; }
+  .empty-jobs, .state { padding: 23px 25px; font-size: 14px; color: #526c7b; }
+  .director-lower { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr) minmax(0,.85fr); gap: 15px; }
+  .director-calendar, .director-activity { display: flex; flex-direction: column; padding: 21px 23px; }
+  .context, .empty { color: #526d7e; font-size: 13px; line-height: 1.5; }
+  .context { margin-top: 5px; }
+  .empty { margin-top: 13px; }
+  .day-selector { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 5px; margin: 23px 0 18px; padding-bottom: 19px; border-bottom: 1px solid #bbd1de; }
+  .day-selector button { display: grid; justify-items: center; gap: 5px; min-width: 0; padding: 9px 1px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #395a70; cursor: pointer; font-size: 13px; }
+  .day-selector button[aria-pressed=true] { border-color: #bdd0e0; background: var(--erp-menu-selected-background); color: var(--erp-menu-accent); }
+  .day-selector b { font-size: 19px; font-weight: 600; }
+  .day-selector small { font-size: 12px; font-weight: 400; }
+  .day-selector b small { margin-left: 3px; }
+  .day-head { gap: 5px; font-size: 14px; }
+  .day-job { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 4px; border: 0; border-bottom: 1px solid #cbdce6; background: transparent; color: #1d516c; text-align: left; cursor: pointer; }
+  .day-job b { font-size: 15px; }
+  .day-job small { display: block; margin-top: 3px; color: #506b7b; font-size: 12px; }
+  .day-job > small { display: flex; gap: 3px; align-items: center; white-space: nowrap; }
+  .board-foot { gap: 6px; flex-wrap: wrap; padding-top: 15px; margin-top: auto; color: #556e7e; font-size: 13px; }
+  .summary-top { flex-wrap: wrap; gap: 6px; }
+  .period-switch { display: flex; gap: 3px; }
+  .period-switch button { padding: 6px 9px; border: 0; border-radius: 6px; background: transparent; color: #476879; font-size: 13px; cursor: pointer; }
+  .period-switch button[aria-pressed=true] { background: var(--erp-menu-selected-background); color: var(--erp-menu-accent); font-weight: 650; }
+  .kpi-row { gap: 15px; margin: 20px 0 18px; align-items: end; }
+  .kpi-values { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .kpi-values strong { color: #235976; font: 650 43px/1.12 "Segoe UI",var(--erp-font-body); }
+  .kpi-values.multiple strong { font-size: 32px; }
+  .kpi-values small { margin-left: 5px; font-size: 15px; font-weight: 500; }
+  .metric-icon { display: grid; place-items: center; width: 42px; height: 42px; flex: none; border: 1px solid #c1d6e3; border-radius: 10px; color: #437b94; background: #e1edf4; }
+  .metric-icon svg { width: 24px; height: 24px; }
+  .subtotals { display: flex; padding-top: 13px; border-top: 1px solid #bbd1de; }
+  .subtotals div { padding-right: 20px; }
+  .subtotals div + div { padding-left: 20px; border-left: 1px solid #bbd1de; }
+  .subtotals strong { display: block; margin-bottom: 3px; font-size: 19px; }
+  .subtotals small { color: #526c7b; font-size: 12px; }
+  .director-rail { display: grid; align-content: start; gap: 14px; min-width: 0; }
+  .sidepanel { padding: 17px 21px; }
+  .sidepanel h2 { font-size: 17px; }
+  .sidepanel p { margin-top: 12px; }
+  .follow-row { width: 100%; gap: 7px; padding: 9px 0; border: 0; background: transparent; color: #33586e; font-size: 14px; cursor: pointer; text-align: left; }
+  .follow-row:first-of-type { margin-top: 8px; }
+  .follow-row + .follow-row { border-top: 1px solid #cfdfe8; }
+  .follow-row:disabled { cursor: default; }
+  .follow-row:disabled svg { visibility: hidden; }
+  .follow-value { margin-left: auto; white-space: nowrap; color: #466575; font-size: 13px; }
+  .follow-value b { font-size: 16px; color: #21475c; }
+  .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; }
+  .planned { color: #638196; }
+}
+.director-dialog {
+  color: var(--erp-color-text-primary); font-family: var(--erp-font-body); font-size: 14px;
+  .back { margin-bottom: 12px; }
+  .detail-head, .detail-due, .detail-qty, footer { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; }
+  .detail-head strong { color: #1c4f6b; font-size: 23px; }
+  .detail-head span, .detail-meta { color: var(--erp-color-text-secondary); font-size: 13px; }
+  h3 { margin: 8px 0; font-size: 19px; }
+  h4 { margin: 19px 0 8px; font-size: 15px; }
+  .detail-due { margin: 12px 0; padding-block: 12px; border-block: 1px solid var(--erp-color-border-subtle); }
+  .director-table-scroll { max-height: 48vh; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+  td, th { padding: 10px; border-bottom: 1px solid var(--erp-color-border-subtle); }
+  th { white-space: nowrap; background: var(--erp-table-header-background); color: var(--erp-color-text-secondary); font-weight: 600; }
+  td small { display: block; color: var(--erp-color-text-secondary); }
+  td .action { text-align: left; font-weight: 650; }
+  footer { margin-top: 14px; justify-content: space-between; color: var(--erp-color-text-secondary); font-size: 13px; }
+}
+@media (min-width: 1650px) {
+  .workshop-director-workbench {
+    .director-mast { min-height: 62px; }
+    .jobs-section { padding-bottom: 23px; }
+    .job-card { padding: 24px 28px 22px; }
+    .task-code { font-size: 25px; }
+    .product { font-size: 23px; }
+    .workstep { margin-top: 11px; }
+    .deadline { margin: 21px 0 18px; padding: 17px 0; }
+    .deadline > b { font-size: 33px; }
+    .director-lower { grid-template-columns: minmax(0,1.3fr) minmax(0,1.02fr) minmax(0,.83fr); }
+    .director-activity, .director-calendar { padding: 24px 25px; min-height: 342px; }
+    .day-selector { gap: 9px; }
+    .day-selector button { padding: 12px 2px; gap: 8px; }
+    .kpi-row { margin-top: 26px; }
+    .sidepanel { padding: 19px 23px; }
+    .follow-row { padding: 10px 0; }
+  }
+}
+@media (max-width: 1350px) {
+  .workshop-director-workbench {
+    .job-card { padding: 18px; }
+    .task-code { font-size: 19px; }
+    .deadline > b { font-size: 25px; }
+    .director-lower { grid-template-columns: minmax(0,1.32fr) minmax(0,1fr); gap: 12px; }
+    .director-rail { grid-column: 1/-1; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; }
+    .director-activity, .director-calendar { padding: 17px; }
+  }
+}
+@media (max-width: 1000px) {
+  .workshop-director-workbench {
+    .job-grid { gap: 8px; }
+    .job-card { padding: 14px; }
+    .task-code, .product { font-size: 17px; }
+    .jump { display: none; }
+    .deadline { align-items: start; flex-wrap: wrap; }
+    .deadline > b { font-size: 21px; }
+    .deadline strong { font-size: 14px; }
+  }
+}
+@media (max-width: 720px) {
+  .workshop-director-workbench {
+    .job-grid, .director-lower, .director-rail { grid-template-columns: minmax(0,1fr); }
+    .director-mast { flex-wrap: wrap; }
+    h1 { font-size: 24px; }
+    .mast-title { gap: 8px; }
+    .day-selector { gap: 0; }
+    .lead-actions { flex-wrap: wrap; }
+    .deadline { align-items: center; margin: 10px 0; padding: 9px 0; }
+  }
+}

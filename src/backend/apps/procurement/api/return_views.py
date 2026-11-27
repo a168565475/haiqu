@@ -53,6 +53,7 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
     currency_code = serializers.CharField(source="purchase_order.currency_code_snapshot", read_only=True)
     order_number = serializers.CharField(source="purchase_order.order_number", read_only=True)
     production_task_number = serializers.CharField(source="purchase_order.production_task_number_snapshot", read_only=True)
+    sample_number = serializers.CharField(source="purchase_order.sample_number_snapshot", read_only=True, allow_blank=True)
     purchase_scope = serializers.ChoiceField(
         choices=PurchaseScope.choices, source="purchase_order.purchase_group.purchase_scope",
         read_only=True, default=PurchaseScope.STANDARD,
@@ -68,7 +69,7 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PurchaseReturn
-        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "purchase_scope", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "return_amount", "currency_code", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
+        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "sample_number", "purchase_scope", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "return_amount", "currency_code", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
         read_only_fields = fields
 
     def get_return_amount(self, instance) -> str | None:

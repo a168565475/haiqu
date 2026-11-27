@@ -4,16 +4,17 @@ import { pipeMeters, pipeRootsFromMeters, weighedProductionPipe } from '@/utils/
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { isCancel } from 'axios'
+import { useRouter } from 'vue-router'
 import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { Calendar, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { confirmMaterialQuality, fetchMaterialQualityBatch, fetchMaterialQualityBatches } from '@/api/inventory'
-import { router } from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialInbound, MaterialInboundLine } from '@/types/inventory'
 import { receiptMaterialAttributeColumnWidth, receiptMaterialLeadingColumnWidths, receiptMaterialTables, receiptMaterialTableWidth } from '@/utils/receiptMaterialTables'
 
 interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuantity: string; quantityInputUnit: string; qualityRemark: string }
 const auth = useAuthStore()
+const router = useRouter()
 const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
 const recordsQuery = computed(() => router.currentRoute?.value.query)
@@ -23,6 +24,7 @@ const selectedBatchId = ref('')
 const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `material-quality-draft:v2:${selectedBatchId.value}:user:${uid}`, legacyKeys: () => [`material-quality-draft:v2:${selectedBatchId.value}`] })
 let draftRaw: string | null = null
 const batch = ref<MaterialInbound | null>(null)
+const taskNumber = computed(() => batch.value?.lines.find(line => line.production_task_number_snapshot)?.production_task_number_snapshot)
 const rows = ref<QualityRow[]>([])
 const materialTables = computed(() => receiptMaterialTables(rows.value))
 const leadingColumnWidths = receiptMaterialLeadingColumnWidths
@@ -302,7 +304,13 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
       <section class="surface table-card">
         <div class="table-head">
           <div><h2>品质确认明细</h2><div class="table-order-meta">
-            <template v-if="batch"><span>入库单号 <strong>{{ batch.inbound_number }}</strong></span><span>采购单号 <strong>{{ batch.purchase_order_number || '—' }}</strong></span><span>生产单号 <strong>{{ batch.lines[0]?.production_task_number_snapshot || '—' }}</strong></span><span>状态 <ElTag type="warning" round>待质检</ElTag></span></template>
+            <template v-if="batch">
+              <span v-if="batch.sample_number">打样单号 <strong>{{ batch.sample_number }}</strong></span>
+              <span v-else-if="taskNumber">生产任务单号 <strong>{{ taskNumber }}</strong></span>
+              <span>入库单号 {{ batch.inbound_number }}</span>
+              <span>采购单号 {{ batch.purchase_order_number || '—' }}</span>
+              <span>状态 <ElTag type="warning" round>待质检</ElTag></span>
+            </template>
             <span v-if="!recordId" class="batch-selector"><label>批次</label><ElSelect v-model="selectedBatchId" aria-label="选择待质检批次" filterable :disabled="locked" :loading="loading" placeholder="入库单号 / 采购单号 / 供应商" @change="selectBatch()"><ElOption v-for="item in batches" :key="item.id" :value="item.id" :label="`${item.inbound_number} · ${item.purchase_order_number || '—'} · ${item.lines[0]?.supplier_name_snapshot || '—'}`" /></ElSelect></span>
           </div></div>
           <div class="table-summary">
@@ -384,7 +392,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-head > div { display: flex; gap: 22px; align-items: center; min-width: 0; }
 .table-order-meta { display: flex; align-items: center; gap: 24px; min-width: 0; color: token.$crm-text-secondary; font-size: 12px; }
 .table-order-meta span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.table-order-meta strong { color: token.$crm-text-primary; font-weight: 500; }
+.table-order-meta strong { color: token.$crm-text-primary; font-weight: 700; }
 .table-order-meta .batch-selector { gap: 8px; }
 .batch-selector > .el-select { width: 320px; }
 .table-head .table-summary { gap: 12px; margin-right: 16px; font-size: 13px; white-space: nowrap; }

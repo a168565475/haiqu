@@ -1,5 +1,5 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus, { ElButton, ElMessageBox, ElOption, ElSelect } from 'element-plus'
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/internalReceipts'
@@ -32,8 +32,9 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-function mountRecords() {
+function mountRecords(readOnly = false) {
   return shallowMount(SemiReceiptRecordsView, {
+    props: { readOnly },
     global: {
       plugins: [ElementPlus],
       renderStubDefaultSlot: true,
@@ -45,12 +46,29 @@ function mountRecords() {
   })
 }
 
+it('车间入口以厂内入库记录为来源，只显示查看操作', async () => {
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({
+    items: [{ ...record, status: 'PENDING', can_delete: true }], total: 1,
+  })
+  const wrapper = mountRecords(true)
+  try {
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('半成品入库记录')
+    expect(wrapper.get('tbody').text()).toContain('查看')
+    expect(wrapper.find('[data-testid="confirm-semi-receipt"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="delete-semi-receipt"]').exists()).toBe(false)
+    expect(api.fetchSemiReceiptRecords).toHaveBeenCalledWith(expect.objectContaining({ direction: 'IN', source: 'INTERNAL' }))
+  } finally { wrapper.unmount() }
+})
+
 it('车间入库显示原提交人，隐藏标注的列、头部附加项和底栏', async () => {
   vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [{ ...record, submitted_by: '车间提交人' }, { ...record, id: 'legacy' }], total: 2 })
   const wrapper = mountRecords()
   try {
     await flushPromises()
     const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    expect(headers.slice(0, 3)).toEqual(['生产任务单号', '入库单号', '入库来源'])
+    expect(wrapper.get('tbody td:first-child strong').text()).toBe('HT-001')
     expect(headers).toContain('提交人')
     expect(headers).not.toContain('部位')
     expect(headers).not.toContain('厚度')
@@ -85,11 +103,15 @@ it('半成品出库沿用原列表与独立查看入口', async () => {
   try {
     await flushPromises()
     expect(wrapper.get('h1').text()).toBe('半成品出库记录')
+    expect(wrapper.findAll('thead th').slice(0, 3).map(cell => cell.text())).toEqual(['生产任务单号', '出库单号', '出库来源'])
     expect(wrapper.findAll('thead th').map(cell => cell.text())).toEqual(expect.arrayContaining(['部位', '厚度']))
     expect(wrapper.get('tbody .receipt-link').text()).toBe('查看')
     expect(wrapper.find('footer').exists()).toBe(true)
     await wrapper.get('tbody .receipt-link').trigger('click')
+    await flushPromises()
     expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('1180')
+    expect(wrapper.get('.receipt-detail-title h2').text()).toBe('HT-001')
+    expect(wrapper.get('.receipt-detail-grid label').text()).toBe('出库单号RK-001')
   } finally { wrapper.unmount() }
 })
 
@@ -172,10 +194,11 @@ it('已入库详情按单据的实际属性分列，数量取每条明细', asyn
   } finally { wrapper.unmount() }
 })
 
-it.each(['confirm-semi-receipt', 'view-semi-receipt'])('待入库入口 %s 先读详情，再以详情版本确认', async entry => {
-  const pending = { ...record, status: 'PENDING', stock_movement_id: null, etag: '"list-version"' }
-  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 } as never)
-  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue({ ...pending, etag: '"detail-version"' })
+it.each(['confirm-semi-receipt', 'view-semi-receipt'])('待入库入口 %s 先读详情，带出旧单库区并用详情版本确认', async entry => {
+  const pending: SemiReceiptRecord = { ...record, status: 'PENDING', stock_movement_id: null, etag: '"list-version"' }
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue({ ...pending, etag: '"detail-version"', zone_id: 'zone-1',
+    zones: [{ id: 'zone-1', warehouse_id: 'warehouse-1', warehouse: '半成品仓', name: '一楼' }] })
   confirm.mockResolvedValue({ receipt_id: pending.id, receipt_number: pending.receipt_number, status: 'CONFIRMED', replayed: false, record_ids: ['movement-1'] })
   const wrapper = mountRecords()
   try {
@@ -189,8 +212,63 @@ it.each(['confirm-semi-receipt', 'view-semi-receipt'])('待入库入口 %s 先�
     expect(confirm).not.toHaveBeenCalled()
     await wrapper.get('[data-testid="confirm-receipt-in-detail"]').trigger('click')
     await flushPromises()
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(pending.id, '"detail-version"')
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(pending.id, '"detail-version"', 'zone-1')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  } finally { wrapper.unmount() }
+})
+
+it.each(['METAL', 'SEWING'] as const)('仓管为 %s 待入库单选择半成品仓和库区后，用详情版本确认', async category => {
+  const pending: SemiReceiptRecord = { ...record, status: 'PENDING', plan_category: category,
+    warehouse: '', zone: '', zone_id: null, etag: '"detail-version"',
+    zones: [
+      { id: 'zone-a', warehouse_id: 'warehouse-a', warehouse: '一仓', name: '一区' },
+      { id: 'zone-b', warehouse_id: 'warehouse-b', warehouse: '二仓', name: '二区' },
+    ],
+  }
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(pending)
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    await wrapper.get('[data-testid="confirm-semi-receipt"]').trigger('click')
+    await flushPromises()
+    const button = wrapper.findAllComponents(ElButton).find(item => item.attributes('data-testid') === 'confirm-receipt-in-detail')!
+    const selects = wrapper.findAllComponents(ElSelect)
+    const warehouse = selects.find(select => select.attributes('aria-label') === '半成品仓')!
+    const zone = selects.find(select => select.attributes('aria-label') === '库区')!
+    expect(button.props('disabled')).toBe(true)
+    warehouse.vm.$emit('update:modelValue', 'warehouse-b')
+    warehouse.vm.$emit('change', 'warehouse-b')
+    await flushPromises()
+    expect(zone.findAllComponents(ElOption).map(option => option.props('value'))).toEqual(['zone-b'])
+    zone.vm.$emit('update:modelValue', 'zone-b')
+    await flushPromises()
+    expect(button.props('disabled')).toBe(false)
+    await button.trigger('click')
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(pending.id, pending.etag, 'zone-b')
+  } finally { wrapper.unmount() }
+})
+
+it.each([null, 'old-zone'])('裁剪待入库原库区为 %s 时，仓管预选裁剪布面仓唯一的三楼库区', async savedZone => {
+  const pending: SemiReceiptRecord = { ...record, status: 'PENDING', plan_category: 'CUTTING',
+    zone_id: savedZone, etag: '"detail-version"',
+    zones: [{ id: 'cutting-zone', warehouse_id: 'cutting-warehouse', warehouse: '裁剪布面仓', name: '三楼' }],
+  }
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(pending)
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    await wrapper.get('[data-testid="confirm-semi-receipt"]').trigger('click')
+    await flushPromises()
+    const selects = wrapper.findAllComponents(ElSelect)
+    const warehouse = selects.find(select => select.attributes('aria-label') === '半成品仓')!
+    const zone = selects.find(select => select.attributes('aria-label') === '库区')!
+    expect(warehouse.props('modelValue')).toBe('cutting-warehouse')
+    expect(warehouse.findAllComponents(ElOption).map(option => option.props('label'))).toEqual(['裁剪布面仓'])
+    expect(zone.props('modelValue')).toBe('cutting-zone')
+    await wrapper.get('[data-testid="confirm-receipt-in-detail"]').trigger('click')
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(pending.id, pending.etag, 'cutting-zone')
   } finally { wrapper.unmount() }
 })
 

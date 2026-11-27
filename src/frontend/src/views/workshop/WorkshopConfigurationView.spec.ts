@@ -6,16 +6,20 @@ const routerState = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
 }))
+const auth = vi.hoisted(() => ({ user: { is_superuser: true }, hasPermission: vi.fn() }))
 
 vi.mock('vue-router', () => ({
   useRoute: () => routerState.route,
   useRouter: () => ({ push: routerState.push, replace: routerState.replace }),
 }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 
 import WorkshopConfigurationView from './WorkshopConfigurationView.vue'
 
 describe('生产车间配置入口', () => {
   beforeEach(() => {
+    auth.user.is_superuser = true
+    auth.hasPermission.mockReset()
     routerState.route.query = {}
     routerState.push.mockReset()
     routerState.replace.mockReset()
@@ -45,6 +49,21 @@ describe('生产车间配置入口', () => {
       global: { stubs: { ElAlert: true, ElTag: true, ElDialog: true, WorkshopConfigManager: true } },
     })
     expect(wrapper.text()).not.toContain('导入 Excel')
+  })
+
+  it('车间账号能进入员工和工序管理，工艺配置链接也不会打开', () => {
+    auth.user.is_superuser = false
+    auth.hasPermission.mockImplementation((permission: string) => [
+      'workshop_config.view_workshopemployee', 'workshop_config.view_craft', 'workshop_config.view_operation',
+    ].includes(permission))
+    routerState.route.query = { panel: 'crafts' }
+    const wrapper = shallowMount(WorkshopConfigurationView, {
+      global: { stubs: { ElAlert: true, ElTag: true, WorkshopConfigManager: true } },
+    })
+    expect(wrapper.findAll('.entry-card').map(card => card.attributes('data-testid'))).toEqual([
+      'workshop-entry-employees', 'workshop-entry-operations',
+    ])
+    expect(wrapper.findComponent({ name: 'WorkshopConfigManager' }).exists()).toBe(false)
   })
 
   it.each([

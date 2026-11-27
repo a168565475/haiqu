@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from rest_framework import serializers
 
+from apps.inventory.stock_services import InventoryStockValidationError
 from apps.production_tasks.selectors import production_task_product_image
 from apps.sales_orders.presentation import specification_display
 
@@ -100,6 +101,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
         include_detail = self.context.get("include_detail", True)
         lines = []
         public_quantity_context = None
+        stock_quantities_unavailable = False
         issued_snapshots = {}
         if include_detail and issue.status == MaterialIssueStatus.ISSUED:
             issued_event = next(
@@ -125,10 +127,19 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                         if 'direct_available_quantity' in issued_snapshot:
                             quantities['direct_available_quantity'] = issued_snapshot['direct_available_quantity']
                     else:
-                        if public_quantity_context is None:
-                            public_quantity_context = public_issue_quantity_context(issue, exclude_issue_id=issue.pk,
-                                                                                    lines=list(issue.lines.all()))
-                        quantities = public_line_quantities(line, context=public_quantity_context, limit_to_order=False)
+                        if public_quantity_context is None and not stock_quantities_unavailable:
+                            try:
+                                public_quantity_context = public_issue_quantity_context(
+                                    issue, exclude_issue_id=issue.pk, lines=list(issue.lines.all()),
+                                )
+                            except InventoryStockValidationError as error:
+                                if error.api_error_code != "PUBLIC_STOCK_IDENTITY_INVALID":
+                                    raise
+                                stock_quantities_unavailable = True
+                        if stock_quantities_unavailable:
+                            quantities = {field: issued_snapshot.get(field) for field in QUANTITY_SNAPSHOT_FIELDS}
+                        else:
+                            quantities = public_line_quantities(line, context=public_quantity_context, limit_to_order=False)
                     semi_requirement = line.semi_requirement if line.semi_requirement_id else None
                     flow = public_line_flow_data(line)
                     lines.append({
@@ -283,6 +294,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
             "source_revision_hash": issue.source_revision_hash,
             "line_count": len(lines) if include_detail else issue.lines.count(),
             "lines": lines,
+            **({"stock_quantities_unavailable": True} if stock_quantities_unavailable else {}),
             "audit_events": events,
             "created_by": {"id": str(issue.created_by_employee_id), "name": issue.created_by_employee.display_name},
             "submitted_at": issue.submitted_at,

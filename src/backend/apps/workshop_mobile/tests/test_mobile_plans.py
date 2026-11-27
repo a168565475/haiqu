@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -11,7 +12,12 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.access_control.models import RoleActionGrant, RoleGrantResource
+from apps.access_control.production_role_templates import DIRECTORS, templates
+from apps.access_control.services import replace_grants
+from apps.core.api.concurrency import etag_for_instance
 from apps.files.models import BusinessFile, FileScanStatus
+from apps.inventory.models import FinishedGoodsReceipt, Warehouse, WarehouseLocation, WarehouseZone
+from apps.inventory.tests.assembly_reporting_fixture import seed_reported_assembly
 from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.production_scheduling.models import ProductionScheduleProductCraft, ScheduleStatus
 from apps.production_tasks.models import ProductionTaskStatus
@@ -75,6 +81,147 @@ class MobilePlanApiTests(APITestCase):
         ProductionScheduleProductCraft.objects.create(schedule_product=self.schedule_product, craft=craft,
             craft_type_snapshot=CraftType.INTERNAL, craft_name_snapshot=craft.name, plan_category=PlanCategory.ASSEMBLY)
         return workshop, craft
+
+    @override_settings(ACCESS_MANAGEMENT_ENABLED=True)
+    def login_with_confirmed_role(self, role_code, workshop=None, *, receipt_workshop=None):
+        role = RoleProfile.objects.filter(role_code=role_code).first()
+        if role is None:
+            role = RoleProfile.objects.create(role_code=role_code, display_name=role_code,
+                                              auth_group=Group.objects.create(name=f"mobile-role-{role_code}"))
+        workshops = dict(Workshop.objects.filter(name__in=DIRECTORS.values()).values_list("name", "pk"))
+        grants = templates(workshops)[role_code]
+        if receipt_workshop is not None:
+            for grant in grants:
+                if grant["permission"] == "inventory.add_finishedgoodsreceipt":
+                    grant["resource_ids"] = [str(receipt_workshop.pk)]
+        request = SimpleNamespace(user=self.user, headers={"If-Match": etag_for_instance(role)}, META={})
+        replace_grants(request, role.pk, grants,
+                       reviewed_group_permission_ids=list(role.auth_group.permissions.values_list("pk", flat=True)))
+        password = uuid.uuid4().hex
+        user = get_user_model().objects.create_user(username=f"mobile-role-{role_code}", password=password)
+        employee = Employee.objects.create(user=user, employee_code=f"MOBILE-{role_code}", display_name=role_code,
+                                           workshop=workshop, workshop_is_supervisor=workshop is not None)
+        EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role, effective_from=timezone.now())
+        client = APIClient(enforce_csrf_checks=True)
+        csrf = client.get("/api/auth/me/")
+        self.assertEqual(csrf.status_code, 200, csrf.data)
+        login_response = client.post("/api/auth/login/", {"username": user.username, "password": password},
+                                     format="json", HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value)
+        self.assertEqual(login_response.status_code, 200, login_response.data)
+        self.assertEqual(str(login_response.data["user"]["employee"]["id"]), str(employee.pk))
+        self.assertFalse(login_response.data["user"]["is_superuser"])
+        client.credentials(HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value)
+        return client
+
+    def test_warehouse_and_assembly_roles_use_independent_plan_permissions(self):
+        assembly, _ = self.add_workshop()
+        scheme = seed_reported_assembly(self.product_line, self.employee, plan=self.schedule_product, quantity=10)
+        warehouse_user = self.login_with_confirmed_role("WAREHOUSE_KEEPER")
+        workshop_user = self.login_with_confirmed_role("ASSEMBLY_DIRECTOR", assembly)
+
+        for client, categories in ((warehouse_user, {"METAL", "ASSEMBLY"}), (workshop_user, {"ASSEMBLY"})):
+            response = client.get(self.url)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertCountEqual([row["plan_category"] for row in response.data["data"]], categories)
+        self.assertEqual(warehouse_user.get(self.detail_url(), self.detail_params()).status_code, 200)
+        self.assertEqual(workshop_user.get(self.detail_url(), self.detail_params()).status_code, 404)
+        self.assertEqual(workshop_user.get(self.url, self.detail_params()).data["data"], [])
+        self.assertEqual(warehouse_user.get("/api/v1/production-schedules/").status_code, 403)
+
+        params = self.detail_params(assembly, "ASSEMBLY")
+        for client, actions in ((warehouse_user, (True, False, False, False, False)),
+                                (workshop_user, (True, True, True, True, True))):
+            detail = client.get(self.detail_url(), params)
+            self.assertEqual(detail.status_code, 200, detail.data)
+            row = detail.data["data"]
+            self.assertEqual(tuple(row[key] for key in
+                             ("can_view_issues", "can_issue", "can_view_reports", "can_report", "can_receive_finished")),
+                             actions)
+            self.assertFalse(row["can_receive_semi"])
+            if client is warehouse_user:
+                self.assertIsNone(row["progress"])
+                self.assertEqual(row["reporting_crafts"], [])
+                self.assertEqual(row["reporting_employees"], [])
+            else:
+                self.assertTrue(row["reporting_employees"])
+                self.assertTrue(all(person["workshop_id"] == str(assembly.pk) for person in row["reporting_employees"]))
+
+        issues = "/api/v1/material-issues/"
+        self.assertEqual(warehouse_user.get(issues).status_code, 200)
+        self.assertEqual(warehouse_user.post(issues, {}, format="json").status_code, 403)
+        requirement_response = workshop_user.get(f"{issues}requirements/", {
+            **params, "production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+        })
+        self.assertEqual(requirement_response.status_code, 200, requirement_response.data)
+
+        reports = "/api/v1/workshop-reporting/work-reports/"
+        receipt = "/api/v1/assembly-finished-receipts/"
+        scope = {"schedule_product_id": str(self.schedule_product.pk)}
+        today = timezone.localdate().isoformat()
+        line = scheme.lines.get()
+        report_payload = {**scope, "production_date": today, "client_request_id": str(uuid.uuid4()),
+                          "scheme_id": str(scheme.pk), "scheme_revision": scheme.revision, "lines": [{
+                              "scheme_line_id": str(line.pk), "quantity": "2", "production_line": 1,
+                              "workshop_employee_id": str(line.report_lines.get().workshop_employee_id),
+                          }]}
+        self.assertEqual(warehouse_user.post(reports, report_payload, format="json").status_code, 403)
+        reported = workshop_user.post(reports, report_payload, format="json")
+        self.assertEqual(reported.status_code, 201, reported.data)
+
+        self.assertEqual(warehouse_user.get(f"{receipt}preview/", scope).status_code, 403)
+        preview = workshop_user.get(f"{receipt}preview/", scope)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        receipt_payload = {**scope, "request_id": str(uuid.uuid4()), "receipt_date": today, "received_quantity": 3}
+        self.assertEqual(warehouse_user.post(receipt, receipt_payload, format="json").status_code, 403)
+        saved = workshop_user.post(receipt, receipt_payload, format="json", HTTP_IF_MATCH=preview["ETag"])
+        self.assertEqual(saved.status_code, 201, saved.data)
+        record = FinishedGoodsReceipt.objects.get(pk=saved.data["data"]["id"])
+        self.assertEqual((record.status, record.remaining_quantity, record.location_id), ("PENDING", 0, None))
+        finished_warehouse = Warehouse.objects.create(warehouse_number="MOBILE-ROLE-FG", warehouse_name="测试成品仓",
+                                                       warehouse_type="FINISHED")
+        zone = WarehouseZone.objects.create(warehouse=finished_warehouse, zone_name="测试库区")
+        location = WarehouseLocation.objects.create(zone=zone, location_number="A01")
+        confirm_url = f"{receipt}{record.pk}/confirm/"
+        location_payload = {"location_id": str(location.pk)}
+        self.assertEqual(workshop_user.post(confirm_url, location_payload, format="json", HTTP_IF_MATCH=saved["ETag"]).status_code, 403)
+        confirmed = warehouse_user.post(confirm_url, location_payload, format="json", HTTP_IF_MATCH=saved["ETag"])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        record.refresh_from_db()
+        self.assertEqual((record.status, record.remaining_quantity, record.location_id), ("CONFIRMED", 3, location.pk))
+
+        replay = workshop_user.post(receipt, receipt_payload, format="json", HTTP_IF_MATCH=preview["ETag"])
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay.data["data"]["id"], str(record.pk))
+        RoleGrantResource.objects.filter(
+            grant__role__role_code="ASSEMBLY_DIRECTOR",
+            grant__permission__content_type__app_label="inventory",
+            grant__permission__codename="add_finishedgoodsreceipt",
+        ).update(workshop=self.workshop)
+        denied_replay = workshop_user.post(receipt, receipt_payload, format="json", HTTP_IF_MATCH=preview["ETag"])
+        self.assertEqual(denied_replay.status_code, 404, denied_replay.data)
+        self.assertEqual(FinishedGoodsReceipt.objects.count(), 1)
+
+    def test_receipt_action_scope_applies_to_options_preview_and_submit(self):
+        assembly, _ = self.add_workshop()
+        seed_reported_assembly(self.product_line, self.employee, plan=self.schedule_product, quantity=10)
+        client = self.login_with_confirmed_role("ASSEMBLY_DIRECTOR", assembly, receipt_workshop=self.workshop)
+        detail = client.get(self.detail_url(), self.detail_params(assembly, "ASSEMBLY"))
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertFalse(detail.data["data"]["can_receive_finished"])
+        scope = {"schedule_product_id": str(self.schedule_product.pk)}
+        receipt = "/api/v1/assembly-finished-receipts/"
+        options = client.get("/api/v1/workshop-mobile/finished-receipt-options/", scope)
+        preview = client.get(f"{receipt}preview/", scope)
+        candidates = client.get(f"{receipt}candidates/")
+        submitted = client.post(receipt, {
+            **scope, "request_id": str(uuid.uuid4()), "receipt_date": timezone.localdate().isoformat(), "received_quantity": 1,
+        }, format="json", HTTP_IF_MATCH=preview.get("ETag", '"unavailable"'))
+        for name, response in (("options", options), ("preview", preview), ("submit", submitted)):
+            with self.subTest(action=name):
+                self.assertEqual(response.status_code, 404, response.data)
+        self.assertEqual(candidates.status_code, 200, candidates.data)
+        self.assertEqual(candidates.data["data"]["items"], [])
+        self.assertFalse(FinishedGoodsReceipt.objects.exists())
 
     def test_card_keeps_real_plan_identity_and_quantity_without_amounts(self):
         self.create_report()

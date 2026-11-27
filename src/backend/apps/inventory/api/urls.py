@@ -3,6 +3,7 @@ from .internal_receipts import InternalReceiptViewSet
 from .finished_receipts import AssemblyReceiptViewSet, FinishedRecordViewSet
 from .material_inbound_sources import MaterialInboundSourceViewSet
 from .material_transfers import MaterialTransferViewSet
+from .warehouse_workbench import WarehouseWorkbenchViewSet
 from django.urls import path
 
 from .views import (
@@ -15,6 +16,7 @@ from .views import (
 
 
 router = SimpleRouter()
+router.register("warehouse-workbench", WarehouseWorkbenchViewSet, basename="warehouse-workbench")
 router.register("assembly-finished-receipts", AssemblyReceiptViewSet, basename="assembly-finished-receipt")
 router.register("finished-goods-records", FinishedRecordViewSet, basename="finished-goods-record")
 router.register("semi-finished-receipts", InternalReceiptViewSet, basename="semi-finished-receipt")

@@ -53,11 +53,12 @@ def validate_combined_output(*, source, identity, quantity, quality):
             ).values_list('receipt_id', flat=True).first()
             current = metal_component_limits(product, exclude_receipt_id=exclude_receipt_id)
             basis = current['components'].get(str(line.component_identity))
+            # 待确认明细的流水为空，按反向关联判断，避免 NOT IN 遇到 NULL 漏算。
             unmatched = PublicStockMovement.objects.filter(product_line=product,
                 bom_line__component_identity=line.component_identity, direction='IN',
                 source_type='INTERNAL_SEMI_RECEIPT', balance__quality='AVAILABLE',
-                balance__identity_snapshot__completed_craft__code='METAL').exclude(
-                    pk__in=InternalSemiFinishedReceiptLine.objects.values('stock_movement_id')).aggregate(total=Sum('quantity'))['total'] or 0
+                balance__identity_snapshot__completed_craft__code='METAL',
+                internal_receipt_line__isnull=True).aggregate(total=Sum('quantity'))['total'] or 0
             remaining = max(basis['allowance']['remaining'] - unmatched, 0) if basis and basis['basis_ready'] else 0
             for day in _basis_dates(product.pk):
                 if str(day) == current['as_of']:

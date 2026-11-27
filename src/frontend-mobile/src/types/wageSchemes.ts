@@ -1,5 +1,12 @@
 export type WageSchemeStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'RETURNED' | 'SUPERSEDED'
-type WageCountingMode = 'ORDER' | 'PIECE' | 'SET'
+type WageCountingMode = 'ORDER' | 'PIECE' | 'SET' | 'GROUP'
+
+export interface CuttingGroupComponent {
+  component_identity: string
+  name: string
+  quantity_per_group: number
+  unit: string
+}
 
 export interface WageSchemeSummary {
   id: string
@@ -49,6 +56,7 @@ export interface WageOperation {
 
 export interface WageFormOptions {
   target: WageTarget
+  plan_category?: string
   order_quantity: string
   bom_options: WageBomOption[] | null
   requires_product_name: boolean
@@ -61,6 +69,7 @@ export interface WageLineInput {
   craft_id: string
   operation_id: string
   bom_line_id: string | null
+  bom_line_ids?: string[]
   display_name: string
   declared_price: string
   previous_price: string | null
@@ -85,6 +94,7 @@ type SavedWageLine = Omit<WageLineInput, 'bom_line_id' | 'work_item_id' | 'count
   counting_mode: WageCountingMode
   operation_name: string
   bom_component_identity: string | null
+  cutting_components?: CuttingGroupComponent[]
 }
 
 export interface SavedWageScheme {
@@ -93,18 +103,20 @@ export interface SavedWageScheme {
   status: WageSchemeStatus
   status_display: string
   can_create_change: boolean
+  can_withdraw?: boolean
   parent_scheme: { id: string } | null
   operation_product_name: string
   remark: string
   lines: SavedWageLine[]
 }
 
-export type WageSubmission = Pick<SavedWageScheme, 'id' | 'scheme_number' | 'status' | 'status_display'> & {
+export type WageSubmission = Pick<SavedWageScheme, 'id' | 'scheme_number' | 'status' | 'status_display' | 'can_withdraw'> & {
   change_target: WageTarget | null
   production_task: { task_number: string }
   product: { name: string }
   workshop: { name: string }
-  scope_craft: { name: string }
+  scope_craft: { id?: string; name: string }
+  schedule_product_id?: string | null
 }
 
 export interface VersionedWageScheme {

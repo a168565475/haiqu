@@ -32,7 +32,7 @@ export function formatScheduleQuantity(value: string | null | undefined, unit = 
 
 export function scheduleAmountReason(status: string | undefined): string {
   return ({
-    NOT_APPLICABLE: '本产品没有内部作业计划。',
+    NOT_APPLICABLE: '本产品没有作业计划。',
     QUANTITY_BASIS_MISMATCH: '排产数量与工价计价基数不同，暂无法计算本排产预计金额。',
     FORBIDDEN: '当前账号没有查看该金额的权限。',
     NOT_CREATED: '尚未建立工价方案。',

@@ -537,6 +537,8 @@ def _source_result(source, line, request=None):
         {
             "id": str(row.pk), "original_order_id": str(row.original_order_id),
             "original_order_number": row.original_order.order_number,
+            "original_production_task_number": (line.issue.production_task.task_number
+                if line.issue.production_task_id == row.original_order.schedule.production_task_id else ""),
             "factory_id": str(row.factory_id), "factory_name": row.factory.name,
             "handoff_pieces": row.handoff_pieces,
             "handoff_date": row.handoff_date.isoformat(),

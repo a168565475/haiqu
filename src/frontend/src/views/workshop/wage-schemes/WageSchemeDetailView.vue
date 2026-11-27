@@ -3,7 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
-import { approveWageScheme, fetchWageScheme, returnWageScheme, submitWageScheme } from '@/api/workshopReporting'
+import { approveWageScheme, fetchWageScheme, returnWageScheme, submitWageScheme, withdrawWageScheme } from '@/api/workshopReporting'
+import CuttingGroupCell from '@/components/workshop/CuttingGroupCell.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { WageScheme } from '@/types/workshopReporting'
 import { compactDecimal } from '@/utils/compactDecimal'
@@ -21,6 +22,7 @@ const canApprove = () => auth.user?.is_superuser || auth.hasPermission('workshop
 const canChange = () => auth.user?.is_superuser || auth.hasPermission('workshop_reporting.change_wagescheme')
 const canEditDraft = () => canChange() && (
   auth.user?.is_superuser || scheme.value?.created_by_id === auth.user?.employee?.id
+  || scheme.value?.withdrawn_by_me
   || auth.user?.effective_access?.actions['workshop_reporting.change_wagescheme']?.scopes
     .some(scope => scope === 'MODULE' || scope === 'ALL')
 )
@@ -64,7 +66,23 @@ async function submit() {
     const result = await submitWageScheme(String(route.params.schemeId), etag.value)
     scheme.value = result.data
     etag.value = result.etag
-    ElMessage.success('已送交厂长审批。')
+    ElMessage.success('已提交厂长审批。')
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  } finally {
+    acting.value = false
+  }
+}
+
+async function withdraw() {
+  const current = scheme.value
+  if (!current?.can_withdraw || acting.value) return
+  acting.value = true
+  try {
+    const result = await withdrawWageScheme(current.id, etag.value)
+    scheme.value = result.data
+    etag.value = result.etag
+    await router.push({ name: 'wage-scheme-change', params: { schemeId: result.data.id } })
   } catch (error) {
     ElMessage.error(errorText(error))
   } finally {
@@ -131,6 +149,8 @@ onMounted(load)
         </div>
         <div>
           <ElButton @click="router.push({ name: 'wage-schemes' })">返回列表</ElButton>
+          <ElButton v-if="scheme.can_withdraw" :loading="acting" @click="withdraw">修改</ElButton>
+          <ElButton v-if="scheme.pending_change_id" @click="router.push({ name: 'wage-schemes', query: { detail: scheme.pending_change_id } })">查看待处理变更</ElButton>
           <ElButton
             v-if="(scheme.status === 'DRAFT' || scheme.status === 'RETURNED') && canEditDraft()"
             @click="router.push({ name: 'wage-scheme-change', params: { schemeId: scheme.id } })"
@@ -138,13 +158,13 @@ onMounted(load)
           <ElButton
             v-if="scheme.can_create_change && canChange() && canSubmit()"
             @click="router.push({ name: 'wage-scheme-change', params: { schemeId: scheme.id } })"
-          >变更</ElButton>
+          >变更工价</ElButton>
           <ElButton
             v-if="(scheme.status === 'DRAFT' || scheme.status === 'RETURNED') && canSubmit()"
             type="primary"
             :loading="acting"
             @click="submit"
-          >送审</ElButton>
+          >提交</ElButton>
         </div>
       </header>
 
@@ -155,7 +175,7 @@ onMounted(load)
           <div><dt>所属产品</dt><dd>{{ [scheme.product.number, scheme.product.name, scheme.product.specification].filter(Boolean).join(' · ') || '—' }}</dd></div>
           <div><dt>生产车间</dt><dd>{{ scheme.workshop.name || '—' }}</dd></div>
           <div><dt>所属工艺</dt><dd>{{ scheme.crafts.map(item => item.name).join('、') || '—' }}</dd></div>
-          <div><dt>工序品名</dt><dd>{{ scheme.operation_product_name || '—' }}</dd></div>
+          <div><dt>{{ scheme.workshop.name === '金工车间' ? '工序品名' : '工价方案' }}</dt><dd>{{ scheme.operation_product_name || '—' }}</dd></div>
           <div><dt>类型</dt><dd>{{ schemeType }}</dd></div>
           <div><dt>申请人</dt><dd>{{ scheme.created_by || '—' }}</dd></div>
           <div><dt>提交时间</dt><dd>{{ formatDateTime(submittedAt) }}</dd></div>
@@ -166,11 +186,13 @@ onMounted(load)
       <section class="wr-card wr-approval-card">
         <h2>工价明细</h2>
         <ElTable class="wr-approval-table" :data="scheme.lines" border empty-text="暂无工价明细">
-          <ElTableColumn prop="display_name" label="名称 / 部位" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.display_label || row.display_name }}</template>
+          <ElTableColumn prop="display_name" label="名称 / 部位" min-width="180">
+            <template #default="{ row }"><CuttingGroupCell :label="row.display_label || row.display_name" :components="row.cutting_components" /></template>
           </ElTableColumn>
           <ElTableColumn prop="operation_name" label="申报工序" min-width="130" show-overflow-tooltip />
-          <ElTableColumn v-if="scheme.scope_craft?.plan_category === 'SEWING'" prop="counting_mode_display" label="计数方式" width="100" align="center" />
+          <ElTableColumn v-if="['CUTTING', 'SEWING'].includes(scheme.scope_craft?.plan_category || '')" label="计数方式" width="100" align="center">
+            <template #default="{ row }">{{ row.counting_mode === 'GROUP' ? '按套' : row.counting_mode_display }}</template>
+          </ElTableColumn>
           <ElTableColumn label="需完成次数" width="112" align="right"><template #default="{ row }">{{ compactDecimal(row.required_quantity) }}</template></ElTableColumn>
           <ElTableColumn prop="production_description" label="制作工序描述" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.production_description || '—' }}</template>

@@ -37,7 +37,7 @@ describe('既有半成品入库入口分派', () => {
     for (const source of [undefined, null, '', 'plan-1', ` ${planId}`, [planId], [planId, planId]]) {
       route.query = { schedule_product_id: source, plan_category: category }
       const wrapper = mount(InternalSemiReceiptEntryView)
-      expect(wrapper.text()).toContain(`请从${category === 'METAL' ? '金工' : '车缝'}内部计划的产品行进入半成品入库`)
+      expect(wrapper.text()).toContain(`请从${category === 'METAL' ? '金工' : '车缝'}作业计划的产品行进入半成品入库`)
       expect(wrapper.findComponent({ name: 'MetalReceipt' }).exists()).toBe(false)
       expect(wrapper.findComponent({ name: 'LegacyReceipt' }).exists()).toBe(false)
       expect(wrapper.find('button').exists()).toBe(false)
@@ -49,7 +49,7 @@ describe('既有半成品入库入口分派', () => {
   it.each([undefined, null, '', 'ASSEMBLY', 'sewing', ['METAL'], ['SEWING', 'SEWING']].map(category => [category]))('非法或重复类别 %j 不加载任何入库子页', category => {
     route.query = { schedule_product_id: planId, plan_category: category }
     const wrapper = mount(InternalSemiReceiptEntryView)
-    expect(wrapper.text()).toContain('请从金工、裁剪或车缝内部计划的产品行进入半成品入库')
+    expect(wrapper.text()).toContain('请从金工、裁剪或车缝作业计划的产品行进入半成品入库')
     expect(mounted.metal).not.toHaveBeenCalled()
     expect(mounted.sewing).not.toHaveBeenCalled()
     expect(wrapper.find('button').exists()).toBe(false)

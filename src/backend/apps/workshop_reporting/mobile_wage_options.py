@@ -13,7 +13,7 @@ from apps.workshop_config.constants import METAL_WORKSHOP_NAME
 from apps.workshop_config.models import CraftType, Operation, PlanCategory, RecordStatus
 
 from .models import WageScheme, WageSchemeStatus
-from .selectors import accessible_wage_schemes, allowed_workshop_ids, reporting_source_products
+from .selectors import accessible_wage_schemes, allowed_workshop_ids, reporting_source_products, wage_scheme_editor_filter
 from .services import (
     EDITABLE_SCHEME_STATUSES,
     WAGE_SCHEME_TASK_STATUSES,
@@ -79,7 +79,7 @@ def _editable_schemes(request):
     schemes = _schemes_in_change_scope(request).filter(status__in=EDITABLE_SCHEME_STATUSES)
     scopes = access_for(request)["actions"].get(CHANGE, {}).get("scopes", [])
     if not request.user.is_superuser and not set(scopes) & {"MODULE", "ALL"}:
-        schemes = schemes.filter(created_by_employee_id=request.employee.pk)
+        schemes = schemes.filter(wage_scheme_editor_filter(request.employee.pk))
     return schemes
 
 
@@ -141,16 +141,20 @@ def mobile_wage_target_data(request, links):
 
 
 def mobile_wage_change_targets(request, schemes):
-    approved = [scheme for scheme in schemes if scheme.status == WageSchemeStatus.APPROVED]
-    if not approved or not all(has_permission(request, permission) for permission in (VIEW, CHANGE, SUBMIT)):
+    candidates = [scheme for scheme in schemes if scheme.status in {*EDITABLE_SCHEME_STATUSES, WageSchemeStatus.APPROVED}]
+    if not candidates or not all(has_permission(request, permission) for permission in (VIEW, CHANGE, SUBMIT)):
         return {}
     links = _eligible_links(request).filter(
-        schedule_product__product_line_id__in={scheme.product_line_id for scheme in approved},
-        latest_scheme_id__in={scheme.pk for scheme in approved},
+        schedule_product_id__in={scheme.schedule_product_id for scheme in candidates},
+        craft_id__in={scheme.scope_craft_id for scheme in candidates},
     )
+    by_scope = {
+        (target["schedule_product_id"], target["craft_id"]): target for target in mobile_wage_target_data(request, links)
+        if target["scheme"] and (target["scheme"]["can_change"] or target["scheme"]["can_edit"])
+    }
     return {
-        target["scheme"]["id"]: target for target in mobile_wage_target_data(request, links)
-        if target["scheme"] and target["scheme"]["can_change"]
+        str(scheme.pk): target for scheme in candidates
+        if (target := by_scope.get((str(scheme.schedule_product_id), str(scheme.scope_craft_id))))
     }
 
 
@@ -190,6 +194,7 @@ def mobile_wage_form(request, schedule_product_id, craft_id):
     ).order_by("product_name", "name", "pk")
     return {
         "target": target,
+        "plan_category": category,
         "order_quantity": str(order_quantity),
         "bom_options": options,
         "requires_product_name": not metal,

@@ -1,4 +1,13 @@
+import { isAxiosError } from 'axios'
 import type { ProductionTask, ProductionTaskListProduct } from '@/types/productionTask'
+
+export function taskWriteResultNotice(error: unknown, taskNumber: string, action: string) {
+  if (!isAxiosError(error)) return
+  const response = error.response
+  if (response && (![500, 502, 503, 504].includes(response.status) || response.data?.error?.message || response.data?.detail)) return
+  return `尚未收到${action}结果。请先在生产任务列表按 ${taskNumber} 查看状态。`
+}
+
 export function isTaskReadyForScheduling(task: Pick<ProductionTask, 'status' | 'has_confirmed_bom_product'> | null) {
   return task?.status === 'READY' && task.has_confirmed_bom_product === true
 }

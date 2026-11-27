@@ -17,6 +17,10 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'production-workbench', label: '生产负责人工作台', to: { name: 'production-workbench' }, permission: 'production_tasks.view_productiontask' },
       { key: 'production-overview', label: '生产总览', to: { name: 'production-overview' }, permission: 'production_tasks.view_productiontask' },
       { key: 'workshop-workbench', label: '车间主管工作台', to: { name: 'workshop-workbench' }, anyPermissions: ['production_scheduling.view_productionschedule', 'workshop_reporting.view_workreport', 'inventory.view_finishedgoodsreceipt'] },
+      { key: 'purchase-workbench', label: '采购工作台', to: { name: 'purchase-workbench' }, permission: 'procurement.view_purchaseorder' },
+      { key: 'sewing-outsourcing-workbench', label: '车缝外协工作台', to: { name: 'sewing-outsourcing-workbench' }, permission: 'outsourcing.view_outsourcingorder' },
+      { key: 'merchandiser-workbench', label: '跟单工作台', to: { name: 'merchandiser-workbench' }, permission: 'production_tasks.view_productiontask' },
+      { key: 'warehouse-workbench', label: '仓库工作台', to: { name: 'warehouse-workbench' } },
     ],
   },
   {
@@ -72,11 +76,13 @@ export const sidebarMenuItems: MenuItem[] = [
     label: '车间',
     children: [
       { key: 'workshop-scheduling', label: '计划排产', to: { name: 'workshop-scheduling' }, permission: 'production_scheduling.view_productionschedule' },
-      { key: 'workshop-internal-plan', label: '内部计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
+      { key: 'workshop-internal-plan', label: '作业计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-outsourcing', label: '委外加工', to: { name: 'workshop-outsourcing' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource', 'outsourcing.manage_cutpieceprinting'] },
       { key: 'wage-schemes', label: '工价方案', to: { name: 'wage-schemes' }, permission: 'workshop_reporting.view_wagescheme' },
       { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport'] },
-      { key: 'workshop-configuration', label: '生产配置', to: { name: 'workshop-configuration' }, permission: 'workshop_config.view_workshop' },
+      { key: 'workshop-semi-receipt-records', label: '半成品入库记录', to: { name: 'workshop-semi-receipt-records' }, allPermissions: ['production_scheduling.view_productionschedule', 'inventory.view_internalsemifinishedreceipt'] },
+      { key: 'workshop-finished-receipt-records', label: '成品入库记录', to: { name: 'workshop-finished-receipt-records' }, allPermissions: ['production_scheduling.view_productionschedule', 'inventory.view_finishedgoodsreceipt'] },
+      { key: 'workshop-configuration', label: '生产配置', to: { name: 'workshop-configuration' }, anyPermissions: ['workshop_config.view_workshop', 'workshop_config.view_workshopemployee', 'workshop_config.view_operation'] },
     ],
   },
   {

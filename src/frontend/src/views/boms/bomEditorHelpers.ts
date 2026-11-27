@@ -13,6 +13,11 @@ export interface FixedSectionDefinition {
   section_type: BomSectionType
 }
 
+export function selectedSourceLabel(sources: BomLineInput[], key: unknown, fallback: string) {
+  const source = sources.find(line => (line.id || line.client_key) === key)
+  return source ? `${source.part_name} · ${source.specification}` : fallback
+}
+
 export const fixedSectionDefinitions: FixedSectionDefinition[] = [
   { title: '管材类', section_type: 'PROFILE' },
   { title: '五金件', section_type: 'ACCESSORY' },

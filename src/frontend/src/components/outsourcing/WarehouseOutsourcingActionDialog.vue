@@ -69,7 +69,7 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
 </script>
 
 <template>
-  <AppWindowDialog v-if="identityBlocked || !allowed || !ready" :model-value="true" :title="title" :width="720" @update:model-value="close">
+  <AppWindowDialog v-if="identityBlocked || !allowed || !ready" :model-value="true" :title="title" :fullscreen="allowed && !identityBlocked" :width="720" @update:model-value="close">
     <div v-loading="loading" class="action-loading">
       <ElAlert v-if="identityBlocked" title="身份尚未核验或已变化，请核验身份后重新打开。" type="warning" :closable="false" />
       <ElAlert v-else-if="!allowed" title="当前列表未开放此操作，请刷新后核对权限和单据状态。" type="warning" :closable="false" />
@@ -81,7 +81,7 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
   <template v-else>
     <TubeOutsourcingPlanDetail v-if="plan && order" :order="order" warehouse action-only :blocked="loading || Boolean(error)" :entry-action="action" @updated="updatedPlan" @refresh="load" @closed="close()" />
     <TubeOutsourcingDetailView v-else-if="tube && action === 'dispatch'" :order-id="record.id" :entry-action="action" action-only @updated="updated" @closed="close()" />
-    <AppWindowDialog v-else-if="tube" :model-value="true" :title="title" :width="1800" :before-close="closeReceipt" class="warehouse-outsourcing-receipt-dialog" @update:model-value="close">
+    <AppWindowDialog v-else-if="tube" :model-value="true" :title="title" fullscreen :width="1800" :before-close="closeReceipt" class="warehouse-outsourcing-receipt-dialog" @update:model-value="close">
       <TubeCoatingReceiptView ref="receiptView" :order-id="record.id" embedded @updated="updated" @closed="close()" />
     </AppWindowDialog>
     <MetalProcessingP4View v-else-if="metal" :mode="record.record_type === 'REWORK' ? 'rework' : 'original'" :original-order-id="record.record_type === 'REWORK' ? undefined : record.id" :external-order-id="record.record_type === 'REWORK' ? record.id : undefined" :entry-action="action" action-only @updated="updated" @closed="close()" />

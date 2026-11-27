@@ -4,11 +4,11 @@ import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FinishedReceiptRecordsPanel from './FinishedReceiptRecordsPanel.vue'
 
-const api = vi.hoisted(() => ({ records: vi.fn(), detail: vi.fn(), options: vi.fn(), confirm: vi.fn(), remove: vi.fn() }))
+const api = vi.hoisted(() => ({ records: vi.fn(), detail: vi.fn(), options: vi.fn(), placements: vi.fn(), confirm: vi.fn(), remove: vi.fn() }))
 const permissions = vi.hoisted(() => new Set<string>())
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ replace: vi.fn() }) }))
 vi.mock('@/api/finishedReceipts', () => ({ fetchFinishedRecords: api.records, fetchFinishedRecord: api.detail, confirmAssemblyReceiptRecord: api.confirm, deleteAssemblyReceiptRecord: api.remove }))
-vi.mock('@/api/inventory', () => ({ fetchFinishedGoodsFilterOptions: api.options }))
+vi.mock('@/api/inventory', () => ({ fetchFinishedGoodsFilterOptions: api.options, fetchInventoryOptions: api.placements }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, hasPermission: (permission: string) => permissions.has(permission) }) }))
 vi.mock('@/directives/horizontalOverflow', () => ({ vHorizontalOverflow: {} }))
 const wrappers: ReturnType<typeof mount>[] = []
@@ -23,6 +23,24 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('成品入库记录排除样品', () => {
+  it('车间入口仅查询装配入库，保留查看并隐藏仓库操作', async () => {
+    api.records.mockResolvedValue({ items: [{
+      id: 'receipt-1', receipt_number: 'CPRK-001', source_type: 'ASSEMBLY', status: 'PENDING',
+      can_delete: true, received_quantity: 3, unit_name: '套', task_number_snapshot: 'HT-001',
+    }], total: 1 })
+    const wrapper = mount(FinishedReceiptRecordsPanel, {
+      props: { readOnly: true }, global: { plugins: [ElementPlus] },
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('成品入库记录')
+    expect(wrapper.get('tbody').text()).toContain('查看')
+    expect(wrapper.find('[data-testid="confirm-finished-receipt"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="delete-finished-receipt"]').exists()).toBe(false)
+    expect(api.records).toHaveBeenCalledWith(expect.objectContaining({ source: 'ASSEMBLY' }))
+    expect(api.options).not.toHaveBeenCalled()
+  })
+
   it('首次读取和筛选重置都排除样品', async () => {
     const wrapper = mount(FinishedReceiptRecordsPanel, { global: { plugins: [ElementPlus] } })
     wrappers.push(wrapper)
@@ -42,7 +60,7 @@ describe('成品入库记录排除样品', () => {
 describe('成品入库详情数量单位', () => {
   it.each(['张', '个'])('使用记录的%s单位区分数量、整箱和箱位', async unit => {
     api.detail.mockResolvedValue({
-      id: 'receipt-1', receipt_number: 'CPRK-1', source_type: 'PRODUCTION_ORDER',
+      id: 'receipt-1', receipt_number: 'CPRK-1', source_type: 'PRODUCTION_ORDER', task_number_snapshot: 'SC-1',
       unit_name: unit, received_quantity: 2001, quantity_per_box: 4,
       box_count: 500, tail_quantity: 1, occupied_box_slots: 501,
       received_before: 0, received_after: 2001, maximum_receivable: 2100,
@@ -53,6 +71,9 @@ describe('成品入库详情数量单位', () => {
     wrappers.push(wrapper)
     await (wrapper.vm as any).show('receipt-1')
     await flushPromises()
+    expect(wrapper.get('.fg-detail-title b').text()).toBe('SC-1')
+    expect(wrapper.get('.fg-detail-fields dt').text()).toBe('入库单号')
+    expect(wrapper.get('.fg-detail-fields dd').text()).toBe('CPRK-1')
     const summary = wrapper.get('.fg-detail-summary').text()
     expect(summary).toContain(`每箱数量：4 ${unit}/箱`)
     expect(summary).toContain('整箱数：500 箱')
@@ -79,15 +100,38 @@ describe('成品入库详情数量单位', () => {
 })
 
 describe('成品待入库确认', () => {
-  it('显示待入库状态并允许仓管确认', async () => {
-    api.records.mockResolvedValueOnce({ items: [{ id: 'receipt-1', receipt_number: 'CPRK-001', source_type: 'ASSEMBLY', source_type_display: '装配入库', received_quantity: 10, unit_name: '件', status: 'PENDING', task_number_snapshot: 'SC-1', item_number_snapshot: 'P-1', product_code_snapshot: 'PC-1', product_name_snapshot: '产品', specification_snapshot: '', actual_color: '', warehouse_name: '成品仓', zone_name: 'A区', location_number: 'A-01', receipt_date: '2026-10-22' }], total: 1 })
-    const wrapper = mount(FinishedReceiptRecordsPanel, { global: { plugins: [ElementPlus] } })
+  it.each([false, true])('打开待入库单后分配位置并确认（已有库位 %s）', async existing => {
+    api.records.mockResolvedValueOnce({ items: [{ id: 'receipt-1', receipt_number: 'CPRK-001', source_type: 'ASSEMBLY', source_type_display: '装配入库', received_quantity: 30, unit_name: '件', status: 'PENDING', task_number_snapshot: 'SC-1', item_number_snapshot: 'P-1', product_code_snapshot: 'PC-1', product_name_snapshot: '产品', specification_snapshot: '', actual_color: '', warehouse_id: existing ? 'warehouse' : null, zone_id: existing ? 'zone' : null, location_id: existing ? 'location' : null, location_number: existing ? 'A-01' : null, receipt_date: '2026-10-22', etag: '"v1"' }], total: 1 })
+    api.placements.mockResolvedValue({
+      warehouses: [{ id: 'warehouse', warehouse_name: '成品仓', warehouse_type: 'FINISHED', status: 'ACTIVE' }],
+      zones: [{ id: 'zone', warehouse: 'warehouse', zone_name: 'A区', status: 'ACTIVE' }],
+      locations: [{ id: 'location', warehouse_id: 'warehouse', zone: 'zone', location_number: 'A-01', status: 'ACTIVE' }],
+    })
+    const wrapper = mount(FinishedReceiptRecordsPanel, { global: { plugins: [ElementPlus],
+      stubs: { AppWindowDialog: { template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>', props: ['modelValue'] } },
+    } })
     wrappers.push(wrapper)
     await flushPromises()
     expect(wrapper.text()).toContain('待入库')
+    expect(wrapper.findAll('thead th').slice(0, 3).map(cell => cell.text())).toEqual(['生产任务单号', '入库单号', '入库来源'])
+    expect(wrapper.get('tbody td:first-child strong').text()).toBe('SC-1')
+    expect(wrapper.get('tbody td:nth-child(2)').text()).toBe('CPRK-001')
     await wrapper.get('[data-testid="confirm-finished-receipt"]').trigger('click')
     await flushPromises()
-    expect(api.confirm).toHaveBeenCalledWith('receipt-1')
+    expect(api.confirm).not.toHaveBeenCalled()
+    expect(wrapper.get('.fg-placement-facts').text()).toContain('30 件')
+    const selects = wrapper.findAllComponents({ name: 'ElSelect' }).slice(-3)
+    expect(selects.map(select => select.props('modelValue'))).toEqual(existing ? ['warehouse', 'zone', 'location'] : ['', '', ''])
+    if (!existing) {
+      for (const [index, value] of ['warehouse', 'zone', 'location'].entries()) {
+        selects[index]!.vm.$emit('update:modelValue', value)
+        await flushPromises()
+      }
+    }
+    await wrapper.get('[aria-label="每箱数量"]').setValue('10')
+    await wrapper.findAll('button').filter(button => button.text() === '确认入库').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(api.confirm).toHaveBeenCalledExactlyOnceWith('receipt-1', { location_id: 'location', quantity_per_box: 10 }, '"v1"')
   })
 })
 

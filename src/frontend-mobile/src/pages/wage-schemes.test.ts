@@ -7,7 +7,7 @@ import type { SavedWageScheme, WageFormOptions, WageTarget } from '@/types/wageS
 
 const api = vi.hoisted(() => ({
   fetchWageTargets: vi.fn(), fetchWageSubmissions: vi.fn(), fetchWageForm: vi.fn(), fetchWageScheme: vi.fn(),
-  saveWageScheme: vi.fn(), createWageSchemeChange: vi.fn(), submitWageScheme: vi.fn(),
+  saveWageScheme: vi.fn(), createWageSchemeChange: vi.fn(), submitWageScheme: vi.fn(), withdrawWageScheme: vi.fn(),
 }))
 const hasPermission = vi.hoisted(() => vi.fn())
 vi.mock('@/api/wageSchemes', () => api)
@@ -105,6 +105,7 @@ describe('手机工价方案', () => {
     await flushPromises()
     await choose('工序', '切管')
     await wrapper.get('.wage-price input').setValue('0.55')
+    expect(wrapper.get('footer button').text()).toBe('提交')
     await wrapper.get('footer button').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('已提交厂长审批')
@@ -119,6 +120,63 @@ describe('手机工价方案', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('暂无待填工价的生产任务')
     expect(wrapper.find('.wage-target').exists()).toBe(false)
+  })
+
+  it('待审批工价点修改后带回原明细，提交更新同一张申请', async () => {
+    const line: SavedWageScheme['lines'][number] = {
+      work_item_id: 'work-cut', counting_mode: 'PIECE', operation_name: '切管',
+      bom_component_identity: 'part-identity', craft_id: 'craft', display_name: '前脚管', operation_id: 'cut',
+      declared_price: '0.5500', previous_price: null, revised_price: null, production_description: '', status: 'ACTIVE', note: '',
+    }
+    const pendingRecord = { data: { ...pending, can_withdraw: true, lines: [line] }, etag: 'pending-v2' }
+    const editable = { data: { ...draft, lines: [line] }, etag: 'draft-v3' }
+    const updated = { data: { ...draft, lines: [{ ...line, declared_price: '0.62' }] }, etag: 'draft-v4' }
+    const editTarget: WageTarget = { ...target, scheme: {
+      id: draft.id, number: draft.scheme_number, status: 'DRAFT', status_display: '草稿',
+      can_edit: true, can_change: false, is_change: false,
+    } }
+    api.fetchWageSubmissions.mockResolvedValueOnce({ data: [{
+      ...submittedRecord, can_withdraw: true, schedule_product_id: target.schedule_product_id,
+      scope_craft: { id: target.craft_id, name: target.craft_name },
+    }] })
+    api.fetchWageTargets
+      .mockResolvedValueOnce({ data: [target] })
+      .mockResolvedValueOnce({ data: [editTarget] })
+    api.fetchWageForm.mockResolvedValueOnce({ ...form, target: editTarget })
+    api.fetchWageScheme.mockResolvedValueOnce(pendingRecord).mockResolvedValueOnce(editable)
+    api.withdrawWageScheme.mockResolvedValueOnce(editable)
+    api.saveWageScheme.mockResolvedValueOnce(updated)
+
+    await openPage()
+    await wrapper.get('.wage-tabs button:last-child').trigger('click')
+    await flushPromises()
+    const action = wrapper.get('.wage-submission-actions button:last-child')
+    expect(action.text()).toBe('修改')
+    await action.trigger('click')
+    await flushPromises()
+    expect(api.withdrawWageScheme).toHaveBeenCalledExactlyOnceWith(pendingRecord)
+    const original = wrapper.get('.wage-line-brief')
+    expect(original.text()).toContain('0.5500 元/次')
+    await original.trigger('click')
+    await wrapper.get('.wage-price input').setValue('0.62')
+    await wrapper.get('footer button').trigger('click')
+    await flushPromises()
+    expect(api.saveWageScheme).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      lines: [expect.objectContaining({ declared_price: '0.62', work_item_id: 'work-cut' })],
+    }), editable)
+    expect(api.submitWageScheme).toHaveBeenCalledExactlyOnceWith(updated)
+    expect(wrapper.text()).toContain('待厂长审批')
+  })
+
+  it('新建裁剪工价显示每套工价', async () => {
+    api.fetchWageForm.mockResolvedValueOnce({
+      ...form, plan_category: 'CUTTING', requires_product_name: true,
+      operations: [{ ...form.operations[0], product_name: '整套方案' }],
+    })
+    await openPage()
+    await openForm()
+    expect(wrapper.get('.wage-price').text()).toContain('每套工价')
+    expect(wrapper.get('.wage-price').text()).toContain('元/套')
   })
 
   it('从报工跳转时打开对应工艺的工价表单', async () => {
@@ -204,7 +262,7 @@ describe('手机工价方案', () => {
     expect(wrapper.text()).toContain('待厂长审批')
   })
 
-  it('品名、部位和工序都能从底部选项点选，取消更换品名后保留已填内容', async () => {
+  it('选工价方案后铺出工序，部位可点选，取消更换方案后保留已填内容', async () => {
     api.fetchWageForm.mockResolvedValueOnce({
       ...form,
       requires_product_name: true,
@@ -216,21 +274,21 @@ describe('手机工价方案', () => {
     })
     await openPage()
     await openForm()
-    await choose('工序品名', '椅架')
+    await choose('工价方案', '椅架')
+    expect(wrapper.findAll('.wage-line-heading h3').map(heading => heading.text())).toEqual(['切管', '弯管'])
     await choose('部位', '扶手（资料待补）')
     expect(wrapper.text()).toContain('请补录扶手用量')
     await choose('部位', '前脚管')
-    await choose('工序', '切管')
     await wrapper.get('.wage-price input').setValue('0.80')
     await choiceTrigger('部位').trigger('click')
     expect(picker('部位').get('button[aria-pressed="true"]').text()).toBe('前脚管')
     await picker('部位').get('.wage-picker-close').trigger('click')
     expect(choiceTrigger('部位').attributes('aria-expanded')).toBe('false')
-    await choose('工序品名', '靠背架')
+    await choose('工价方案', '靠背架')
     await new DOMWrapper(document.body).get('.van-dialog__cancel').trigger('click')
     await flushPromises()
-    expect(choiceTrigger('工序品名').text()).toContain('椅架')
-    expect(choiceTrigger('工序').text()).toContain('切管')
+    expect(choiceTrigger('工价方案').text()).toContain('椅架')
+    expect(wrapper.get('.wage-line-heading h3').text()).toBe('切管')
     expect((wrapper.get('.wage-price input').element as HTMLInputElement).value).toBe('0.80')
   })
 

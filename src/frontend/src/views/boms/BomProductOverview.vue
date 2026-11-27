@@ -21,6 +21,7 @@ function number(value: string | number | null | undefined) {
       <section>
         <h3>基本信息</h3>
         <dl>
+          <div><dt>生产任务单号</dt><dd><strong>{{ bom.production_task_number || '—' }}</strong></dd></div>
           <div><dt>BOM 编号</dt><dd>{{ bom.bom_number }}</dd></div>
           <div><dt>订单号</dt><dd>{{ bom.order_number || '—' }}</dd></div>
           <div><dt>产品编号</dt><dd>{{ bom.product_code_snapshot || bom.product_number_snapshot || '—' }}</dd></div>

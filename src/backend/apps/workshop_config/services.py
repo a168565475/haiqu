@@ -4,8 +4,10 @@ from uuid import uuid4
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 
+from apps.access_control.resource_scopes import require_workshop
+from apps.access_control.sales_policy import has_permission
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
@@ -62,8 +64,7 @@ def _object_type(instance):
     }[type(instance)]
 
 
-@transaction.atomic
-def create_config(*, model_class, validated_data, actor_employee, request=None):
+def _save_new_config(*, model_class, validated_data, actor_employee, request):
     if model_class is Operation and not validated_data.get("operation_number"):
         validated_data = {**validated_data, "operation_number": _next_operation_number()}
     instance = model_class(
@@ -82,6 +83,44 @@ def create_config(*, model_class, validated_data, actor_employee, request=None):
         request=request,
     )
     return instance
+
+
+@transaction.atomic
+def create_config(*, model_class, validated_data, actor_employee, request=None):
+    if model_class is Operation and request is not None:
+        require_workshop(request, "workshop_config.add_operation", validated_data["craft"].workshop_id)
+    return _save_new_config(
+        model_class=model_class, validated_data=validated_data, actor_employee=actor_employee, request=request,
+    )
+
+
+@transaction.atomic
+def copy_operation_scheme(*, craft, source_name, target_name, actor_employee, request):
+    if not has_permission(request, "workshop_config.view_operation"):
+        raise PermissionDenied("当前账号无权查看工序方案。")
+    craft = Craft.objects.select_for_update().get(pk=craft.pk)
+    require_workshop(request, "workshop_config.view_operation", craft.workshop_id)
+    require_workshop(request, "workshop_config.add_operation", craft.workshop_id)
+    if craft.status != RecordStatus.ACTIVE:
+        raise Conflict("该工艺已停用，请刷新后重试。")
+    operations = Operation.objects.filter(craft=craft)
+    source_rows = list(operations.filter(product_name=source_name))
+    if not source_rows:
+        raise NotFound("原方案不存在。")
+    if operations.filter(product_name=target_name).exists():
+        raise Conflict("新方案名称已存在，请换一个名称。")
+
+    for row in source_rows:
+        _save_new_config(
+            model_class=Operation,
+            validated_data={
+                "craft": craft, "product_name": target_name, "name": row.name,
+                "reporting_unit_id": row.reporting_unit_id, "status": row.status,
+            },
+            actor_employee=actor_employee,
+            request=request,
+        )
+    return len(source_rows)
 
 
 def _enforce_disable_gate(instance, validated_data):
@@ -111,6 +150,11 @@ def _enforce_disable_gate(instance, validated_data):
 def update_config(*, model_class, instance_id, validated_data, actor_employee, request):
     instance = model_class.objects.select_for_update().get(pk=instance_id)
     require_matching_etag(request, instance)
+    if isinstance(instance, Operation):
+        permission = "workshop_config.change_operation"
+        require_workshop(request, permission, instance.craft.workshop_id)
+        if craft := validated_data.get("craft"):
+            require_workshop(request, permission, craft.workshop_id)
     _enforce_disable_gate(instance, validated_data)
     before_data = _snapshot(instance)
     for field_name, value in validated_data.items():

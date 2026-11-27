@@ -92,6 +92,52 @@ afterEach(async () => {
 })
 
 describe('手机报工页面', () => {
+  it('裁片做齐后按套报工，显示套数和每套工价', async () => {
+    api.scheme.mockResolvedValueOnce({
+      ...reportingScheme,
+      lines: [{ ...reportingScheme.lines[0], cutting_components: [
+        { component_identity: 'front', name: '床面', quantity_per_group: 1, unit: '片' },
+        { component_identity: 'side', name: '侧片', quantity_per_group: 2, unit: '片' },
+      ] }],
+    })
+    const view = await openPage({ ...query, plan_category: 'CUTTING' })
+    expect(view.get('.report-quantity').text()).toContain('本次套数')
+    expect(view.get('.report-quantity-unit').text()).toBe('套')
+    expect(view.get('.report-entry').text()).toContain('全部做齐才算 1 套')
+    expect(view.get('.report-line-details').text()).toContain('元 / 套')
+  })
+
+  it('装配沿用整组员工和线别，合计超 20 次时保留输入', async () => {
+    api.scheme.mockResolvedValueOnce({
+      ...reportingScheme,
+      lines: [{ ...reportingScheme.lines[0], cumulative_quantity: '0.0000', declared_price: '2.0000',
+        last_employees: [{ workshop_employee_id: 'worker-a', production_line: 1 }, { workshop_employee_id: 'worker-b', production_line: 2 }],
+      }],
+    })
+    const view = await openPage({ ...query, plan_category: 'ASSEMBLY' })
+    expect(view.findAll('.report-entry')).toHaveLength(1)
+    expect(view.findAll<HTMLInputElement>('.report-choice input').map(input => input.element.value)).toEqual(['测试员工甲', '测试员工乙'])
+    expect(view.findAllComponents(RadioGroup).map(component => component.props('modelValue'))).toEqual([1, 2])
+    expect(view.findAll<HTMLInputElement>('.report-quantity input').map(input => input.element.value)).toEqual(['', ''])
+    expect(view.get('.report-submit-count').text()).toContain('0')
+    await fillQuantity(view, 0, '60')
+    await fillQuantity(view, 1, '60')
+    await clickButton(view, '提交报工')
+    expect(view.text()).toContain('2 人合计 120 次')
+    expect(view.text()).toContain('超出 20 次')
+    expect(view.findAll<HTMLInputElement>('.report-quantity input').map(input => input.element.value)).toEqual(['60', '60'])
+    expect(api.create).not.toHaveBeenCalled()
+    await fillQuantity(view, 1, '40')
+    expect(view.text()).toContain('2 人合计 100 次')
+    expect(view.text()).toContain('本人工费 120.00 元')
+    expect(view.text()).toContain('本人工费 80.00 元')
+    await clickButton(view, '提交报工')
+    expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ lines: [
+      { scheme_line_id: 'line', workshop_employee_id: 'worker-a', production_line: 1, quantity: '60' },
+      { scheme_line_id: 'line', workshop_employee_id: 'worker-b', production_line: 2, quantity: '40' },
+    ] }))
+  })
+
   it('成功后只合并本次员工，换版按工作项恢复员工且次数仍为空', async () => {
     localStorage.setItem(memoryKey(), JSON.stringify({ 'work-two': 'worker-b', 'old-work': 'worker-a' }))
     api.scheme.mockResolvedValueOnce(structuredClone(multipleOperations))

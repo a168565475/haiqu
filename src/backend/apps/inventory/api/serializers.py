@@ -140,12 +140,12 @@ class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.supplier_name", allow_null=True, read_only=True)
     unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
     unit_name = serializers.CharField(source="unit.unit_name", read_only=True)
-    warehouse_id = serializers.UUIDField(source="location.zone.warehouse_id", read_only=True)
-    warehouse_number = serializers.CharField(source="location.zone.warehouse.warehouse_number", read_only=True)
-    warehouse_name = serializers.CharField(source="location.zone.warehouse.warehouse_name", read_only=True)
-    zone_id = serializers.UUIDField(source="location.zone_id", read_only=True)
-    zone_name = serializers.CharField(source="location.zone.zone_name", read_only=True)
-    location_number = serializers.CharField(source="location.location_number", read_only=True)
+    warehouse_id = serializers.UUIDField(source="location.zone.warehouse_id", allow_null=True, read_only=True)
+    warehouse_number = serializers.CharField(source="location.zone.warehouse.warehouse_number", allow_null=True, read_only=True)
+    warehouse_name = serializers.CharField(source="location.zone.warehouse.warehouse_name", allow_null=True, read_only=True)
+    zone_id = serializers.UUIDField(source="location.zone_id", allow_null=True, read_only=True)
+    zone_name = serializers.CharField(source="location.zone.zone_name", allow_null=True, read_only=True)
+    location_number = serializers.CharField(source="location.location_number", allow_null=True, read_only=True)
     received_by_name = serializers.CharField(source="received_by_employee.display_name", read_only=True)
     submitted_by_name = serializers.CharField(source="submitted_by_employee.display_name", allow_null=True, read_only=True)
     confirmed_by_name = serializers.CharField(source="confirmed_by_employee.display_name", allow_null=True, read_only=True)
@@ -498,6 +498,7 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     material_section_display = serializers.CharField(read_only=True)
     purchase_order_number = serializers.CharField(source="purchase_order.order_number", read_only=True, allow_null=True)
+    sample_number = serializers.CharField(source="purchase_order.sample_number_snapshot", read_only=True, default="")
     total_received_quantity = serializers.SerializerMethodField()
     total_return_quantity = serializers.SerializerMethodField()
     total_accepted_quantity = serializers.SerializerMethodField()
@@ -512,7 +513,7 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
         model = MaterialInbound
         fields = [
             "id", "inbound_number", "source_type", "source_type_display", "purchase_order_id", "purchase_order_number", "inbound_date",
-            "material_section", "material_section_display",
+            "material_section", "material_section_display", "sample_number",
             "status", "status_display", "remark", "received_by_name", "quality_confirmed_by_name",
             "quality_confirmed_at", "total_received_quantity", "total_return_quantity",
             "total_accepted_quantity", "total_received_weight_kg", "total_return_weight_kg", "total_accepted_weight_kg",

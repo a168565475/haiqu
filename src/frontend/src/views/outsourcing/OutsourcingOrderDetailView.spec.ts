@@ -45,6 +45,9 @@ describe('原外发详情的直接交接展示及保护', () => {
   it('跟单查看关联外发详情后返回生产任务，不跳独立委外列表', async () => {
     auth.followed = true
     const wrapper = await createView({ ...structuredClone(baseDetail), direct_handoff: false })
+    const fields = wrapper.findAll('.order-basic-grid > div')
+    expect(fields.slice(0, 2).map(field => field.get('dt').text())).toEqual(['任务单号', '外发单号'])
+    expect(fields[0]!.get('dd strong').text()).toBe(baseDetail.production_task_number)
     await wrapper.findAll('button').find(button => button.text() === '返回生产任务')!.trigger('click')
     expect(api.push).toHaveBeenCalledWith({ name: 'production-task-detail', params: { taskId: 'task-1' } })
   })

@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { router as applicationRouter } from '@/router'
 import { useAuthStore } from '@/stores/auth'
+import type { AccessScope } from '@/types/access'
 import { createPageTab } from '@/utils/pageTabs'
 import AppSidebar from './AppSidebar.vue'
 
@@ -36,22 +37,23 @@ const settingsEntries = [
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
-  workbench: ['production-workbench', 'production-overview', 'workshop-workbench'],
+  workbench: ['production-workbench', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench'],
   'customer-management': ['customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'analytics'],
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
-  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
+  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
 
-const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
+const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
+  'workshop-semi-receipt-records', 'workshop-finished-receipt-records',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
@@ -136,7 +138,7 @@ describe('全局悬停侧栏', () => {
     }
   })
 
-  it('各组真实二级菜单完整渲染对应图标，待开放项也保留图形', async () => {
+  it('各组二级菜单按实际顺序渲染，已确认的图标完整显示', async () => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, permissions: [...auth.user!.permissions,
       'product_catalog.view_productcatalog', 'material_catalog.view_materialcatalog'] }
@@ -209,9 +211,7 @@ describe('全局悬停侧栏', () => {
     const { router } = await setup()
     await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().find(`[data-menu-key="${missingKey}"]`).exists()).toBe(false)
-    expect(panel().findAll('a, button, [tabindex]').map(item => item.attributes('data-menu-key'))).toEqual([
-      'finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing',
-    ])
+    expect(panel().findAll('a, button, [tabindex]').map(item => item.attributes('data-menu-key'))).toEqual(secondaryIconKeys['warehouse-management'])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
     const plate = panel().get('[data-sidebar-hover-plate]')
     await panel().get('[data-menu-key="material-inventory"]').trigger('mouseenter')
@@ -297,7 +297,7 @@ describe('全局悬停侧栏', () => {
   it('管理员工作台分组隐藏主管与业务员版，保留生产入口', async () => {
     const { router } = await setup()
     await wrapper.get('[data-menu-key="workbench"]').trigger('click')
-    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['生产负责人工作台', '生产总览', '车间主管工作台'])
+    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['生产负责人工作台', '生产总览', '车间主管工作台', '采购工作台', '车缝外协工作台', '跟单工作台', '仓库工作台'])
     await panel().get('[data-menu-key="production-overview"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('production-overview')
@@ -323,6 +323,8 @@ describe('全局悬停侧栏', () => {
   it.each([
     ['production_tasks.view_productiontask', ['production-workbench', 'production-overview']],
     ['workshop_reporting.view_workreport', ['workshop-workbench']],
+    ['procurement.view_purchaseorder', ['purchase-workbench']],
+    ['outsourcing.view_outsourcingorder', ['sewing-outsourcing-workbench']],
   ])('生产入口按源模块权限展示：%s', async (permission, expected) => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, is_superuser: false, permissions: [permission] }
@@ -494,9 +496,45 @@ describe('全局悬停侧栏', () => {
     await setup()
     await group('workshop').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '计划排产', '内部计划', '委外加工', '工价方案', '报工记录', '生产配置',
+      '计划排产', '作业计划', '委外加工', '工价方案', '报工记录', '半成品入库记录', '成品入库记录', '生产配置',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('workshop-scheduling')
+  })
+
+  it.each<{
+    scopes: AccessScope[]; unrestricted?: boolean; warehouseDuty?: boolean
+    showScheduling: boolean; showWarehouse: boolean
+  }>([
+    { scopes: ['WORKSHOP'], showScheduling: false, showWarehouse: false },
+    { scopes: ['MODULE'], showScheduling: true, showWarehouse: true },
+    { scopes: ['MODULE', 'WORKSHOP'], showScheduling: true, showWarehouse: true },
+    { scopes: ['WORKSHOP'], unrestricted: true, showScheduling: true, showWarehouse: true },
+    { scopes: ['WORKSHOP'], warehouseDuty: true, showScheduling: false, showWarehouse: true },
+  ])('车间侧栏按授权展示入口（显示排产 $showScheduling，显示仓库 $showWarehouse）', async ({
+    scopes, unrestricted, warehouseDuty, showScheduling, showWarehouse,
+  }) => {
+    const { auth, router } = await setup()
+    const permission = 'production_scheduling.view_productionschedule'
+    auth.user = { ...auth.user!, is_superuser: false,
+      permissions: [permission, 'workshop_reporting.view_workreport', 'material_issues.view_materialissue',
+        'inventory.view_internalsemifinishedreceipt',
+        ...(unrestricted ? ['production_scheduling.view_all_productionschedule'] : []),
+        ...(warehouseDuty ? ['inventory.receive_material'] : [])],
+      effective_access: { active: true, is_superuser: false, roles: [],
+        actions: { [permission]: { scopes, sources: [] } }, legacy_sources: [], version: 'test' },
+    }
+    await router.push('/home')
+    expect(wrapper.find('[data-menu-key="warehouse-management"]').exists()).toBe(showWarehouse)
+    await group('workshop').trigger('click')
+    expect(panel().find('[data-menu-key="workshop-scheduling"]').exists()).toBe(showScheduling)
+    expect(panel().find('[data-menu-key="work-report-days"]').exists()).toBe(true)
+    expect(panel().find('[data-menu-key="workshop-semi-receipt-records"]').exists()).toBe(true)
+    expect(panel().find('[data-menu-key="workshop-finished-receipt-records"]').exists()).toBe(false)
+    const plan = panel().get('[data-menu-key="workshop-internal-plan"]')
+    expect(plan.get('.app-sidebar__flyout-label').text()).toBe('作业计划')
+    await plan.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
   })
 
   it('仓库菜单中车间领料的下一项可直接打开车间入库记录', async () => {
@@ -505,6 +543,9 @@ describe('全局悬停侧栏', () => {
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
       '成品库存', '材料库存', '材料收发', '采购入库', '入库记录', '退货明细', '车间领料', '车间入库', '委外管理',
     ])
+    const inboundIcon = panel().get('[data-menu-key="purchase-receipt-records"] svg')
+    expect(inboundIcon.find('rect').exists()).toBe(true)
+    expect(inboundIcon.find('path.accent').exists()).toBe(true)
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
     await panel().get('[data-menu-key="semi-receipt-records"]').trigger('click')
     await flushPromises()
@@ -563,7 +604,7 @@ describe('全局悬停侧栏', () => {
     await advance(100)
     expect(panel().isVisible()).toBe(true)
     expect(panel().attributes('data-flyout-menu-key')).toBe('workshop-management')
-    expect(panel().findAll('[data-menu-key]')).toHaveLength(6)
+    expect(panel().findAll('[data-menu-key]')).toHaveLength(secondaryIconKeys['workshop-management']!.length)
   })
 
   it('跨入二级栏取消关闭，离开整个导航后收起', async () => {

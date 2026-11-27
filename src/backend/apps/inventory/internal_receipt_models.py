@@ -31,7 +31,7 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
                                        related_name='internal_semi_receipts')
     plan_category = models.CharField(max_length=20, choices=[('METAL','金工'),('CUTTING','裁剪'),('SEWING','车缝')])
     receipt_date = models.DateField()
-    zone = models.ForeignKey('inventory.WarehouseZone', on_delete=models.PROTECT,
+    zone = models.ForeignKey('inventory.WarehouseZone', null=True, blank=True, on_delete=models.PROTECT,
                             related_name='internal_semi_receipts')
     actor_employee = models.ForeignKey('organizations.Employee', on_delete=models.PROTECT,
                                       related_name='internal_semi_receipts')
@@ -57,7 +57,10 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
         constraints = [models.CheckConstraint(condition=Q(plan_category__in=['METAL','CUTTING','SEWING']),
                                                name='inv_internal_receipt_stage'),
                        models.CheckConstraint(condition=Q(status__in=InternalReceiptStatus.values),
-                                               name='inv_internal_receipt_status')]
+                                               name='inv_internal_receipt_status'),
+                       models.CheckConstraint(
+                           condition=Q(zone__isnull=False) | Q(status=InternalReceiptStatus.PENDING),
+                           name='inv_internal_receipt_zone_required')]
         indexes = [models.Index(fields=['schedule_product','plan_category'],name='inv_int_receipt_plan'),
                    models.Index(fields=['-receipt_date','-id'],name='inv_int_receipt_date')]
 

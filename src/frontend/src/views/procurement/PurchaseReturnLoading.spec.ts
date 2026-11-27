@@ -34,12 +34,17 @@ describe('退货明细加载与搜索', () => {
       { id: 'line-2', part_name: '扣件', specification: '扣件', material: '尼龙',
         material_attributes_snapshot: { fields: [{ key: 'size', label: '尺寸', value: '30 mm' }] } },
     ]
-    vi.mocked(api.fetchPurchaseReturns).mockResolvedValue({ data: [{ ...record, lines }], meta: { total: 1 } } as never)
+    vi.mocked(api.fetchPurchaseReturns).mockResolvedValue({
+      data: [{ ...record, sample_number: 'DY01', order_number: 'CG01', inbound_number: 'RK01', lines }],
+      meta: { total: 1 },
+    } as never)
     const wrapper = mountTable(PurchaseReturnListView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
     try {
       await flushPromises()
       const headers = wrapper.findAll('thead th').map(cell => cell.text())
       const cells = wrapper.get('tbody tr').findAll('td')
+      expect(cells.slice(0, 4).map(cell => cell.text())).toEqual(['DY01', 'TH01', 'CG01', 'RK01'])
+      expect(cells[0]!.get('strong').text()).toBe('DY01')
       const names = cells[headers.indexOf('品名')]!.findAll('.bom-attributes-anchor')
       expect(names.map(name => name.text())).toEqual(['螺钉', '扣件'])
       expect(cells[headers.indexOf('规格')]!.text()).toBe('M6、尺寸 30 mm / 材质 尼龙')

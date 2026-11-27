@@ -20,7 +20,7 @@ export interface ReceiptPreview {
   excluded: string[]; zones: { id: string; warehouse: string; name: string }[]
 }
 export interface ReceiptPayload {
-  request_id: string; schedule_product_id: string; plan_category: 'METAL' | 'CUTTING' | 'SEWING'; zone_id: string
+  request_id: string; schedule_product_id: string; plan_category: 'METAL' | 'CUTTING' | 'SEWING'; zone_id?: string
   receipt_date: string; remark: string; lines: { bom_line_id: string; quantity: string }[]
 }
 export interface SemiReceiptLine extends ProcessingMaterialPair {
@@ -39,6 +39,8 @@ export interface SemiReceiptRecord extends ProcessingMaterialPair {
   submitted_by?: string; submitted_at?: string | null; confirmed_by?: string; confirmed_at?: string | null
   stock_movement_id?: string | null
   receipt_id?: string; etag?: string; can_delete?: boolean
+  plan_category?: ReceiptPayload['plan_category']; zone_id?: string | null
+  zones?: { id: string; warehouse_id: string; warehouse: string; name: string }[]
 }
 
 export interface InternalReceiptResult {

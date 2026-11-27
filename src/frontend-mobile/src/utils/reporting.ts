@@ -56,6 +56,10 @@ export function remainingQuantity(line: ReportingSchemeLine | undefined): string
   return quantityText(fromScaled(required > cumulative ? required - cumulative : 0n))
 }
 
+export function reportEntryTotal(rows: ReportEntry[]) {
+  return rows.reduce((total, row) => /^\d{1,14}$/.test(row.quantity) ? total + BigInt(row.quantity) : total, 0n)
+}
+
 export function estimatedLineAmount(line: ReportingSchemeLine | undefined, quantity: string): string {
   const price = scaledDecimal(line?.declared_price)
   if (price === null || !/^\d{1,14}$/.test(quantity)) return '—'
@@ -95,9 +99,11 @@ export function validateReportEntries(scheme: ReportingScheme, entries: ReportEn
   for (const row of entries) {
     const line = activeLines.find(item => item.id === row.scheme_line_id)
     if (!line) continue
-    const remaining = scaledDecimal(line.required_quantity)! - scaledDecimal(line.cumulative_quantity)!
-    if ((totals.get(line.work_item_id) ?? 0n) > remaining) {
-      result.rows[row.key] = { ...result.rows[row.key], quantity: `同一工序本次合计超过剩余次数，最多可报 ${remainingQuantity(line)}。` }
+    const available = scaledDecimal(line.required_quantity)! - scaledDecimal(line.cumulative_quantity)!
+    const remaining = available > 0n ? available : 0n
+    const total = totals.get(line.work_item_id) ?? 0n
+    if (total > remaining) {
+      result.rows[row.key] = { ...result.rows[row.key], quantity: `同一工序本次合计 ${quantityText(fromScaled(total))} 次，最多可报 ${remainingQuantity(line)}，超出 ${quantityText(fromScaled(total - remaining))} 次。` }
     }
   }
   result.completesPlan = !Object.keys(result.rows).length && activeLines.every(line => (

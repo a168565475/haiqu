@@ -1,5 +1,5 @@
-import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElPagination, ElSelect } from 'element-plus'
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import ElementPlus, { ElOption, ElPagination, ElSelect } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 
@@ -7,10 +7,14 @@ import WorkReportDayListView from './WorkReportDayListView.vue'
 
 enableAutoUnmount(afterEach)
 
-const api = vi.hoisted(() => ({ context: vi.fn(), list: vi.fn(), detail: vi.fn(), records: vi.fn(), tasks: vi.fn() }))
+const api = vi.hoisted(() => ({ context: vi.fn(), list: vi.fn(), detail: vi.fn(), records: vi.fn(), tasks: vi.fn(), products: vi.fn(), workshops: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 const auth = vi.hoisted(() => ({
-  user: { is_superuser: true, permissions: [] as string[] },
+  user: { is_superuser: true, permissions: [] } as {
+    is_superuser: boolean
+    permissions: string[]
+    effective_access?: { roles: { code: string }[] }
+  },
   hasPermission: vi.fn((permission: string) => auth.user.permissions.includes(permission)),
 }))
 const route = reactive({ query: {} as Record<string, string | string[]> })
@@ -21,7 +25,9 @@ vi.mock('@/api/workshopReporting', () => ({
   fetchWorkReportDay: api.detail,
   fetchWorkReportDays: api.list,
   fetchWorkReports: api.records,
-  fetchWorkReportTasks: api.tasks,
+  fetchWorkReportTaskOptions: api.tasks,
+  fetchWorkReportProductOptions: api.products,
+  fetchWorkReportWorkshops: api.workshops,
 }))
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => auth,
@@ -51,6 +57,15 @@ const secondReport = { ...report, id: 'report-2', report_number: 'BG-202609-0000
 const recordsResponse = (data = [report, secondReport], page = 1, total = data.length) => ({
   data, meta: { page, page_size: 20, total, total_pages: Math.ceil(total / 20) },
 })
+const workshopRows = [{ id: 'workshop-1', name: '金工车间' }, { id: 'workshop-2', name: '装配车间' }]
+const tasks = [{ id: 'task-1', task_number: 'HT26050' }, { id: 'task-2', task_number: 'HT26170' }]
+const products = [
+  { id: 'line-1', production_task_id: 'task-1', task_number: 'HT26050', name: '六边形围炉桌', code: 'HTC-001B', number: 'P020' },
+  { id: 'line-2', production_task_id: 'task-2', task_number: 'HT26170', name: '靠背椅', code: 'CHAIR-CODE', number: 'P021' },
+]
+const filterSelect = (wrapper: VueWrapper, name: string) => wrapper.findAllComponents(ElSelect)
+  .find(select => select.attributes('data-testid') === `work-report-${name}-filter`)!
+const button = (wrapper: VueWrapper, label: string) => wrapper.findAll('button').find(item => item.text() === label)!
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -60,23 +75,22 @@ beforeEach(() => {
   router.replace.mockImplementation(async (location: { query?: Record<string, string> }) => {
     route.query = location.query || {}
   })
-  api.tasks.mockResolvedValue({
-    data: [{ id: 'task-1', task_number: 'HT26050', order_number: 'SO-202609-000076', workshops: [{ id: 'workshop-1', name: '金工车间' }, { id: 'workshop-2', name: '裁剪车间' }] }],
-    meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
-  })
+  api.tasks.mockResolvedValue(tasks)
+  api.products.mockResolvedValue(products)
+  api.workshops.mockResolvedValue(workshopRows)
   api.context.mockResolvedValue({
     schedule_product: {
       id: 'schedule-product-1', product_line_id: 'line-1', production_task_id: 'task-1',
       task_number: 'HT26050', order_number: 'SO-202609-000076',
-      product_name: '六边形围炉桌', product_number: 'FLOW260917-P020',
+      product_name: '六边形围炉桌', product_number: 'FLOW260917-P020', product_code: 'HTC-001B',
       product_specification: '标准款', product_color: '黑色', planned_quantity: '350',
       order_quantity: '350', unit_name: '件',
     },
     schedule_products: [],
-    workshops: [{ id: 'workshop-1', name: '金工车间' }, { id: 'workshop-2', name: '裁剪车间' }],
+    workshops: workshopRows,
     crafts: [
       { id: 'craft-1', name: '管材加工', workshop_id: 'workshop-1', plan_category: 'METAL' },
-      { id: 'craft-2', name: '裁剪', workshop_id: 'workshop-2', plan_category: 'CUTTING' },
+      { id: 'craft-2', name: '装配', workshop_id: 'workshop-2', plan_category: 'ASSEMBLY' },
     ],
     operations: [], bom_items: [], employees: [],
   })
@@ -113,36 +127,33 @@ it('按实际报工次数分页，只读取当前页且翻页立即清空旧明�
     wrapper.unmount()
 })
 
-it('没有上下文时弹窗选择任务和车间，取消后可重新选择', async () => {
-    route.query = {}
-    const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
-    await flushPromises()
+it('从报工菜单直接加载记录，并显示两个可搜索的多选框', async () => {
+  route.query = {}
+  const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
 
-    expect(router.replace).not.toHaveBeenCalled()
-    expect(api.context).not.toHaveBeenCalled()
-    expect(api.records).not.toHaveBeenCalled()
-    expect(api.tasks).toHaveBeenCalled()
-    const selector = wrapper.findComponent({ name: 'WorkReportTaskSelectDialog' })
-    expect(selector.props('modelValue')).toBe(true)
-    selector.vm.$emit('update:modelValue', false)
-    await flushPromises()
-    expect(wrapper.text()).toContain('请先选择生产任务单和车间')
-    await wrapper.find('[data-testid="work-report-select-task"]').trigger('click')
-    expect(selector.props('modelValue')).toBe(true)
-    wrapper.unmount()
+  expect(router.replace).not.toHaveBeenCalled()
+  expect(api.context).not.toHaveBeenCalled()
+  expect(api.records).toHaveBeenCalledWith(expect.objectContaining({ workshop_id: 'workshop-1' }))
+  expect(api.tasks).not.toHaveBeenCalled()
+  expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  for (const name of ['task', 'product']) {
+    expect(filterSelect(wrapper, name).props()).toMatchObject({ multiple: true, filterable: true, remote: true })
+  }
+  expect(wrapper.find('.wr-report-context').text()).not.toContain('生产订单：')
 })
 
 it('按任务和车间读取全部产品，不显示新增入口，每条保存记录标注产品', async () => {
   route.query = { production_task_id: 'task-1', workshop_id: 'workshop-1' }
   const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  expect(api.tasks).toHaveBeenCalledWith(expect.objectContaining({ production_task_id: 'task-1' }))
+  expect(api.tasks).toHaveBeenCalledWith(expect.objectContaining({ production_task_ids: ['task-1'] }))
   expect(api.context).not.toHaveBeenCalled()
   expect(api.records).toHaveBeenCalledWith(expect.objectContaining({ production_task_id: 'task-1', workshop_id: 'workshop-1' }))
   expect(api.list).not.toHaveBeenCalled()
   expect(api.detail).not.toHaveBeenCalled()
   expect(wrapper.find('.wr-report-records__create').exists()).toBe(false)
-  expect(wrapper.find('.wr-report-context').text()).toContain('全部产品')
+  expect(filterSelect(wrapper, 'product').props('modelValue')).toEqual([])
   expect(wrapper.find('.wr-report-group__header').text()).toContain('六边形围炉桌')
   expect(wrapper.find('.wr-report-group__header').text()).toMatch(/HTC-001B\s*生产日期：2026-09-28/)
   expect(wrapper.find('.wr-report-group__header').text()).not.toContain(report.report_number)
@@ -156,35 +167,77 @@ it('按任务和车间读取全部产品，不显示新增入口，每条保存�
   wrapper.unmount()
 })
 
-it('选择任务后通过任务和车间路由进入，不附带任意排产产品', async () => {
+it('搜索任务及产品编码，应用时发送多选，取消任务后移除不再关联的产品', async () => {
   route.query = {}
   const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  wrapper.findComponent({ name: 'WorkReportTaskSelectDialog' }).vm.$emit('select', { productionTaskId: 'task-1', workshopId: 'workshop-2' })
+
+  const task = filterSelect(wrapper, 'task')
+  const product = filterSelect(wrapper, 'product')
+  task.props('remoteMethod')!('HT26')
   await flushPromises()
-  expect(router.replace).toHaveBeenCalledWith({ name: 'work-report-days', query: { production_task_id: 'task-1', workshop_id: 'workshop-2' } })
-  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ production_task_id: 'task-1', workshop_id: 'workshop-2' }))
-  expect(api.context).not.toHaveBeenCalled()
-  wrapper.unmount()
+  expect(api.tasks).toHaveBeenCalledWith(expect.objectContaining({ q: 'HT26', workshop_id: 'workshop-1' }))
+  await task.setValue(tasks)
+  task.vm.$emit('change', tasks)
+  await product.get('.el-select__wrapper').trigger('click')
+  await flushPromises()
+  product.props('remoteMethod')!('HTC-001B')
+  await flushPromises()
+  expect(api.products).toHaveBeenCalledWith(expect.objectContaining({
+    q: 'HTC-001B', production_task_ids: ['task-1', 'task-2'], workshop_id: 'workshop-1',
+  }))
+  expect(product.findAllComponents(ElOption).map(option => option.props('label'))).toContain('HTC-001B · 六边形围炉桌 · HT26050')
+  await product.setValue(products)
+  await button(wrapper, '应用筛选').trigger('click')
+  await flushPromises()
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({
+    page: 1, production_task_ids: ['task-1', 'task-2'], product_line_ids: ['line-1', 'line-2'],
+  }))
+
+  await task.setValue([tasks[0]])
+  task.vm.$emit('change', [tasks[0]])
+  await button(wrapper, '应用筛选').trigger('click')
+  await flushPromises()
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({
+    production_task_ids: ['task-1'], product_line_ids: ['line-1'],
+  }))
 })
 
 it('裁剪和车缝用同一车间 ID，但请求各自分类，也不显示金工切割长度列', async () => {
   const sewing = { id: 'workshop-sewing', name: '车缝车间' }
   route.query = { production_task_id: 'task-1', workshop_id: sewing.id, plan_category: 'CUTTING' }
-  api.tasks.mockResolvedValue({
-    data: [{ id: 'task-1', workshops: [sewing] }], meta: { page: 1, total: 1, total_pages: 1 },
-  })
+  api.workshops.mockResolvedValue([sewing])
   api.records.mockResolvedValue(recordsResponse([{ ...report, workshop: sewing }]))
   const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
   expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: sewing.id, plan_category: 'CUTTING' }))
   expect(wrapper.get('.wr-report-group').text()).not.toContain('切割长度')
-  wrapper.getComponent(ElSelect).vm.$emit('change', `${sewing.id}:SEWING`)
+  await filterSelect(wrapper, 'workshop').setValue(`${sewing.id}:SEWING`)
+  await button(wrapper, '应用筛选').trigger('click')
   await flushPromises()
-  expect(router.replace).toHaveBeenLastCalledWith({
-    name: 'work-report-days', query: { production_task_id: 'task-1', workshop_id: sewing.id, plan_category: 'SEWING' },
-  })
-  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: sewing.id, plan_category: 'SEWING' }))
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({
+    workshop_id: sewing.id, plan_category: 'SEWING', production_task_ids: ['task-1'],
+  }))
+})
+
+it.each([
+  ['METAL_DIRECTOR', workshopRows[0]!],
+  ['ASSEMBLY_DIRECTOR', workshopRows[1]!],
+])('%s 以固定车间进入，其他有权账号可使用车间下拉', async (role, workshop) => {
+  route.query = {}
+  api.workshops.mockResolvedValue([workshop])
+  auth.user = { is_superuser: false, permissions: ['workshop_reporting.view_workreport'], effective_access: { roles: [{ code: role }] } }
+  const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  expect(wrapper.find('[data-testid="work-report-workshop-filter"]').exists()).toBe(false)
+  expect(wrapper.get('.wr-report-context__workshop').text()).toContain(workshop.name)
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: workshop.id }))
+  wrapper.unmount()
+
+  auth.user = { is_superuser: false, permissions: ['workshop_reporting.view_workreport'], effective_access: { roles: [{ code: 'FACTORY_MANAGER' }] } }
+  const manager = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  expect(manager.find('[data-testid="work-report-workshop-filter"]').exists()).toBe(true)
 })
 
 it.each([
@@ -211,19 +264,29 @@ it('任务接口拒绝访问时显示错误，不读取报工列表', async () =
   wrapper.unmount()
 })
 
-it('车间切换导航失败时显示错误并还原车间，不展示旧车间数据作为新结果', async () => {
+it('排产链接失效时仍可重置并用同一页面筛选授权记录', async () => {
+  api.context.mockRejectedValueOnce({ response: { data: { error: { message: '排产产品已失效' } } } })
+  const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  expect(wrapper.get('.wr-report-records__error').text()).toContain('排产产品已失效')
+  expect(api.records).not.toHaveBeenCalled()
+  await button(wrapper, '重置').trigger('click')
+  await flushPromises()
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: 'workshop-1' }))
+  expect(wrapper.find('.wr-report-records__error').exists()).toBe(false)
+})
+
+it('切换车间读取失败时清空旧记录并显示实际错误', async () => {
   route.query = { production_task_id: 'task-1', workshop_id: 'workshop-1' }
   const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  router.replace.mockRejectedValueOnce(new Error('navigation failed'))
-  const workshopSelect = wrapper.find('.wr-report-context__workshop').findComponent(ElSelect)
-  await workshopSelect.setValue('workshop-2')
-  workshopSelect.vm.$emit('change', 'workshop-2')
+  api.records.mockRejectedValueOnce({ response: { data: { error: { message: '车间范围已变化' } } } })
+  await filterSelect(wrapper, 'workshop').setValue('workshop-2')
+  await button(wrapper, '应用筛选').trigger('click')
   await flushPromises()
-  expect(wrapper.find('.wr-report-records__error').text()).toContain('打开失败')
-  expect(workshopSelect.props('modelValue')).toBe('workshop-1')
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: 'workshop-2' }))
+  expect(wrapper.find('.wr-report-records__error').text()).toContain('车间范围已变化')
   expect(wrapper.find('.wr-report-group').exists()).toBe(false)
-  wrapper.unmount()
 })
 
 it('切换任务时清空旧数据并忽略先前未完成的请求', async () => {
@@ -243,7 +306,7 @@ it('切换任务时清空旧数据并忽略先前未完成的请求', async () =
 })
 
 describe('按每次报工查看记录', () => {
-  it('同一天两次报工各占一行，选中哪次只展示该次信息和创建时间', async () => {
+  it('同一天两次报工各占一行，按生产日期显示所选报工', async () => {
     const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
 
@@ -259,8 +322,10 @@ describe('按每次报工查看记录', () => {
     expect(wrapper.text()).toContain('HT26050')
     expect(wrapper.text()).toContain('六边形围炉桌')
     expect(wrapper.findAll('.wr-report-list-panel__table .el-table__row')).toHaveLength(2)
+    expect(wrapper.find('.wr-report-list-panel__table .el-table__header').text()).toContain('生产日期')
+    expect(wrapper.findAll('.wr-report-date').map(cell => cell.text())).toEqual(['2026-09-28', '2026-09-28'])
     expect(wrapper.find('.wr-report-group').text()).toContain('生产日期：2026-09-28')
-    expect(wrapper.find('.wr-report-group').text()).toContain('报工时间：2026/09/28 16:16')
+    expect(wrapper.text()).not.toContain('报工时间')
     expect(wrapper.find('.wr-report-group').text()).toContain('管材加工')
     expect(wrapper.find('.wr-report-group').text()).toContain('员工甲')
     expect(wrapper.find('.wr-report-group').text()).not.toContain('员工乙')
@@ -288,14 +353,14 @@ describe('按每次报工查看记录', () => {
 
     const workshopSelect = wrapper.find('.wr-report-context__workshop').findComponent(ElSelect)
     await workshopSelect.setValue('workshop-2')
-    workshopSelect.vm.$emit('change', 'workshop-2')
+    await button(wrapper, '应用筛选').trigger('click')
     await flushPromises()
     expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ workshop_id: 'workshop-2' }))
 
     await wrapper.find('.wr-report-records__create').trigger('click')
     expect(router.push).toHaveBeenCalledWith({
       name: 'work-report-new',
-      query: { schedule_product_id: 'schedule-product-1', workshop_id: 'workshop-2', craft_id: 'craft-2' },
+      query: expect.objectContaining({ schedule_product_id: 'schedule-product-1', workshop_id: 'workshop-2', craft_id: 'craft-2' }),
     })
     wrapper.unmount()
   })
@@ -304,11 +369,11 @@ describe('按每次报工查看记录', () => {
     const wrapper = mount(WorkReportDayListView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await wrapper.findAll('.wr-report-list-panel__table .el-table__row')[1].trigger('click')
-    await wrapper.find('.wr-report-context__refresh').trigger('click')
+    await button(wrapper, '刷新').trigger('click')
     await flushPromises()
     expect(wrapper.find('.wr-report-group').text()).toContain('员工乙')
     api.records.mockResolvedValueOnce(recordsResponse([report]))
-    await wrapper.find('.wr-report-context__refresh').trigger('click')
+    await button(wrapper, '刷新').trigger('click')
     await flushPromises()
     expect(wrapper.find('.wr-report-group').text()).toContain('员工甲')
     wrapper.unmount()
@@ -321,7 +386,7 @@ describe('按每次报工查看记录', () => {
     expect(wrapper.text()).toContain('当前车间暂无报工记录')
     expect(wrapper.find('.wr-report-group').exists()).toBe(false)
     api.records.mockRejectedValueOnce({ response: { data: { error: { message: '没有报工查看权限。' } } } })
-    await wrapper.find('.wr-report-context__refresh').trigger('click')
+    await button(wrapper, '刷新').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('没有报工查看权限。')
     expect(wrapper.find('.wr-report-group').exists()).toBe(false)

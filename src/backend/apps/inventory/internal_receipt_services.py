@@ -6,14 +6,15 @@ import uuid
 
 from django.db import connection, models
 from django.db.models.deletion import ProtectedError
-from django.db.models import Prefetch, Sum
+from django.db.models import Prefetch, Q, Sum
+from django.db.migrations.recorder import MigrationRecorder
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
-from apps.core.api.exceptions import Conflict
+from apps.core.api.exceptions import Conflict, DatabaseMigrationRequired
 from apps.core.auth import active_employee_for
 from apps.core.numbering import next_business_number
 from apps.material_issues.models import (MaterialIssue, MaterialIssueLine, MaterialIssueAuditEvent,
@@ -33,7 +34,7 @@ from .public_stock_cutover import stock_write_transaction
 from .public_stock_identity import build_semi_finished_identity
 from .catalog_stock_identity import build_catalog_stock_identity
 from .processing_material_snapshots import copy_material_selection, freeze_processing_materials
-from .public_stock_services import credit_public_stock
+from .public_stock_services import credit_public_stock, raw_pipe_warehouse_filter
 from .public_stock_mode import public_flow_enabled
 from .stock_services import InventoryStockValidationError
 from .receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category
@@ -339,6 +340,43 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
                 tube_basis=tube_basis)
 
 
+def active_semi_receipt_zones(category):
+    locations = Q(warehouse__warehouse_type='SEMI_FINISHED')
+    if category == 'CUTTING':
+        locations &= Q(warehouse__warehouse_name='裁剪布面仓')
+    elif category == 'METAL':
+        locations |= raw_pipe_warehouse_filter()
+    return WarehouseZone.objects.filter(locations, status='ACTIVE', warehouse__status='ACTIVE').select_related('warehouse')
+
+
+def semi_receipt_zone_options(category):
+    return [
+        dict(id=str(zone.pk), warehouse_id=str(zone.warehouse_id),
+             warehouse=zone.warehouse.warehouse_name, name=zone.zone_name)
+        for zone in active_semi_receipt_zones(category).order_by('warehouse__warehouse_name', 'warehouse_id', 'zone_name')
+    ]
+
+
+def submission_receipt_zone(category, zone_id):
+    if zone_id is not None:
+        return get_object_or_404(active_semi_receipt_zones(category), pk=zone_id)
+    migration = '0038_pending_cutting_receipt_zone' if category == 'CUTTING' else '0039_pending_semi_receipt_zone'
+    if not MigrationRecorder(connection).migration_qs.filter(app='inventory', name=migration).exists():
+        raise DatabaseMigrationRequired('请先完成半成品入库数据库迁移，再提交由仓库分配库区的申请。')
+    return None
+
+
+def confirmation_receipt_zone(receipt, zone_id):
+    assigned_zone = zone_id or receipt.zone_id
+    if assigned_zone is None:
+        raise ValidationError({'zone_id': '请选择半成品仓和库区。'})
+    zone = active_semi_receipt_zones(receipt.plan_category).filter(pk=assigned_zone).first()
+    if zone is None:
+        message = '请选择裁剪布面仓的库区。' if receipt.plan_category == 'CUTTING' else '请选择有效的半成品库区。'
+        raise ValidationError({'zone_id': message})
+    return zone
+
+
 def preview_data(context, actor):
     if context.get('tube_new'):
         from .tube_receipt_services import tube_preview_data
@@ -360,13 +398,11 @@ def preview_data(context, actor):
             remaining = basis['allowance']['remaining'] if basis and basis['basis_ready'] else 0
             row['can_receive'] = str(min(Decimal(row['can_receive']), Decimal(remaining)))
         rows.append(row)
-    zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
-        warehouse__warehouse_type='SEMI_FINISHED').select_related('warehouse').order_by('warehouse__warehouse_name','zone_name')
     return dict(schedule_product_id=str(context['plan'].pk), plan_category=context['category'],
         etag=f'"{context["revision"]}"', production_order=context['task'].task_number,
         product=context['product'].product_name_snapshot, order_quantity=str(context['product'].quantity),
         actor=actor.display_name, receipt_date=str(timezone.localdate()), lines=rows, excluded=context['excluded'],
-        zones=[dict(id=str(zone.pk), warehouse=zone.warehouse.warehouse_name, name=zone.zone_name) for zone in zones])
+        zones=semi_receipt_zone_options(context['category']))
 
 
 @stock_write_transaction
@@ -413,8 +449,7 @@ def submit_receipt(request, data):
         assert_tube_quantity_available(product_line_id=context['product'].pk,
             requested={str(context['facts'][key]['line'].component_identity): quantity for key, quantity in requested.items()},
             expected_revision=context['tube_basis']['revision'])
-    zone = get_object_or_404(WarehouseZone, pk=data['zone_id'], status='ACTIVE',
-                            warehouse__status='ACTIVE', warehouse__warehouse_type='SEMI_FINISHED')
+    zone = submission_receipt_zone(context['category'], data.get('zone_id'))
     now = timezone.now()
     header = InternalSemiFinishedReceipt.objects.create(receipt_number=next_business_number('INTERNAL_SEMI_RECEIPT'),
         request_id=data['request_id'], request_payload_hash=payload_hash, schedule_product=context['plan'],
@@ -448,7 +483,7 @@ def _receipt_requested(receipt):
 
 
 @stock_write_transaction
-def confirm_receipt(request, receipt_id):
+def confirm_receipt(request, receipt_id, *, zone_id=None):
     """仓库确认待入库原单；成功后才写公共库存和通知。"""
     actor = require_operator(request, permission='confirm_internalsemifinishedreceipt')
     receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_related('schedule_product'), pk=receipt_id)
@@ -458,12 +493,14 @@ def confirm_receipt(request, receipt_id):
         'schedule_product', 'zone', 'completed_craft'), pk=receipt_id)
     get_object_or_404(receipt_plans_for_category(request, receipt.plan_category, confirmation=True), pk=receipt.schedule_product_id)
     if receipt.status == InternalReceiptStatus.CONFIRMED:
+        if zone_id is not None and receipt.zone_id != zone_id:
+            raise Conflict('该入库单已在其他库区确认，请刷新核对。')
         return receipt, True
     if receipt.status != InternalReceiptStatus.PENDING:
         raise Conflict('该入库原单状态不允许确认。')
     if receipt.source_snapshot.get('quantity_basis') == 'WORK_REPORT_MINIMUM':
         from .tube_receipt_services import confirm_tube_receipt
-        return confirm_tube_receipt(request, receipt)
+        return confirm_tube_receipt(request, receipt, zone_id=zone_id)
     context = load_receipt_context(request, receipt.schedule_product_id, receipt.plan_category,
                                    lock=True, exclude_receipt_id=receipt.pk, confirmation=True)
     expected = request.headers.get('If-Match')
@@ -471,6 +508,7 @@ def confirm_receipt(request, receipt_id):
         raise PreconditionRequired()
     if expected != f'"{receipt.source_revision_hash}"':
         raise PreconditionFailed('待入库原单版本已变化，请刷新后重试。')
+    receipt.zone = confirmation_receipt_zone(receipt, zone_id)
     if (receipt.source_snapshot.get('bom_id') != str(context['bom'].pk)
             or receipt.completed_craft_id != context['craft'].pk):
         raise Conflict('BOM或完成工序已变化，请删除待入库原单后重新提交。')
@@ -534,7 +572,7 @@ def confirm_receipt(request, receipt_id):
     receipt.status = InternalReceiptStatus.CONFIRMED
     receipt.confirmed_by_employee = actor
     receipt.confirmed_at = timezone.now()
-    receipt.save(update_fields=['status','confirmed_by_employee','confirmed_at','updated_at'])
+    receipt.save(update_fields=['zone','status','confirmed_by_employee','confirmed_at','updated_at'])
     from .notification_events import internal_receipt_confirmed
     internal_receipt_confirmed(receipt, actor)
     return receipt, False

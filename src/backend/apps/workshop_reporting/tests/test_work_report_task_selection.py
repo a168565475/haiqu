@@ -30,6 +30,7 @@ class WorkReportTaskSelectionTests(APITestCase):
     task_url = '/api/v1/workshop-reporting/work-report-tasks/'
     day_url = '/api/v1/workshop-reporting/work-report-days/'
     report_url = '/api/v1/workshop-reporting/work-reports/'
+    filter_url = f'{report_url}filter-options/'
 
     def copy_values(self, source, **overrides):
         values = {
@@ -232,6 +233,12 @@ class WorkReportTaskSelectionTests(APITestCase):
             self.assertEqual([row['id'] for row in report_list.data['data']], [str(report.pk)])
             hidden_reports = client.get(self.report_url, {**params, 'workshop_id': str(other_workshop.pk)})
             self.assertEqual(hidden_reports.data['data'], [])
+            workshops = client.get(self.filter_url, {'kind': 'workshops'})
+            self.assertEqual(workshops.status_code, 200, workshops.data)
+            self.assertEqual({str(row['id']) for row in workshops.data['data']}, {str(self.workshop.pk)})
+            hidden_products = client.get(self.filter_url, {'kind': 'products', 'workshop_id': str(other_workshop.pk)})
+            self.assertEqual(hidden_products.status_code, 200, hidden_products.data)
+            self.assertEqual(hidden_products.data['data'], [])
 
     def test_permission_and_invalid_or_missing_task_boundaries(self):
         for url in (self.task_url, self.day_url, self.report_url, f'{self.day_url}{timezone.localdate().isoformat()}/'):
@@ -245,6 +252,7 @@ class WorkReportTaskSelectionTests(APITestCase):
         self.client.force_authenticate(user)
         for url in (self.task_url, self.day_url, self.report_url, f'{self.day_url}{timezone.localdate().isoformat()}/'):
             self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.get(self.filter_url, {'kind': 'tasks'}).status_code, 403)
 
     def test_report_list_keeps_two_same_day_submissions_and_snapshot_amounts_separate(self):
         first = self.create_report()
@@ -308,3 +316,31 @@ class WorkReportTaskSelectionTests(APITestCase):
             missing = self.client.get(self.report_url, {**params, field: str(uuid.uuid4())})
             self.assertEqual(missing.status_code, 200, missing.data)
             self.assertEqual(missing.data['data'], [])
+
+    def test_searchable_task_and_product_options_and_multiple_report_filters(self):
+        first = self.create_report()
+        product, scheduled = self.add_product(self.task, self.schedule, 2)
+        excluded = self.copy_report(first, product=product, scheduled=scheduled)
+        task, _, other_product, other_scheduled = self.add_task()
+        third = self.copy_report(first, product=other_product, scheduled=other_scheduled)
+        other_product.product_code_snapshot = 'REPORT-FILTER-CODE'
+        other_product.save(update_fields=['product_code_snapshot'])
+
+        tasks = self.client.get(self.filter_url, {'kind': 'tasks', 'q': task.task_number, 'workshop_id': self.workshop.pk})
+        self.assertEqual(tasks.status_code, 200, tasks.data)
+        self.assertEqual([row['task_number'] for row in tasks.data['data']], [task.task_number])
+        options_params = {'kind': 'products', 'q': 'filter-code', 'workshop_id': self.workshop.pk}
+        products = self.client.get(self.filter_url, {**options_params, 'production_task_ids': [self.task.pk, task.pk]})
+        self.assertEqual(products.status_code, 200, products.data)
+        self.assertEqual([(str(row['id']), row['code']) for row in products.data['data']], [(str(other_product.pk), 'REPORT-FILTER-CODE')])
+        restricted = self.client.get(self.filter_url, {**options_params, 'production_task_ids': [self.task.pk]})
+        self.assertEqual(restricted.data['data'], [])
+
+        reports = self.client.get(self.report_url, {
+            'production_task_ids': [self.task.pk, task.pk], 'product_line_ids': [self.product_line.pk, other_product.pk],
+        })
+        self.assertEqual(reports.status_code, 200, reports.data)
+        self.assertEqual({row['id'] for row in reports.data['data']}, {str(first.pk), str(third.pk)})
+        self.assertNotIn(str(excluded.pk), {row['id'] for row in reports.data['data']})
+        response = self.client.get(self.report_url, {'product_line_ids': [self.product_line.pk, 'invalid']})
+        self.assertEqual(response.status_code, 400, response.data)

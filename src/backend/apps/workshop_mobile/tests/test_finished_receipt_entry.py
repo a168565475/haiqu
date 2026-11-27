@@ -66,7 +66,8 @@ class FinishedReceiptEntryTests(SimpleTestCase):
         with patch.object(selectors, 'plan_links', return_value=base), \
                 patch.object(selectors, 'links_for_permission', side_effect=lambda _base, _request, code: allowed[code]):
             selectors.visible_plan_links(SimpleNamespace())
-        selected = base.filter.call_args.args[0]
+        # 车缝可用性筛选后，才会叠加各动作的可见范围。
+        selected = base.filter.return_value.filter.call_args.args[0]
         self.assertEqual(selected.connector, 'OR')
         self.assertEqual({id(value) for field, value in selected.children if field == 'pk__in'},
                          {id(row.values.return_value) for row in allowed.values()})

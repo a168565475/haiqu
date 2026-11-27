@@ -1,11 +1,19 @@
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
-from django.db.models import Prefetch, Q, Sum
+from django.db import connection
+from django.db.migrations.recorder import MigrationRecorder
+from django.db.models import Exists, F, OuterRef, Prefetch, Q, Subquery, Sum
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import WageScheme, WageSchemeLine, WageSchemeStatus, WorkshopReportingScope, WorkReport, WorkReportLine
+from apps.core.api.exceptions import DatabaseMigrationRequired
+
+from .models import WageScheme, WageSchemeAction, WageSchemeEvent, WageSchemeLine, WageSchemeLineCuttingGroup, WageSchemeStatus, WorkCountingMode, WorkshopReportingScope, WorkReport, WorkReportLine
+
+
+CUTTING_GROUP_COLUMN_MIGRATION = "0017_cutting_groups_and_scheme_withdrawals"
+CUTTING_GROUP_STORAGE_MIGRATION = "0018_wage_scheme_cutting_group_storage"
 
 
 def reporting_source_products(request, permission):
@@ -89,6 +97,61 @@ def accessible_wage_schemes(request, permission=None):
     return queryset
 
 
+def wage_scheme_editor_filter(employee_id):
+    withdrawal = WageSchemeEvent.objects.filter(
+        scheme_id=OuterRef("pk"), action=WageSchemeAction.WITHDRAWN, actor_employee_id=employee_id,
+    )
+    resubmitted = WageSchemeEvent.objects.filter(
+        scheme_id=OuterRef("scheme_id"), action=WageSchemeAction.SUBMITTED,
+        scheme_revision__gt=OuterRef("scheme_revision"),
+    )
+    return Q(created_by_employee_id=employee_id) | Q(Exists(
+        withdrawal.filter(~Exists(resubmitted))
+    ))
+
+
+def last_work_report_employees(lines, *, work_item_ids, workshop_id):
+    from apps.organizations.models import Employee
+    from apps.workshop_config.selectors import active_employees
+
+    relevant = lines.filter(work_item_id__in=work_item_ids)
+    latest = relevant.filter(work_item_id=OuterRef("work_item_id")).order_by(
+        "-report__created_at", "-report_id",
+    ).values("report_id")[:1]
+    employees = active_employees(Employee.objects.filter(workshop_id=workshop_id))
+    rosters = defaultdict(list)
+    for work_item_id, employee_id, production_line in relevant.filter(
+        report_id=Subquery(latest), workshop_employee__in=employees,
+    ).order_by("line_number", "id").values_list("work_item_id", "workshop_employee_id", "production_line"):
+        rosters[work_item_id].append({
+            "workshop_employee_id": str(employee_id), "production_line": production_line,
+        })
+    return rosters
+
+
+def schedule_wage_line_prefetch():
+    return Prefetch("lines", queryset=WageSchemeLine.objects.only(
+        "scheme_id", "work_item_id", "status", "required_quantity_snapshot",
+        "order_quantity_snapshot", "declared_price", "bom_component_identity_snapshot",
+    ))
+
+
+def wage_line_cutting_components(lines):
+    group_line_ids = [line.pk for line in lines if line.counting_mode == WorkCountingMode.GROUP]
+    if not group_line_ids:
+        return {}
+    require_wage_line_storage(grouped=True)
+    return dict(WageSchemeLineCuttingGroup.objects.filter(line_id__in=group_line_ids).values_list("line_id", "components"))
+
+
+def require_wage_line_storage(*, grouped):
+    applied = set(MigrationRecorder(connection).migration_qs.filter(
+        app="workshop_reporting", name__in=[CUTTING_GROUP_COLUMN_MIGRATION, CUTTING_GROUP_STORAGE_MIGRATION],
+    ).values_list("name", flat=True))
+    if CUTTING_GROUP_STORAGE_MIGRATION not in applied and (grouped or CUTTING_GROUP_COLUMN_MIGRATION in applied):
+        raise DatabaseMigrationRequired("请先完成工价裁片组数据库迁移，再处理该工价方案。")
+
+
 def wage_schemes_with_context(queryset=None):
     queryset = queryset if queryset is not None else WageScheme.objects.all()
     return queryset.select_related(
@@ -150,6 +213,61 @@ def work_report_task_products(reports, crafts):
     ).prefetch_related("images__image_file").order_by("production_task_id", "line_number", "id")
 
 
+def work_reports_in_plan_category(queryset, category):
+    from apps.production_scheduling.models import ProductionScheduleProductCraft
+
+    # 历史报工按排产工艺快照归类，不随当前工艺配置修改或移除而变化。
+    category_link = ProductionScheduleProductCraft.objects.filter(
+        schedule_product_id=OuterRef("schedule_product_id"),
+        craft_id=OuterRef("scheme__scope_craft_id"),
+        craft_type_snapshot="INTERNAL", plan_category=category,
+    )
+    return queryset.filter(Exists(category_link))
+
+
+def work_report_filter_workshops(request):
+    from apps.workshop_config.models import Workshop
+
+    ids = reporting_source_workshop_ids(request)
+    workshops = Workshop.objects.all()
+    if ids is not None:
+        reports = accessible_work_reports(request, permission="workshop_reporting.view_workreport")
+        workshops = workshops.filter(Q(pk__in=ids) | Q(pk__in=reports.order_by().values("workshop_id")))
+    return workshops.values("id", "name")
+
+
+def work_report_filter_options(request, filters):
+    reports, crafts = work_report_selection_sources(request)
+    if workshop_id := filters.get("workshop_id"):
+        reports = reports.filter(workshop_id=workshop_id)
+        crafts = crafts.filter(craft__workshop_id=workshop_id)
+    if category := filters.get("plan_category"):
+        reports = work_reports_in_plan_category(reports, category)
+        crafts = crafts.filter(plan_category=category)
+    task_ids = filters.get("production_task_ids")
+    keyword = filters["q"]
+    if filters["kind"] == "tasks":
+        tasks = work_report_tasks(reports, crafts, keyword)
+        if task_ids:
+            tasks = tasks.filter(pk__in=task_ids)
+        return tasks.values("id", "task_number")
+
+    products = work_report_task_products(reports, crafts)
+    if task_ids:
+        products = products.filter(production_task_id__in=task_ids)
+    if product_ids := filters.get("product_line_ids"):
+        products = products.filter(pk__in=product_ids)
+    if keyword:
+        products = products.filter(
+            Q(product_code_snapshot__icontains=keyword) | Q(product_name_snapshot__icontains=keyword)
+            | Q(product_number_snapshot__icontains=keyword) | Q(production_task__task_number__icontains=keyword)
+        )
+    return products.values(
+        "id", "production_task_id", task_number=F("production_task__task_number"),
+        code=F("product_code_snapshot"), name=F("product_name_snapshot"), number=F("product_number_snapshot"),
+    )
+
+
 def _work_report_progress(metrics):
     if not metrics:
         return {"status": "UNAVAILABLE", "percentage": None}
@@ -201,7 +319,7 @@ def work_report_task_cards(tasks, reports, crafts):
         workshop_id__in={scope[2] for scope in scopes},
         scope_craft_id__in={scope[3] for scope in scopes},
         status=WageSchemeStatus.APPROVED, effective_from__lte=today,
-    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today)).prefetch_related("lines")
+    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today)).prefetch_related(schedule_wage_line_prefetch())
     schemes_by_scope = {}
     for scheme in schemes:
         schemes_by_scope.setdefault((scheme.product_line_id, scheme.workshop_id, scheme.scope_craft_id), []).append(scheme)

@@ -1,0 +1,168 @@
+.warehouse-workbench, .warehouse-dialog {
+  font-family: var(--erp-font-body);
+  font-variant-numeric: tabular-nums;
+  --wh-ink: color-mix(in srgb, var(--erp-table-header-text) 42%, var(--erp-menu-accent));
+  --wh-muted: var(--erp-color-text-secondary);
+  --wh-rule: var(--erp-color-border);
+  --wh-glass: color-mix(in srgb, var(--erp-table-body-fill) 82%, transparent);
+  --wh-edge: color-mix(in srgb, var(--erp-table-body-fill) 73%, white);
+  button { cursor: pointer; font-family: inherit; }
+  button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+  button:disabled { cursor: default; }
+  .action, .row-link { border: 0; background: none; color: var(--erp-menu-accent); padding: 3px 0; font-size: 13px; }
+  .action:hover:not(:disabled) { text-decoration: underline; }
+  svg { display: inline-block; flex: none; width: 18px; height: 18px; }
+}
+.warehouse-workbench {
+  height: 100%; overflow: auto; color: var(--wh-ink);
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: 34px; line-height: 1.3; font-weight: 680; letter-spacing: .025em; color: var(--erp-color-text-primary); }
+  h2 { display: flex; align-items: center; gap: 9px; font-size: 21px; line-height: 1.4; font-weight: 650; }
+  h2 svg { width: 23px; height: 23px; color: var(--erp-color-brand); }
+  .warehouse-mast, .panel > header, .queue-figure, .queue-open, .priority-row, .panel footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .warehouse-mast { min-height: 56px; margin-bottom: 13px; padding-bottom: 8px; }
+  .warehouse-mast time { font-size: 14px; color: var(--wh-muted); }
+  .warehouse-groups { display: grid; grid-template-columns: minmax(0,3fr) minmax(0,2fr); gap: 20px; }
+  .queue-group { min-width: 0; }
+  .queue-group > h2 { margin: 3px 0 13px; }
+  .queue-cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+  .queue-group + .queue-group .queue-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .panel, .queue-card {
+    min-width: 0; border: 1px solid var(--wh-edge); border-radius: 14px;
+    background: var(--wh-glass); box-shadow: 0 5px 18px #365c770d, inset 0 1px 0 #ffffff38;
+  }
+  .queue-card {
+    width: 100%; display: flex; flex-direction: column; align-items: stretch; text-align: left;
+    padding: 24px 23px 19px; color: var(--wh-ink);
+  }
+  .queue-card:hover:not(:disabled) { background: var(--erp-table-body-fill); border-color: var(--erp-color-border-strong); }
+  .queue-card:disabled { color: var(--wh-muted); }
+  .queue-card:disabled img { opacity: .55; }
+  .queue-title { font-size: 20px; font-weight: 650; line-height: 1.35; }
+  .queue-figure { margin: 12px 0 3px; }
+  .queue-figure img { width: 93px; height: 78px; object-fit: contain; flex: none; }
+  .queue-card[data-queue=purchase] img { width: 112px; }
+  .queue-number { font: 650 56px/1.1 'Segoe UI', var(--erp-font-body); color: var(--wh-ink); letter-spacing: -.045em; }
+  .queue-group + .queue-group .queue-number { color: var(--erp-color-success); }
+  .queue-number small { font: 500 14px var(--erp-font-body); color: var(--wh-muted); margin-left: 8px; letter-spacing: 0; }
+  .queue-subtitle { min-height: 21px; margin: 3px 0 18px; font-size: 14px; line-height: 1.5; color: var(--wh-muted); }
+  .overdue { color: var(--erp-color-danger); }
+  .queue-preview { display: grid; align-content: start; gap: 5px; border-top: 1px solid var(--wh-rule); padding-top: 15px; min-height: 59px; }
+  .queue-preview b { font: 600 17px/1.3 'Segoe UI', var(--erp-font-body); overflow-wrap: anywhere; }
+  .queue-preview > span, .queue-preview.empty { color: var(--wh-muted); font-size: 13px; }
+  .queue-preview > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-open { margin-top: auto; padding-top: 16px; color: var(--erp-menu-accent); font-size: 13px; font-weight: 600; }
+  .queue-open svg, .priority-row > svg { width: 14px; height: 14px; }
+  .warehouse-lower { display: grid; grid-template-columns: minmax(0,1.37fr) minmax(0,1.07fr) minmax(0,.82fr); gap: 16px; margin-top: 22px; }
+  .panel { display: flex; flex-direction: column; padding: 22px 24px; }
+  .panel > header { flex-wrap: wrap; }
+  .panel small, .range { color: var(--wh-muted); font-size: 13px; font-weight: 400; }
+  .empty:not(.queue-preview) { margin: 16px 0; color: var(--wh-muted); font-size: 14px; }
+  .priority-list, .sidepanel > header { margin-bottom: 0; }
+  .priority-list { margin-top: 12px; }
+  .priority-row { width: 100%; padding: 14px 0; text-align: left; border: 0; background: none; color: inherit; gap: 11px; }
+  .priority-row + .priority-row { border-top: 1px solid var(--wh-rule); }
+  .priority-row:hover, .bar-row:hover:not(:disabled) { background: var(--erp-color-hover); }
+  .priority-doc { display: grid; gap: 5px; flex: 1; min-width: 0; }
+  .priority-doc strong { font-size: 16px; font-weight: 610; line-height: 1.45; }
+  .priority-doc small, .queue-preview b { overflow-wrap: anywhere; }
+  .priority-doc small b { margin-right: 8px; }
+  .date-tag { flex: none; font-size: 12px; line-height: 1.5; border-radius: 5px; padding: 3px 6px; background: var(--erp-color-subtle); }
+  .date-tag.overdue { background: var(--erp-color-danger-soft); }
+  .date-tag.today { color: #805b1d; background: #f4ead8; }
+  .period-switch { display: flex; padding: 2px; border-radius: 7px; background: var(--erp-color-subtle); }
+  .period-switch button { border: 0; background: none; border-radius: 5px; color: var(--wh-muted); font-size: 13px; line-height: 27px; padding: 0 10px; }
+  .period-switch button[aria-pressed=true] { color: var(--erp-menu-accent); background: var(--erp-color-surface); box-shadow: 0 1px 3px #65859830; font-weight: 650; }
+  .range { margin-top: 10px; }
+  .bars { display: grid; gap: 5px; margin: 11px 0 14px; }
+  .bar-row { width: 100%; border: 0; background: none; display: grid; grid-template-columns: 68px minmax(20px,1fr) minmax(42px,auto); gap: 14px; align-items: center; padding: 4px 0; text-align: left; color: inherit; font-size: 14px; }
+  .bar-row strong, .bar-row > small { text-align: right; font-size: 14px; white-space: nowrap; }
+  .bar-row strong small { margin-left: 4px; }
+  .track { height: 8px; overflow: hidden; border-radius: 9px; background: var(--erp-color-subtle); }
+  .track i { height: 100%; display: block; border-radius: inherit; background: #77a6bd; }
+  .bar-row:nth-last-child(-n+2) .track i { background: #75a8a6; }
+  .panel footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--wh-rule); color: var(--wh-muted); font-size: 13px; }
+  .sidepanel > header { margin-bottom: 12px; }
+  .sidepanel .msgrow { padding: 15px 0; }
+  .sidepanel > p { margin: 8px 0; }
+  .state { display: block; }
+}
+.warehouse-dialog {
+  color: var(--erp-color-text-regular);
+  h3 { margin: 5px 0 8px; font-size: 19px; }
+  h4 { margin: 19px 0 8px; font-size: 15px; }
+  p { margin: 8px 0 15px; }
+  .back { margin-bottom: 12px; display: block; }
+  .file-id { font: 650 25px 'Segoe UI',var(--erp-font-body); color: var(--wh-ink); }
+  .file-meta { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; padding: 17px 0; margin: 10px 0 16px; border-block: 1px solid var(--wh-rule); }
+  .file-meta span, .note, .related, .movement { color: var(--wh-muted); font-size: 13px; overflow-wrap: anywhere; }
+  .file-meta b { display: block; font-size: 15px; margin-top: 5px; color: var(--wh-ink); }
+  .related, footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 15px; }
+  .table-scroll { overflow-x: auto; border-radius: 7px; border: 1px solid var(--wh-rule); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th, td { padding: 11px 13px; overflow-wrap: anywhere; }
+  th { background: var(--erp-table-header-fill); font-weight: 550; font-size: 13px; }
+  td { font-size: 14px; }
+  tbody tr:first-child, tbody tr + tr { border-top: 1px solid var(--wh-rule); }
+  .open-row { cursor: pointer; }
+  .open-row:hover { background: var(--erp-color-hover); }
+  td b, .amount strong { color: var(--wh-ink); }
+  td small, .movement small { display: block; color: var(--wh-muted); font-size: 12px; margin-top: 3px; }
+  .amount { text-align: right; white-space: nowrap; }
+  .row-link { display: flex; padding: 3px; }
+  .row-link svg { width: 15px; height: 15px; }
+  .movement { padding: 9px 0; border-top: 1px solid var(--wh-rule); display: grid; grid-template-columns: 110px 100px 1fr; gap: 10px; }
+  footer { font-size: 13px; }
+}
+@media (min-width: 1700px) {
+  .warehouse-workbench {
+    h2, .queue-title { font-size: 22px; }
+    .queue-card { padding: 26px 26px 20px; }
+    .queue-figure { margin-top: 14px; }
+    .queue-figure img { width: 100px; height: 88px; }
+    .queue-card[data-queue=purchase] img { width: 125px; }
+    .panel { padding: 25px 27px; }
+    .priority-list { margin-top: 16px; }
+    .priority-row { padding: 16px 0; }
+    .bars { gap: 8px; }
+    .bar-row { padding: 5px 0; }
+  }
+}
+@media (max-width: 1420px) {
+  .warehouse-workbench {
+    .warehouse-groups, .queue-cards { gap: 10px; }
+    .queue-card { padding: 17px 14px; }
+    .queue-figure img { width: 70px; height: 64px; }
+    .queue-card[data-queue=purchase] img { width: 79px; }
+    .queue-title { font-size: 17px; }
+    .queue-number { font-size: 45px; }
+    .queue-subtitle { font-size: 12px; }
+    .warehouse-lower { gap: 11px; }
+    .panel { padding: 18px; }
+    h2 { font-size: 18px; }
+    .priority-doc strong { font-size: 14px; }
+  }
+}
+@media (max-width: 1100px) {
+  .warehouse-workbench {
+    .warehouse-groups { grid-template-columns: 1fr; }
+    .warehouse-lower { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .sidepanel { grid-column: 1/-1; }
+  }
+}
+@media (max-width: 700px) {
+  .warehouse-workbench {
+    h1 { font-size: 25px; }
+    .warehouse-mast { flex-wrap: wrap; }
+    .queue-cards, .queue-group + .queue-group .queue-cards, .warehouse-lower { grid-template-columns: 1fr; }
+    .queue-card { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 4px; }
+    .queue-figure { grid-column: 2; grid-row: 1/4; margin: 0; }
+    .queue-number { font-size: 32px; }
+    .queue-subtitle { margin: 0; }
+    .queue-preview { border: 0; padding: 0; min-height: auto; }
+    .queue-open { grid-column: 1/-1; padding-top: 5px; }
+  }
+  .warehouse-dialog { .file-meta { grid-template-columns: 1fr 1fr; } th, td { padding: 7px 8px; } .movement { grid-template-columns: 80px 70px 1fr; } }
+}

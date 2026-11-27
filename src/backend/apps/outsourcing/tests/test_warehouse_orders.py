@@ -235,6 +235,7 @@ class WarehouseMetalOrdersTests(WarehouseResponseMixin, ScopedActorMixin, MetalP
         self.assertEqual([(row['id'], row['warehouse_actions']) for row in self.warehouse_rows()],
                          [(self.original_order, ['dispatch'])])
         summary = self.warehouse_get(f'/api/v1/metal-processing-original-orders/{self.original_order}/').data['data']
+        self.assertEqual(summary['production_task_number'], self.line.issue.production_task.task_number)
         self.assertTrue(summary['can_handoff'])
         self.assertTrue(summary['has_handoffs'])
         options = self.warehouse_get('/api/v1/metal-processing-sources/options/').data['data']
@@ -242,6 +243,7 @@ class WarehouseMetalOrdersTests(WarehouseResponseMixin, ScopedActorMixin, MetalP
                                                      'can_handoff': True, 'has_handoffs': True}])
         source = self.warehouse_get(f'/api/v1/metal-processing-sources/{self.line.pk}/').data['data']
         self.assertTrue(source['can_handoff'])
+        self.assertEqual(source['original_handoffs'][0]['original_production_task_number'], self.line.issue.production_task.task_number)
         candidates = self.client.get('/api/v1/metal-processing-sources/', {**WAREHOUSE, 'original_order_id': self.original_order})
         self.assertEqual(candidates.status_code, 200, candidates.data)
         self.assertEqual([(row['issue_line_id'], row['can_handoff']) for row in candidates.data['data']], [(str(self.line.pk), True)])
@@ -313,6 +315,7 @@ class WarehouseMetalOrdersTests(WarehouseResponseMixin, ScopedActorMixin, MetalP
         self.assertEqual(self.client.get(url).status_code, 403)
         detail = self.warehouse_get(url).data['data']
         self.assertTrue(detail['can_handoff'])
+        self.assertEqual(detail['production_task_number'], order.source.issue_line.issue.production_task.task_number)
         self.warehouse_get('/api/v1/metal-processing-sources/options/')
         self.warehouse_get(f'/api/v1/metal-processing-sources/{self.line.pk}/')
         response = self.client.post(url + 'handoff/?warehouse_stage=all', {

@@ -6,7 +6,7 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from apps.workshop_reporting.models import WageScheme, WorkReportLine
-from apps.workshop_reporting.selectors import accessible_work_reports
+from apps.workshop_reporting.selectors import accessible_work_reports, schedule_wage_line_prefetch
 from .detail_reporting import WAGE_PERMISSION, REPORT_PERMISSION, _allows, _estimated_wage, _workshop_scope
 from .models import ProductionScheduleProduct, ProductionScheduleProductCraft
 
@@ -43,7 +43,7 @@ def schedule_list_amounts(request, schedules):
         Q(effective_to__isnull=True) | Q(effective_to__gte=today),
         product_line_id__in=[product.product_line_id for product in products],
         status="APPROVED", effective_from__lte=today,
-    ).prefetch_related("lines"):
+    ).prefetch_related(schedule_wage_line_prefetch()):
         schemes[(scheme.product_line_id, scheme.scope_craft_id)].append(scheme)
     all_report_counts = dict(WorkReportLine.objects.filter(
         report__schedule_product__schedule_id__in=schedule_ids,

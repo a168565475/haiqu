@@ -96,6 +96,9 @@ class SampleReceivingApiTests(SampleReceivingHelpers, APITestCase):
         result = self.receive_all()
         self.assertEqual(result.status_code, 201, result.data)
         inbound = MaterialInbound.objects.get(pk=result.data['data']['id'])
+        record = self.client.get(f'/api/v1/material-inventory/purchase-receipt-records/{inbound.pk}/')
+        self.assertEqual(record.status_code, 200, record.data)
+        self.assertEqual(record.data['data']['sample_number'], self.sample.request_number)
         self.assertEqual(inbound.status, 'CONFIRMED')
         self.assertIsNone(inbound.quality_confirmed_at)
         self.assertIsNone(inbound.quality_confirmed_by_employee_id)
@@ -127,6 +130,9 @@ class SampleReceivingApiTests(SampleReceivingHelpers, APITestCase):
 
     def test_pending_history_blocks_direct_receipt_and_still_can_be_quality_confirmed(self):
         legacy = legacy_sample_receipt(self, '2')
+        record = self.client.get(f"/api/v1/material-inventory/quality-batches/{legacy.data['data']['id']}/")
+        self.assertEqual(record.status_code, 200, record.data)
+        self.assertEqual(record.data['data']['sample_number'], self.sample.request_number)
         old_etag = self.receipt_etag()
         self.assertEqual(self.receive_all().status_code, 409)
         self.assertFalse(MaterialStockBalance.objects.exists())

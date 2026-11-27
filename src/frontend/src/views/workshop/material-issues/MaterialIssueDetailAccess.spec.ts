@@ -6,8 +6,7 @@ import MaterialIssueDetailView from './MaterialIssueDetailView.vue'
 const state = vi.hoisted(() => ({ followed: true }))
 const navigation = vi.hoisted(() => ({ push: vi.fn() }))
 const api = vi.hoisted(() => ({ detail: vi.fn() }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { issueId: 'issue-1' }, query: {} }) }))
-vi.mock('@/router', () => ({ router: navigation }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { issueId: 'issue-1' }, query: {} }), useRouter: () => navigation }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => {
   const permissions = ['material_issues.view_materialissue', 'material_issues.view_metalprocessingsource', 'production_tasks.view_productiontask']
   return { user: { id: 1, is_superuser: false, effective_access: { legacy_sources: [], actions: Object.fromEntries(

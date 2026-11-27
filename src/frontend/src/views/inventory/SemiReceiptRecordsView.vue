@@ -12,11 +12,12 @@ import { useAuthStore } from '@/stores/auth'
 import { materialAttributeFields } from '@/utils/materialAttributes'
 import type { SemiReceiptLine, SemiReceiptRecord, ReceiptAttributes } from '@/types/internalReceipt'
 import '@/styles/internalReceipt.scss'
+const props = defineProps<{ readOnly?: boolean }>()
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.confirm_internalsemifinishedreceipt'))
-const outgoing = computed(() => route.name === 'semi-outbound-records' || route.query.direction === 'OUT')
+const canConfirm = computed(() => !props.readOnly && (auth.user?.is_superuser === true || auth.hasPermission('inventory.confirm_internalsemifinishedreceipt')))
+const outgoing = computed(() => !props.readOnly && (route.name === 'semi-outbound-records' || route.query.direction === 'OUT'))
 const direction = computed(() => outgoing.value ? 'OUT' as const : 'IN' as const)
 const actionLabel = computed(() => outgoing.value ? '出库' : '入库')
 const pageSize = 20
@@ -25,6 +26,14 @@ const loading = ref(false), error = ref(''), detailLoading = ref(false), detailE
 const detail = ref<SemiReceiptRecord | null>(null), dates = ref<string[] | null>([])
 const confirming = ref<string | null>(null)
 const deleting = ref<string | null>(null)
+const warehouseId = ref(''), zoneId = ref('')
+const warehousePlacement = computed(() => !outgoing.value && canConfirm.value
+  && detail.value?.status === 'PENDING' && detail.value.source === 'INTERNAL')
+const warehouseOptions = computed(() => Array.from(new Map(
+  (detail.value?.zones || []).map(zone => [zone.warehouse_id, zone.warehouse]),
+)))
+const zoneOptions = computed(() => detail.value?.zones?.filter(zone => zone.warehouse_id === warehouseId.value) || [])
+const hasSelectedZone = computed(() => zoneOptions.value.some(zone => zone.id === zoneId.value))
 const number = (value:string) => Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 const specification = (value:ReceiptAttributes) => value.specification || (value.tube_diameter ? `${value.tube_diameter} × ${value.cutting_length_mm}mm` : '—')
 const rowQuantity = (row: SemiReceiptRecord) => row.quantity_totals && row.quantity_totals.length > 1
@@ -83,11 +92,12 @@ let sequence = 0, detailSequence = 0
 function message(cause:unknown) { return cause instanceof AxiosError ? cause.response?.data?.error?.message || '请求失败，请重试。' : '请求失败，请重试。' }
 async function confirm(row: SemiReceiptRecord) {
   if (confirming.value || deleting.value || row.status !== 'PENDING' || !canConfirm.value) return
+  if (!hasSelectedZone.value) return
   const fromDetail = visible.value && detail.value?.id === row.id
   if (fromDetail) detailError.value = ''
   confirming.value = row.id
   try {
-    await confirmInternalReceiptRecord(row.receipt_id || row.id, row.etag)
+    await confirmInternalReceiptRecord(row.receipt_id || row.id, row.etag, zoneId.value)
     if (visible.value && detail.value?.id === row.id) { detailSequence++; visible.value = false; detail.value = null }
     await load()
   } catch (cause) {
@@ -97,7 +107,7 @@ async function confirm(row: SemiReceiptRecord) {
   finally { confirming.value = null }
 }
 async function remove(row: SemiReceiptRecord) {
-  if (confirming.value || deleting.value || outgoing.value || row.status !== 'PENDING' || !row.can_delete) return
+  if (props.readOnly || confirming.value || deleting.value || outgoing.value || row.status !== 'PENDING' || !row.can_delete) return
   deleting.value = row.id
   try {
     await ElMessageBox.confirm(`确定删除待入库单“${row.receipt_number}”？本单全部明细将删除，可重新提交入库。`, '删除待入库记录', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
@@ -125,7 +135,7 @@ async function load(reset=false) {
   const current=++sequence
   loading.value=true; error.value=''
   try {
-    const result=await fetchSemiReceiptRecords({direction:direction.value,page:page.value,page_size:pageSize,source:source.value,search:search.value.trim(),date_from:dates.value?.[0],date_to:dates.value?.[1],product_line_id:route.query.product_line_id || undefined})
+    const result=await fetchSemiReceiptRecords({direction:direction.value,page:page.value,page_size:pageSize,source:props.readOnly?'INTERNAL':source.value,search:search.value.trim(),date_from:dates.value?.[0],date_to:dates.value?.[1],product_line_id:route.query.product_line_id || undefined})
     if (current!==sequence) return
     rows.value=result.items; total.value=result.total
   } catch (cause) { if (current===sequence) { error.value=message(cause); rows.value=[] } }
@@ -134,7 +144,19 @@ async function load(reset=false) {
 async function open(row:SemiReceiptRecord) {
   const current=++detailSequence
   visible.value=true; detailLoading.value=true; detail.value=null; detailError.value=''
-  try { const result=await fetchSemiReceiptRecord(row.id, direction.value); if(current===detailSequence) detail.value=result }
+  warehouseId.value = ''; zoneId.value = ''
+  try {
+    const result = await fetchSemiReceiptRecord(row.id, direction.value)
+    if (current !== detailSequence) return
+    detail.value = result
+    const savedZone = result.zones?.find(zone => zone.id === result.zone_id)
+    const cuttingZone = result.status === 'PENDING' && result.plan_category === 'CUTTING' ? result.zones?.[0] : undefined
+    const initialZone = savedZone ?? cuttingZone
+    if (initialZone) {
+      warehouseId.value = initialZone.warehouse_id
+      if (savedZone || result.zones?.length === 1) zoneId.value = initialZone.id
+    }
+  }
   catch(cause) { if(current===detailSequence) detailError.value=message(cause) }
   finally { if(current===detailSequence) detailLoading.value=false }
 }
@@ -145,11 +167,11 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
   <section class="internal-receipt-page erp-glass-list">
     <section v-glass-spotlight class="erp-list-filter">
     <header class="receipt-heading erp-list-heading">
-      <h1>{{ outgoing ? '半成品出库记录' : '车间入库' }}</h1>
+      <h1>{{ readOnly ? '半成品入库记录' : outgoing ? '半成品出库记录' : '车间入库' }}</h1>
       <span v-if="outgoing" class="muted">共 {{ total }} 条{{ actionLabel }}明细</span>
       <ElButton v-if="outgoing" class="erp-button-motion" @click="router.push({name:'material-inventory'})">材料库存</ElButton>
     </header>
-    <div class="receipt-filters erp-list-filters"><ElInput v-model="search" clearable :placeholder="`搜索${actionLabel}单号、生产订单、产品或部位`" @keyup.enter="load(true)" @clear="load(true)" /><ElSelect v-model="source" placeholder="全部来源" aria-label="入库来源" @change="load(true)"><ElOption label="全部来源" value=""/><ElOption :label="outgoing ? '生产领用出库' : '厂内入库'" value="INTERNAL"/><ElOption :label="outgoing ? '其他出库' : '外发入库'" value="EXTERNAL"/></ElSelect><ElDatePicker v-model="dates" type="daterange" value-format="YYYY-MM-DD" :start-placeholder="`${actionLabel}开始日期`" :end-placeholder="`${actionLabel}结束日期`" @change="load(true)"/><ElButton class="erp-button-motion" @click="load()">刷新</ElButton><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="search=''; source=''; dates=[]; load(true)">重置</ElButton><ElButton class="erp-button-motion" type="primary" :loading="loading" @click="load(true)">应用筛选</ElButton></div></div>
+    <div class="receipt-filters erp-list-filters"><ElInput v-model="search" clearable :placeholder="`搜索${actionLabel}单号、生产订单、产品或部位`" @keyup.enter="load(true)" @clear="load(true)" /><ElSelect v-if="!readOnly" v-model="source" placeholder="全部来源" aria-label="入库来源" @change="load(true)"><ElOption label="全部来源" value=""/><ElOption :label="outgoing ? '生产领用出库' : '厂内入库'" value="INTERNAL"/><ElOption :label="outgoing ? '其他出库' : '外发入库'" value="EXTERNAL"/></ElSelect><ElDatePicker v-model="dates" type="daterange" value-format="YYYY-MM-DD" :start-placeholder="`${actionLabel}开始日期`" :end-placeholder="`${actionLabel}结束日期`" @change="load(true)"/><ElButton class="erp-button-motion" @click="load()">刷新</ElButton><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="search=''; source=''; dates=[]; load(true)">重置</ElButton><ElButton class="erp-button-motion" type="primary" :loading="loading" @click="load(true)">应用筛选</ElButton></div></div>
     <ElPagination v-if="!outgoing && !error && total > pageSize" v-model:current-page="page" class="receipt-page-controls" :page-size="pageSize" :total="total" :disabled="loading" layout="prev, pager, next" @current-change="load()" />
     </section>
     <section class="erp-list-data">
@@ -158,7 +180,7 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
         <div v-horizontal-overflow class="receipt-records-table receipt-table-scroll erp-list-table-scroll scroll-actions-container" v-loading="loading">
           <table class="receipt-table erp-list-native-table erp-list-native-table--nowrap">
             <colgroup>
-              <col style="width:178px"><col style="width:96px"><col style="width:144px"><col style="width:128px">
+              <col style="width:144px"><col style="width:178px"><col style="width:96px"><col style="width:128px">
               <col v-if="outgoing" style="width:96px"><col style="width:80px"><col style="width:80px"><col style="width:128px">
               <col style="width:86px"><col v-if="outgoing" style="width:76px"><col style="width:100px"><col :style="{ width: mixedQuantityColumn ? '132px' : '82px' }">
               <col style="width:58px"><col v-if="!outgoing" style="width:96px"><col style="width:106px"><col style="width:82px">
@@ -166,7 +188,7 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
             </colgroup>
             <thead>
               <tr>
-                <th>{{ actionLabel }}单号</th><th>{{ actionLabel }}来源</th><th>生产订单</th><th>产品</th>
+                <th>生产任务单号</th><th>{{ actionLabel }}单号</th><th>{{ actionLabel }}来源</th><th>产品</th>
                 <th v-if="outgoing">部位</th><th>品类</th><th>材质</th><th>规格</th><th>颜色</th><th v-if="outgoing">厚度</th>
                 <th>加工阶段</th><th class="number">数量</th><th>单位</th><th v-if="!outgoing">提交人</th>
                 <th>{{ actionLabel }}日期</th><th>状态</th><th class="scroll-actions-cell">操作</th>
@@ -174,9 +196,9 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
             </thead>
             <tbody>
               <tr v-for="row in rows" :key="row.id">
-                <td :title="row.receipt_number" class="primary-text">{{ row.receipt_number }}</td>
+                <td :title="row.production_order"><strong>{{ row.production_order || '—' }}</strong></td>
+                <td :title="row.receipt_number">{{ row.receipt_number }}</td>
                 <td><span class="erp-list-tag" :class="row.source==='EXTERNAL' ? 'erp-list-tag--info' : 'erp-list-tag--brand'">{{ row.source_display }}</span></td>
-                <td :title="row.production_order">{{ row.production_order }}</td>
                 <td :title="row.product">{{ row.product }}</td>
                 <td v-if="outgoing" :title="row.attributes.part_name" class="primary-text"><ProcessingMaterialDetails :materials="row">{{ row.attributes.part_name }}</ProcessingMaterialDetails></td>
                 <td>{{ row.attributes.category }}</td><td>{{ row.attributes.material }}</td>
@@ -200,7 +222,7 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
                       <ElDropdownMenu>
                         <ElDropdownItem data-testid="view-semi-receipt" @click="open(row)">查看</ElDropdownItem>
                         <ElDropdownItem v-if="row.status === 'PENDING' && canConfirm" :disabled="Boolean(confirming || deleting)" data-testid="confirm-semi-receipt" @click="open(row)">确认入库</ElDropdownItem>
-                        <ElDropdownItem v-if="row.status === 'PENDING' && row.can_delete" :disabled="Boolean(confirming || deleting)" data-testid="delete-semi-receipt" divided @click="remove(row)">删除</ElDropdownItem>
+                        <ElDropdownItem v-if="!readOnly && row.status === 'PENDING' && row.can_delete" :disabled="Boolean(confirming || deleting)" data-testid="delete-semi-receipt" divided @click="remove(row)">删除</ElDropdownItem>
                       </ElDropdownMenu>
                     </template>
                   </ElDropdown>
@@ -215,8 +237,20 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
     </section>
     <AppWindowDialog v-model="visible" :title="detail ? `${detail.source_display} · 来源详情` : `${actionLabel}来源详情`" :width="outgoing ? 1180 : '80vw'" :height="660" :min-width="760" :min-height="440" class="semi-receipt-source-dialog" :close-on-click-modal="false">
       <div v-loading="detailLoading" class="receipt-detail-body"><ElAlert v-if="detailError" :title="detailError" type="error" :closable="false"/><template v-if="detail">
-        <div class="receipt-detail-title"><h2>{{ detail.receipt_number }}</h2><span class="receipt-tag" :class="{external:detail.source==='EXTERNAL'}">{{ detail.source_display }}</span><span class="receipt-tag" :class="detail.status === 'PENDING' ? 'warning' : 'success'">{{ detail.status === 'PENDING' ? '待入库' : `已${actionLabel}` }}</span></div>
-        <div class="receipt-detail-grid"><label>生产订单<strong>{{ detail.production_order }}</strong></label><label>产品<strong>{{ detail.product }}</strong></label><label v-if="!outgoing">{{ detail.source==='INTERNAL' ? '厂内工序' : '加工厂' }}<strong>{{ detail.source_detail?.workshop || detail.source_detail?.factory || '—' }}</strong></label><label v-if="!outgoing && detail.source === 'EXTERNAL'">{{ detail.source_detail?.is_plan ? '委外总单' : '原外发单' }}<strong>{{ detail.source_detail?.source_number || '—' }}</strong></label><label>{{ actionLabel }}日期<strong>{{ detail.receipt_date }}</strong></label><label>材料仓 / 库区<strong>{{ detail.warehouse }} / {{ detail.zone }}</strong></label><label>{{ actionLabel }}人<strong>{{ detail.actor }}</strong></label></div>
+        <div class="receipt-detail-title"><h2>{{ detail.production_order || '—' }}</h2><span class="receipt-tag" :class="{external:detail.source==='EXTERNAL'}">{{ detail.source_display }}</span><span class="receipt-tag" :class="detail.status === 'PENDING' ? 'warning' : 'success'">{{ detail.status === 'PENDING' ? '待入库' : `已${actionLabel}` }}</span></div>
+        <div class="receipt-detail-grid"><label>{{ actionLabel }}单号<strong>{{ detail.receipt_number }}</strong></label><label>产品<strong>{{ detail.product }}</strong></label><label v-if="!outgoing">{{ detail.source==='INTERNAL' ? '厂内工序' : '加工厂' }}<strong>{{ detail.source_detail?.workshop || detail.source_detail?.factory || '—' }}</strong></label><label v-if="!outgoing && detail.source === 'EXTERNAL'">{{ detail.source_detail?.is_plan ? '委外总单' : '原外发单' }}<strong>{{ detail.source_detail?.source_number || '—' }}</strong></label><label>{{ actionLabel }}日期<strong>{{ detail.receipt_date }}</strong></label>
+          <template v-if="warehousePlacement">
+            <label>半成品仓<ElSelect v-model="warehouseId" aria-label="半成品仓" :disabled="!!confirming || !warehouseOptions.length"
+              :placeholder="warehouseOptions.length ? '请选择半成品仓' : '暂无可用半成品仓'" @change="zoneId = ''">
+              <ElOption v-for="[id, name] in warehouseOptions" :key="id" :label="name" :value="id" />
+            </ElSelect></label>
+            <label>库区<ElSelect v-model="zoneId" aria-label="库区" :disabled="!!confirming || !warehouseId" placeholder="请选择库区">
+              <ElOption v-for="zone in zoneOptions" :key="zone.id" :label="zone.name" :value="zone.id" />
+            </ElSelect></label>
+          </template>
+          <label v-else>材料仓 / 库区<strong>{{ detail.status === 'PENDING' && !detail.zone ? '待仓库分配' : `${detail.warehouse} / ${detail.zone}` }}</strong></label>
+          <label>{{ actionLabel }}人<strong>{{ detail.actor }}</strong></label>
+        </div>
         <template v-if="detail.source === 'EXTERNAL' && detail.source_detail?.source_type === 'TUBE_OUTSOURCING_RETURN'">
           <h3>{{ detail.source_detail.is_plan ? '委外总单入库' : '外发回货' }}</h3>
           <div class="receipt-detail-grid receipt-detail-progress">
@@ -273,7 +307,7 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
         <ElButton @click="visible=false">关闭</ElButton>
         <ElButton v-if="!outgoing && canConfirm && detail?.status === 'PENDING'" type="primary"
           data-testid="confirm-receipt-in-detail" :loading="confirming === detail.id"
-          :disabled="!detail.etag || Boolean(confirming || deleting)" @click="confirm(detail)">确认入库</ElButton>
+          :disabled="!detail.etag || Boolean(confirming || deleting) || (warehousePlacement && !hasSelectedZone)" @click="confirm(detail)">确认入库</ElButton>
       </template>
     </AppWindowDialog>
   </section>

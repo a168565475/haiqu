@@ -249,3 +249,20 @@ class OperationSerializer(serializers.ModelSerializer):
             if craft and craft.pk != self.instance.craft_id:
                 raise serializers.ValidationError({"craft": "工序已有工价工作项，不能更换所属工艺。"})
         return attrs
+
+
+class OperationSchemeCopySerializer(serializers.Serializer):
+    craft = serializers.PrimaryKeyRelatedField(queryset=Craft.objects.filter(
+        craft_type=CraftType.INTERNAL, status=RecordStatus.ACTIVE,
+    ).exclude(workshop__name=METAL_WORKSHOP_NAME))
+    source_name = serializers.CharField(max_length=200, trim_whitespace=False)
+    target_name = serializers.CharField(max_length=200)
+
+    def validate(self, attrs):
+        if attrs["source_name"] == attrs["target_name"]:
+            raise serializers.ValidationError({"target_name": "请输入不同的新方案名称。"})
+        return attrs
+
+
+class OperationSchemeCopyResultSerializer(serializers.Serializer):
+    copied_count = serializers.IntegerField()

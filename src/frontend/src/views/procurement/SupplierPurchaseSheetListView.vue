@@ -238,8 +238,10 @@ onMounted(() => {
       <div class="erp-list-table-frame">
       <ElTable ref="tableRef" v-loading="loading" :data="rows" height="100%" row-key="id" @selection-change="selected = $event">
         <ElTableColumn type="selection" width="46" align="center" header-align="center" :selectable="() => !busy && !loading" />
+        <ElTableColumn label="任务/打样单号" width="110" show-overflow-tooltip>
+          <template #default="{ row }"><strong>{{ (row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : row.production_task_number || row.content_snapshot?.order?.production_task_number) || '—' }}</strong></template>
+        </ElTableColumn>
         <ElTableColumn prop="sheet_number" label="采购表编号" width="152" show-overflow-tooltip />
-        <ElTableColumn label="订单来源" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : (row.production_task_number || row.sales_order_number || '—') }}</template></ElTableColumn>
         <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.purchase_batch_number == null ? '—' : `第 ${row.purchase_batch_number} 批` }}</template></ElTableColumn>
         <ElTableColumn prop="supplier_name_snapshot" label="供应商" min-width="200" show-overflow-tooltip />
         <ElTableColumn prop="template_name" label="模板" width="126" show-overflow-tooltip />

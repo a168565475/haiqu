@@ -135,8 +135,8 @@ watch(scheduleId, () => { void load() }, { immediate: true })
       <section class="schedule-section detail-basic">
         <header><h2>基本信息</h2></header>
         <dl>
+          <div><dt>生产任务单号</dt><dd><strong>{{ schedule.source.task_number }}</strong></dd></div>
           <div><dt>排产计划号</dt><dd>{{ schedule.schedule_number }}</dd></div>
-          <div><dt>生产任务单</dt><dd>{{ schedule.source.task_number }}</dd></div>
           <div><dt>创建日期</dt><dd>{{ formatDate(schedule.created_at) }}</dd></div>
           <div><dt>创建人</dt><dd>{{ schedule.created_by.name }}</dd></div>
           <div><dt>交货日期</dt><dd>{{ formatDate(schedule.source.delivery_date) }}</dd></div>

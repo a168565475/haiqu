@@ -1,12 +1,36 @@
 import { flushPromises, mount, shallowMount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ElementPlus from 'element-plus'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import * as api from '@/api/inventory'
 import MaterialInventoryDetailView from './MaterialInventoryDetailView.vue'
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { stockItemId: 'stock' }, query: {} }) }))
-vi.mock('@/router', () => ({ router: { replace: vi.fn(), push: vi.fn() } }))
 vi.mock('@/api/inventory', () => ({ fetchMaterialInventorySummary: vi.fn(), fetchMaterialOrderIssues: vi.fn(), fetchMaterialOrderPurchases: vi.fn() }))
+
+const page = { template: '<div />' }
+const router = createRouter({ history: createMemoryHistory(), routes: [
+  { path: '/stock/:stockItemId', component: page },
+  { path: '/issues/:issueId', name: 'material-issue-detail', component: page },
+] })
+beforeEach(async () => { await router.replace('/stock/stock?identity_key=current') })
+
+it('切换采购页签和打开领料单都更新当前页面的路由', async () => {
+  vi.mocked(api.fetchMaterialInventorySummary).mockResolvedValue({ zones: [] } as never)
+  vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([])
+  vi.mocked(api.fetchMaterialOrderIssues).mockResolvedValue([{ material_issue_id: 'issue', issue_number: 'LL01' }] as never)
+  const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus, router] } })
+  try {
+    await flushPromises()
+    await wrapper.get('#tab-purchases').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ identity_key: 'current', tab: 'purchases' })
+    await wrapper.get('#tab-issues').trigger('click')
+    await flushPromises()
+    await wrapper.get('#pane-issues button').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/issues/issue')
+  } finally { wrapper.unmount() }
+})
 
 describe('库存数量与计量单位', () => {
   it.each(['个', '片'])('五金库存%s和KG独立展示，关联采购为KG、领料仍是原单位', async unit => {
@@ -16,7 +40,7 @@ describe('库存数量与计量单位', () => {
       zones: [{ zone_id: 'zone', warehouse_number: 'CK01', warehouse_name: '材料仓', zone_name: '五金区', quality: '合格', quantity: '900', weight_quantity: '3.9' }] } as never)
     vi.mocked(api.fetchMaterialOrderIssues).mockResolvedValue([{ material_issue_id: 'issue', issue_number: 'LL01', issued_quantity: '100', unit }] as never)
     vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([{ purchase_order_id: 'order', purchase_order_number: 'CG01', purchase_quantity: '6', actual_inbound_quantity: '3.9', pending_inbound_quantity: '2.1', weight_unit: true, unit: 'KG' }] as never)
-    const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus, router] } })
     try {
       await flushPromises()
       const cards = wrapper.findAll('.stock-cards article')
@@ -38,7 +62,7 @@ describe('库存数量与计量单位', () => {
       cumulative_inbound_quantity: '1000', cumulative_issued_quantity: '100', unit, zones: [] } as never)
     vi.mocked(api.fetchMaterialOrderIssues).mockResolvedValue([])
     vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([])
-    const wrapper = shallowMount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus, router] } })
     await flushPromises()
     const cards = wrapper.findAll('.stock-cards article')
     expect(cards[0]!.get('strong').text()).toBe(`900 ${unit}`)
@@ -54,7 +78,7 @@ describe('库存数量与计量单位', () => {
     vi.mocked(api.fetchMaterialOrderPurchases).mockResolvedValue([{ purchase_order_number: 'CG01', production_task_number: 'HT26205',
       purchase_quantity: '12', actual_inbound_quantity: '9.6', pending_inbound_quantity: '2.4', weight_unit: true, unit: 'KG',
       bar_counts: { ordered: 5, accepted: 4, pending: 1 } }] as never)
-    const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(MaterialInventoryDetailView, { global: { plugins: [ElementPlus, router] } })
     await flushPromises()
     try {
       const cards = wrapper.findAll('.stock-cards article')

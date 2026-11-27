@@ -35,7 +35,11 @@ export interface MaterialRequirement {
   }
   semi_balance_allocations?: { balance_id: string; max_issue_quantity: string }[]
 }
-export interface MaterialIssueLine extends Omit<MaterialRequirement, 'stock_item_id' | 'validation_errors'> {
+type MaterialIssueQuantityField = 'required_quantity' | 'internal_issued_quantity' | 'outsourcing_issued_quantity'
+  | 'order_remaining' | 'available_stock' | 'max_issue_quantity'
+
+export type MaterialIssueLine = Omit<MaterialRequirement, 'stock_item_id' | 'validation_errors' | MaterialIssueQuantityField>
+  & Record<MaterialIssueQuantityField, string | null> & {
   id: string; requested_quantity: string; issued_quantity: string | null
   bar_count?: string; meters?: string
   public_stock_allocations?: {
@@ -45,6 +49,7 @@ export interface MaterialIssueLine extends Omit<MaterialRequirement, 'stock_item
 export interface MaterialIssue {
   id: string; issue_number: string; status: MaterialIssueStatus; status_display: string; version: number
   stock_mode?: MaterialIssueStockMode
+  stock_quantities_unavailable?: boolean
   production_task: { id: string; task_number: string; order_number: string } | null
   product: MaterialIssueProduct | null; workshop: NamedOption | null
   recipient: { id: string | null; name: string } | null; created_by: NamedOption

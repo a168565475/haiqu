@@ -216,7 +216,9 @@ describe('D3整单喷塑回货', () => {
     const { wrapper, vm } = await mountPage()
     expect(vm.receiptDate).toBe(base.today); expect(wrapper.get('[aria-label="入库经办人"]').attributes('readonly')).toBeDefined()
     expect(wrapper.get('[aria-label="入库经办人"]').attributes('value')).toBeUndefined()
-    expect(wrapper.findAll('.d3-context .info-cell')).toHaveLength(12)
+    const info = wrapper.findAll('.d3-context .info-cell')
+    expect(info).toHaveLength(13)
+    expect(info.slice(0, 2).map(field => field.get('strong').text())).toEqual([base.order.task_number, base.order.order_number])
     expect(wrapper.findAll('.d3-lines th').map(item => item.text())).toEqual(['部位', '材质', '形状', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '实发（支）', '实收（支）', '差额（支）', '差额原因', '入库库区'])
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false); expect(wrapper.text()).not.toContain('批次'); expect(wrapper.text()).not.toContain('实发（根）')
     expect(vm.rows[0]!.received).toBe(''); expect(vm.warehouse).toBe('')
@@ -228,6 +230,7 @@ describe('D3整单喷塑回货', () => {
   })
   it('全回只增加实收，保存UUID及原版本，结束后只读且不能追加', async () => {
     const { wrapper, vm } = await mountPage(); receive(vm); vm.openConfirm(); await flushPromises()
+    expect(wrapper.findAll('.d3-confirm-context strong').slice(0, 2).map(value => value.text())).toEqual([base.order.task_number, base.order.order_number])
     expect(wrapper.find('.d3-confirm-lines').text()).toContain('20'); expect(wrapper.text()).toContain('整单只登记一次')
     await vm.finishReceipt()
     expect(api.confirmTubeReceipt).toHaveBeenCalledWith('order-1', expect.objectContaining({ receipt_date: base.today, warehouse_id: 'warehouse-1', lines: [{ order_line_id: 'line-1', received_quantity: '20', shortage_reason: '', zone_id: 'zone-1' }] }), order.etag)

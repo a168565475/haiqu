@@ -25,6 +25,13 @@ describe('个人收件API契约（测试替身）', () => {
     expect(await getNotificationInbox(2, signal)).toEqual(data)
     expect(client.get).toHaveBeenCalledWith('/api/v1/notifications/inbox/', { timeout: 20000, params: { page: 2, page_size: 10 }, signal })
   })
+  it('工作台请求服务端在分页前筛出未读消息', async () => {
+    client.get.mockResolvedValueOnce({ data: { data: [], count: 0, page: 1, page_size: 10 } })
+    await getNotificationInbox(1, undefined, true)
+    expect(client.get).toHaveBeenCalledWith('/api/v1/notifications/inbox/', {
+      timeout: 20000, signal: undefined, params: { page: 1, page_size: 10, unread_only: true },
+    })
+  })
   it('未读接口精确读取计数，拒绝缺失/负数/字符串响应', async () => {
     for (const count of [0, 105]) {
       client.get.mockResolvedValueOnce({ data: { unread_count: count } })

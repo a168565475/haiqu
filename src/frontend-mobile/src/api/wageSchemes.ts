@@ -55,3 +55,9 @@ export async function submitWageScheme(saved: VersionedWageScheme) {
   )
   return data.data
 }
+
+export async function withdrawWageScheme(saved: VersionedWageScheme) {
+  return versioned(await apiClient.post<ResponseData<SavedWageScheme>>(
+    `${path}${encodeURIComponent(saved.data.id)}/withdraw/`, {}, { headers: { 'If-Match': saved.etag } },
+  ))
+}

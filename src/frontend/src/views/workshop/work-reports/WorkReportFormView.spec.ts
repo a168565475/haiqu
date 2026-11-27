@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElDatePicker, ElInput, ElMessage, ElMessageBox, ElSelect } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,10 +29,15 @@ vi.mock('@/api/workshopReporting', () => ({
   updateWorkReport: mocks.update,
 }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ user: { username: 'admin', display_name: '超级管理员' } }),
+  useAuthStore: () => ({ user: { username: 'admin', display_name: '超级管理员' }, hasPermission: () => false }),
 }))
 
 const wrappers: ReturnType<typeof mount>[] = []
+const assemblyEmployees = [
+  { id: 'worker-1', name: '员工甲', workshop_id: 'workshop-1' },
+  { id: 'worker-2', name: '员工乙', workshop_id: 'workshop-1' },
+  { id: 'worker-3', name: '员工丙', workshop_id: 'workshop-1' },
+]
 const scheme = {
   id: 'scheme-1', scheme_number: 'GJ-001', status: 'APPROVED', status_display: '已批准', version: 1, revision: 3,
   can_create_change: true, parent_scheme: null, product_line_id: 'line-1', schedule_product_id: 'product-1',
@@ -89,6 +94,39 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('报工直接编辑', () => {
+  it('报工明细将裁片组收起为首个裁片和剩余数量', async () => {
+    mocks.price.mockResolvedValueOnce({ ...scheme, lines: [{
+      ...scheme.lines[0], display_name: '床面、侧片', counting_mode: 'GROUP', cutting_components: [
+        { component_identity: 'front', name: '床面', quantity_per_group: 1, unit: '片' },
+        { component_identity: 'side', name: '侧片', quantity_per_group: 2, unit: '片' },
+      ],
+    }] })
+    const wrapper = mount(WorkReportFormView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.get('.cutting-group-cell').text()).toBe('床面+1')
+    expect(wrapper.get('.wr-quantity-field .el-input-group__append').text()).toBe('套')
+    expect(wrapper.get('.wr-work-report-table').text()).not.toContain('侧片')
+  })
+
+  it('向下键在本次报工数量列跳到下一行', async () => {
+    const report = await mocks.report()
+    const firstLine = report.data.lines[0]
+    mocks.report.mockResolvedValue({ ...report, data: { ...report.data, lines: [
+      firstLine, { ...firstLine, id: 'report-line-2', line_number: 2, quantity: '3.0000' },
+    ] } })
+    const wrapper = mount(WorkReportFormView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const quantities = wrapper.findAll<HTMLInputElement>('.wr-quantity-field input')
+    expect(quantities).toHaveLength(2)
+    quantities[0]!.element.focus()
+    await quantities[0]!.trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(quantities[1]!.element)
+    expect(quantities.map(input => input.element.value)).toEqual(['2.0000', '3.0000'])
+  })
+
   it.each([
     ['task-1', { production_task_id: 'task-1', workshop_id: 'workshop-1' }],
     ['other-task', { schedule_product_id: 'product-1', workshop_id: 'workshop-1', craft_id: 'craft-1' }],
@@ -225,7 +263,7 @@ describe('报工直接编辑', () => {
     await wrapper.findAll('button').find(button => button.text().includes('提交报工'))!.trigger('click')
     await flushPromises()
 
-    expect(warning).toHaveBeenCalledWith('请选择员工。')
+    expect(warning).toHaveBeenCalledWith('请选择本车间有效员工。')
     expect(warning.mock.calls.flat().join('')).not.toContain('装配线')
     expect(mocks.create).not.toHaveBeenCalled()
   })
@@ -262,6 +300,154 @@ describe('报工直接编辑', () => {
 
     expect(mocks.price).toHaveBeenCalledWith(expect.objectContaining({ schedule_product_id: 'product-1' }))
     expect(wrapper.findAllComponents(ElSelect).some(select => select.props('modelValue') === 'worker-1')).toBe(true)
+  })
+
+  it('装配同一工序多选员工，浮层逐人填写并提交独立明细', async () => {
+    route.params = {}
+    route.query = { schedule_product_id: 'product-1', workshop_id: 'workshop-1', craft_id: 'craft-1', plan_category: 'ASSEMBLY' }
+    mocks.price.mockResolvedValue({ ...scheme, lines: [{ ...scheme.lines[0], required_quantity: '1300.0000',
+      cumulative_quantity: '0.0000', declared_price: '2.0000', last_employees: [{ workshop_employee_id: 'worker-1', production_line: 1 }] }] })
+    const context = await mocks.context()
+    mocks.context.mockResolvedValue({ ...context, employees: assemblyEmployees })
+    mocks.create.mockResolvedValue({})
+    const wrapper = mount(WorkReportFormView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const row = wrapper.get('.wr-work-report-table tbody .el-table__row')
+    const employees = row.getComponent(ElSelect)
+    expect(employees.props('multiple')).toBe(true)
+    expect(employees.props('modelValue')).toEqual(['worker-1'])
+    expect(employees.props('collapseTags')).toBe(true)
+    await row.get('input[inputmode=numeric]').setValue('300')
+    employees.vm.$emit('update:modelValue', ['worker-1', 'worker-2', 'worker-3'])
+    await flushPromises()
+
+    expect(wrapper.findAll('.wr-work-report-table tbody .el-table__row')).toHaveLength(1)
+    expect(row.text()).toContain('切管')
+    expect(row.text()).not.toContain('加员工')
+    await row.get('.wr-report-line-summary').trigger('click', { button: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.wr-report-assembly-line-popover')).not.toBeNull())
+    const linePopover = new DOMWrapper(document.querySelector('.wr-report-assembly-line-popover')!)
+    const assemblyLineInputs = linePopover.findAll<HTMLSelectElement>('select')
+    expect(assemblyLineInputs[0]!.element.value).toBe('1')
+    await assemblyLineInputs[1]!.setValue('2')
+    await assemblyLineInputs[2]!.setValue('3')
+
+    const summary = row.get<HTMLInputElement>('.wr-report-quantity-summary input')
+    await summary.trigger('click', { button: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.wr-report-quantity-popover')).not.toBeNull())
+    const popover = new DOMWrapper(document.querySelector('.wr-report-quantity-popover')!)
+    const columns = popover.findAll('.wr-report-employee-column')
+    expect(columns.map(column => column.get('strong').text())).toEqual(['员工甲', '员工乙', '员工丙'])
+    expect(columns[0]!.get<HTMLInputElement>('input').element.value).toBe('300')
+    expect(popover.findAll('select')).toHaveLength(0)
+    await columns[1]!.get('input').setValue('400')
+    await columns[2]!.get('input').setValue('700')
+    expect(row.text()).toContain('超出 100 次')
+
+    await columns[2]!.get('input').setValue('500')
+    expect(summary.element.value).toBe('300,400,500')
+    expect(row.text()).toContain('¥2400')
+    expect(row.text()).not.toContain('超出')
+    const submit = wrapper.findAll('button').find(button => button.text() === '提交报工')!
+    await submit.trigger('click')
+    await flushPromises()
+
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-1', production_line: 1, quantity: '300' },
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-2', production_line: 2, quantity: '400' },
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-3', production_line: 3, quantity: '500' },
+      ],
+    }))
+  })
+
+  it('统一装配线同步当前工序和随后选中的员工', async () => {
+    route.params = {}
+    route.query = { schedule_product_id: 'product-1', workshop_id: 'workshop-1', craft_id: 'craft-1', plan_category: 'ASSEMBLY' }
+    const context = await mocks.context()
+    mocks.context.mockResolvedValue({ ...context, employees: assemblyEmployees })
+    mocks.price.mockResolvedValue({ ...scheme, lines: [
+      { ...scheme.lines[0], last_employees: [{ workshop_employee_id: 'worker-1', production_line: 1 }] },
+      { ...scheme.lines[0], id: 'scheme-line-2', work_item_id: 'work-item-2',
+        last_employees: [{ workshop_employee_id: 'worker-2', production_line: 3 }] },
+    ] })
+    mocks.create.mockResolvedValue({})
+    const wrapper = mount(WorkReportFormView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const bulkSelect = wrapper.get('.wr-report-assembly-line-header').getComponent(ElSelect)
+    const [first, second] = wrapper.findAll('.wr-work-report-table tbody .el-table__row')
+    expect(bulkSelect.props('modelValue')).toBeNull()
+    await first!.get('input[inputmode=numeric]').setValue('4')
+    await second!.get('input[inputmode=numeric]').setValue('6')
+    bulkSelect.vm.$emit('update:modelValue', 2)
+    first!.getComponent(ElSelect).vm.$emit('update:modelValue', ['worker-1', 'worker-3'])
+    await flushPromises()
+
+    expect(bulkSelect.props('modelValue')).toBe(2)
+    expect(second!.findAllComponents(ElSelect)[1]!.props('modelValue')).toBe(2)
+    await first!.get('.wr-report-line-summary').trigger('click', { button: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.wr-report-assembly-line-popover')).not.toBeNull())
+    const linePopover = new DOMWrapper(document.querySelector('.wr-report-assembly-line-popover')!)
+    const lines = linePopover.findAll<HTMLSelectElement>('select')
+    expect(lines.map(line => line.element.value)).toEqual(['2', '2'])
+    await lines[1]!.setValue('3')
+    expect(bulkSelect.props('modelValue')).toBeNull()
+    bulkSelect.vm.$emit('update:modelValue', 2)
+
+    await first!.get('.wr-report-quantity-summary input').trigger('click', { button: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.wr-report-quantity-popover')).not.toBeNull())
+    const popover = new DOMWrapper(document.querySelector('.wr-report-quantity-popover')!)
+    await popover.get('input[aria-label="员工丙报工数量"]').setValue('8')
+    await wrapper.findAll('button').find(button => button.text() === '提交报工')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-1', production_line: 2, quantity: '4' },
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-3', production_line: 2, quantity: '8' },
+        { scheme_line_id: 'scheme-line-2', workshop_employee_id: 'worker-2', production_line: 2, quantity: '6' },
+      ],
+    }))
+  })
+
+  it('编辑旧装配报工保留同一员工在不同装配线的历史明细', async () => {
+    const context = await mocks.context()
+    mocks.context.mockResolvedValue({ ...context, employees: assemblyEmployees,
+      crafts: [{ ...context.crafts[0], plan_category: 'ASSEMBLY' }] })
+    const report = await mocks.report()
+    const first = { ...report.data.lines[0], production_line: 1 }
+    mocks.report.mockResolvedValue({ ...report, data: { ...report.data, lines: [
+      first,
+      { ...first, id: 'report-line-2', line_number: 2, production_line: 2, quantity: '3.0000' },
+      { ...first, id: 'report-line-3', line_number: 3, workshop_employee_id: 'worker-2', employee_name: '员工乙', production_line: 3, quantity: '5.0000' },
+    ] } })
+    const wrapper = mount(WorkReportFormView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const summary = wrapper.get<HTMLInputElement>('.wr-report-quantity-summary input')
+    expect(summary.element.value).toBe('2,3,5')
+    await summary.trigger('click', { button: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.wr-report-quantity-popover')).not.toBeNull())
+    const popover = new DOMWrapper(document.querySelector('.wr-report-quantity-popover')!)
+    const columns = popover.findAll('.wr-report-employee-column')
+    expect(columns.map(column => column.get('strong').text())).toEqual(['员工甲', '员工乙'])
+    expect(columns[0]!.findAll('input')).toHaveLength(2)
+    await columns[0]!.findAll('input')[1]!.setValue('4')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.update).toHaveBeenCalledWith('report-1', expect.objectContaining({
+      lines: [
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-1', production_line: 1, quantity: '2.0000' },
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-1', production_line: 2, quantity: '4' },
+        { scheme_line_id: 'scheme-line-1', workshop_employee_id: 'worker-2', production_line: 3, quantity: '5.0000' },
+      ],
+    }), '"report-etag"')
   })
 
   it('本次数量为空或零的行不校验员工且不提交', async () => {

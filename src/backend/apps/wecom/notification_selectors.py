@@ -91,8 +91,9 @@ def all_rule_payloads():
             for event in all_events()]
 
 
-def inbox_queryset(employee_id):
-    return NotificationRecipient.objects.filter(employee_id=employee_id).select_related("event").prefetch_related("deliveries").order_by("-created_at", "-id")
+def inbox_queryset(employee_id, *, unread_only=False):
+    rows = _unread_queryset(employee_id) if unread_only else NotificationRecipient.objects.filter(employee_id=employee_id)
+    return rows.select_related("event").prefetch_related("deliveries").order_by("-created_at", "-id")
 
 
 def delivery_statuses(recipient):
@@ -184,13 +185,18 @@ def recipient_payload(recipient, user, *, permission_snapshots=None):
     }
 
 
-def unread_count(employee_id):
+def _unread_queryset(employee_id):
     tracking_codes = {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}
     unread = NotificationRecipient.objects.filter(employee_id=employee_id, read_at__isnull=True)
     tracking = unread.filter(event__event_code__in=tracking_codes).select_related('event', 'employee__user')
     qualification_cache = {}
-    return unread.exclude(event__event_code__in=tracking_codes).count() + sum(
-        content_accessible(recipient, recipient.employee.user, permission_snapshots=qualification_cache) for recipient in tracking)
+    hidden_ids = [r.pk for r in tracking
+                  if not content_accessible(r, r.employee.user, permission_snapshots=qualification_cache)]
+    return unread.exclude(pk__in=hidden_ids)
+
+
+def unread_count(employee_id):
+    return _unread_queryset(employee_id).count()
 
 
 def delivery_queryset():

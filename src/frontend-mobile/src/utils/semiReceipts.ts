@@ -61,7 +61,8 @@ export function parsePendingSemiReceipt(raw: string, planId: string, category: S
   if (!value || typeof value.etag !== 'string' || !value.etag || (value.conflict !== undefined && typeof value.conflict !== 'boolean') || !payload
     || payload.schedule_product_id !== planId || payload.plan_category !== category
     || typeof payload.request_id !== 'string' || !semiReceiptUuid.test(payload.request_id)
-    || typeof payload.zone_id !== 'string' || !semiReceiptUuid.test(payload.zone_id)
+    || (payload.zone_id !== undefined
+      && (typeof payload.zone_id !== 'string' || !semiReceiptUuid.test(payload.zone_id)))
     || typeof payload.receipt_date !== 'string' || !validProductionDate(payload.receipt_date)
     || typeof payload.remark !== 'string' || payload.remark.length > 2000 || !Array.isArray(payload.lines) || !payload.lines.length || payload.lines.length > 300
     || !payload.lines.every(line => line && typeof line.bom_line_id === 'string' && semiReceiptUuid.test(line.bom_line_id)
@@ -73,7 +74,10 @@ export function parsePendingSemiReceipt(raw: string, planId: string, category: S
 export function semiReceiptFailure(error: unknown, recovering: boolean): 'deleted' | 'conflict' | 'rejected' | 'unknown' {
   const response = (error as { response?: { status?: number; data?: { error?: { code?: string } } } })?.response
   const status = response?.status
-  if (status === 409) return response?.data?.error?.code === 'RECEIPT_REQUEST_DELETED' ? 'deleted' : 'conflict'
+  if (status === 409) {
+    if (response?.data?.error?.code === 'DATABASE_MIGRATION_REQUIRED') return 'rejected'
+    return response?.data?.error?.code === 'RECEIPT_REQUEST_DELETED' ? 'deleted' : 'conflict'
+  }
   if (recovering && [400, 403, 404].includes(status ?? 0)) return 'unknown'
   return [400, 403, 404, 412, 428].includes(status ?? 0) ? 'rejected' : 'unknown'
 }

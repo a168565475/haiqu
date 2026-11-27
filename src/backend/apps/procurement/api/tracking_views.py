@@ -20,6 +20,12 @@ from ..tracking_permissions import (
     VIEW_PERMISSION, accessible_packaging_tracking_task_ids, accessible_tracking_task_ids, can_read_packaging_as_pmc,
 )
 from ..tracking_selectors import arrival_rows, coverage_rows
+from ..tracking_rules import beijing_today
+from ..workbench import COVERAGE_CATEGORIES, arrival_queues, coverage_queues, purchase_spend
+from .workbench_serializers import (
+    WorkbenchArrivalItemSerializer, WorkbenchCoverageItemSerializer, WorkbenchFilterSerializer,
+    WorkbenchItemFilterSerializer, WorkbenchSpendFilterSerializer, items_response, overview_response, spend_response,
+)
 from .group_serializers import PurchaseGroupFilterOptionsSerializer
 from .tracking_serializers import (
     ArrivalTrackingResponseSerializer, ArrivalTrackingRowSerializer,
@@ -89,6 +95,55 @@ class PurchaseTrackingViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated, HasActiveEmployee, TrackingViewPermission]
     serializer_class = ArrivalTrackingRowSerializer
     pagination_class = None
+
+    def _standard_workbench(self, filter_class):
+        if not module_policy.has_permission(self.request, VIEW_PERMISSION):
+            raise PermissionDenied('当前账号没有普通采购查看权限。')
+        filters = filter_class(data=self.request.query_params)
+        filters.is_valid(raise_exception=True)
+        return accessible_tracking_task_ids(self.request), filters.validated_data
+
+    @extend_schema(responses=overview_response)
+    @action(detail=False, methods=['get'])
+    def workbench(self, request):
+        tasks, _ = self._standard_workbench(WorkbenchFilterSerializer)
+        today = beijing_today()
+        arrivals, missing, comparable = arrival_queues(tasks, today)
+        coverage, unknown_requirements = coverage_queues(tasks)
+        counts = {key: len(rows) for key, rows in {**coverage, **arrivals}.items()}
+        reasons = {}
+        if unknown_requirements:
+            reasons['shortage'] = f'另有 {unknown_requirements} 项需求量待核对'
+        if missing and not comparable:
+            counts['late_for_use'] = None
+            reasons['late_for_use'] = '未收到的物料尚无可比的排产用料日期。'
+        return Response({'data': {'as_of': today.isoformat(), 'counts': counts, 'availability_reasons': reasons,
+                                   'missing_use_date_count': missing}})
+
+    @extend_schema(parameters=[WorkbenchItemFilterSerializer], responses=items_response)
+    @action(detail=False, methods=['get'], url_path='workbench-items')
+    def workbench_items(self, request):
+        tasks, filters = self._standard_workbench(WorkbenchItemFilterSerializer)
+        category = filters['category']
+        if category in COVERAGE_CATEGORIES:
+            rows = coverage_queues(tasks)[0][category]
+            _sort_coverage_rows(rows)
+            serializer = WorkbenchCoverageItemSerializer
+        else:
+            rows = arrival_queues(tasks, beijing_today())[0][category]
+            rows.sort(key=lambda row: (row['delivery_date'] or '9999-12-31', row['task_number'], row['row_key']))
+            serializer = WorkbenchArrivalItemSerializer
+        size, page = filters['page_size'], filters['page']
+        selected = rows[(page - 1) * size:page * size]
+        self._filter_actions(selected)
+        return Response({'data': serializer(selected, many=True).data, 'meta': {
+            'page': page, 'page_size': size, 'total': len(rows), 'total_pages': ceil(len(rows) / size)}})
+
+    @extend_schema(parameters=[WorkbenchSpendFilterSerializer], responses=spend_response)
+    @action(detail=False, methods=['get'], url_path='workbench-spend')
+    def workbench_spend(self, request):
+        tasks, filters = self._standard_workbench(WorkbenchSpendFilterSerializer)
+        return Response({'data': purchase_spend(tasks, filters['period'], filters['date'])})
 
     def _filters(self):
         serializer = TrackingFilterSerializer(data=self.request.query_params)

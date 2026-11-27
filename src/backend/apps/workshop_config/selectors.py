@@ -25,6 +25,11 @@ def employee_workshop_ids(request, permission):
     return resource_ids(request, permission, "WORKSHOP")
 
 
+def workshop_config_rows(queryset, request, permission, workshop_field):
+    ids = resource_ids(request, permission, "WORKSHOP")
+    return queryset if ids is None else queryset.filter(**{f"{workshop_field}__in": ids})
+
+
 def accessible_workshop_employees(request, permission="workshop_config.view_workshopemployee"):
     queryset = active_department_employees("DEPT_PRODUCTION")
     ids = employee_workshop_ids(request, permission)

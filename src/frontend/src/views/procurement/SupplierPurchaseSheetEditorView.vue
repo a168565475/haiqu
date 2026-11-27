@@ -482,10 +482,12 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
         <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: sheetsQuery })" />
         <h2>采购表信息</h2>
         <dl class="published-fields">
+          <div v-if="content.order.source_type === 'SAMPLE'"><dt>打样单号</dt><dd><strong>{{ content.order.source_number || '—' }}</strong></dd></div>
+          <div v-else><dt>生产任务单号</dt><dd><strong>{{ content.order.production_task_number || sheet.production_task_number || '—' }}</strong></dd></div>
           <div><dt>采购表编号</dt><dd>{{ sheet.sheet_number }}</dd></div>
           <div><dt>当前版本</dt><dd class="published-status">V{{ sheet.version_number }} · 已发布</dd></div>
           <div><dt>合同模板</dt><dd>{{ sheet.template_name || '—' }}</dd></div>
-          <div><dt>{{ content.order.source_type === 'SAMPLE' ? '打样单号' : '关联订单' }}</dt><dd>{{ (content.order.source_type === 'SAMPLE' ? content.order.source_number : content.order.sales_order_number) || '—' }}</dd></div>
+          <div v-if="content.order.source_type !== 'SAMPLE'"><dt>销售订单</dt><dd>{{ content.order.sales_order_number || '—' }}</dd></div>
           <div><dt>采购日期</dt><dd>{{ content.purchase_date || '—' }}</dd></div>
           <div><dt>结算方式</dt><dd>{{ content.settlement_mode === 'ACTUAL_WEIGHT' ? '按实际重量结算' : '按数量和单价结算' }}</dd></div>
           <div><dt>采购金额</dt><dd class="published-amount">{{ money(totalAmount) }} （共{{ content.lines.length }}项明细）</dd></div>

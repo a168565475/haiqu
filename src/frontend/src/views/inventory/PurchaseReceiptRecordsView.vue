@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { MoreFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { fetchPurchaseReceiptRecord, fetchPurchaseReceiptRecords } from '@/api/inventory'
@@ -30,6 +30,15 @@ const detailLoading = ref(false)
 const detailError = ref('')
 const detail = ref<Awaited<ReturnType<typeof fetchPurchaseReceiptRecord>>>()
 const detailRecord = ref<PurchaseReceiptRecord>()
+const receiptReference = computed(() => {
+  if (detail.value?.source !== 'PURCHASE' || !detailRecord.value) return
+  const sampleNumber = detail.value.data.sample_number
+  return {
+    label: sampleNumber ? '打样单号' : '生产任务单号',
+    number: sampleNumber || detailRecord.value.production_task_number,
+    purchaseOrderNumber: detailRecord.value.purchase_order_number,
+  }
+})
 let detailRequestId = 0
 
 async function load() {
@@ -131,11 +140,7 @@ onMounted(load)
       <div v-loading="detailLoading" class="receipt-detail">
         <ElAlert v-if="detailError" :title="detailError" type="error" :closable="false" />
         <template v-if="detail?.source === 'PURCHASE'">
-          <div v-if="detailRecord" class="receipt-meta">
-            <span v-if="detailRecord.production_task_number">生产任务单号 <strong>{{ detailRecord.production_task_number }}</strong></span>
-            <span v-if="detailRecord.purchase_order_number">采购单号 <strong>{{ detailRecord.purchase_order_number }}</strong></span>
-          </div>
-          <PurchaseInboundHistory :purchase-order-id="detail.data.purchase_order_id" :inbounds="[detail.data]" embedded expand-single>
+          <PurchaseInboundHistory :purchase-order-id="detail.data.purchase_order_id" :inbounds="[detail.data]" :receipt-reference="receiptReference" embedded expand-single>
             <template #material-details="{ quantity }">
               <ReceiptRecordMaterialTables :receipt="{ ...detail, productionTaskNumber: detailRecord?.production_task_number, formatQuantity: quantity }" />
             </template>

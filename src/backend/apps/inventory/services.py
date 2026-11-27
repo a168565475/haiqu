@@ -284,9 +284,13 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     if Decimal(received_total) + Decimal(quantity) > maximum:
         raise ValidationError({"received_quantity": f"累计入库不能超过 {int(maximum)}；装配各工序最低累计报工 {reporting['reported_minimum']}，已入库 {received_total}。"})
 
-    location = lock_finished_goods_locations([validated_data["location_id"]]).get(str(validated_data["location_id"]))
-    if location is None:
-        raise ValidationError({"location_id": "入库库位不存在。"})
+    location_id = validated_data.get("location_id")
+    location = None
+    if location_id:
+        location = lock_finished_goods_locations([location_id]).get(str(location_id))
+        if location is None:
+            raise ValidationError({"location_id": "入库库位不存在。"})
+        _validate_finished_goods_location(location)
 
     supplier = validated_data.get("supplier")
     if supplier and (supplier.is_disabled or supplier.supplier_type != SupplierType.FINISHED):
@@ -297,7 +301,6 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     box_count, tail_quantity, occupied_box_slots = packaging_values(
         quantity, validated_data["quantity_per_box"]
     )
-    _validate_finished_goods_location(location)
     product = line.product
     category_name = (line.product_selection_snapshot.get("category_name", "") if line.product_catalog_id
                      else getattr(getattr(product, "category", None), "category_name", ""))
@@ -335,7 +338,8 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     write_audit_log(
         object_type="FINISHED_GOODS_RECEIPT", object_id=receipt.pk, action="CREATED",
         context_type="PRODUCTION_TASK", context_id=line.production_task_id, actor_employee=actor_employee,
-        after_data={"receipt_number": receipt.receipt_number, "quantity": quantity, "location_id": str(location.pk),
+        after_data={"receipt_number": receipt.receipt_number, "quantity": quantity,
+                    "location_id": str(location_id) if location_id else None,
                     "status": receipt.status},
         request=request,
     )
@@ -343,35 +347,52 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
 
 
 @transaction.atomic
-def confirm_finished_goods_receipt(*, receipt_id, actor_employee, request):
-    receipt = FinishedGoodsReceipt.objects.select_for_update().select_related(
-        "location", "location__zone", "location__zone__warehouse",
-    ).filter(pk=receipt_id).first()
+def confirm_finished_goods_receipt(*, receipt_id, actor_employee, request, confirmation):
+    receipt = FinishedGoodsReceipt.objects.select_for_update().filter(pk=receipt_id).first()
     if receipt is None:
         raise FinishedGoodsReceipt.DoesNotExist
     if receipt.status == FinishedGoodsReceiptStatus.CONFIRMED:
+        if (confirmation.get("location_id", receipt.location_id) != receipt.location_id
+                or confirmation.get("quantity_per_box", receipt.quantity_per_box) != receipt.quantity_per_box):
+            raise Conflict("该单据已确认入库，请刷新核对实际库位与包装。")
         return receipt, True
     if receipt.status != FinishedGoodsReceiptStatus.PENDING:
         raise Conflict("当前成品入库单状态不能确认。")
-    location = lock_finished_goods_locations([receipt.location_id]).get(str(receipt.location_id))
+    location_id = confirmation.get("location_id", receipt.location_id)
+    if not location_id:
+        raise ValidationError({"location_id": "请选择成品入库库位。"})
+    if confirmation or request.headers.get("If-Match"):
+        from apps.core.api.concurrency import require_matching_etag
+        require_matching_etag(request, receipt)
+    location = lock_finished_goods_locations([location_id]).get(str(location_id))
     if location is None:
         raise ValidationError({"location_id": "入库库位不存在。"})
     _validate_finished_goods_location(location)
+    quantity_per_box = confirmation.get("quantity_per_box", receipt.quantity_per_box)
+    box_count, tail_quantity, occupied_box_slots = packaging_values(receipt.received_quantity, quantity_per_box)
     occupied_now = FinishedGoodsReceipt.objects.filter(
         location=location, status=FinishedGoodsReceiptStatus.CONFIRMED, remaining_quantity__gt=0,
     ).exclude(pk=receipt.pk).aggregate(total=Sum("remaining_box_slots"))["total"] or 0
     if (
-        receipt.occupied_box_slots is not None
+        occupied_box_slots is not None
         and location.capacity_box_slots is not None
-        and occupied_now + receipt.occupied_box_slots > location.capacity_box_slots
+        and occupied_now + occupied_box_slots > location.capacity_box_slots
     ):
         raise ValidationError({"receipt": f"库位剩余 {location.capacity_box_slots - occupied_now} 个箱位，无法确认本次入库。"})
+    receipt.location = location
+    receipt.quantity_per_box = quantity_per_box
+    receipt.box_count = box_count
+    receipt.tail_quantity = tail_quantity
+    receipt.occupied_box_slots = occupied_box_slots
     receipt.status = FinishedGoodsReceiptStatus.CONFIRMED
     receipt.remaining_quantity = receipt.received_quantity
     receipt.remaining_box_slots = receipt.occupied_box_slots
     receipt.confirmed_by_employee = actor_employee
     receipt.confirmed_at = timezone.now()
-    receipt.save(update_fields=["status", "remaining_quantity", "remaining_box_slots", "confirmed_by_employee", "confirmed_at", "updated_at"])
+    receipt.save(update_fields=[
+        "location", "quantity_per_box", "box_count", "tail_quantity", "occupied_box_slots", "status",
+        "remaining_quantity", "remaining_box_slots", "confirmed_by_employee", "confirmed_at", "updated_at",
+    ])
     write_audit_log(
         object_type="FINISHED_GOODS_RECEIPT", object_id=receipt.pk, action="CONFIRMED",
         context_type="PRODUCTION_TASK", context_id=receipt.production_task_product.production_task_id,

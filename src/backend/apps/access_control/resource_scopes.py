@@ -22,7 +22,11 @@ def enforcing(request, code):
 def scope_kind(code):
     if code == 'inventory.receive_material':
         return 'MATERIAL'
-    if code in {'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee'}:
+    if code in {
+        'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee',
+        'workshop_config.view_craft', 'workshop_config.view_operation',
+        'workshop_config.add_operation', 'workshop_config.change_operation',
+    }:
         return 'WORKSHOP'
     if code in {f'inventory.{action}_{kind}' for action in ('view', 'add', 'delete')
                 for kind in ('internalsemifinishedreceipt', 'finishedgoodsreceipt')}:

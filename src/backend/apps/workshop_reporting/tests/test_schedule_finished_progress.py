@@ -10,6 +10,7 @@ from apps.inventory.models import FinishedGoodsReceipt
 from apps.inventory.tests import test_assembly_receipts as receipt_fixtures
 from apps.inventory.tests import test_inventory_api as inventory_fixtures
 from apps.inventory.tests.assembly_reporting_fixture import seed_reported_assembly
+from apps.inventory.tests.finished_receipt_fixture import historical_finished_receipt
 
 
 class ScheduleFinishedProgressTests(receipt_fixtures.AssemblyFixture, APITestCase):
@@ -31,11 +32,14 @@ class ScheduleFinishedProgressTests(receipt_fixtures.AssemblyFixture, APITestCas
     def test_reporting_alone_does_not_advance_but_actual_receipts_do(self):
         seed_reported_assembly(self.line, self.employee, plan=self.plan)
         self.assertEqual(self.progress()["percentage"], 0)
-        self.assertEqual(self.post(self.payload(received_quantity=4)).status_code, 201)
+        pending = self.post(self.payload(received_quantity=4))
+        self.assertEqual(pending.status_code, 201, pending.data)
+        self.assertEqual(self.progress()["percentage"], 0)
+        self.confirm(pending)
         self.assertEqual(self.progress()["percentage"], 40)
-        self.assertEqual(self.post(self.payload(received_quantity=6)).status_code, 201)
+        self.confirm(self.post(self.payload(received_quantity=6)))
         self.assertEqual(self.progress()["percentage"], 100)
-        self.assertEqual(self.post(self.payload(received_quantity=1)).status_code, 201)
+        self.confirm(self.post(self.payload(received_quantity=1)))
         self.assertEqual(self.progress()["percentage"], 100)
         # 已出库会减少库存余量，但不能抹掉已完成的入库事实。
         FinishedGoodsReceipt.objects.update(remaining_quantity=0)
@@ -47,13 +51,11 @@ class ScheduleFinishedProgressTests(receipt_fixtures.AssemblyFixture, APITestCas
         second.quantity = 30
         second.save(update_fields=["quantity"])
         seed_reported_assembly(second, self.employee)
-        self.assertEqual(self.post(self.payload(received_quantity=4)).status_code, 201)
+        self.confirm(self.post(self.payload(received_quantity=4)))
         self.assertEqual(self.progress()["percentage"], 10)
-        payload = inventory_fixtures.FinishedGoodsInventoryApiTests.receipt_payload(
-            self, production_task_product_id=str(second.pk), received_quantity=6, quantity_per_box=None,
+        historical_finished_receipt(
+            product_line=second, actor=self.employee, location_id=self.location_id, quantity=6, quantity_per_box=None,
         )
-        response = self.client.post("/api/v1/finished-goods-inventory/receipts/", payload, format="json")
-        self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(self.progress()["percentage"], 25)
 
     def test_parameter_and_existing_read_permission_boundary(self):

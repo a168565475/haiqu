@@ -1,5 +1,7 @@
 import uuid
+from decimal import Decimal
 
+from django.contrib.auth.models import Permission
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -23,6 +25,9 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
 
     def setUp(self):
         super().setUp()
+        self.cutting_zone = self.make_zone('CUT-RECEIPT', 'SEMI_FINISHED')
+        self.cutting_zone.warehouse.warehouse_name = '裁剪布面仓'
+        self.cutting_zone.warehouse.save(update_fields=['warehouse_name'])
         ProductCategory.objects.get_or_create(category_name='面料', item_type='MATERIAL')
         SewingFixture.prepare_sewing(self)
         self.cut_unit, _ = ProductionUnit.objects.get_or_create(unit_name='片', defaults={'unit_code': 'PFPIECE'})
@@ -59,8 +64,9 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         return response.data['data']
 
     def submit(self, category, line, quantity, etag=None):
+        zone = self.cutting_zone if category == 'CUTTING' else self.semi_zone
         data = {'request_id': str(uuid.uuid4()), 'schedule_product_id': str(self.schedule_product.pk),
-            'plan_category': category, 'zone_id': str(self.semi_zone.pk), 'receipt_date': str(timezone.localdate()),
+            'plan_category': category, 'zone_id': str(zone.pk), 'receipt_date': str(timezone.localdate()),
             'lines': [{'bom_line_id': str(line.pk), 'quantity': str(quantity)}]}
         response = self.client.post(self.url, data, format='json',
             HTTP_IF_MATCH=etag or self.preview(category)['etag'])
@@ -126,12 +132,59 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         self.assertIsNone(line.input_requirement_id)
         self.assertEqual(line.unit_id, self.cut_unit.pk)
 
+    def test_cutting_receipt_without_zone_requires_warehouse_assignment(self):
+        target = self.cutting_zone
+        self.semi_zone.warehouse.warehouse_name = '成品布面仓'
+        self.semi_zone.warehouse.save(update_fields=['warehouse_name'])
+        preview = self.preview('CUTTING')
+        self.assertEqual([zone['id'] for zone in preview['zones']], [str(target.pk)])
+        piece = self.parts[0]
+        payload = {
+            'request_id': str(uuid.uuid4()), 'schedule_product_id': str(self.schedule_product.pk),
+            'plan_category': 'CUTTING', 'receipt_date': str(timezone.localdate()),
+            'lines': [{'bom_line_id': str(piece.pk), 'quantity': '20'}],
+        }
+        submitted = self.client.post(self.url, payload, format='json', HTTP_IF_MATCH=preview['etag'])
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        receipt_id = submitted.data['data']['receipt_id']
+        receipt = InternalSemiFinishedReceipt.objects.get(pk=receipt_id)
+        self.assertIsNone(receipt.zone_id)
+        self.assertEqual(receipt.status, 'PENDING')
+        movements = PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT', source_id=receipt_id)
+        self.assertFalse(movements.exists())
+        def available(data):
+            return Decimal(next(row['can_receive'] for row in data['lines'] if row['bom_line_id'] == str(piece.pk)))
+
+        self.assertEqual(available(self.preview('CUTTING')), available(preview) - 20)
+        self.assertEqual(self.client.get(self.url + 'pending/').data['data']['items'][0]['zone'], '')
+
+        detail = self.client.get(f'{self.url}{receipt_id}/').data['data']
+        self.assertIsNone(detail['zone_id'])
+        self.assertEqual([zone['id'] for zone in detail['zones']], [str(target.pk)])
+        url = f'{self.url}{receipt_id}/confirm/'
+        for body in ({}, {'zone_id': str(self.raw_zone.pk)}, {'zone_id': str(self.semi_zone.pk)}):
+            blocked = self.client.post(url, body, format='json', HTTP_IF_MATCH=detail['etag'])
+            self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertFalse(movements.exists())
+
+        zone = {'zone_id': str(target.pk)}
+        confirmed = self.client.post(url, zone, format='json', HTTP_IF_MATCH=detail['etag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        replay = self.client.post(url, zone, format='json', HTTP_IF_MATCH=detail['etag'])
+        self.assertTrue(replay.data['data']['replayed'])
+        changed = self.client.post(url, {'zone_id': str(self.semi_zone.pk)}, format='json', HTTP_IF_MATCH=detail['etag'])
+        self.assertEqual(changed.status_code, 409, changed.data)
+        receipt.refresh_from_db()
+        self.assertEqual((receipt.status, receipt.zone_id), ('CONFIRMED', target.pk))
+        movement = movements.get()
+        self.assertEqual((movement.balance.zone_id, movement.quantity), (target.pk, 20))
+
     def test_receipt_list_groups_both_statuses_and_detail_keeps_each_cut_piece(self):
         parts = self.parts[:2]
         preview = self.preview('CUTTING')
         submitted = self.client.post(self.url, {
             'request_id': str(uuid.uuid4()), 'schedule_product_id': str(self.schedule_product.pk),
-            'plan_category': 'CUTTING', 'zone_id': str(self.semi_zone.pk), 'receipt_date': str(timezone.localdate()),
+            'plan_category': 'CUTTING', 'zone_id': str(self.cutting_zone.pk), 'receipt_date': str(timezone.localdate()),
             'lines': [{'bom_line_id': str(part.pk), 'quantity': str(quantity)} for part, quantity in zip(parts, (10, 20))],
         }, format='json', HTTP_IF_MATCH=preview['etag'])
         self.assertEqual(submitted.status_code, 201, submitted.data)
@@ -201,6 +254,30 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         typed_sewing = [row for row in sewing if row['conversion_snapshot']['public_identity']['identity_snapshot'].get('schema_version') == 3]
         self.assertEqual({row['material_name'] for row in typed_sewing}, {line.part_name for line in self.parts})
         self.assertEqual(PublicStockBalance.objects.filter(identity_snapshot__semi_kind='SEWN_PART').get().quantity, 9000)
+
+    def test_inventory_tabs_split_receipts_and_legacy_fabric_stock(self):
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label='inventory', codename='view_materialinbound'))
+        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
+        for category, line in (('CUTTING', self.parts[0]), ('SEWING', self.part)):
+            created, _ = self.submit(category, line, 1)
+            self.assertEqual(created.status_code, 201, created.data)
+            confirmed = self.confirm(created)
+            self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        legacy_line = BomLine(section=self.part.section, category='裁片', specification='50*40',
+            material=self.fabric.material, fabric_source_line=self.fabric, cutting_pieces_per_set=2)
+        for stage, name in (('CUTTING', '旧款裁片'), ('SEWING', '旧款车缝部位')):
+            legacy_line.part_name = name
+            identity = build_semi_finished_identity(bom_line=legacy_line, completed_craft=component_stock_craft(stage), unit=self.set_unit)
+            credit_public_stock(identity=identity, zone=self.semi_zone, quantity=3, actor_employee=self.employee,
+                source_type='TEST_LEGACY_FABRIC', source_id=uuid.uuid4(), source_line_id=uuid.uuid4())
+
+        for section, expected in (('FABRIC_SEMI', {self.parts[0].part_name, '旧款裁片'}),
+                                  ('SEWN_PART', {self.part.part_name, '旧款车缝部位'})):
+            result = self.client.get('/api/v1/material-inventory/', {'stock_kind': 'SEMI', 'bom_section': section})
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data['count'], 2)
+            self.assertEqual({row['part_name'] for row in result.data['results']}, expected)
 
     def test_attribute_identity_extension_passes_receipt_constraints_and_freezes_each_stage(self):
         from apps.material_catalog.models import MaterialCatalog

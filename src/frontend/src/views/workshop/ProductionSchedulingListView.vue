@@ -192,8 +192,8 @@ onMounted(() => { void load() })
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
     <div v-else class="schedule-table-card schedule-main-table erp-list-table-frame">
       <ElTable height="100%" v-loading="loading" :data="rows" border row-key="id" empty-text="暂无排产计划">
+        <ElTableColumn label="生产任务单号" width="120"><template #default="{ row }"><strong>{{ row.source.task_number }}</strong></template></ElTableColumn>
         <ElTableColumn prop="schedule_number" label="排产单号" width="135" />
-        <ElTableColumn label="生产任务单" width="120"><template #default="{ row }"><strong>{{ row.source.task_number }}</strong></template></ElTableColumn>
         <ElTableColumn label="产品" min-width="160"><template #default="{ row }">
           <ElPopover trigger="hover" placement="bottom-start" :width="640" :show-after="120" :hide-after="120" :persistent="false" :disabled="!row.products.length" popper-class="schedule-products-popover">
             <template #reference><button type="button" class="schedule-products-summary">{{ scheduleProductSummary(row.products) }}</button></template>

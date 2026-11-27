@@ -5,14 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Craft, Operation, WorkshopEmployee } from '@/types/workshopConfig'
 import WorkshopConfigManager from './WorkshopConfigManager.vue'
 
-const api = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() }))
-const feedback = vi.hoisted(() => ({ warning: vi.fn(), error: vi.fn(), success: vi.fn(), confirm: vi.fn() }))
+const api = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), options: vi.fn(), create: vi.fn(), copyScheme: vi.fn(), update: vi.fn(), remove: vi.fn() }))
+const feedback = vi.hoisted(() => ({ warning: vi.fn(), error: vi.fn(), success: vi.fn(), confirm: vi.fn(), prompt: vi.fn() }))
 const auth = vi.hoisted(() => ({ user: { is_superuser: false }, hasPermission: vi.fn() }))
 vi.mock('@/api/workshopConfig', () => ({
   fetchWorkshopConfigList: api.list,
   fetchWorkshopConfigDetail: api.detail,
   fetchWorkshopEmployeeOptions: api.options,
   createWorkshopConfig: api.create,
+  copyOperationScheme: api.copyScheme,
   updateWorkshopConfig: api.update,
   deleteWorkshopEmployee: api.remove,
 }))
@@ -20,7 +21,7 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('element-plus', async (importOriginal) => ({
   ...await importOriginal<typeof import('element-plus')>(),
   ElMessage: feedback,
-  ElMessageBox: { confirm: feedback.confirm },
+  ElMessageBox: { confirm: feedback.confirm, prompt: feedback.prompt },
 }))
 
 const legacy: WorkshopEmployee = {
@@ -31,14 +32,14 @@ const legacy: WorkshopEmployee = {
   role_workshop: null, role_workshop_name: null,
 }
 const operation: Operation = {
-  id: 'operation-1', operation_number: 'OP-LEGACY-001', product_name: '', craft: 'craft-1', craft_name: '管材加工',
+  id: 'operation-1', operation_number: 'OP-LEGACY-001', product_name: '', craft: 'craft-1', craft_name: '金属装配',
   craft_type: 'INTERNAL', craft_type_display: '厂内', workshop: 'workshop-1', workshop_name: '金工车间', name: '弯管',
   reporting_unit: null, reporting_unit_name: null, status: 'ACTIVE', status_display: '启用',
   created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
 }
 const operationCraft: Craft = {
   id: 'craft-1', craft_type: 'INTERNAL', craft_type_display: '厂内', plan_category: 'METAL', plan_category_display: '金工计划',
-  outsourcing_code: null, outsourcing_code_display: null, workshop: 'workshop-1', workshop_name: '金工车间', name: '管材加工',
+  outsourcing_code: null, outsourcing_code_display: null, workshop: 'workshop-1', workshop_name: '金工车间', name: '金属装配',
   status: 'ACTIVE', status_display: '启用', operation_count: 1, active_operation_count: 1,
   created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
 }
@@ -211,11 +212,18 @@ describe('车间直接配置行政生产员工', () => {
 })
 
 describe('工序配置自动编号与快捷筛选', () => {
-  async function renderOperations(props: Record<string, unknown> = {}) {
-    api.list.mockImplementation((kind: string) => Promise.resolve({
-      data: kind === 'workshops' ? [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }] : kind === 'crafts' ? [operationCraft] : [operation],
-      meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
-    }))
+  async function renderOperations(props: Record<string, unknown> = {}, craftRecords = [operationCraft], operationRecords = [operation]) {
+    api.list.mockImplementation((kind: string, query: { craft_type?: string; craft?: string; status?: string; page?: number; page_size?: number }) => {
+      const data = kind === 'workshops' ? [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }]
+        : kind === 'crafts' ? (query.craft_type === 'INTERNAL' ? craftRecords : [
+          ...craftRecords, { ...operationCraft, id: 'external-craft', name: '喷塑', craft_type: 'EXTERNAL', craft_type_display: '厂外' },
+        ]) : operationRecords.filter(row => (!query.craft || row.craft === query.craft) && (!query.status || row.status === query.status))
+      const { page = 1, page_size = 20 } = query
+      return Promise.resolve({
+        data: data.slice((page - 1) * page_size, page * page_size),
+        meta: { page, page_size, total: data.length, total_pages: Math.ceil(data.length / page_size) },
+      })
+    })
     api.detail.mockResolvedValue({ data: operation, etag: '"operation-v1"' })
     const wrapper = mount(WorkshopConfigManager, {
       props: { kind: 'operations', ...props },
@@ -242,6 +250,41 @@ describe('工序配置自动编号与快捷筛选', () => {
     })
   })
 
+  it('工序管理固定筛选厂内工艺，隐藏类型筛选、列和表单字段', async () => {
+    const wrapper = await renderOperations()
+    const query = expect.objectContaining({ craft_type: 'INTERNAL', craft: 'craft-1' })
+    expect(api.list).toHaveBeenCalledWith('operations', query)
+    expect(api.list).toHaveBeenCalledWith('crafts', expect.objectContaining({ craft_type: 'INTERNAL' }))
+    const filters = wrapper.findAllComponents(ElSelect)
+    expect(filters.some(select => select.props('ariaLabel') === '类型')).toBe(false)
+    expect(filters.some(select => select.props('ariaLabel') === '工艺')).toBe(false)
+    expect(filters.some(select => select.props('ariaLabel') === '车间')).toBe(false)
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['金属装配'])
+    const columns = wrapper.findAllComponents({ name: 'ElTableColumn' }).map(column => column.props('label'))
+    expect(columns).toContain('方案名称')
+    expect(columns).not.toContain('类型')
+    expect(columns).not.toContain('工艺')
+    expect(columns).not.toContain('车间')
+    expect(columns).not.toContain('品名')
+    await button(wrapper, '重置').trigger('click')
+    expect(api.list).toHaveBeenLastCalledWith('operations', query)
+
+    await button(wrapper, '新增工序').trigger('click')
+    expect(wrapper.findAllComponents(ElFormItem).map(item => item.props('label'))).not.toContain('类型（自动）')
+    expect(field(wrapper, '工艺').findAllComponents(ElOption).map(option => option.props('label'))).toEqual(['金属装配'])
+  })
+
+  it('方案名称用于非金工工序的表单与校验', async () => {
+    const sewing = { ...operationCraft, id: 'craft-sewing', name: '车缝加工', workshop_name: '车缝车间' }
+    const wrapper = await renderOperations({}, [sewing], [])
+    await button(wrapper, '新增工序').trigger('click')
+    await setSelect(wrapper, '工艺', sewing.id)
+    expect(field(wrapper, '方案名称').getComponent(ElInput).props('placeholder')).toBe('请输入方案名称')
+    expect(field(wrapper, '车间（自动）')).toBeUndefined()
+    await button(wrapper, '保存').trigger('click')
+    expect(feedback.warning).toHaveBeenCalledWith('请输入方案名称。')
+  })
+
   it('只在新增时使用入口传入的弹窗宽度', async () => {
     const wrapper = await renderOperations({ createDialogWidth: '80vw' })
     await edit(wrapper)
@@ -251,8 +294,144 @@ describe('工序配置自动编号与快捷筛选', () => {
     expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('80vw')
   })
 
+  it('表格上方按工艺切换，每次只取所选工艺的工序', async () => {
+    const welding = { ...operationCraft, id: 'craft-2', name: '焊接' }
+    const weldingOperation = { ...operation, id: 'operation-2', craft: 'craft-2', craft_name: '焊接', name: '点焊' }
+    const wrapper = await renderOperations({}, [operationCraft, welding], [operation, weldingOperation])
+    const tableCard = wrapper.get('.table-card')
+    expect(tableCard.element.firstElementChild).toBe(wrapper.get('.operation-craft-tabs').element)
+    const tabs = tableCard.findAll('[role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['金属装配', '焊接'])
+    expect(tabs[0]!.attributes('aria-selected')).toBe('true')
+    expect(tableCard.get('.table-region').text()).toContain('弯管')
+    expect(tableCard.get('.table-region').text()).not.toContain('点焊')
+
+    await tabs[1]!.trigger('click')
+    await flushPromises()
+    expect(api.list).toHaveBeenLastCalledWith('operations', expect.objectContaining({
+      page: 1, craft_type: 'INTERNAL', craft: 'craft-2',
+    }))
+    expect(tabs[1]!.attributes('aria-selected')).toBe('true')
+    expect(tableCard.get('.table-region').text()).toContain('点焊')
+    expect(tableCard.get('.table-region').text()).not.toContain('弯管')
+  })
+
+  it('管材加工跨接口分页显示工序标签，删除确认后停用，仍可筛选已停用工序', async () => {
+    const tube = { ...operationCraft, name: '管材加工' }
+    const tubeRows: Operation[] = Array.from({ length: 101 }, (_, index) => ({
+      ...operation, id: `pipe-${index + 1}`, name: `管材工序 ${index + 1}`, craft_name: tube.name, product_name: '旧方案',
+    }))
+    const wrapper = await renderOperations({}, [tube], tubeRows)
+    const tags = wrapper.get('.operation-tags')
+    expect(tags.findAll('.operation-tag')).toHaveLength(101)
+    expect(tags.text()).toContain('管材工序 101')
+    expect(tags.text()).not.toContain('旧方案')
+    expect(wrapper.find('.pagination-bar').exists()).toBe(false)
+    expect(wrapper.find('.el-table').exists()).toBe(false)
+    expect(api.list).toHaveBeenCalledWith('operations', expect.objectContaining({ page: 2, status: 'ACTIVE', craft: tube.id }))
+
+    const remove = tags.get('[aria-label="删除工序 管材工序 1"]')
+    feedback.confirm.mockRejectedValueOnce('cancel')
+    await remove.trigger('click')
+    await flushPromises()
+    expect(api.update).not.toHaveBeenCalled()
+    api.update.mockImplementationOnce(async () => { tubeRows[0]!.status = 'INACTIVE' })
+    await remove.trigger('click')
+    await flushPromises()
+    expect(api.update).toHaveBeenCalledExactlyOnceWith('operations', 'pipe-1', { status: 'INACTIVE' }, '"operation-v1"')
+    expect(tags.findAll('.operation-tag')).toHaveLength(100)
+    expect(tags.find('[aria-label="删除工序 管材工序 1"]').exists()).toBe(false)
+
+    const status = wrapper.findAllComponents(ElSelect).find(select => select.props('ariaLabel') === '状态')!
+    status.vm.$emit('update:modelValue', 'INACTIVE')
+    status.vm.$emit('change', 'INACTIVE')
+    await flushPromises()
+    expect(tags.findAll('.operation-tag').map(tag => tag.text())).toEqual(['管材工序 1'])
+    expect(tags.find('.operation-tag__remove').exists()).toBe(false)
+  })
+
+  it('管材工序查看权限只显示工序名', async () => {
+    auth.hasPermission.mockImplementation((permission: string) => permission === 'workshop_config.view_operation')
+    const wrapper = await renderOperations({}, [{ ...operationCraft, name: '管材加工' }])
+    expect(wrapper.get('.operation-tag').text()).toBe('弯管')
+    expect(wrapper.find('.operation-tag button').exists()).toBe(false)
+  })
+
+  it.each([
+    ['裁剪', 'CUTTING'],
+    ['车缝', 'SEWING'],
+    ['装配/包装', 'ASSEMBLY'],
+  ] as const)('%s 的方案卡片同页显示各自工序标签', async (name, plan_category) => {
+    const craft = { ...operationCraft, name, plan_category }
+    const records = [
+      { ...operation, name: '定位', product_name: 'HQ-01' },
+      { ...operation, id: 'operation-2', name: '复检', product_name: 'HQ-01' },
+      { ...operation, id: 'operation-3', name: '封边', product_name: 'HQ-02' },
+    ]
+    const wrapper = await renderOperations({}, [craft], records)
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual([name])
+    const cards = wrapper.findAll('.operation-scheme-card')
+    expect(cards.map(card => card.get('h3').text())).toEqual(['HQ-01', 'HQ-02'])
+    expect(cards.map(card => card.findAll('.operation-tag').map(tag => tag.text()))).toEqual([
+      ['定位', '复检'], ['封边'],
+    ])
+    expect(wrapper.find('.pagination-bar').exists()).toBe(false)
+  })
+
+  it('选用并标出当前工艺允许的方案，兼容未设置计划分类的工艺', async () => {
+    const assembly = { ...operationCraft, name: '装配/包装', plan_category: null }
+    const sewing = { ...operationCraft, id: 'craft-sewing', name: '车缝', plan_category: 'SEWING' as const }
+    const records = [
+      { ...operation, product_name: 'HQ-01' },
+      { ...operation, id: 'operation-selected', name: '装配', product_name: 'HQ-02' },
+      { ...operation, id: 'operation-other-craft', name: '车缝', craft: sewing.id, product_name: 'HQ-02' },
+    ]
+    const wrapper = await renderOperations({ initialCraft: assembly.id, initialSchemeName: 'HQ-02', selectableSchemeNames: ['HQ-02'] }, [assembly, sewing], records)
+    const selected = wrapper.get('.operation-scheme-card--selected')
+    expect(selected.get('h3').text()).toBe('HQ-02')
+    expect(selected.attributes('aria-current')).toBe('true')
+    expect(selected.get('.operation-tag').text()).toBe('装配')
+    expect(wrapper.find('[aria-label="选用工价方案 HQ-01"]').exists()).toBe(false)
+    await selected.get('[aria-label="选用工价方案 HQ-02"]').trigger('click')
+    expect(wrapper.emitted('select-scheme')).toEqual([['HQ-02']])
+
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.operation-scheme-card h3').text()).toBe('HQ-02')
+    expect(wrapper.find('.operation-scheme-card--selected').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="选用工价方案 HQ-02"]').exists()).toBe(false)
+  })
+
+  it('卡片新增工序只提交名称，复制一次提交整组并通知表单刷新方案', async () => {
+    const craft = { ...operationCraft, name: '装配/包装', plan_category: 'ASSEMBLY' as const }
+    const wrapper = await renderOperations({}, [craft], [{ ...operation, product_name: 'HQ-01' }])
+
+    feedback.prompt.mockResolvedValueOnce({ value: ' 补装 ' })
+    await wrapper.get('[aria-label="新增工序 HQ-01"]').trigger('click')
+    await flushPromises()
+    expect(feedback.prompt).toHaveBeenLastCalledWith('当前方案 HQ-01', '新增工序', expect.objectContaining({ inputPlaceholder: '请输入工序名称' }))
+    expect(api.create).toHaveBeenCalledExactlyOnceWith('operations', {
+      craft: craft.id, product_name: 'HQ-01', name: '补装', status: 'ACTIVE',
+    })
+
+    feedback.prompt.mockResolvedValueOnce({ value: 'HQ-02' })
+    await wrapper.get('[aria-label="复制方案 HQ-01"]').trigger('click')
+    await flushPromises()
+    expect(api.copyScheme).toHaveBeenCalledExactlyOnceWith(craft.id, 'HQ-01', 'HQ-02')
+    expect(api.list).toHaveBeenLastCalledWith('operations', expect.objectContaining({ q: 'HQ-02' }))
+    expect(wrapper.emitted('schemes-changed')).toHaveLength(2)
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it('只剩停用的厂内工艺时显示空态', async () => {
+    const wrapper = await renderOperations({}, [{ ...operationCraft, status: 'INACTIVE' }])
+    expect(wrapper.find('[role="tab"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('暂无厂内工艺')
+    expect(api.list.mock.calls.some(([kind]) => kind === 'operations')).toBe(false)
+  })
+
   it('按当前车间、厂内类型和工艺初始化筛选，并在保存后发出 saved 事件', async () => {
-    const wrapper = await renderOperations({ initialWorkshop: 'workshop-1', initialCraftType: 'INTERNAL', initialCraft: 'craft-1' })
+    const wrapper = await renderOperations({ initialWorkshop: 'workshop-1', initialCraft: 'craft-1' })
     expect(api.list.mock.calls.some(([kind, query]) => kind === 'operations' && query.workshop === 'workshop-1' && query.craft_type === 'INTERNAL' && query.craft === 'craft-1')).toBe(true)
     await button(wrapper, '新增工序').trigger('click')
     expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('900')

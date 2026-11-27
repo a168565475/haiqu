@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from apps.boms.models import BomLine
 from apps.organizations.models import Employee
@@ -34,6 +34,32 @@ from .hardware_stock_weights import catalog_piece_weight_identity, piece_weight_
 MAX_QUANTITY = Decimal("99999999999999.9999")
 MAX_METERS = Decimal("99999999999999999999.99")
 MAX_RAW_BAR_LENGTH = Decimal("9999999999999999.99")
+RAW_PIPE_WAREHOUSE_NAME = "原料管材仓"
+
+
+def raw_pipe_warehouse_filter(prefix="warehouse__"):
+    return Q(**{
+        f"{prefix}warehouse_type": WarehouseType.MATERIAL,
+        f"{prefix}warehouse_name": RAW_PIPE_WAREHOUSE_NAME,
+    })
+
+
+def _warehouse_type_for_stock(stock_kind):
+    return WarehouseType.MATERIAL if stock_kind in ("RAW_PIPE", "CATALOG_RAW") else WarehouseType.SEMI_FINISHED
+
+
+def _is_metal_pipe_stock(identity):
+    if identity["stock_kind"] not in ("SEMI", "CATALOG_SEMI"):
+        return False
+    snapshot = identity["identity_snapshot"]
+    return snapshot.get("semi_kind") == "PIPE" and snapshot.get("completed_craft", {}).get("code") == "METAL"
+
+
+def stock_warehouse_filter(identity):
+    result = Q(zone__warehouse__warehouse_type=_warehouse_type_for_stock(identity["stock_kind"]))
+    if _is_metal_pipe_stock(identity):
+        result |= raw_pipe_warehouse_filter("zone__warehouse__")
+    return result
 
 
 def _invalid(message, code):
@@ -198,14 +224,16 @@ def lock_public_stock_locations(zone_ids):
     return {row.pk: row for row in zones}
 
 
-def _validate_location(*, zone_id, stock_kind, quality):
+def _validate_location(*, zone_id, identity, quality):
     if quality not in MaterialStockQuality.values:
         _invalid("库存品质无效。", "QUALITY_INVALID")
     zone = lock_public_stock_locations([zone_id])[zone_id]
     if zone.status != RecordStatus.ACTIVE or zone.warehouse.status != RecordStatus.ACTIVE:
         _invalid("库区或仓库不存在或已停用。", "ZONE_UNAVAILABLE")
-    expected = WarehouseType.MATERIAL if stock_kind in ("RAW_PIPE", "CATALOG_RAW") else WarehouseType.SEMI_FINISHED
-    if zone.warehouse.warehouse_type != expected:
+    warehouse = zone.warehouse
+    metal_pipe_storage = (warehouse.warehouse_type == WarehouseType.MATERIAL
+        and warehouse.warehouse_name == RAW_PIPE_WAREHOUSE_NAME and _is_metal_pipe_stock(identity))
+    if warehouse.warehouse_type != _warehouse_type_for_stock(identity["stock_kind"]) and not metal_pipe_storage:
         _invalid("原材料管材须存放材料仓，半成品须存放半成品仓。", "WAREHOUSE_SCOPE_INVALID")
     return zone
 
@@ -362,7 +390,7 @@ def credit_public_stock(*, identity, zone, quantity, source_type, source_id, sou
     validate_combined_output(source=source, identity=identity, quantity=quantity, quality=quality)
     if identity["stock_kind"] == "RAW_PIPE":
         _validate_pipe_material(raw_material_id=identity["raw_material_id"], unit_id=identity["unit_id"])
-    _validate_location(zone_id=zone_id, stock_kind=identity["stock_kind"], quality=quality)
+    _validate_location(zone_id=zone_id, identity=identity, quality=quality)
     catalog_id = identity["identity_snapshot"]["material_selection_snapshot"]["catalog_id"] if identity["stock_kind"] in CATALOG_STOCK_KINDS else None
     _validate_unit_and_quantity(unit_id=identity["unit_id"], catalog_id=catalog_id, stock_kind=identity["stock_kind"], quantity=quantity,
                                 expected_unit_name=identity["identity_snapshot"]["unit_name"])
@@ -388,12 +416,13 @@ def debit_public_stock(*, balance_id, quantity, source_type, source_id, source_l
         return _check_replay(existing, source=source, quantity=quantity, balance_id=balance_id,
                              check_weight=weight_quantity is not None, weight_quantity=weight_quantity)
     _validate_source_context(source)
-    hint = PublicStockBalance.objects.filter(pk=balance_id).values("zone_id", "stock_kind", "quality", "raw_material_id", "unit_id").first()
+    hint = PublicStockBalance.objects.filter(pk=balance_id).values(
+        "zone_id", "stock_kind", "quality", "raw_material_id", "unit_id", "identity_snapshot").first()
     if hint is None:
         _invalid("公共库存记录不存在。", "STOCK_NOT_FOUND")
     if hint["stock_kind"] == "RAW_PIPE":
         _validate_pipe_material(raw_material_id=hint["raw_material_id"], unit_id=hint["unit_id"])
-    _validate_location(zone_id=hint["zone_id"], stock_kind=hint["stock_kind"], quality=hint["quality"])
+    _validate_location(zone_id=hint["zone_id"], identity=hint, quality=hint["quality"])
     balance = PublicStockBalance.objects.select_for_update(of=("self",)).filter(pk=balance_id).order_by("id").first()
     if balance is None:
         _invalid("公共库存记录不存在。", "STOCK_NOT_FOUND")
@@ -420,9 +449,6 @@ def available_public_stock(*, identity, zone_id=None, quality=MaterialStockQuali
         "stock_kind": identity["stock_kind"], "identity_key": identity["identity_key"],
         "unit_id": identity["unit_id"], "quality": quality,
         "zone__status": RecordStatus.ACTIVE, "zone__warehouse__status": RecordStatus.ACTIVE,
-        "zone__warehouse__warehouse_type": (
-            WarehouseType.MATERIAL if identity["stock_kind"] in ("RAW_PIPE", "CATALOG_RAW") else WarehouseType.SEMI_FINISHED
-        ),
         "unit__status": "ACTIVE", "unit__archived_at__isnull": True,
         "unit__unit_name": identity["identity_snapshot"]["unit_name"],
     }
@@ -437,4 +463,4 @@ def available_public_stock(*, identity, zone_id=None, quality=MaterialStockQuali
         filters.pop("unit__unit_name", None)
     if zone_id is not None:
         filters["zone_id"] = _uuid(zone_id, "库区")
-    return PublicStockBalance.objects.filter(**filters).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    return PublicStockBalance.objects.filter(stock_warehouse_filter(identity), **filters).aggregate(total=Sum("quantity"))["total"] or Decimal("0")

@@ -14,6 +14,7 @@ import TubeOutsourcingEndedResult from '@/components/outsourcing/TubeOutsourcing
 import TubeOutsourcingPlanDetail from '@/components/outsourcing/TubeOutsourcingPlanDetail.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import { cancelTubeOrder, dispatchTubeOrder, fetchTubeOrder, findTubeAction } from '@/api/tubeOutsourcing'
+import { fetchPrintOrder } from '@/api/cutPiecePrinting'
 import { fetchTubeReceiptPreview } from '@/api/tubeReceipts'
 import { useAuthStore } from '@/stores/auth'
 import type { TubeCancelInput, TubeDetailLine, TubeDispatchInput, TubeOrderDetail, TubePendingAction } from '@/types/tubeOutsourcing'
@@ -23,7 +24,7 @@ import { materialSpecificationValue } from '@/utils/componentSourceColumns'
 import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeSourceLabels } from '@/utils/tubeOutsourcing'
 import '@/styles/tubeOutsourcingDetail.scss'
 
-const props = defineProps<{ orderId?: string; entryAction?: string; actionOnly?: boolean }>()
+const props = defineProps<{ orderId?: string; entryAction?: string; actionOnly?: boolean; printTracking?: boolean }>()
 const emit = defineEmits<{ closed: []; updated: [order: TubeOrderDetail] }>()
 interface Column { key: string; label: string; width: number; num?: boolean }
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -67,6 +68,8 @@ const source = computed(() => detail.value?.source_kind)
 const cutting = computed(() => isCuttingSource(source.value))
 const direct = computed(() => isDirectSource(source.value))
 const categoryName = computed(() => cutting.value ? '裁片' : '管材')
+const pageTitle = computed(() => props.printTracking || detail.value?.screen_print_pieces ? '裁片丝印外发单'
+  : detail.value?.sewing_inputs ? '车缝外发单' : `${categoryName.value}${detail.value?.is_plan ? '委外加工单' : '外发单'}`)
 const materialName = computed(() => cutting.value ? '辅料' : '五金')
 const quantityUnit = computed(() => cutting.value ? '套' : '支')
 const receiptTitle = computed(() => cutting.value ? `${detail.value?.craft_name || '裁片'}入库` : '喷塑入库')
@@ -96,7 +99,7 @@ const stockImpact = computed(() => {
 })
 const statusNote = computed(() => state.value === 'PENDING_DISPATCH' ? '已保存待发 · 实际发出后才扣库存或登记直发' : state.value === 'PROCESSING' ? `整单已发出 · ${cutting.value ? detail.value?.craft_name || '加工' : '喷塑'}回货后一次登记入库` : state.value === 'COMPLETED' ? '整单回货已登记结束' : state.value === 'CANCELLED' ? '原单保留 · 已释放待发预留 · 未办理实际发出' : '')
 const info = computed(() => [
-  ['生产任务单', detail.value?.task_number], ['订单号', detail.value?.task_order_number], ['排产单号', detail.value?.schedule_number],
+  ['生产任务单', detail.value?.task_number], ['外发单号', detail.value?.order_number], ['订单号', detail.value?.task_order_number], ['排产单号', detail.value?.schedule_number],
   ['订单量', detail.value ? `${format(detail.value.quantity)} ${detail.value.unit || ''}` : '—'], ['计划发出日', detail.value?.planned_dispatch_date], ['预计回货日', detail.value?.expected_return_date],
   ['产品名称', detail.value?.product_name], ['品号', detail.value?.product_number], ['货号', detail.value?.item_number],
   [cutting.value ? '外发工艺' : '订单喷塑色', cutting.value ? detail.value?.craft_name : detail.value?.color], ['建单日期', dateText(detail.value?.created_at)], ['建单人', detail.value?.created_by_name],
@@ -180,7 +183,7 @@ async function loadDetail() {
     try {
       // 终态直接读取原单及最终凭证，不先查普通详情的动态最低报工。
       owned.assertCurrent()
-      preview = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
+      if (!props.printTracking) preview = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
       owned.assertCurrent()
     } catch (cause) {
       if (isCancel(cause) || !owned.isCurrent() || sequence !== readSequence) return
@@ -189,7 +192,8 @@ async function loadDetail() {
     }
     if (!owned.isCurrent() || disposed || sequence !== readSequence) return
     if (preview && (!preview.order || preview.order.id !== orderId || !preview.order.etag || !Array.isArray(preview.order.lines))) throw new Error('外发单详情不完整，请重新加载。')
-    if (preview?.order.is_plan) result = preview.order
+    if (props.printTracking) result = await fetchPrintOrder(orderId)
+    else if (preview?.order.is_plan) result = preview.order
     else if (preview?.order.status === 'COMPLETED') { result = preview.order; finalReceipt = preview.receipt }
     else {
       owned.assertCurrent()
@@ -359,8 +363,9 @@ function recreate() {
   void router.push({ name: 'workshop-outsourcing-tube-new', query: { ...(cutting.value ? { category: 'cutting', craft_id: detail.value.craft_id } : {}), schedule_product_id: detail.value.schedule_product_id, source_kind: detail.value.source_kind, ...(detail.value.zone_id ? { zone_id: detail.value.zone_id } : {}) } })
 }
 onMounted(async () => {
-  if (!storageAvailable()) return
   if (!orderId) { readError.value = '外发单编号缺失，请返回列表重新打开。'; return }
+  if (props.printTracking) { await loadDetail(); return }
+  if (!storageAvailable()) return
   try {
     const raw = owned.read(); pendingRaw = raw
     if (raw !== null) {
@@ -385,14 +390,14 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
 <template>
   <section v-if="!actionOnly" class="tube-outsourcing-detail-page d4-page" :class="{ 'd4-ended-page': !detail?.is_plan && (endedPresentation || state === 'COMPLETED') }">
     <header class="page-heading">
-      <div class="title-row"><h1>{{ categoryName }}{{ detail?.is_plan ? '委外加工单' : '外发单' }}</h1><span v-if="state" class="status" :class="state === 'COMPLETED' ? 'success' : state === 'PROCESSING' ? 'info' : state === 'CANCELLED' ? 'neutral' : 'warning'">{{ stateLabel }}</span><span v-if="source" class="status">{{ sourceLabel }}</span><span v-if="detail" class="d4-order-code">{{ detail.order_number }}</span></div>
+      <div class="title-row"><h1>{{ pageTitle }}</h1><span v-if="state" class="status" :class="state === 'COMPLETED' ? 'success' : state === 'PROCESSING' ? 'info' : state === 'CANCELLED' ? 'neutral' : 'warning'">{{ stateLabel }}</span><span v-if="source" class="status">{{ sourceLabel }}</span></div>
       <ElButton :icon="ArrowLeft" :disabled="saving" @click="owned.isCurrent() && router.push(canOpenList ? listPath : { name: 'workshop-scheduling' })">{{ canOpenList ? '返回列表' : '返回排产' }}</ElButton>
     </header>
     <ElAlert v-if="pending" type="warning" :closable="false" show-icon title="提交结果尚未确认，请核对原请求结果，避免再次发出或取消。" />
     <ElAlert v-else-if="recheckError" type="warning" :closable="false" show-icon :title="`${recheckError} 尚未发出。可刷新重核原单数量；需要改量、加工厂或库区时，取消后重新创建。`" />
     <ElAlert v-if="identityBlocked" type="warning" :closable="false" show-icon title="身份尚未核验或已变化，已暂停本页操作。请核验身份后重新打开本页。" />
     <ElAlert v-if="storageError" type="warning" :closable="false" show-icon :title="storageReason" />
-    <TubeOutsourcingPlanDetail v-if="showDetails && detail?.is_plan" :order="detail" :warehouse="warehouseWorkspace" :blocked="locked" :entry-action="typeof route.query?.action === 'string' ? route.query.action : undefined" @updated="detail = $event" @refresh="loadDetail" @cancel="openCancel" />
+    <TubeOutsourcingPlanDetail v-if="showDetails && detail?.is_plan" :order="detail" :warehouse="warehouseWorkspace" :read-only="printTracking" :blocked="locked" :entry-action="typeof route.query?.action === 'string' ? route.query.action : undefined" @updated="detail = $event" @refresh="loadDetail" @cancel="openCancel" />
     <ElButton v-if="detail?.is_plan && pending" type="primary" :loading="saving" :disabled="storageError" @click="recoverPending(true)">核对本次提交</ElButton>
     <section v-if="showDetails && !detail?.is_plan && state === 'COMPLETED' && !pending && materialRows.length" class="panel d4-material-panel d4-ended-materials" :aria-label="`附带${materialName}`">
       <div class="section-heading"><h2>附带{{ materialName }} · {{ materialRows.length }} 项</h2><span class="muted">按所选加工厂随本单一起发出，不单独回货</span></div>
@@ -439,7 +444,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
     </template>
     <div v-else-if="!showDetails" class="panel d4-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="readError || '此外发单暂无可查看的详情'" /><ElButton v-if="![401, 403, 404].includes(readStatus || 0) && !pending && !storageError" :icon="Refresh" @click="loadDetail">重新加载</ElButton></template></div>
     <footer v-if="!showDetails && endedPresentation && !pending && !storageError" class="footer-bar d4-ended-footer"><div class="totals"><span>实发 <strong>—</strong> {{ quantityUnit }}</span><span>实收 <strong>—</strong> {{ quantityUnit }}</span><span>差额 <strong>—</strong> {{ quantityUnit }}</span><small>仅读取历史结果，不办理入库</small></div><ElButton type="primary" :icon="Document" disabled>查看入库凭证</ElButton></footer>
-    <footer v-else-if="!detail?.is_plan && !(showDetails && state === 'COMPLETED' && !pending)" class="footer-bar d4-footer">
+    <footer v-else-if="!printTracking && !detail?.is_plan && !(showDetails && state === 'COMPLETED' && !pending)" class="footer-bar d4-footer">
       <div>{{ footerLabel }} <strong>{{ showDetails ? format(detail?.total_quantity) : '—' }}</strong> {{ quantityUnit }} <span v-if="showDetails" class="muted"> · {{ rows.length }} 个部位<span v-if="source === 'RAW_PIPE'"> · {{ format(detail?.total_stock_quantity) }} 根 / {{ meters(detail?.total_meters) }} 米</span></span><span v-if="showDetails && !warehouseWorkspace && !cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(detail?.total_area_sqm, '—') }}</strong> ㎡</span><span v-if="showDetails && !warehouseWorkspace" class="d4-planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(detail?.planned_amount) }}</strong> 元</span><small>{{ state === 'CANCELLED' ? '已取消 · 仓库库存未扣减' : state === 'COMPLETED' ? '整单回货已登记结束' : state === 'PROCESSING' ? '已按整单数量完成发出' : stockImpact }}</small></div>
       <ElButton v-if="pending" type="primary" :loading="saving" :disabled="storageError" @click="recoverPending(true)">核对本次提交</ElButton>
       <template v-else-if="state === 'PENDING_DISPATCH'"><ElTooltip v-if="!warehouseWorkspace" :disabled="detail?.permissions.can_cancel !== false" content="当前账号没有取消权限"><span><ElButton :disabled="!canCancel" @click="openCancel">取消外发单</ElButton></span></ElTooltip><ElTooltip v-if="dispatchWorkspace" :disabled="detail?.permissions.can_dispatch !== false" content="当前账号没有实际发出权限"><span><ElButton type="primary" :disabled="!canDispatch" @click="openDispatch">确认实际发出</ElButton></span></ElTooltip></template>
@@ -448,7 +453,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
     </footer>
   </section>
 
-  <AppWindowDialog :model-value="actionOnly || dialog === 'dispatch'" :title="warehouseWorkspace ? '材料发出' : '确认实际发出'" :width="warehouseWorkspace ? 1800 : source === 'RAW_PIPE' ? 1480 : 1240" class="tube-outsourcing-detail-dialog" :before-close="beforeClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
+  <AppWindowDialog :model-value="actionOnly || dialog === 'dispatch'" :title="warehouseWorkspace ? '材料发出' : '确认实际发出'" :fullscreen="warehouseWorkspace" :width="warehouseWorkspace ? 1800 : source === 'RAW_PIPE' ? 1480 : 1240" class="tube-outsourcing-detail-dialog" :before-close="beforeClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
     <div v-loading="loading" class="d4-dispatch" :class="{ 'warehouse-compact': warehouseWorkspace }">
       <template v-if="actionOnly"><ElAlert v-if="readError || recheckError || storageError || identityBlocked" :title="readError || recheckError || (storageError ? storageReason : '身份已变化，请关闭后重新打开。')" type="warning" :closable="false" /><ElAlert v-if="pending" title="提交结果尚未确认，请核对原请求，勿重复发出。" type="warning" :closable="false" /><ElAlert v-else-if="!loading && detail && !canDispatch" title="当前单据状态或权限已变化，不能材料发出，请关闭后刷新核对。" type="warning" :closable="false" /></template>
       <div class="d4-dialog-context"><strong>{{ detail?.order_number || '—' }}</strong><span>{{ sourceLabel }}</span><span>{{ detail?.task_number || '—' }}</span><span>{{ detail?.product_name || '—' }}</span></div>

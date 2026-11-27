@@ -3,13 +3,13 @@ import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { fetchMaterialInventorySummary, fetchMaterialOrderIssues, fetchMaterialOrderPurchases } from '@/api/inventory'
-import { router } from '@/router'
 import type { MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchase } from '@/types/inventory'
 
 const route = useRoute()
+const router = useRouter()
 const stockItemId = computed(() => String(route.params.stockItemId || ''))
 const identityKey = computed(() => typeof route.query.identity_key === 'string' ? route.query.identity_key : undefined)
 const activeTab = ref(route.query.tab === 'purchases' ? 'purchases' : 'issues')

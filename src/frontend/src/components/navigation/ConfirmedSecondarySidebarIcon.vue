@@ -1,11 +1,18 @@
 <script setup lang="ts">
 defineProps<{ name: string }>()
 
+const purchaseIconTitles: Record<string, string> = {
+  'purchase-orders': '采购订单', 'purchase-tracking': '采购跟踪',
+  'purchase-alerts': '采购提醒', 'purchase-workbench': '采购工作台',
+}
+
 const inboundIconTitles: Record<string, string> = {
   'purchase-inbounds': '采购入库',
   'material-inbound-details': '一般入库',
   'material-transfers': '材料收发',
   'semi-receipt-records': '车间入库',
+  'workshop-semi-receipt-records': '半成品入库记录',
+  'workshop-finished-receipt-records': '成品入库记录',
 }
 </script>
 
@@ -40,6 +47,12 @@ const inboundIconTitles: Record<string, string> = {
       <path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Z" class="finance-statement-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
       <path d="M8 7h8m-8 4h8" class="finance-statement-lines"/>
       <path d="m8 15 2 2 5-4" class="accent part finance-statement-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-purchase-payables'">
+      <title>采购应付</title>
+      <path d="M5 3h10l4 4v14H5V3Z" class="finance-payable-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M15 3v5h4M8 7h3" class="finance-payable-lines"/>
+      <path d="m9 11 3 3 3-3m-3 3v5m-3-5h6m-6 3h6" class="accent part finance-payable-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
     </g>
     <g v-else-if="name === 'finance-receipts'">
       <title>收款确认单</title>
@@ -82,6 +95,12 @@ const inboundIconTitles: Record<string, string> = {
       <path class="accent part" d="M18 14v4m-2-2h4" style="stroke:var(--icon-accent,#c84e28)"/>
     </g>
 
+    <g v-else-if="name === 'merchandiser-workbench'">
+      <title>跟单工作台</title>
+      <rect x="4" y="4" width="16" height="17" rx="2" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M9 3h6v4H9zM8 11h8M8 15h3"/>
+      <path class="accent part" d="m12 16 2 2 4-5" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
     <g v-else-if="name === 'production-overview'">
       <title>生产总览</title>
       <rect x="3" y="3" width="18" height="15" rx="2" style="fill:var(--icon-muted,#e7e9e4)"/>
@@ -210,8 +229,8 @@ const inboundIconTitles: Record<string, string> = {
       <path d="m10 3-1 5v4h6V8l-1-5" class="accent part" style="stroke:var(--icon-accent,#c84e28)"/>
     </g>
 
-    <g v-else-if="name === 'purchase-orders' || name === 'purchase-tracking' || name === 'purchase-alerts'">
-      <title>{{ name === 'purchase-tracking' ? '采购跟踪' : name === 'purchase-alerts' ? '采购提醒' : '采购订单' }}</title>
+    <g v-else-if="purchaseIconTitles[name]">
+      <title>{{ purchaseIconTitles[name] }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M6 9h16l-2 8H7L5 6H2"/><path d="M11 9V2h8v7"/></g>
       <circle cx="8" cy="21" r="1.3"/><circle cx="18" cy="21" r="1.3"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M13.5 5h3m-3 2h2"/></g>
@@ -246,15 +265,16 @@ const inboundIconTitles: Record<string, string> = {
     </g>
 
     <g v-else-if="name === 'workshop-internal-plan'">
-      <title>内部计划</title>
+      <title>作业计划</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M2 21V11h3V4h4v8l5-3v4l4-3v4"/></g>
       <path d="M2 21h9M6 16h2m-2 3h2"/>
       <g style="fill:var(--icon-muted,#e7e9e4)"><circle cx="18" cy="18" r="4.5"/></g>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M18 15.5V18l2 1"/></g>
     </g>
 
-    <g v-else-if="name === 'workshop-outsourcing' || name === 'warehouse-outsourcing'">
-      <title>委外加工</title>
+
+    <g v-else-if="name === 'workshop-outsourcing' || name === 'warehouse-outsourcing' || name === 'sewing-outsourcing-workbench'">
+      <title>{{ name === 'sewing-outsourcing-workbench' ? '车缝外协工作台' : '委外加工' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M2 21V11h3V7h3v6l4-3v11Zm14-8h6v8h-6Z"/></g>
       <path d="M6 17h2m11-1v2"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M8 3h11v6m-3-3 3 3 3-3"/></g>
@@ -326,8 +346,8 @@ const inboundIconTitles: Record<string, string> = {
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M5 14h14"/><circle cx="6" cy="14" r="1"/><circle cx="18" cy="14" r="1"/></g>
     </g>
 
-    <g v-else-if="name === 'warehouse-board'">
-      <title>仓库大屏</title>
+    <g v-else-if="name === 'warehouse-board' || name === 'warehouse-workbench'">
+      <title>{{ name === 'warehouse-board' ? '仓库大屏' : '仓库工作台' }}</title>
       <rect x="2" y="3" width="20" height="15" rx="1.5"/><path d="M12 18v3m-4 0h8"/>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M5 14V8l7-3 7 3v6h-4v-4H9v4Z"/></g>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M10 11h4m-4 3h4"/></g>
@@ -359,6 +379,8 @@ const inboundIconTitles: Record<string, string> = {
 :global(.app-sidebar__flyout-link.is-active .finance-bank-roof) { fill: var(--erp-menu-accent); }
 :global(.app-sidebar__flyout-link.is-active .finance-statement-body) { fill: var(--erp-menu-accent) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-statement-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-payable-body) { fill: var(--erp-menu-accent) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-payable-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-receipt-body) { fill: var(--erp-menu-accent) !important; }
 :global(.app-sidebar__flyout-link.is-active .finance-receipt-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
 </style>

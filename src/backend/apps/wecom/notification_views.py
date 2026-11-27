@@ -19,7 +19,7 @@ from .notification_serializers import (
     NotificationListSerializer, NotificationPreviewResponseSerializer,
     NotificationPreviewSerializer, NotificationReadSerializer, NotificationRuleListSerializer,
     NotificationRuleResponseSerializer, NotificationRuleWriteSerializer, NotificationUnreadSerializer,
-    NotificationQuerySerializer, NotificationDeliveryQuerySerializer, NotificationDeliveryListSerializer,
+    NotificationInboxQuerySerializer, NotificationDeliveryQuerySerializer, NotificationDeliveryListSerializer,
     NotificationPreviewSendSerializer, NotificationPreviewRecipientQuerySerializer,
 )
 from .views import IF_MATCH
@@ -121,15 +121,15 @@ class NotificationPersonalView(APIView):
 
 
 class NotificationInboxView(NotificationPersonalView):
-    @extend_schema(responses=NotificationListSerializer)
+    @extend_schema(parameters=[NotificationInboxQuerySerializer], responses=NotificationListSerializer)
     def get(self, request):
         employee = active_employee_for(request.user)
         if employee is None:
             return Response({"data": [], "count": 0, "page": 1, "page_size": 20})
-        query = NotificationQuerySerializer(data=request.query_params)
+        query = NotificationInboxQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         page, page_size = query.validated_data["page"], query.validated_data["page_size"]
-        queryset = selectors.inbox_queryset(employee.pk)
+        queryset = selectors.inbox_queryset(employee.pk, unread_only=query.validated_data["unread_only"])
         start = (page - 1) * page_size
         permission_snapshots = {}
         values = {"data": [selectors.recipient_payload(item, request.user, permission_snapshots=permission_snapshots)

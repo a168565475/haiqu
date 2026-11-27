@@ -18,7 +18,7 @@ from apps.production_scheduling.selectors import accessible_production_schedules
 from apps.products.material_identity import lock_bom_line_material_identities
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_reporting.models import WageScheme
-from .models import InternalReceiptStatus, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, WarehouseZone
+from .models import InternalReceiptStatus, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine
 from .public_stock_identity import build_semi_finished_identity
 from .public_bom_snapshot import build_output_identity
 from .catalog_stock_identity import build_catalog_stock_identity
@@ -205,12 +205,11 @@ def load_tube_receipt_context(request, schedule_product_id, *, lock=False, exclu
 
 
 def tube_preview_data(context, actor):
+    from .internal_receipt_services import semi_receipt_zone_options
     from .processing_material_snapshots import tube_processing_not_enabled
     for row in context['rows']:
         row['processing_not_enabled_reason'] = tube_processing_not_enabled(context['facts'][row['bom_line_id']]['line'])
     plan, task, product = context['plan'], context['task'], context['product']
-    zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
-        warehouse__warehouse_type='SEMI_FINISHED').select_related('warehouse').order_by('warehouse__warehouse_name', 'zone_name', 'pk')
     future_blockers = list(dict.fromkeys(message for row in context['rows']
         for message in row['metal_processing']['future_blockers']))
     if any(int(row['can_receive']) > 0 for row in context['rows']):
@@ -221,8 +220,7 @@ def tube_preview_data(context, actor):
         'item_number': product.item_number_snapshot, 'product_unit': product.unit_name,
         'product_color': product.color_name_snapshot, 'order_quantity': str(product.quantity),
         'actor': actor.display_name, 'receipt_date': str(timezone.localdate()), 'processing_state': '未喷塑',
-        'lines': context['rows'], 'excluded': [], 'zones': [{'id': str(zone.pk), 'warehouse_id': str(zone.warehouse_id),
-            'warehouse': zone.warehouse.warehouse_name, 'name': zone.zone_name} for zone in zones],
+        'lines': context['rows'], 'excluded': [], 'zones': semi_receipt_zone_options('METAL'),
         'metal_processing': {'as_of': context['tube_basis']['as_of'], 'blockers': context['blockers'],
             'future_blockers': future_blockers}}
 
@@ -245,7 +243,7 @@ def receipt_result(receipt, *, replayed=True):
 
 def submit_tube_receipt(request, data):
     # 调用者已经通过stock_write_transaction进入原子事务并取得公共库存切换锁。
-    from .internal_receipt_services import require_operator
+    from .internal_receipt_services import require_operator, submission_receipt_zone
     actor = require_operator(request, write=True)
     payload_hash = digest({'actor': str(actor.pk), 'data': data})
     with connection.cursor() as cursor:
@@ -288,8 +286,7 @@ def submit_tube_receipt(request, data):
         requested[key] = quantity
     assert_tube_quantity_available(product_line_id=context['product'].pk, requested=requested,
                                   expected_revision=context['tube_basis']['revision'])
-    zone = get_object_or_404(WarehouseZone, pk=data['zone_id'], status='ACTIVE',
-        warehouse__status='ACTIVE', warehouse__warehouse_type='SEMI_FINISHED')
+    zone = submission_receipt_zone('METAL', data.get('zone_id'))
     header = InternalSemiFinishedReceipt.objects.create(
         receipt_number=next_business_number('INTERNAL_SEMI_RECEIPT'),
         request_id=data['request_id'], request_payload_hash=payload_hash, schedule_product=context['plan'],
@@ -318,9 +315,9 @@ def submit_tube_receipt(request, data):
     return header, False
 
 
-def confirm_tube_receipt(request, receipt):
+def confirm_tube_receipt(request, receipt, *, zone_id=None):
     """确认 D1 金工待入库原单并创建公共库存流水。"""
-    from .internal_receipt_services import require_operator
+    from .internal_receipt_services import confirmation_receipt_zone, require_operator
     actor = require_operator(request, permission='confirm_internalsemifinishedreceipt')
     context = load_tube_receipt_context(request, receipt.schedule_product_id, lock=True,
                                         exclude_receipt_id=receipt.pk, confirmation=True)
@@ -329,6 +326,7 @@ def confirm_tube_receipt(request, receipt):
         raise PreconditionRequired()
     if expected != f'"{receipt.source_revision_hash}"':
         raise PreconditionFailed('入库原单版本不一致，请刷新记录后重试。')
+    receipt.zone = confirmation_receipt_zone(receipt, zone_id)
     if (receipt.source_snapshot.get('bom_id') != str(context['bom'].pk)
             or receipt.source_snapshot.get('order_quantity') != str(context['product'].quantity)
             or receipt.completed_craft_id != context['craft'].pk):
@@ -396,7 +394,7 @@ def confirm_tube_receipt(request, receipt):
     receipt.status = InternalReceiptStatus.CONFIRMED
     receipt.confirmed_by_employee = actor
     receipt.confirmed_at = timezone.now()
-    receipt.save(update_fields=['status', 'confirmed_by_employee', 'confirmed_at', 'updated_at'])
+    receipt.save(update_fields=['zone', 'status', 'confirmed_by_employee', 'confirmed_at', 'updated_at'])
     from .notification_events import internal_receipt_confirmed
     internal_receipt_confirmed(receipt, actor)
     return receipt, False

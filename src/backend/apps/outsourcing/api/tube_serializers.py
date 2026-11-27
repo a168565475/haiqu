@@ -253,11 +253,10 @@ class TubeCancelWriteSerializer(TubeActionWriteSerializer):
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
 
 
-class TubePlanDispatchSerializer(TubeActionWriteSerializer):
+class TubePlanDispatchBatchSerializer(TubeActionWriteSerializer):
+    client_request_id = None
     source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
     zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    actual_dispatch_date = serializers.DateField()
-    remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
     lines = TubeLineWriteSerializer(many=True, allow_empty=True, required=False)
     inputs = TubePlanInputSerializer(many=True, allow_empty=False, required=False, max_length=500)
     materials = TubeMaterialWriteSerializer(many=True, required=False)
@@ -289,6 +288,24 @@ class TubePlanDispatchSerializer(TubeActionWriteSerializer):
         if attrs.get('materials') and not attrs.get('material_source_revision'):
             raise serializers.ValidationError({'material_source_revision': '请选择并刷新辅料来源。'})
         return attrs
+
+
+class TubePlanDispatchSerializer(TubePlanDispatchBatchSerializer):
+    client_request_id = serializers.UUIDField()
+    actual_dispatch_date = serializers.DateField()
+    remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
+    source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices, required=False)
+    batches = TubePlanDispatchBatchSerializer(many=True, required=False, allow_empty=False, max_length=500)
+
+    def validate(self, attrs):
+        if 'batches' in attrs:
+            if any(key in self.initial_data for key in ('source_kind', 'zone_id', 'lines', 'inputs',
+                                                        'materials', 'material_source_revision')):
+                raise serializers.ValidationError({'batches': '分来源发出时请将材料和辅料放在各自的发料明细中。'})
+            return attrs
+        if 'source_kind' not in attrs:
+            raise serializers.ValidationError({'source_kind': '请选择实际发料来源。'})
+        return super().validate(attrs)
 
 
 class TubeReceiptCandidatesQuerySerializer(serializers.Serializer):

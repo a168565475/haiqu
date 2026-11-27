@@ -7,12 +7,27 @@ export interface PageAccessReader {
   hasPermission: (permission: string) => boolean
 }
 
+export function hasWorkshopOnlyPlanAccess(auth: PageAccessReader): boolean {
+  if (auth.user?.is_superuser) return false
+  const permission = 'production_scheduling.view_productionschedule'
+  const access = auth.user?.effective_access
+  const scopes = access?.actions[permission]?.scopes
+  return Boolean(scopes?.length && scopes.every(scope => scope === 'WORKSHOP'))
+    && !access?.legacy_sources.some(source => source.permission === permission)
+    && !auth.hasPermission('production_scheduling.view_all_productionschedule')
+}
+
 export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.available === false) return false
   if (item.key === 'employee-list') return auth.canReadAccessDirectory
   if (auth.user?.is_superuser) return true
+  if (item.key === 'warehouse-workbench') {
+    return auth.user?.effective_access?.roles.some(role => role.code === 'WAREHOUSE_KEEPER') === true
+  }
+  if (item.key === 'merchandiser-workbench'
+    && !auth.user?.effective_access?.roles.some(role => role.code === 'MERCHANDISER')) return false
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly && permission !== 'outsourcing.manage_cutpieceprinting') {

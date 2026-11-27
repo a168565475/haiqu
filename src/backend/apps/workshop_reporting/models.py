@@ -27,6 +27,7 @@ class WorkCountingMode(models.TextChoices):
     ORDER = "ORDER", "按订单量"
     SET = "SET", "按套"
     PIECE = "PIECE", "按片"
+    GROUP = "GROUP", "按组"
 
 
 class WorkshopPlanStatus(models.TextChoices):
@@ -38,6 +39,7 @@ class WageSchemeAction(models.TextChoices):
     CREATED = "CREATED", "创建"
     UPDATED = "UPDATED", "修改"
     SUBMITTED = "SUBMITTED", "送审"
+    WITHDRAWN = "WITHDRAWN", "撤回"
     APPROVED = "APPROVED", "批准"
     RETURNED = "RETURNED", "退回"
     CHANGE_CREATED = "CHANGE_CREATED", "发起变更"
@@ -251,6 +253,15 @@ class WageSchemeLine(TimeStampedModel):
             models.CheckConstraint(condition=Q(line_number__gt=0), name="wage_scheme_line_positive"),
             models.CheckConstraint(condition=Q(declared_price__gte=0), name="wage_scheme_price_nonnegative"),
         ]
+
+
+class WageSchemeLineCuttingGroup(models.Model):
+    # 明细替换服务只清理实际存在的组，旧库删除普通草稿时无需访问新表。
+    line = models.OneToOneField(WageSchemeLine, primary_key=True, on_delete=models.DO_NOTHING, related_name="+")
+    components = models.JSONField()
+
+    class Meta:
+        db_table = "workshop_wage_scheme_cutting_group"
 
 
 class WageSchemeEvent(TimeStampedModel):

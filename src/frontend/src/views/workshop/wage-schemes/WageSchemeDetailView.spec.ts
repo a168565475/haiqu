@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   detail: vi.fn(),
   returnScheme: vi.fn(),
   submit: vi.fn(),
+  withdraw: vi.fn(),
 }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 const auth = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ vi.mock('@/api/workshopReporting', () => ({
   fetchWageScheme: api.detail,
   returnWageScheme: api.returnScheme,
   submitWageScheme: api.submit,
+  withdrawWageScheme: api.withdraw,
 }))
 
 const scheme = {
@@ -97,6 +99,29 @@ afterEach(() => {
 })
 
 describe('工价方案审批确认', () => {
+  it('待审批时从修改进入原申请，使用当前版本完成撤回', async () => {
+    api.detail.mockResolvedValueOnce({ data: { ...scheme, can_withdraw: true, scope_craft: { plan_category: 'CUTTING' }, lines: [{
+      ...scheme.lines[0], counting_mode: 'GROUP', counting_mode_display: '按组', cutting_components: [
+        { component_identity: 'front', name: '床面', quantity_per_group: 1, unit: '片' },
+        { component_identity: 'side', name: '侧片', quantity_per_group: 2, unit: '片' },
+      ],
+    }] }, etag: '"2"' })
+    api.withdraw.mockResolvedValueOnce({
+      data: { ...scheme, status: 'DRAFT', can_withdraw: false, withdrawn_by_me: true }, etag: '"3"',
+    })
+    const wrapper = mount(WageSchemeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.get('.cutting-group-cell').text()).toBe('床面+1')
+    expect(wrapper.get('.wr-approval-table').text()).toContain('按套')
+    const actions = wrapper.findAll('button')
+    expect(actions.some(button => button.text().trim() === '提交')).toBe(false)
+    await actions.find(button => button.text().trim() === '修改')!.trigger('click')
+    await flushPromises()
+    expect(api.withdraw).toHaveBeenCalledExactlyOnceWith('scheme-1', '"2"')
+    expect(router.push).toHaveBeenCalledExactlyOnceWith({ name: 'wage-scheme-change', params: { schemeId: 'scheme-1' } })
+    wrapper.unmount()
+  })
+
   it('有全模块修改授权的普通管理者可代办，车间授权不扩大为他人草稿', async () => {
     auth.user.is_superuser = false
     auth.user.employee.id = 'manager'
@@ -134,6 +159,9 @@ describe('工价方案审批确认', () => {
     expect(wrapper.text()).toContain('首件确认后批量制作')
     expect(wrapper.text()).not.toContain('版本')
     expect(wrapper.text()).toContain('申报工序')
+    const nameCell = wrapper.get('.wr-approval-table .el-table__body tbody tr:first-child td:first-child .cell')
+    expect(nameCell.text()).toBe(scheme.lines[0]!.display_name)
+    expect(nameCell.classes()).not.toContain('el-tooltip')
     expect(wrapper.text()).toContain('¥0.6')
     expect(wrapper.text()).not.toContain('¥0.6000')
     expect(wrapper.text()).toContain('2026-09-28 06:58')

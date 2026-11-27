@@ -12,6 +12,7 @@ import expandIcon from '@/assets/procurement/create-expand.svg'
 import rightIcon from '@/assets/procurement/create-right.svg'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { isAxiosError } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -21,7 +22,7 @@ import {
   fetchSamplePurchaseOrderSource,
   fetchVersionedPurchaseOrder,
 } from '@/api/purchaseOrders'
-import { confirmPurchaseBatchPage, createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup, submitPurchaseSupplierBatch } from '@/api/purchaseGroups'
+import { confirmPurchaseBatchPage, createPurchaseBatch, createPurchaseGroup, fetchPurchaseGroups, fetchVersionedPurchaseGroup, submitPurchaseSupplierBatch } from '@/api/purchaseGroups'
 import { fetchPackagingPurchaseOptions, fetchPackagingPurchasePage, fetchPackagingPurchaseSources, preparePackagingPurchase, writePackagingPurchasePage } from '@/api/purchaseGroups'
 import type { PackagingPurchaseSource, PurchaseBatchInput, PurchaseBatchPageConfirmationInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
 import type { SupplierCategory } from '@/types/supplier'
@@ -1241,6 +1242,65 @@ async function initializePage(): Promise<void> {
   else if (!isPackaging.value) await restoreTrackingSource()
 }
 
+async function findCreatedGroup(taskId: string, bomIds: string[]) {
+  for (let page = 1; ; page++) {
+    const result = await fetchPurchaseGroups({ production_task_id: taskId, page })
+    const match = result.data.find(item => {
+      if (item.production_task_id !== taskId || item.combined_into_group_id) return false
+      if (item.source_bom_id_snapshot) return bomIds.length === 1 && item.source_bom_id_snapshot === bomIds[0]
+      const sources = new Set(item.progress.lines.flatMap(line => line.source_snapshot.source_contributions?.map(row => row.bom_id) ?? []))
+      return sources.size === bomIds.length && bomIds.every(id => sources.has(id))
+    })
+    if (match || page >= result.meta.total_pages) return match
+  }
+}
+
+function purchaseGroupResultUnknown(error: unknown): boolean {
+  if (!isAxiosError(error)) return false
+  const response = error.response
+  if (!response) return ['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(error.code ?? '')
+  if (response.status === 500) return response.data == null || (typeof response.data === 'string' && !response.data.trim())
+  return [408, 502, 503, 504].includes(response.status)
+}
+
+async function openStandardGroup(taskId: string) {
+  const requestId = sourceRequestId
+  const sources = selectedBomSources.value
+  const taskNumber = selectedTask.value?.task_number || ''
+  let target: PurchaseGroup | undefined
+  let recovered = false
+  try {
+    target = (await createPurchaseGroup({ production_task_id: taskId, ...(sources.length === 1 ? sources[0]! : { sources }) })).data
+  } catch (error) {
+    if (requestId !== sourceRequestId) return
+    if (!purchaseGroupResultUnknown(error)) {
+      ElMessage.error(apiErrorMessage(error, '创建采购需求失败，请重新读取来源。'))
+      return
+    }
+    const pendingMessage = `未能确认创建结果，请在采购需求列表按生产任务号 ${taskNumber} 核对后再操作。`
+    try {
+      target = await findCreatedGroup(taskId, sources.map(item => item.bom_id))
+    } catch (readError) {
+      if (requestId === sourceRequestId) sourceError.value = pendingMessage + apiErrorMessage(readError, '读取采购需求失败。')
+      return
+    }
+    if (requestId !== sourceRequestId) return
+    if (!target) { sourceError.value = pendingMessage; return }
+    recovered = true
+    ElMessage.success(`已查到采购需求 ${target.group_number}。`)
+  }
+  if (requestId !== sourceRequestId) return
+  const navigationMessage = `采购需求 ${target.group_number} 已建立。页面未打开，请从采购需求列表进入。`
+  const destination = recovered ? { name: 'purchase-group-detail', params: { id: target.id } }
+    : { name: 'purchase-batch-create', params: { groupId: target.id } }
+  try {
+    if (await router.push(destination)) sourceError.value = navigationMessage
+  } catch (error) {
+    sourceError.value = navigationMessage
+    console.error('打开采购需求页面失败', error)
+  }
+}
+
 async function goToDetails(): Promise<void> {
   if (isPackaging.value) {
     if (saving.value || !canContinueToDetails.value) return
@@ -1278,11 +1338,7 @@ async function goToDetails(): Promise<void> {
     }
     if (saving.value) return
     saving.value = true
-    try {
-      const sources = selectedBomSources.value
-      const result = await createPurchaseGroup({ production_task_id: sourceId, ...(sources.length === 1 ? sources[0]! : { sources }) })
-      await router.push({ name: 'purchase-batch-create', params: { groupId: result.data.id } })
-    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购需求失败，请重新读取来源。')) }
+    try { await openStandardGroup(sourceId) }
     finally { saving.value = false }
     return
   }

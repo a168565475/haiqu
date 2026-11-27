@@ -13,14 +13,14 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.production_scheduling.selectors import schedule_items_for_category
 from ..assembly_receipts import (
     load_context,
-    confirm_assembly_receipt,
+    submit_assembly_receipt,
     confirm_pending_assembly_receipt,
     assembly_progress_for_plans,
     delete_pending_assembly_receipt,
 )
-from ..receipt_permissions import can_delete_pending_receipt
+from ..receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category, receipt_record_workshops
 from ..models import FinishedGoodsReceipt
-from ..selectors import receipt_batches, scoped_finished_receipts
+from ..selectors import receipt_batches, require_inventory_overview, scoped_finished_receipts
 from .serializers import FinishedGoodsReceiptSerializer, FinishedGoodsInventoryScopeSerializer
 
 
@@ -31,12 +31,17 @@ class DataResponse(serializers.Serializer):
 class AssemblyInput(serializers.Serializer):
     request_id = serializers.UUIDField()
     schedule_product_id = serializers.UUIDField()
-    location_id = serializers.UUIDField()
+    location_id = serializers.UUIDField(required=False)
     receipt_date = serializers.DateField()
     received_quantity = serializers.IntegerField(min_value=1, max_value=9007199254740991)
     quantity_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=9007199254740991, default=None)
     actual_color = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')
     remark = serializers.CharField(required=False, allow_blank=True, max_length=3000, default='')
+
+
+class AssemblyConfirmation(serializers.Serializer):
+    location_id = serializers.UUIDField(required=False)
+    quantity_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=9007199254740991)
 
 
 class Filters(serializers.Serializer):
@@ -101,7 +106,7 @@ class AssemblyReceiptViewSet(viewsets.ViewSet):
     @action(detail=False,methods=['get'])
     def candidates(self,request):
         data=read_data(Filters,request.query_params)
-        rows=schedule_items_for_category(request,'ASSEMBLY').filter(schedule__production_task__status='IN_PRODUCTION')
+        rows=receipt_plans_for_category(request,'ASSEMBLY').filter(schedule__production_task__status='IN_PRODUCTION')
         if data['q']:
             rows=rows.filter(Q(schedule__schedule_number__icontains=data['q'])|Q(product_line__product_name_snapshot__icontains=data['q'])|Q(schedule__production_task__task_number__icontains=data['q']))
         total=rows.count(); start=(data['page']-1)*data['page_size']
@@ -117,13 +122,17 @@ class AssemblyReceiptViewSet(viewsets.ViewSet):
     @extend_schema(request=AssemblyInput,responses={201:DataResponse,200:DataResponse})
     def create(self,request):
         data=read_data(AssemblyInput,request.data)
-        receipt,replayed=confirm_assembly_receipt(request,data)
+        receipt,replayed=submit_assembly_receipt(request,data)
         return Response({'data':{'id':str(receipt.pk),'receipt_number':receipt.receipt_number,
-                                 'status':receipt.status,'replayed':replayed}},status=200 if replayed else 201)
+                                 'status':receipt.status,'replayed':replayed}},status=200 if replayed else 201,
+                        headers={'ETag': etag_for_instance(receipt)})
 
+    @extend_schema(request=AssemblyConfirmation, responses=DataResponse,
+                   parameters=[OpenApiParameter('If-Match', str, location='header')])
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm(self, request, pk=None):
-        receipt, replayed = confirm_pending_assembly_receipt(request, pk)
+        pk = serializers.UUIDField().run_validation(pk)
+        receipt, replayed = confirm_pending_assembly_receipt(request, pk, read_data(AssemblyConfirmation, request.data))
         return Response({'data': {'id': str(receipt.pk), 'receipt_number': receipt.receipt_number,
                                   'status': receipt.status, 'replayed': replayed}})
 
@@ -161,6 +170,9 @@ class FinishedRecordViewSet(viewsets.ViewSet):
     @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     @action(detail=False,methods=['get'])
     def locations(self,request):
+        permission = 'inventory.view_finishedgoodsreceipt'
+        if receipt_record_workshops(request, permission) is not None:
+            require_inventory_overview(request, permission)
         class Input(FinishedGoodsInventoryScopeSerializer):
             product_id=serializers.UUIDField(required=False,allow_null=True)
             product_catalog_id=serializers.UUIDField(required=False,allow_null=True)

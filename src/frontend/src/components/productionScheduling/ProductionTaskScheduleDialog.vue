@@ -221,6 +221,7 @@ function validate() {
 }
 
 async function save() {
+  if (saving.value) return
   const message = validate()
   if (message) {
     ElMessage.warning(message)
@@ -275,10 +276,10 @@ function viewExistingSchedule() {
     destroy-on-close
     @update:model-value="updateVisibility"
   >
-    <div v-loading="loading" class="task-schedule-dialog__content">
+    <div v-loading="loading || saving" class="task-schedule-dialog__content">
       <ElAlert v-if="errorMessage" class="task-schedule-dialog__error" type="error" :closable="false" :title="errorMessage">
         <ElButton v-if="candidate?.existing_schedule_id" link type="primary" @click="viewExistingSchedule">查看原计划</ElButton>
-        <ElButton v-else link type="primary" @click="loadDialog">重新加载</ElButton>
+        <ElButton v-else-if="!candidate" link type="primary" @click="loadDialog">重新加载</ElButton>
       </ElAlert>
 
       <section class="schedule-readiness" aria-label="排产前检查">

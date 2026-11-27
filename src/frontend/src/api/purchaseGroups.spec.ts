@@ -88,7 +88,7 @@ describe('采购总单 API 契约', () => {
     mockedPost.mockResolvedValueOnce({ data: { data: { id: 'group-1' } }, headers: { etag: '"group-v1"' } })
 
     expect((await createPurchaseGroup(payload)).etag).toBe('"group-v1"')
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/purchase-groups/', payload)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/purchase-groups/', payload, { timeout: 60000 })
   })
 
   it.each(['NORMAL', 'SUPPLEMENT'] as const)('%s批次保留所选子集、超建议量和精度，携带父版本而接收子版本', async (batchType) => {

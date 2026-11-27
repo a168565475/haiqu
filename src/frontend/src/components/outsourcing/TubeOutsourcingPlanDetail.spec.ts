@@ -88,7 +88,7 @@ async function mountPage(value = structuredClone(order), warehouse = true, props
     ElButton: { props: ['disabled', 'loading'], template: '<button :disabled="disabled || loading"><slot/></button>' },
     ElDropdown: { name: 'ElDropdown', template: '<div><slot/></div>' },
     ElAlert: { name: 'ElAlert', props: ['title'], template: '<div role="alert">{{ title }}</div>' },
-    AppWindowDialog: { props: ['modelValue', 'title', 'width'], template: '<section v-if="modelValue" :aria-label="title" :data-width="width"><slot/><slot name="footer"/></section>' },
+    AppWindowDialog: { props: ['modelValue', 'title', 'width', 'fullscreen'], template: '<section v-if="modelValue" :aria-label="title" :data-width="width" :data-fullscreen="fullscreen"><slot/><slot name="footer"/></section>' },
   } } })
   wrappers.push(wrapper); await flushPromises()
   return { wrapper, vm: wrapper.vm as unknown as ViewModel }
@@ -107,7 +107,13 @@ beforeEach(() => {
   vi.mocked(api.fetchTubeOrder).mockResolvedValue(structuredClone(order))
   vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: structuredClone(order), etag: 'v1', can_receive: true, blockers: [], actor_name: '经办人', today: '2026-10-29', warehouses: [{ id: 'warehouse-1', name: '半成品仓' }], zones: [{ id: 'received-zone', warehouse_id: 'warehouse-1', warehouse: '半成品仓', name: '喷塑区' }], receipt: null })
   vi.mocked(api.receiveTubePlan).mockImplementation(async (_, payload) => receivedResult(payload.client_request_id))
-  vi.mocked(api.dispatchTubePlan).mockImplementation(async (_, payload) => ({ ...structuredClone(order), etag: 'v2', dispatch_records: [{ id: 'dispatch-1', client_request_id: payload.client_request_id, order_number: 'WF-batch', actual_dispatch_date: payload.actual_dispatch_date, created_at: '', actor_name: '经办人', source_kind: payload.source_kind, zone_name: '未喷塑区', total_quantity: payload.lines[0]!.quantity, lines: payload.lines.map(item => ({ ...item, factory_name: '加工厂' })) }] }))
+  vi.mocked(api.dispatchTubePlan).mockImplementation(async (_, payload) => {
+    const batch = payload.batches ? payload.batches[0]! : payload
+    return { ...structuredClone(order), etag: 'v2', dispatch_records: [{ id: 'dispatch-1', client_request_id: payload.client_request_id,
+      order_number: 'WF-batch', actual_dispatch_date: payload.actual_dispatch_date, created_at: '', actor_name: '经办人',
+      source_kind: batch.source_kind, zone_name: '未喷塑区', total_quantity: batch.lines[0]?.quantity || batch.inputs?.[0]?.quantity || '0',
+      lines: batch.lines.map(item => ({ ...item, factory_name: '加工厂' })) }] }
+  })
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
@@ -196,6 +202,30 @@ describe('车间编辑委外总单计划数量', () => {
 })
 
 describe('委外总单分次收发', () => {
+  it('车间详情将本厂部位紧排在委外部位上方，两表共用列且本厂没有外协结算金额', async () => {
+    const value = typedColumnOrder()
+    value.internal_sewing_parts = [{
+      component_identity: 'internal-part', part_name: '外袋', specification: '190*63*42', unit: '套',
+      factory_name: '本厂', quantity: 1200, bom_quantity: '1200', unit_price: '1.50',
+      component_source_materials: value.lines[0]!.component_source_materials,
+    }]
+    const { wrapper } = await mountPage(value, false, {}, true)
+    const panels = wrapper.findAll('.plan-detail > section.panel')
+    const index = panels.findIndex(panel => panel.find('h2').text() === '本厂车缝部位')
+    expect(index).toBeGreaterThan(0)
+    const internal = panels[index]!
+    const external = panels[index + 1]!
+    expect(external.get('h2').text()).toBe('委外部位')
+    const headers = internal.findAll('thead th').map(cell => cell.text())
+    expect(headers).toEqual(external.get('.plan-parts-table').findAll('thead th').map(cell => cell.text()))
+    const cells = internal.findAll('tbody td').map(cell => cell.text())
+    expect(Object.fromEntries(headers.map((name, i) => [name, cells[i]]))).toMatchObject({
+      部位: '外袋', 规格: '190*63*42', 单位: '套', 计划加工厂: '本厂', BOM需求: '1200',
+      目标数量: '1200', 部位单价: '1.5 元/套', 累计入库: '—', '计划金额（元）': '—', '回货金额（元）': '—',
+    })
+    expect(internal.text()).toContain('蓝面布')
+    expect((await mountPage(value, true, {}, true)).wrapper.text()).not.toContain('本厂车缝部位')
+  })
   it('仓库从车缝直发页能看到已丝印数量，并按回货库区发出', async () => {
     const value = typedColumnOrder()
     value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' })
@@ -213,6 +243,146 @@ describe('委外总单分次收发', () => {
     await vm.submit()
     expect(vm.message).toContain('当前库区已丝印可发 60 片')
     expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+  })
+  it('管材逐行选车间和库区，留空或填零的行不需要来源', async () => {
+    const value = structuredClone(order)
+    value.plan_options!.per_line_sources = true
+    value.plan_options!.source_kinds.push({ value: 'RAW_PIPE', label: '原材料' })
+    const rawWarehouse = { ...value.plan_options!.zones[0]!, warehouse_name: '原料管材仓', warehouse_type: 'MATERIAL' as const, name: '一楼' }
+    value.plan_options!.zones = [rawWarehouse, { ...rawWarehouse, id: 'zone-2', name: '二楼' },
+      { ...rawWarehouse, id: 'unrelated', warehouse_name: '管材喷塑仓', warehouse_type: 'SEMI_FINISHED' }]
+    value.lines = ['横管', '竖管', '弯管', '斜管', '脚管'].map((name, index) => ({
+      ...line, id: `line-${index}`, component_identity: `pipe-${index}`, part_name: name, dispatched_quantity: index === 3 ? line.quantity : '0',
+    }))
+    vi.mocked(api.fetchTubeSource).mockImplementation(async query => ({
+      ...sourceContext, source_kind: query.source_kind!, zone_id: query.zone_id || null,
+      rows: value.lines.map(row => ({ ...sourceContext.rows[0]!, part_name: row.part_name,
+        component_identity: row.component_identity, max_quantity: query.zone_id === 'zone-1' ? '21' : query.zone_id ? '34' : '99999999999999' })),
+    }))
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    expect(wrapper.text()).not.toContain('更换来源')
+    const table = wrapper.get('.plan-entry-table')
+    const rows = table.findAll('tbody tr')
+    const sources = rows.map(row => row.getComponent(ElSelect))
+    expect(sources[0]!.props('modelValue')).toBe('METAL')
+    expect(sources[0]!.props('options')).toEqual([
+      expect.objectContaining({ key: 'PUBLIC_SEMI:zone-1', label: '原料管材仓 / 一楼' }),
+      expect.objectContaining({ key: 'PUBLIC_SEMI:zone-2', label: '原料管材仓 / 二楼' }),
+      expect.objectContaining({ key: 'METAL', label: '金工车间直发' }),
+    ])
+    expect(wrapper.text()).not.toContain('数量留空或填 0 的行不发出。')
+    expect(table.text()).not.toContain('99,999,999,999,999')
+    const remaining = table.findAll('th').findIndex(cell => cell.text() === '本单剩余可发（支）')
+    expect(rows[3]!.findAll('td')[remaining]!.text()).toBe('0')
+    vm.entries[3]!.quantity = '1'
+    await vm.submit()
+    expect(vm.message).toContain('斜管：本次最多可发 0 支')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+    vm.entries[3]!.quantity = ''
+    const choose = async (index: number, key: string) => {
+      sources[index]!.vm.$emit('change', key)
+      await flushPromises()
+    }
+    await choose(1, '')
+    await choose(3, '')
+    await choose(4, '')
+    vm.entries[0]!.quantity = '7'
+    vm.entries[1]!.quantity = '12'
+    vm.entries[2]!.quantity = '19'
+    vm.entries[4]!.quantity = '0'
+    await vm.submit()
+    expect(vm.message).toContain('竖管：请选本行的发料来源')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+    await choose(1, 'PUBLIC_SEMI:zone-1')
+    await choose(2, 'PUBLIC_SEMI:zone-2')
+    expect(sources.map(field => field.props('modelValue'))).toEqual(['METAL', 'PUBLIC_SEMI:zone-1', 'PUBLIC_SEMI:zone-2', '', ''])
+    const available = table.findAll('th').findIndex(cell => cell.text() === '库区可用（支）')
+    expect(rows.map(row => row.findAll('td')[available]!.text())).toEqual(['—', '21', '34', '—', '—'])
+    vi.mocked(api.dispatchTubePlan).mockRejectedValueOnce(new AxiosError('超时'))
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledExactlyOnceWith(value.id, expect.objectContaining({ batches: [
+      { source_kind: 'METAL', zone_id: null, lines: [{ component_identity: 'pipe-0', quantity: '7', factory_id: 'factory-1' }] },
+      { source_kind: 'PUBLIC_SEMI', zone_id: 'zone-1', lines: [{ component_identity: 'pipe-1', quantity: '12', factory_id: 'factory-1' }] },
+      { source_kind: 'PUBLIC_SEMI', zone_id: 'zone-2', lines: [{ component_identity: 'pipe-2', quantity: '19', factory_id: 'factory-1' }] },
+    ] }), value.etag)
+    expect(vm.pending?.kind).toBe('DISPATCH')
+    wrapper.unmount()
+    const reopened = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    expect(reopened.vm.pending).toEqual(vm.pending)
+    await reopened.vm.postPending()
+    expect(vi.mocked(api.dispatchTubePlan).mock.calls[1]).toEqual(vi.mocked(api.dispatchTubePlan).mock.calls[0])
+    expect(localStorage.getItem(key)).toBeNull()
+  })
+  it('普通裁片在裁剪车间和裁剪布面仓之间选择，丝印裁片按实际回仓位置与加工点发出', async () => {
+    const value = typedColumnOrder()
+    const piece = value.inputs![0]!
+    piece.target_quantity = '90'
+    value.inputs!.push({ ...piece, component_identity: 'ordinary', part_name: '普通背片', target_quantity: '200' })
+    value.inputs!.push({ ...piece, component_identity: 'piece-2', part_name: '印花袋片' })
+    value.plan_options!.per_line_sources = true
+    value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' }, { value: 'PROCESSOR', label: '加工点发出' })
+    value.plan_options!.zones.push({ id: 'print-zone', warehouse_id: 'fabric', warehouse_name: '成品布面仓', name: '四楼', warehouse_type: 'SEMI_FINISHED' })
+    value.plan_options!.zones.push({ ...value.plan_options!.zones.at(-1)!, id: 'print-zone-2', name: '三楼' })
+    value.plan_options!.zones.push({ id: 'cut-zone', warehouse_id: 'cutting', warehouse_name: '裁剪布面仓', name: '三楼', warehouse_type: 'SEMI_FINISHED' })
+    const sourceRow = { order_required: '200', stock_quantity: null, blockers: [] }
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...sourceContext, part_flow: true, sewing_inputs: true, sewing_print_sources: true,
+      inputs: [
+        { ...piece, ...sourceRow, max_quantity: '0', screen_print_required: true, printed_available_quantity: '30',
+          stock_zones: [{ zone_id: 'print-zone', available_quantity: '30' }, { zone_id: 'print-zone-2', available_quantity: '8' }],
+          processor_source: { factory_id: 'printer', factory_name: '丝印一厂', order_id: 'print-order',
+            order_number: 'WF-PRINT', order_line_id: 'print-line', available_quantity: '70' } },
+        { ...value.inputs![1]!, ...sourceRow, max_quantity: '200' },
+        { ...value.inputs![2]!, ...sourceRow, max_quantity: '0', screen_print_required: true, printed_available_quantity: '15',
+          stock_zones: [{ zone_id: 'print-zone-2', available_quantity: '15' }] },
+      ],
+    })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    const ordinary = wrapper.get('.plan-entry-table--parts:not(.sewing-print-table)')
+    expect(ordinary.text()).toContain('普通背片')
+    expect(ordinary.text()).not.toContain('面片')
+    const ordinarySource = ordinary.getComponent(ElSelect)
+    expect(ordinarySource.props('modelValue')).toBe('CUTTING')
+    expect(ordinarySource.props('options')).toEqual([
+      expect.objectContaining({ key: 'CUTTING', label: '车间裁片直发' }),
+      expect.objectContaining({ key: 'PUBLIC_PIECE:cut-zone', label: '裁剪布面仓 / 三楼' }),
+    ])
+    const printed = wrapper.get('.sewing-print-table')
+    expect(printed.findAll('thead th').map(cell => cell.text())).toEqual(expect.arrayContaining(['来源', '可发数量', '本次数量']))
+    const warehouseRows = printed.findAll('tr[data-print-source="warehouse"]')
+    const warehouseRow = warehouseRows[0]!
+    const processorRow = printed.findAll('tr[data-print-source="processor"]')[0]!
+    expect(printed.findAll('tbody tr')).toHaveLength(5)
+    expect(printed.findAllComponents(ElSelect)).toHaveLength(0)
+    expect(warehouseRows.map(row => row.get('.sewing-print-zone').text())).toEqual([
+      '成品布面仓 / 四楼', '成品布面仓 / 三楼', '成品布面仓 / 三楼',
+    ])
+    expect(warehouseRow.get('td').attributes('rowspan')).toBe('3')
+    expect(warehouseRow.text()).not.toContain('已回')
+    expect(warehouseRow.text()).toContain('30 片')
+    expect(processorRow.get('td').text()).toBe('加工点：丝印一厂')
+    expect(processorRow.text()).toContain('70 片')
+    expect(printed.text()).not.toContain('普通背片')
+    const inputs = [warehouseRow.getComponent({ name: 'ElInput' }), processorRow.getComponent({ name: 'ElInput' })]
+    inputs[0]!.vm.$emit('update:modelValue', '30')
+    inputs[1]!.vm.$emit('update:modelValue', '70')
+    await vm.submit()
+    expect(vm.message).toContain('合计最多 90 片')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+
+    inputs[0]!.vm.$emit('update:modelValue', '18')
+    inputs[1]!.vm.$emit('update:modelValue', '50')
+    warehouseRows[1]!.getComponent({ name: 'ElInput' }).vm.$emit('update:modelValue', '5')
+    warehouseRows[2]!.getComponent({ name: 'ElInput' }).vm.$emit('update:modelValue', '7')
+    vm.entries[1]!.quantity = '3'
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledExactlyOnceWith(value.id, expect.objectContaining({ batches: [
+      { source_kind: 'CUTTING', zone_id: null, lines: [], inputs: [{ component_identity: 'ordinary', quantity: '3' }] },
+      { source_kind: 'PUBLIC_PIECE', zone_id: 'print-zone', lines: [], inputs: [{ component_identity: 'piece-1', quantity: '18' }] },
+      { source_kind: 'PUBLIC_PIECE', zone_id: 'print-zone-2', lines: [], inputs: [
+        { component_identity: 'piece-1', quantity: '5' }, { component_identity: 'piece-2', quantity: '7' },
+      ] },
+      { source_kind: 'PROCESSOR', zone_id: null, lines: [], inputs: [{ component_identity: 'piece-1', quantity: '50', print_order_line_id: 'print-line' }] },
+    ] }), value.etag)
   })
   it('加工点发出只列来源厂待交的裁片，目的厂按车缝总单，提交带原丝印行', async () => {
     const value = typedColumnOrder()
@@ -246,14 +416,89 @@ describe('委外总单分次收发', () => {
     expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: value.id, product_line_id: value.product_line_id }))
     expect(vi.mocked(api.fetchTubeSource).mock.calls[0]![0]).not.toHaveProperty('schedule_product_id')
   })
+  it('丝印发料默认裁片直发，可以改选裁剪布面仓三楼，发完的可发量只显示零', async () => {
+    const value = typedColumnOrder()
+    Object.assign(value, { screen_print_pieces: true, sewing_inputs: false, source_kind: 'PUBLIC_PIECE', zone_id: 'other-floor' })
+    Object.assign(value.lines[0]!, { unit: '片', quantity: '1200', dispatched_quantity: '0' })
+    value.plan_options!.per_line_sources = true
+    value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' })
+    const cuttingZone = { id: 'fabric-zone', warehouse_id: 'fabric', warehouse_name: '裁剪布面仓', name: '三楼', warehouse_type: 'SEMI_FINISHED' as const }
+    value.plan_options!.zones.push(cuttingZone,
+      { ...cuttingZone, id: 'other-floor', name: '四楼' },
+      { ...cuttingZone, id: 'finished-fabric', warehouse_name: '成品布面仓' })
+    vi.mocked(api.fetchTubeSource).mockImplementation(async params => ({ ...sourceContext, part_flow: true,
+      source_kind: params.source_kind!, rows: [{ ...sourceContext.rows[0]!, unit: '片', parent_component_identity: 'bed',
+        max_quantity: params.zone_id === 'fabric-zone' ? '1200' : '0',
+        stock_zones: params.source_kind === 'CUTTING' ? [{ zone_id: 'fabric-zone', available_quantity: '1200' }] : [] }] }))
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    const table = wrapper.get('.plan-entry-table--parts')
+    const heads = table.findAll('thead th')
+    const column = heads.findIndex(cell => cell.text() === '可外发多少')
+    expect(heads[column]!.classes()).toContain('num')
+    expect(heads.find(cell => cell.text() === '已外发')!.classes()).toContain('num')
+    const amount = table.findAll('tbody tr:first-child td')[column]!
+    expect(amount.text()).toBe('0')
+    const sourceField = table.getComponent(ElSelect)
+    expect(sourceField.props('modelValue')).toBe('CUTTING')
+    expect(sourceField.props('options')).toEqual([
+      expect.objectContaining({ key: 'CUTTING', label: '车间裁片直发' }),
+      expect.objectContaining({ key: 'PUBLIC_PIECE:fabric-zone', label: '裁剪布面仓 / 三楼' }),
+    ])
+    vm.entries[0]!.quantity = '1200'
+    await vm.submit()
+    expect(vm.message).toContain('车间可直发 0 片')
+    vi.mocked(api.fetchTubeSource).mockRejectedValueOnce(new AxiosError('Network Error'))
+    sourceField.vm.$emit('change', 'PUBLIC_PIECE:fabric-zone')
+    await flushPromises()
+    expect(vm.message).toContain('发料来源加载失败')
+    expect(sourceField.props('modelValue')).toBe('')
+    expect(vm.entries[0]!.quantity).toBe('1200')
+    sourceField.vm.$emit('change', 'PUBLIC_PIECE:fabric-zone')
+    await flushPromises()
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith(expect.objectContaining({ source_kind: 'PUBLIC_PIECE', zone_id: 'fabric-zone' }))
+    expect(amount.text()).toBe('1,200')
+    expect(vm.entries[0]!.quantity).toBe('1200')
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+
+    const completed = structuredClone(value)
+    completed.lines[0]!.dispatched_quantity = '1200'
+    const { wrapper: completedForm } = await mountPage(completed, true, { actionOnly: true, entryAction: 'dispatch' })
+    expect(completedForm.get('.plan-entry-table--parts').findAll('tbody tr:first-child td')[column]!.text()).toBe('0')
+    expect(completedForm.text()).not.toContain('该裁片已发完')
+    expect(completedForm.find('.print-stock-options').exists()).toBe(false)
+  })
+  it('丝印厂没有待交裁片时不打开入库预览', async () => {
+    const value = typedColumnOrder()
+    Object.assign(value, { screen_print_pieces: true, sewing_inputs: false })
+    value.lines.forEach(line => { line.receivable_quantity = '0' })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(vm.canReceive).toBe(false)
+    expect(receipts.fetchTubeReceiptPreview).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('丝印厂当前没有待交裁片')
+  })
+  it('丝印预览读到待交已归零时更新原单并收起入库表单', async () => {
+    const value = typedColumnOrder()
+    Object.assign(value, { screen_print_pieces: true, sewing_inputs: false })
+    value.lines[0]!.receivable_quantity = '10'
+    const latest = structuredClone(value)
+    latest.etag = 'fresh-etag'
+    latest.lines.forEach(line => { line.receivable_quantity = '0' })
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: latest, etag: latest.etag,
+      can_receive: true, blockers: [], actor_name: '仓管', today: '2026-11-26', warehouses: [], zones: [], receipt: null })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(wrapper.emitted('updated')?.[0]).toEqual([latest])
+    expect(vm.mode).toBe('')
+    expect(wrapper.find('[aria-label="入库日期"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('丝印厂当前没有待交裁片')
+  })
   it('丝印裁片回仓不能超过厂内待交，先扣除已直送数量', async () => {
     const value = typedColumnOrder()
     Object.assign(value, { screen_print_pieces: true, sewing_inputs: false })
     Object.assign(value.lines[0]!, { part_name: '面片', unit: '片', quantity: '200', dispatched_quantity: '80', received_quantity: '20',
       transferred_quantity: '15', receivable_quantity: '45' })
     vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: value, etag: value.etag, can_receive: true, blockers: [],
-      actor_name: '仓管', today: '2026-11-26', warehouses: [{ id: 'warehouse-1', name: '布面仓' }],
-      zones: [{ id: 'received-zone', warehouse_id: 'warehouse-1', warehouse: '布面仓', name: '四楼' }], receipt: null })
+      actor_name: '仓管', today: '2026-11-26', warehouses: [{ id: 'warehouse-1', name: '裁剪布面仓' }],
+      zones: [{ id: 'received-zone', warehouse_id: 'warehouse-1', warehouse: '裁剪布面仓', name: '三楼' }], receipt: null })
     const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
     expect(wrapper.get('.plan-entry-table--parts').text()).toContain('丝印厂待交')
     expect(wrapper.text()).toContain('本次收回的裁片将标记为「已丝印」')
@@ -266,6 +511,9 @@ describe('委外总单分次收发', () => {
     const value = typedColumnOrder()
     vi.mocked(api.fetchTubeOrder).mockResolvedValue(value)
     const { wrapper, vm } = await mountPage(value, false, {}, true)
+    const identity = wrapper.findAll('.plan-context > span')
+    expect(identity[0]!.get('strong').text()).toBe(value.task_number)
+    expect(identity[1]!.text()).toContain(value.order_number)
     const parts = wrapper.get('.plan-parts-table')
     const headers = parts.findAll('thead th').map(cell => cell.text())
     const cells = parts.findAll('tbody tr')[0]!.findAll('td')
@@ -295,6 +543,7 @@ describe('委外总单分次收发', () => {
   })
   it('发出和回货弹窗保持独立规格与来源列，附带辅料显示本次来源的规格材质颜色单位', async () => {
     const value = typedColumnOrder()
+    value.lines[0]!.bom_quantity = '1200'
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(sourceContext), source_kind: 'CUTTING', part_flow: true,
       sewing_inputs: true, inputs: value.inputs!.map(piece => ({ ...piece, order_required: '200', max_quantity: '200', stock_quantity: null, blockers: [] })),
       material_rows: [{ bom_line_id: 'bom-material-1', material_number: 'FL-1', name: '包边带', specification: '俊峰#33号灰色 / 橡胶 / 11*64/60CM', material: '橡胶', color: '俊峰#33号灰色', unit: '米',
@@ -321,6 +570,9 @@ describe('委外总单分次收发', () => {
     const receipt = wrapper.get('.plan-entry-table--parts')
     const receiptHeaders = receipt.findAll('thead th').map(cell => cell.text())
     const receiptCells = receipt.findAll('tbody tr')[0]!.findAll('td')
+    expect(receiptHeaders.slice(receiptHeaders.indexOf('单位') + 1, receiptHeaders.indexOf('本次数量') + 1))
+      .toEqual(['订单需求量', '累计入库', '本次数量'])
+    expect(receiptCells[receiptHeaders.indexOf('订单需求量')]!.text()).toBe('1,200')
     expect(receiptCells[receiptHeaders.indexOf('规格')]!.text()).toBe('成形60*40cm')
     expect(receiptCells[receiptHeaders.indexOf('来源布料')]!.findAll('.component-source-value').map(item => item.text())).toEqual(['蓝面布', '红里布'])
     expect(receiptCells[receiptHeaders.indexOf('面料规格')]!.findAll('.component-source-value').map(item => item.text())).toEqual(['600D', '210D'])
@@ -413,6 +665,7 @@ describe('委外总单分次收发', () => {
     const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
     expect(wrapper.find('.plan-detail').exists()).toBe(false)
     expect(wrapper.get('[aria-label="材料发出"]').attributes('data-width')).toBe('1800')
+    expect(wrapper.get('[aria-label="材料发出"]').attributes('data-fullscreen')).toBe('true')
     expect(wrapper.text()).toContain('金工车间直发')
     expect(wrapper.text()).toContain('更换来源')
     expect(wrapper.find('[aria-label="实际来源库区"]').exists()).toBe(false)
@@ -432,17 +685,19 @@ describe('委外总单分次收发', () => {
     expect(wrapper.emitted('closed')).toHaveLength(1)
   })
   it.each([
-    ['CUTTING', '成品布面仓'],
-    ['METAL', '管材喷塑仓'],
-  ] as const)('列表外发入库按 %s 默认选中 %s', async (sourceKind, warehouseName) => {
-    const value = { ...structuredClone(order), source_kind: sourceKind }
+    ['CUTTING', '成品布面仓', false],
+    ['METAL', '管材喷塑仓', false],
+    ['CUTTING', '裁剪布面仓', true],
+  ] as const)('列表外发入库按 %s 默认选中 %s', async (sourceKind, warehouseName, printing) => {
+    const value = { ...structuredClone(order), source_kind: sourceKind, screen_print_pieces: printing }
     vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValueOnce({
       order: value, etag: value.etag, can_receive: true, blockers: [], actor_name: '经办人', today: '2026-10-29',
       warehouses: [{ id: 'other-warehouse', name: '半成品暂存仓' }, { id: 'default-warehouse', name: warehouseName }],
       zones: [
-        { id: 'zone-1', warehouse_id: 'default-warehouse', warehouse: warehouseName, name: 'A区' },
+        { id: 'zone-1', warehouse_id: 'default-warehouse', warehouse: warehouseName, name: printing ? '三楼' : 'A区' },
         { id: 'zone-2', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'B区' },
         { id: 'zone-3', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'C区' },
+        ...(printing ? [{ id: 'zone-4', warehouse_id: 'default-warehouse', warehouse: warehouseName, name: '二楼' }] : []),
       ], receipt: null,
     })
     const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
@@ -461,7 +716,8 @@ describe('委外总单分次收发', () => {
   })
   it('列表外发入库保留实收记录、材料属性和只读计划厂家，不显示可入上限', async () => {
     const { wrapper, vm } = await mountPage(structuredClone(order), true, { actionOnly: true, entryAction: 'return' })
-    expect(vm.mode).toBe('RECEIPT'); expect(wrapper.find('[aria-label="外发入库"]').exists()).toBe(true)
+    expect(vm.mode).toBe('RECEIPT')
+    expect(wrapper.get('[aria-label="外发入库"]').attributes('data-fullscreen')).toBe('true')
     const headers = wrapper.findAll('.plan-entry-table th').map(item => item.text())
     expect(headers).toContain('材质'); expect(headers).toContain('规格'); expect(headers).toContain('切割长度 mm')
     expect(headers).toContain('计划加工厂'); expect(headers).not.toContain('加工单价')
@@ -471,6 +727,15 @@ describe('委外总单分次收发', () => {
     expect(cells).toHaveLength(headers.length)
     expect(cells[headers.indexOf('计划加工厂')]!.text()).toBe('加工厂')
     expect(wrapper.emitted('closed')).toBeUndefined()
+  })
+  it.each(['PUBLIC_SEMI', 'PUBLIC_CUTTING'] as const)('列表%s总单入库弹窗先展示实际任务单号', async sourceKind => {
+    const value = { ...structuredClone(order), source_kind: sourceKind }
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValue({ order: value, etag: value.etag, can_receive: true, blockers: [], actor_name: '', today: '2026-10-29', warehouses: [], zones: [], receipt: null })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(vm.mode).toBe('RECEIPT')
+    const identity = wrapper.get('[aria-label="外发入库"] > p')
+    expect(identity.get('strong').text()).toBe(`生产任务单号 ${value.task_number}`)
+    expect(identity.text()).toBe(`生产任务单号 ${value.task_number} · ${value.order_number} · ${value.product_name} · ${value.craft_name}`)
   })
   it('库存来源的需要外发显示总单计划，仓库详情和记录隐藏价款，车间保留', async () => {
     const value = structuredClone(order)
@@ -583,11 +848,45 @@ describe('委外总单分次收发', () => {
     expect(rows[0]!.find('input,select,textarea,el-input-stub,el-select-stub,[role="combobox"]').exists()).toBe(false)
     for (const label of ['拉链本次辅料数量', '拉链辅料加工厂', '拉链辅料库区']) expect(rows[1]!.find(`[aria-label="${label}"]`).exists()).toBe(true)
     expect(vm.materialEntries[0]).toMatchObject({ quantity: '', factory: '', zone: '' })
-    Object.assign(vm.materialEntries[1]!, { quantity: '2', factory: 'factory-1', zone: 'material-zone' })
+    expect(vm.materialEntries[1]!.factory).toBe('factory-1')
+    Object.assign(vm.materialEntries[1]!, { quantity: '2', zone: 'material-zone' })
     vm.entries[0]!.quantity = '1'
     await vm.submit()
     expect(api.dispatchTubePlan).toHaveBeenCalledWith(value.id, expect.objectContaining({
       materials: [{ bom_line_id: 'zip', quantity: '2', factory_id: 'factory-1', zone_id: 'material-zone' }],
+    }), value.etag)
+  })
+
+  it('车缝辅料只列总单的外厂，默认第一家并保留人工改选', async () => {
+    const value = typedColumnOrder()
+    const first = { id: 'factory-1', name: '加工厂' }, second = { id: 'factory-2', name: '另一个外厂' }
+    const part = value.lines[0]!
+    value.lines.push(
+      { ...part, id: 'another-part', component_identity: 'part-2', factory_id: second.id, factory_name: second.name },
+      { ...part, id: 'third-part', component_identity: 'part-3' },
+    )
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({
+      ...sourceContext, factories: [second, { id: 'outside', name: '总单外的厂' }, first, { id: 'internal', name: '本厂' }],
+      inputs: value.inputs!.map(piece => ({ ...piece, order_required: '200', max_quantity: '200', stock_quantity: null, blockers: [] })),
+      material_source_revision: 'revision', material_rows: [{
+        bom_line_id: 'strap', material_number: '', name: '织带', specification: '', material: '', color: '', unit: '米',
+        required_quantity: '8', order_remaining: '8', available_stock: '8', max_quantity: '8', blockers: [],
+        zones: [{ zone_id: 'material-zone', zone_name: '辅料区', warehouse_id: 'warehouse-1', warehouse_name: '辅料仓', available_quantity: '8' }],
+      }],
+    })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    const factorySelect = wrapper.findAllComponents(ElSelect)
+      .find(select => select.attributes('aria-label') === '织带辅料加工厂')!
+    expect(factorySelect.props('options')).toEqual([first, second])
+    expect(factorySelect.props('modelValue')).toBe(first.id)
+    factorySelect.vm.$emit('update:modelValue', second.id)
+    await vm.loadSource()
+    expect(factorySelect.props('modelValue')).toBe(second.id)
+    vm.entries[0]!.quantity = '1'
+    vm.materialEntries[0]!.quantity = '2'
+    await vm.submit()
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith(value.id, expect.objectContaining({
+      materials: [{ bom_line_id: 'strap', quantity: '2', factory_id: second.id, zone_id: 'material-zone' }],
     }), value.etag)
   })
 

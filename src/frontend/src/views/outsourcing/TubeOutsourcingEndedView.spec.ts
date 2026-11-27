@@ -147,7 +147,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(wrapper.findAll('.d4-ended-lines th').map(item => item.text())).toEqual(expected)
     expect(wrapper.get('.d4-ended-footer').text()).not.toContain('计划加工金额')
     expect(wrapper.text()).toContain(labels[source]); expect(wrapper.text()).toContain('当前订单量')
-    expect(wrapper.findAll('.d4-ended-context .info-cell')).toHaveLength(12)
+    expect(wrapper.findAll('.d4-ended-context .info-cell')).toHaveLength(13)
     expect(wrapper.findAll('.d4-ended-meta .info-cell')).toHaveLength(8)
     expect(wrapper.find('.d4-ended-lines input').exists()).toBe(false)
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
@@ -384,6 +384,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
   it('缺少回货办理权限仍能在既有查看权限下读取已结束凭证', async () => {
     permission.canReceive = false
     const { wrapper } = await mountPage()
+    expect(wrapper.findAll('.d4-ended-context strong').slice(0, 2).map(value => value.text())).toEqual([order.task_number, order.order_number])
     expect(button(wrapper, '查看入库凭证').attributes('disabled')).toBeUndefined()
     await button(wrapper, '查看入库凭证').trigger('click')
     expect(wrapper.find('.d4-ended-receipt').exists()).toBe(true)

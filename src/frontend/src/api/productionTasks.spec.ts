@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl, holdProductionTask, fetchProductionTaskFilterOptions, fetchProductionTaskAdvancedFilterOptions, fetchProductionTaskOptions } from '@/api/productionTasks'
+import { deleteProductionTask, createProductionOrderFromSalesOrder, createProductionTask, submitProductionTask, decideProductionTaskByPmc, exportProductionTasks, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl, holdProductionTask, fetchProductionTaskFilterOptions, fetchProductionTaskAdvancedFilterOptions, fetchProductionTaskOptions } from '@/api/productionTasks'
 import { apiClient } from '@/api/request'
 
 vi.mock('@/api/request', () => ({
@@ -58,6 +58,14 @@ describe('生产任务单 API', () => {
     expect(apiClient.getUri).toHaveBeenCalledWith({ url: '/api/v1/production-tasks/sales-order-source-image/', params: { sales_order_id: 'sales-1', line_id: 'line-1' } })
   })
 
+  it('手动建单与提交等待完整业务回执', async () => {
+    mockedPost.mockResolvedValue({ data: { data: { id: 'task-1' } }, headers: { etag: 'v1' } })
+    await createProductionTask({ task_number: 'HT26320' } as Parameters<typeof createProductionTask>[0], {}, {})
+    expect(mockedPost).toHaveBeenLastCalledWith('/api/v1/production-tasks/', expect.any(FormData), { timeout: 60_000 })
+    await submitProductionTask('task-1', 'v1')
+    expect(mockedPost).toHaveBeenLastCalledWith('/api/v1/production-tasks/task-1/submit/', {}, { headers: { 'If-Match': 'v1' }, timeout: 60_000 })
+  })
+
   it('PMC 确认使用专用入口并携带当前 ETag', async () => {
     mockedPost.mockResolvedValueOnce({
       data: { data: { id: 'task-1', status: 'READY' } },
@@ -77,7 +85,7 @@ describe('生产任务单 API', () => {
       planned_end_date: '2026-09-20',
       planner_id: 'employee-1',
     }, {
-      headers: { 'If-Match': '"task-v1"' },
+      headers: { 'If-Match': '"task-v1"' }, timeout: 60_000,
     })
     expect(result.etag).toBe('"task-v2"')
   })
@@ -103,7 +111,7 @@ describe('生产任务单 API', () => {
 
     await createProductionOrderFromSalesOrder(payload)
 
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-tasks/create-from-sales-order/', payload)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-tasks/create-from-sales-order/', payload, { timeout: 60_000 })
   })
 
   it('精确 PATCH 只提交实际修改字段并携带当前 ETag', async () => {
@@ -117,7 +125,7 @@ describe('生产任务单 API', () => {
     const [, body, config] = mockedPatch.mock.calls[0]
     expect(body).toBeInstanceOf(FormData)
     expect(JSON.parse((body as FormData).get('payload') as string)).toEqual({ delivery_date: '2026-09-30' })
-    expect(config).toEqual({ headers: { 'If-Match': '"task-v1"' } })
+    expect(config).toEqual({ headers: { 'If-Match': '"task-v1"' }, timeout: 60_000 })
   })
 
   it('导出勾选项时移除分页参数并传递筛选条件', async () => {
@@ -150,7 +158,7 @@ describe('生产任务单 API', () => {
     expect(body).toBeInstanceOf(FormData)
     expect(JSON.parse((body as FormData).get('payload') as string)).toEqual(payload)
     expect(Array.from((body as FormData).keys())).toEqual(['payload'])
-    expect(config).toEqual({ headers: { 'If-Match': '"task-v1"' } })
+    expect(config).toEqual({ headers: { 'If-Match': '"task-v1"' }, timeout: 60_000 })
     expect(result.etag).toBe('"task-v2"')
   })
 })

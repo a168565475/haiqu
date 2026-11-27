@@ -40,6 +40,12 @@ describe('厂内半成品入库接口契约',()=>{
     await expect(confirmInternalReceiptRecord('receipt-1')).resolves.toMatchObject({ status: 'CONFIRMED' })
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/semi-finished-receipts/receipt-1/confirm/', undefined, { headers: undefined, timeout: 30000 })
   })
+  it('仓管确认裁剪入库时提交所选库区和详情版本', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: { data: { status: 'CONFIRMED' } } })
+    await confirmInternalReceiptRecord('receipt-1', '"v1"', 'zone-1')
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/semi-finished-receipts/receipt-1/confirm/',
+      { zone_id: 'zone-1' }, { headers: { 'If-Match': '"v1"' }, timeout: 30000 })
+  })
   it('删除待入库单携带版本并接受204空响应，不转换成确认动作', async () => {
     vi.mocked(apiClient.delete).mockResolvedValueOnce({ status: 204 })
     await expect(deleteInternalReceiptRecord('receipt-1', '"v1"')).resolves.toBeUndefined()

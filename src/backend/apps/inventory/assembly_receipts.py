@@ -4,13 +4,14 @@ import json
 from decimal import Decimal, ROUND_FLOOR
 
 from django.db import connection, transaction
+from django.db.migrations.recorder import MigrationRecorder
 from django.db.models.deletion import ProtectedError
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.core.api.exceptions import Conflict
+from apps.core.api.exceptions import Conflict, DatabaseMigrationRequired
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired, require_matching_etag
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct
 from apps.production_scheduling.selectors import accessible_production_schedules
@@ -18,7 +19,7 @@ from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from .models import FinishedGoodsReceipt, FinishedGoodsReceiptStatus, AssemblyReceiptSource
 from .services import create_finished_goods_receipt, confirm_finished_goods_receipt
 from .assembly_reporting_limits import assembly_reporting_limit
-from .receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category
+from .receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category, scoped_assembly_receipt_sources
 
 
 def digest(value):
@@ -27,6 +28,9 @@ def digest(value):
 
 class ReceiptRequestConflict(Conflict):
     api_error_code = 'RECEIPT_REQUEST_CONFLICT'
+
+
+PENDING_LOCATION_MIGRATION = '0037_pending_finished_receipt_location'
 
 
 def load_context(request, plan_id, *, lock=False, exclude_receipt_id=None, confirmation=False):
@@ -47,7 +51,11 @@ def load_context(request, plan_id, *, lock=False, exclude_receipt_id=None, confi
     receipt_rows = FinishedGoodsReceipt.objects.filter(production_task_product=product)
     if exclude_receipt_id is not None:
         receipt_rows = receipt_rows.exclude(pk=exclude_receipt_id)
-    total = receipt_rows.aggregate(total=Sum('received_quantity'))['total'] or 0
+    totals = receipt_rows.aggregate(
+        total=Sum('received_quantity'),
+        confirmed=Sum('received_quantity', filter=Q(status=FinishedGoodsReceiptStatus.CONFIRMED)),
+    )
+    total = int(totals['total'] or 0)
     maximum = int((Decimal(product.quantity)*(1+Decimal(task.order_tolerance_percent)/100)).to_integral_value(rounding=ROUND_FLOOR))
     if product.quantity <= 0 or not product.unit_id or maximum < 0:
         raise ValidationError('订单数量、单位或允许偏差不完整。')
@@ -60,7 +68,8 @@ def load_context(request, plan_id, *, lock=False, exclude_receipt_id=None, confi
         item_number=product.item_number_snapshot, specification=product.specification_snapshot,
         actual_color=product.color_name_snapshot, unit_id=str(product.unit_id), unit_name=product.unit.unit_name,
         order_quantity=int(product.quantity), tolerance_percent=str(task.order_tolerance_percent),
-        maximum_receivable=maximum, received_total=int(total), remaining_receivable=max(0,maximum-int(total)),
+        maximum_receivable=maximum, received_total=total, confirmed_received_total=int(totals['confirmed'] or 0),
+        remaining_receivable=max(0,maximum-total),
         order_maximum=order_maximum, **reporting,
         receipt_date=str(timezone.localdate()), actor_name=request.employee.display_name)
     revision = digest([values, str(plan.updated_at), str(plan.schedule.updated_at), str(task.updated_at), str(product.updated_at)])
@@ -68,15 +77,16 @@ def load_context(request, plan_id, *, lock=False, exclude_receipt_id=None, confi
 
 
 @transaction.atomic
-def confirm_assembly_receipt(request, data):
+def submit_assembly_receipt(request, data):
     payload_hash = digest(data)
     lock_id = int.from_bytes(hashlib.sha256(str(data['request_id']).encode()).digest()[:8], 'big', signed=True)
     with connection.cursor() as cursor:
         cursor.execute('SELECT pg_advisory_xact_lock(%s)', [lock_id])
     # 已成功原单按来源数据权限核对，不受后来作废计划或移除工序影响。
-    previous = AssemblyReceiptSource.objects.select_related('receipt','schedule_product').filter(request_id=data['request_id']).first()
+    previous = AssemblyReceiptSource.objects.select_related('receipt').filter(request_id=data['request_id']).first()
     if previous:
-        get_object_or_404(accessible_production_schedules(request),pk=previous.schedule_product.schedule_id)
+        plans = ProductionScheduleProduct.objects.filter(schedule__in=accessible_production_schedules(request))
+        get_object_or_404(scoped_assembly_receipt_sources(plans, request, historical=True), pk=previous.schedule_product_id)
         if previous.payload_hash != payload_hash:
             raise ReceiptRequestConflict('同一入库请求不能修改内容，请先核对原单。')
         return previous.receipt, True
@@ -87,10 +97,15 @@ def confirm_assembly_receipt(request, data):
         raise PreconditionRequired('请先读取当前入库额度。')
     if request.headers.get('If-Match') != etag:
         raise PreconditionFailed('订单或入库额度已变化，请刷新后重新确认。')
-    validated = dict(production_task_product_id=product.pk, location_id=data['location_id'],
+    if not data.get('location_id') and not MigrationRecorder(connection).migration_qs.filter(
+        app='inventory', name=PENDING_LOCATION_MIGRATION,
+    ).exists():
+        raise DatabaseMigrationRequired('请先完成成品入库数据库迁移，再提交不指定库位的入库申请。')
+    validated = dict(production_task_product_id=product.pk, location_id=data.get('location_id'),
         supplier=None, expected_received_total=context['received_total'], received_quantity=data['received_quantity'],
         quantity_per_box=data.get('quantity_per_box'), unit_id=product.unit_id,
-        actual_color=data['actual_color'], remark=data.get('remark',''))
+        actual_color=data['actual_color'] if data.get('location_id') else (data['actual_color'] or product.color_name_snapshot),
+        remark=data.get('remark',''))
     receipt = create_finished_goods_receipt(
         validated_data=validated, actor_employee=request.employee, request=request,
     )
@@ -104,7 +119,12 @@ def confirm_assembly_receipt(request, data):
 
 
 @transaction.atomic
-def confirm_pending_assembly_receipt(request, receipt_id):
+def confirm_pending_assembly_receipt(request, receipt_id, confirmation):
+    from .selectors import scoped_finished_receipts
+    if not scoped_finished_receipts(FinishedGoodsReceipt.objects.filter(pk=receipt_id), request,
+                                    'inventory.confirm_finishedgoodsreceipt').exists():
+        from django.http import Http404
+        raise Http404
     source = lock_assembly_receipt_source(receipt_id)
     if source.receipt.status == FinishedGoodsReceiptStatus.PENDING:
         _plan, _product, context, _etag = load_context(
@@ -113,7 +133,7 @@ def confirm_pending_assembly_receipt(request, receipt_id):
         if source.receipt.received_quantity > context['remaining_receivable']:
             raise ValidationError({'receipt': '提交后订单额度或报工最低数量已变化，当前入库数量不能确认。'})
     receipt, replayed = confirm_finished_goods_receipt(
-        receipt_id=source.receipt_id, actor_employee=request.employee, request=request,
+        receipt_id=source.receipt_id, actor_employee=request.employee, request=request, confirmation=confirmation,
     )
     if not replayed:
         source.snapshot = {**source.snapshot, 'status': receipt.status,

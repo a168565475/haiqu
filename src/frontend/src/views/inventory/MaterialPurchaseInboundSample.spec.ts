@@ -162,13 +162,16 @@ describe('采购收货和样品采购全部入库', () => {
   })
 
   it('生产采购待收100件时，登记到货105件须填写该行备注', async () => {
-    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, source_type: 'PRODUCTION' }] as never)
+    vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([{ ...order, order_number: 'CG-001', source_type: 'PRODUCTION', production_task_number: 'HT-001', batch_number: 2 }] as never)
     vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [
       { ...lines[1], purchased_quantity: '100', remaining_quantity: '100' },
     ] } as never)
     vi.mocked(api.createMaterialReceiving).mockResolvedValue(receipt as never)
     const wrapper = mount(); await flushPromises()
     try {
+      const fields = wrapper.findAll('.table-order-meta > span')
+      expect(fields.slice(0, 3).map(field => field.text())).toEqual(['生产任务单号 HT-001', '采购单号 CG-001', '采购批次 第 2 批'])
+      expect(wrapper.get('.table-order-meta strong').text()).toBe('HT-001')
       const vm = wrapper.vm as unknown as View
       assignZone(vm)
       expect(vm.readyToSubmit).toBe(true)
@@ -193,6 +196,8 @@ describe('采购收货和样品采购全部入库', () => {
     const legacy = localStorage.getItem('material-receiving-draft:v2:sample-order')
     const wrapper = mount(); await flushPromises()
     const vm = wrapper.vm as unknown as View
+    expect(wrapper.findAll('.table-order-meta > span').slice(0, 2).map(field => field.text())).toEqual(['打样单号 SRQ-1', '采购单号 CG-SAMPLE'])
+    expect(wrapper.get('.table-order-meta strong').text()).toBe('SRQ-1')
     expect(localStorage.getItem('material-receiving-draft:v2:sample-order')).toBe(legacy)
     expect(localStorage.getItem('material-receiving-draft:v2:sample-order:user:7')).toBeNull()
     expect(vm.rows.map(row => row.included)).toEqual([true, true])

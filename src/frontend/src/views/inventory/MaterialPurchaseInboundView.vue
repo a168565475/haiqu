@@ -446,7 +446,15 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
       </section>
       <section class="surface table-card">
         <div class="table-head">
-          <div><h2>采购明细</h2><div v-if="selectedOrder" class="table-order-meta"><span>采购单号 <strong>{{ selectedOrder.order_number }}</strong></span><span v-if="selectedOrder.batch_number" data-testid="receiving-purchase-batch">采购批次 <strong>第 {{ selectedOrder.batch_number }} 批</strong></span><span>生产单号 <strong>{{ selectedOrder.production_task_number || '—' }}</strong></span><span>状态 <ElTag type="warning" round>{{ receiptCreated ? isSample ? '已入库' : '已收货，待质检' : '待收货' }}</ElTag></span></div></div>
+          <div>
+            <h2>采购明细</h2>
+            <div v-if="selectedOrder" class="table-order-meta">
+              <span>{{ isSample ? '打样单号' : '生产任务单号' }} <strong>{{ (isSample ? selectedOrder.source_number : selectedOrder.production_task_number) || '—' }}</strong></span>
+              <span>采购单号 {{ selectedOrder.order_number }}</span>
+              <span v-if="selectedOrder.batch_number" data-testid="receiving-purchase-batch">采购批次 第 {{ selectedOrder.batch_number }} 批</span>
+              <span>状态 <ElTag type="warning" round>{{ receiptCreated ? isSample ? '已入库' : '已收货，待质检' : '待收货' }}</ElTag></span>
+            </div>
+          </div>
           <div class="table-summary">
             <ElCheckbox v-if="materialTables.length > 1" v-model="allSelected" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked">全选物料</ElCheckbox>
             <strong>共 {{ rows.length }} 项</strong>
@@ -549,7 +557,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-head > div { display: flex; gap: 22px; align-items: center; min-width: 0; }
 .table-order-meta { display: flex; align-items: center; gap: 24px; min-width: 0; color: token.$crm-text-secondary; font-size: 12px; }
 .table-order-meta span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.table-order-meta strong { color: token.$crm-text-primary; font-weight: 500; }
+.table-order-meta strong { color: token.$crm-text-primary; font-weight: 700; }
 .table-head .table-summary { gap: 12px; margin-right: 16px; font-size: 13px; white-space: nowrap; }
 .receipt-material-group + .receipt-material-group { margin-top: 10px; }
 .receipt-material-group h3 { position: sticky; left: 0; width: max-content; margin: 0; padding: 5px 16px; color: var(--erp-table-header-text); font-size: 13px; }

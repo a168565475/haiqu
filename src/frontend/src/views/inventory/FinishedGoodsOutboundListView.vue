@@ -46,7 +46,7 @@ onMounted(async () => {
   catch (error) { optionsError.value = message(error) }
 })
 const columns = [
-  ['出货单号', 155], ['生产任务单号', 140], ['产品编码', 130], ['产品名称', 160], ['货号', 100],
+  ['生产任务单号', 140], ['出货单号', 155], ['产品编码', 130], ['产品名称', 160], ['货号', 100],
   ['材质', 100], ['规格', 160], ['颜色', 100], ['订单数量', 110], ['入库数量', 110], ['出库数量', 110],
   ['单位', 65], ['出库仓库', 120], ['库位', 110], ['出货日期', 120], ['出库负责人', 115],
   ['装卸费用', 100], ['其他费用', 100], ['操作', 120],
@@ -80,8 +80,8 @@ const columns = [
             <tbody>
               <template v-for="(row, rowIndex) in rows" :key="row.id">
                 <tr v-for="(line, index) in displayLines(row)" :key="line?.id || row.id" :class="{ 'last-document': rowIndex === rows.length - 1 }">
-                  <td v-if="index === 0" class="primary document-cell" :rowspan="displayLines(row).length" :title="row.outbound_number">{{ row.outbound_number }}</td>
-                  <td>{{ line?.task_number_snapshot || row.task_number_snapshot || '—' }}</td>
+                  <td><strong>{{ line?.task_number_snapshot || row.task_number_snapshot || '—' }}</strong></td>
+                  <td v-if="index === 0" class="document-cell" :rowspan="displayLines(row).length" :title="row.outbound_number">{{ row.outbound_number }}</td>
                   <td :title="line?.product_code_snapshot">{{ line?.product_code_snapshot || '—' }}</td>
                   <td :title="line?.product_name_snapshot">{{ line?.product_name_snapshot || '—' }}</td>
                   <td>{{ line?.item_number_snapshot || '—' }}</td><td :title="line?.material_snapshot">{{ line?.material_snapshot || '—' }}</td>
@@ -114,6 +114,5 @@ const columns = [
 // 合并单元格后的 DOM 末格不一定是表格末列，边界按实际列和单据分组处理。
 .outbound-table td:last-child:not(.scroll-actions-cell):not(.empty) { border-right: 1px solid var(--erp-table-border); }
 .outbound-table .last-document .document-cell { border-bottom: 0; }
-.primary { color: var(--erp-color-brand); font-weight: 600; }
 .outbound-list-page .el-alert { flex: none; margin-bottom: 10px; }
 </style>

@@ -11,6 +11,7 @@ from apps.production_scheduling.selectors import schedules_with_context
 
 from .models import WageScheme, WorkReportLine
 from .schedule_outsourcing_status import schedule_outsourcing_statuses
+from .selectors import schedule_wage_line_prefetch
 
 
 STAGE_DATES = {
@@ -81,7 +82,9 @@ def _internal_reporting_metrics(products, full_links, as_of_date):
     schemes = list(WageScheme.objects.filter(
         scheme_scopes,
         status="APPROVED", effective_from__lte=as_of_date,
-    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=as_of_date)).prefetch_related("lines"))
+    ).filter(
+        Q(effective_to__isnull=True) | Q(effective_to__gte=as_of_date),
+    ).prefetch_related(schedule_wage_line_prefetch()))
     for scheme in schemes:
         schemes_by_scope[(scheme.product_line_id, scheme.workshop_id, scheme.scope_craft_id)].append(scheme)
     report_scopes = Q(pk__in=[])

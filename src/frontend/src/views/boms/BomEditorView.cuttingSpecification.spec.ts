@@ -440,7 +440,9 @@ describe('裁剪规格提醒和新增裁片', () => {
     await flushPromises()
     await (form.getComponent(BomCuttingCatalogSelect).getComponent(MaterialSelectionPanel).vm as unknown as { pickName: (id: string) => Promise<void> }).pickName('part-catalog')
     await flushPromises()
-    form.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '部位单位')!.vm.$emit('change', '个')
+    const partUnit = form.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '部位单位')!
+    expect(partUnit.props('modelValue')).toBe('套')
+    partUnit.vm.$emit('change', '个')
     await form.get('input[aria-label="部位规格"]').setValue('120×60cm')
     await button(page, '应用修改').trigger('click')
     await flushPromises()

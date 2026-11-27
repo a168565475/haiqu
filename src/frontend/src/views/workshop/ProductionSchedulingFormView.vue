@@ -43,9 +43,9 @@ const externalCrafts = computed(() => options.value.crafts.filter(item => item.c
 
 function errorText(error: unknown) {
   if (!(error instanceof AxiosError)) return error instanceof Error ? error.message : '保存排产失败。'
-  const data = error.response?.data as { error?: { message?: string } } | undefined
-  if (error.response?.status === 412) return '排产已被其他人修改，请刷新后重试。'
-  return data?.error?.message || '保存排产失败。'
+  const data = error.response?.data as { error?: { message?: string }; detail?: string } | undefined
+  if (error.response?.status === 412) return data?.error?.message || data?.detail || '排产版本已更新。填写已保留，请先在排产列表核对。'
+  return data?.error?.message || data?.detail || '保存排产失败。'
 }
 function blankDraft(task: ScheduleTaskCandidate, product: NonNullable<ScheduleTaskCandidate['products']>[number]): Draft {
   return { product_line_id: product.id, planned_quantity: product.quantity, material_inbound_date: '', metal_return_date: '', sewing_return_date: '', finished_inbound_date: '', craft_ids: [], selected: product.bom_status === 'VERIFIED', source_quantity: product.quantity, production_task_id: task.id, task_number: task.task_number, product }
@@ -138,6 +138,7 @@ function payloadItems(taskId: string): ScheduleWriteItem[] {
     .map(({ selected: _selected, source_quantity: _source, production_task_id: _taskId, task_number: _taskNumber, product: _product, ...item }) => ({ ...item, craft_ids: [...item.craft_ids] }))
 }
 async function save() {
+  if (saving.value) return
   const message = validate()
   if (message) { ElMessage.warning(message); return }
   saving.value = true
@@ -180,7 +181,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section v-loading="loading" class="schedule-page schedule-form erp-glass-form" data-testid="production-scheduling-form">
+  <section v-loading="loading || saving" class="schedule-page schedule-form erp-glass-form" data-testid="production-scheduling-form">
     <header class="schedule-heading"><div><h1>{{ isEditing ? '编辑排产' : '新增排产' }}</h1><span>按产品分别填写数量、日期和工艺</span></div></header>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false" />
     <section class="schedule-section basic-section">

@@ -4,8 +4,9 @@ import type { CSSProperties } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 
-import { fetchWageScheme } from '@/api/workshopReporting'
+import { fetchWageScheme, withdrawWageScheme } from '@/api/workshopReporting'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import CuttingGroupCell from '@/components/workshop/CuttingGroupCell.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { WageScheme } from '@/types/workshopReporting'
 import { compactDecimal } from '@/utils/compactDecimal'
@@ -23,6 +24,8 @@ const emit = defineEmits<{
 const router = useRouter()
 const auth = useAuthStore()
 const scheme = ref<WageScheme | null>(null)
+const etag = ref('')
+const withdrawing = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
 const linesSectionRef = ref<HTMLElement | null>(null)
@@ -106,6 +109,23 @@ async function openChange() {
   }
 }
 
+async function withdraw() {
+  const current = scheme.value
+  if (!current?.can_withdraw || withdrawing.value) return
+  withdrawing.value = true
+  try {
+    const result = await withdrawWageScheme(current.id, etag.value)
+    scheme.value = result.data
+    etag.value = result.etag
+    await router.push({ name: 'wage-scheme-change', params: { schemeId: result.data.id } })
+    visible.value = false
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  } finally {
+    withdrawing.value = false
+  }
+}
+
 async function load() {
   if (!props.schemeId) return
   const current = ++requestSequence
@@ -116,6 +136,7 @@ async function load() {
     const result = await fetchWageScheme(props.schemeId)
     if (current !== requestSequence) return
     scheme.value = result.data
+    etag.value = result.etag
   } catch (error) {
     if (current !== requestSequence) return
     scheme.value = null
@@ -204,11 +225,13 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
             :max-height="tableMaxHeight"
             empty-text="暂无工价明细"
           >
-            <ElTableColumn prop="display_name" label="名称 / 部位" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.display_label || row.display_name }}</template>
+            <ElTableColumn prop="display_name" label="名称 / 部位" min-width="150" class-name="wage-line-name">
+              <template #default="{ row }"><CuttingGroupCell :label="row.display_label || row.display_name" :components="row.cutting_components" /></template>
             </ElTableColumn>
             <ElTableColumn prop="operation_name" label="申报工序" min-width="100" show-overflow-tooltip />
-            <ElTableColumn v-if="scheme.scope_craft?.plan_category === 'SEWING'" prop="counting_mode_display" label="计数方式" width="82" align="center" />
+            <ElTableColumn v-if="['CUTTING', 'SEWING'].includes(scheme.scope_craft?.plan_category || '')" label="计数方式" width="82" align="center">
+              <template #default="{ row }">{{ row.counting_mode === 'GROUP' ? '按套' : row.counting_mode_display }}</template>
+            </ElTableColumn>
             <ElTableColumn prop="production_description" label="制作工序描述" min-width="170" show-overflow-tooltip>
               <template #default="{ row }">{{ row.production_description || '—' }}</template>
             </ElTableColumn>
@@ -247,13 +270,17 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     <template #footer>
       <div class="wage-detail-dialog__footer">
         <ElButton @click="visible = false">关闭</ElButton>
+        <ElButton v-if="scheme?.can_withdraw" :loading="withdrawing" @click="withdraw">修改</ElButton>
+        <ElButton v-if="scheme?.pending_change_id" type="primary"
+          @click="router.push({ name: 'wage-scheme-detail', params: { schemeId: scheme.pending_change_id } }); visible = false"
+        >继续处理变更</ElButton>
         <ElButton
           v-if="canCreateChange"
           type="primary"
           data-testid="wage-scheme-change-button"
           @click="openChange"
         >
-          变更
+          变更工价
         </ElButton>
       </div>
     </template>
@@ -317,6 +344,10 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     padding-right: 16px !important;
     padding-left: 16px !important;
     line-height: inherit;
+  }
+
+  .el-table__body td.wage-line-name > .cell {
+    padding-block: 4px;
   }
 
   .el-table__body tr:hover > td.el-table__cell {

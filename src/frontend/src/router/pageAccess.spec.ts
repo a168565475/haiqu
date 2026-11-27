@@ -16,6 +16,24 @@ function followedReader(permissions: string[]): PageAccessReader {
 }
 
 describe('岗位菜单与独立页面权限', () => {
+  it('仓管按任职进入工作台，仅持有库存查看权的其他岗位不开放', () => {
+    const auth = followedReader(['inventory.view_materialinbound'])
+    expect(canOpenPage('warehouse-workbench', auth)).toBe(false)
+    auth.user!.effective_access!.roles.push({ id: 'warehouse', code: 'WAREHOUSE_KEEPER', name: '仓管' })
+    expect(canOpenPage('warehouse-workbench', auth)).toBe(true)
+    expect(canOpenPage('warehouse-workbench', reader([], true))).toBe(true)
+  })
+  it('跟单工作台按有效岗位和生产任务查看权开放', () => {
+    const key = 'merchandiser-workbench'
+    const task = 'production_tasks.view_productiontask'
+    const auth = followedReader([task])
+    expect(canOpenPage(key, auth)).toBe(false)
+    auth.user!.effective_access!.roles.push({ id: 'role-1', code: 'MERCHANDISER', name: '跟单' })
+    expect(canOpenPage(key, auth)).toBe(true)
+    auth.hasPermission = () => false
+    expect(canOpenPage(key, auth)).toBe(false)
+    expect(canOpenPage(key, reader([], true))).toBe(true)
+  })
   it('车间入库使用半成品入库查看权，跟单角色保留关联记录入口', () => {
     const key = 'semi-receipt-records'
     const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
@@ -118,7 +136,7 @@ describe('岗位菜单与独立页面权限', () => {
       'production_tasks.view_productiontask', 'material_issues.view_materialissue',
       'outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource',
     ])
-    for (const key of ['material-issues', 'workshop-outsourcing']) {
+    for (const key of ['material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench']) {
       const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
       expect(canOpenMenu(item, auth), key).toBe(false)
       expect(canOpenPage(key, auth), key).toBe(false)
@@ -168,5 +186,16 @@ describe('岗位菜单与独立页面权限', () => {
     expect(canOpenPage('production-overview', reader())).toBe(false)
     expect(canOpenPage('production-overview', reader(['production_tasks.view_productiontask']))).toBe(true)
     expect(canOpenPage('bom-edit', reader([], true))).toBe(true)
+  })
+
+  it('员工或工序查看权即可进入生产配置的侧栏和页面', () => {
+    const item = sidebarMenuItems.find(group => group.key === 'workshop-management')!
+      .children!.find(child => child.key === 'workshop-configuration')!
+    expect(canOpenPage('workshop-configuration', reader())).toBe(false)
+    for (const permission of ['workshop_config.view_workshopemployee', 'workshop_config.view_operation']) {
+      const auth = reader([permission])
+      expect(canOpenMenu(item, auth)).toBe(true)
+      expect(canOpenPage('workshop-configuration', auth)).toBe(true)
+    }
   })
 })

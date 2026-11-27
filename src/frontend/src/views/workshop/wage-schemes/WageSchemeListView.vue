@@ -106,7 +106,7 @@ function openDetail(schemeId: string) {
   void router.replace({ query: { ...route.query, detail: schemeId } })
 }
 function canProcess(row: WageScheme) {
-  if (row.status === 'PENDING_APPROVAL') return canApprove.value
+  if (row.status === 'PENDING_APPROVAL') return canApprove.value || row.can_withdraw
   return ['DRAFT', 'RETURNED'].includes(row.status) && canSubmit.value
 }
 function closeDetail() {
@@ -146,8 +146,8 @@ onMounted(() => { void loadFilterOptions(); void load() })
       <header class="wr-list-card__header erp-list-toolbar erp-list-filters"><strong>工价方案记录</strong><ElButton class="erp-button-motion" v-if="canCreate" type="primary" :icon="Plus" @click="router.push({ name: 'wage-scheme-new' })">新增工价方案</ElButton><div><ElSelect v-model="ordering" data-testid="wage-ordering" class="wr-ordering-select" aria-label="列表排序" @change="apply"><ElOption label="更新时间 ↓" value="-updated_at" /><ElOption label="更新时间 ↑" value="updated_at" /><ElOption label="方案编号 ↓" value="-scheme_number" /><ElOption label="方案编号 ↑" value="scheme_number" /></ElSelect><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></div></header>
       <ElAlert v-if="errorMessage" class="wr-list-error" type="error" show-icon :closable="false" :title="errorMessage"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
       <div v-else class="erp-list-table-frame"><ElTable height="100%" v-loading="loading" :data="rows" border row-key="id" empty-text="暂无工价方案">
+      <ElTableColumn prop="production_task.task_number" label="生产任务单号" min-width="120" show-overflow-tooltip><template #default="{ row }"><strong>{{ row.production_task.task_number }}</strong></template></ElTableColumn>
       <ElTableColumn prop="scheme_number" label="方案编号" min-width="130" show-overflow-tooltip />
-      <ElTableColumn prop="production_task.task_number" label="生产任务单" min-width="120" show-overflow-tooltip />
       <ElTableColumn label="产品信息" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ productText(row) }}</template></ElTableColumn>
       <ElTableColumn prop="workshop.name" label="所属车间" min-width="85" show-overflow-tooltip />
       <ElTableColumn label="所属工艺" min-width="90" show-overflow-tooltip><template #default="{ row }">{{ row.crafts.map((item: { name: string }) => item.name).join('、') || '—' }}</template></ElTableColumn>

@@ -12,8 +12,8 @@ let wrapper: ReturnType<typeof mount> | undefined
 const fixture = () => ({ total: 1, items: [{
   id: 'out-1', outbound_number: 'CK-001', shipment_date: '2026-10-21', responsible_employee_name: '负责人', loading_fee: '12.50', other_fee: '2.00',
   lines: [
-    { id: 'line-1', product_code_snapshot: 'CODE-A', product_name_snapshot: '产品A', specification_snapshot: '10×20', actual_color: '红', order_quantity: 2000, received_quantity: 800, outbound_quantity: 300, unit_name: '箱', warehouse_name: '成品仓A' },
-    { id: 'line-2', product_code_snapshot: 'CODE-B', product_name_snapshot: '产品B', specification_snapshot: '20×30', actual_color: '蓝', order_quantity: 1500, received_quantity: 600, outbound_quantity: 200, unit_name: '个', warehouse_name: '成品仓B' },
+    { id: 'line-1', task_number_snapshot: 'HT-001', product_code_snapshot: 'CODE-A', product_name_snapshot: '产品A', specification_snapshot: '10×20', actual_color: '红', order_quantity: 2000, received_quantity: 800, outbound_quantity: 300, unit_name: '箱', warehouse_name: '成品仓A' },
+    { id: 'line-2', task_number_snapshot: 'HT-002', product_code_snapshot: 'CODE-B', product_name_snapshot: '产品B', specification_snapshot: '20×30', actual_color: '蓝', order_quantity: 1500, received_quantity: 600, outbound_quantity: 200, unit_name: '个', warehouse_name: '成品仓B' },
   ],
 }] })
 beforeEach(() => {
@@ -31,7 +31,10 @@ it('同单不同产品逐行保留各自数量、单位和仓库，整单费用�
   for (const value of ['CODE-A', '产品A', '10×20', '红', '2,000', '800', '300', '箱', '成品仓A']) expect(rows[0].text()).toContain(value)
   for (const value of ['CODE-B', '产品B', '20×30', '蓝', '1,500', '600', '200', '个', '成品仓B']) expect(rows[1].text()).toContain(value)
   expect(wrapper.findAll('td').filter(cell => cell.text() === '12.5')).toHaveLength(1)
-  expect(rows[0].get('td').attributes('rowspan')).toBe('2')
+  expect(wrapper.findAll('thead th').slice(0, 2).map(cell => cell.text())).toEqual(['生产任务单号', '出货单号'])
+  expect(rows.map(row => row.get('td:first-child strong').text())).toEqual(['HT-001', 'HT-002'])
+  expect(rows[0].get('td:nth-child(2)').text()).toBe('CK-001')
+  expect(rows[0].get('td:nth-child(2)').attributes('rowspan')).toBe('2')
   expect(rows.every(row => row.classes().includes('last-document'))).toBe(true)
   expect(rows[0].findAll('.document-cell')).toHaveLength(6)
   expect(rows[1].findAll('.document-cell')).toHaveLength(0)

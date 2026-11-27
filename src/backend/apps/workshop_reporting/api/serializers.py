@@ -3,7 +3,10 @@ from decimal import Decimal, ROUND_HALF_UP, localcontext
 from django.utils import timezone
 from rest_framework import serializers
 
-from ..models import WageSchemeLineStatus, WageSchemeStatus, WorkCountingMode
+from apps.workshop_config.models import PlanCategory
+
+from ..models import WageSchemeAction, WageSchemeLineStatus, WageSchemeStatus, WorkCountingMode
+from ..selectors import wage_line_cutting_components
 from ..services import wage_scheme_line_display_labels
 
 
@@ -26,7 +29,8 @@ class WageSchemeLineWriteSerializer(serializers.Serializer):
     craft_id = serializers.UUIDField()
     operation_id = serializers.UUIDField()
     bom_line_id = serializers.UUIDField(required=False, allow_null=True)
-    display_name = serializers.CharField(max_length=200, trim_whitespace=True)
+    bom_line_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_empty=False)
+    display_name = serializers.CharField(max_length=200, trim_whitespace=True, allow_blank=True)
     counting_mode = serializers.ChoiceField(
         choices=WorkCountingMode.choices, required=False, default=WorkCountingMode.ORDER
     )
@@ -36,6 +40,17 @@ class WageSchemeLineWriteSerializer(serializers.Serializer):
     declared_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
     status = serializers.ChoiceField(choices=WageSchemeLineStatus.choices, required=False, default=WageSchemeLineStatus.ACTIVE)
     note = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if "bom_line_ids" in attrs:
+            ids = attrs["bom_line_ids"]
+            if attrs.get("bom_line_id") or len(ids) != len(set(ids)):
+                raise serializers.ValidationError({"bom_line_ids": "请只提交一组不重复的裁片。"})
+        elif attrs.get("counting_mode") == WorkCountingMode.GROUP:
+            raise serializers.ValidationError({"bom_line_ids": "请选择要计入这一组的裁片。"})
+        elif not attrs.get("display_name"):
+            raise serializers.ValidationError({"display_name": "名称/部位不能为空。"})
+        return attrs
 
 
 class WageSchemeWriteSerializer(serializers.Serializer):
@@ -107,6 +122,18 @@ class WorkReportDeleteSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=1000, allow_blank=False, trim_whitespace=True)
 
 
+class WorkReportListFiltersSerializer(serializers.Serializer):
+    production_task_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+    product_line_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+
+
+class WorkReportFilterOptionsSerializer(WorkReportListFiltersSerializer):
+    kind = serializers.ChoiceField(choices=("tasks", "products", "workshops"))
+    q = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    workshop_id = serializers.UUIDField(required=False)
+    plan_category = serializers.ChoiceField(choices=PlanCategory.values, required=False)
+
+
 def _estimated_line_amount(line):
     if line.status != WageSchemeLineStatus.ACTIVE or line.required_quantity_snapshot is None:
         return None
@@ -132,12 +159,13 @@ def _estimated_scheme_total(lines):
         return str(total)
 
 
-def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_labels=True):
+def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_labels=True, request=None):
     line_metrics = line_metrics or {}
     lines = []
     events = []
     if detail:
         scheme_lines = list(scheme.lines.all())
+        cutting_components = wage_line_cutting_components(scheme_lines)
         display_labels = wage_scheme_line_display_labels(scheme, scheme_lines) if include_display_labels else {}
         lines = [
             {
@@ -159,6 +187,7 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_
                     str(line.bom_component_identity_snapshot)
                     if line.bom_component_identity_snapshot else None
                 ),
+                "cutting_components": cutting_components.get(line.pk, []),
                 "counting_mode": line.counting_mode,
                 "counting_mode_display": line.get_counting_mode_display(),
                 "order_quantity": line.order_quantity_snapshot,
@@ -187,6 +216,26 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_
             for event in scheme.events.all()
         ]
     task = scheme.product_line.production_task
+    can_withdraw = withdrawn_by_me = False
+    if request is not None and scheme.status in {WageSchemeStatus.PENDING_APPROVAL, WageSchemeStatus.DRAFT}:
+        from apps.access_control.module_policy import has_permission
+        from ..selectors import allowed_workshop_ids
+        permission = "workshop_reporting.submit_wagescheme"
+        latest_transition = max(
+            (event for event in scheme.events.all() if event.action in {WageSchemeAction.SUBMITTED, WageSchemeAction.WITHDRAWN}),
+            key=lambda event: (event.scheme_revision, event.created_at, event.pk), default=None,
+        )
+        if latest_transition and latest_transition.actor_employee_id == request.employee.pk:
+            withdrawn_by_me = latest_transition.action == WageSchemeAction.WITHDRAWN
+            if scheme.status == WageSchemeStatus.PENDING_APPROVAL and has_permission(request, permission):
+                workshops = allowed_workshop_ids(request, permission=permission)
+                can_withdraw = workshops is None or scheme.workshop_id in workshops
+    change_versions = list(scheme.change_versions.all())
+    pending_change = next(
+        (version for version in change_versions if version.status in {
+            WageSchemeStatus.DRAFT, WageSchemeStatus.RETURNED, WageSchemeStatus.PENDING_APPROVAL,
+        }), None,
+    )
     return {
         "id": str(scheme.pk),
         "scheme_number": scheme.scheme_number,
@@ -194,8 +243,11 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_
         "status_display": scheme.get_status_display(),
         "version": scheme.version,
         "revision": scheme.revision,
+        "can_withdraw": can_withdraw,
+        "withdrawn_by_me": withdrawn_by_me,
+        "pending_change_id": str(pending_change.pk) if pending_change else None,
         "can_create_change": (
-            scheme.status == WageSchemeStatus.APPROVED and not bool(list(scheme.change_versions.all()))
+            scheme.status == WageSchemeStatus.APPROVED and not change_versions
         ),
         "parent_scheme": ({
             "id": str(scheme.parent_scheme_id),
@@ -210,6 +262,7 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None, include_display_
         "product": {
             "name": scheme.product_name_snapshot,
             "number": scheme.product_number_snapshot,
+            "code": scheme.product_line.product_code_snapshot,
             "specification": scheme.product_specification_snapshot,
         },
         "workshop": {"id": str(scheme.workshop_id), "name": scheme.workshop.name},

@@ -452,20 +452,20 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
           </div>
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="rows" row-key="id" class="purchase-table" height="100%">
-          <ElTableColumn label="采购单号" width="162" show-overflow-tooltip>
-            <template #default="{ row }"><strong class="order-number">{{ row.order_number }}</strong></template>
-          </ElTableColumn>
-          <ElTableColumn label="关联订单" width="145">
+          <ElTableColumn label="生产任务/打样单号" width="145">
             <template #default="{ row }">
               <div v-if="row.source_type === 'SAMPLE'" class="cell-stack order-summary" data-testid="purchase-order-basic-info"
                 :title="`打样单：${row.source_number || '—'}\n交期：${row.delivery_date || '—'}`">
-                <span>{{ row.source_number || '—' }}</span>
+                <strong>{{ row.source_number || '—' }}</strong>
               </div>
               <div v-else class="cell-stack order-summary" data-testid="purchase-order-basic-info"
-                :title="`生产单号：${row.production_task_number || '—'}\n交期：${row.delivery_date || '—'}`">
-                <span>{{ row.production_task_number || '—' }}</span>
+                :title="`生产任务单号：${row.production_task_number || '—'}\n交期：${row.delivery_date || '—'}`">
+                <strong>{{ row.production_task_number || '—' }}</strong>
               </div>
             </template>
+          </ElTableColumn>
+          <ElTableColumn label="采购单号" width="162" show-overflow-tooltip>
+            <template #default="{ row }"><span class="order-number">{{ row.order_number }}</span></template>
           </ElTableColumn>
           <ElTableColumn label="产品信息" min-width="188">
             <template #default="{ row }">
@@ -563,8 +563,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
 .cell-stack { min-width: 0; display: flex; flex-direction: column; line-height: 18px; }
 .cell-stack > * { @include mixin.text-ellipsis; }
 .cell-stack small { color: var(--erp-table-text); font-size: 12px; }
-.product-summary strong, .order-number { font-weight: 600; }
-.order-summary > span { font-weight: 500; }
+.product-summary strong, .order-summary > strong { font-weight: 600; }
 .product-summary:focus-visible { @include mixin.focus-ring; }
 .product-tooltip-content { max-width: 440px; max-height: 420px; overflow: auto; white-space: pre-line; }
 .amount, .order-number { font-variant-numeric: tabular-nums; white-space: nowrap; }

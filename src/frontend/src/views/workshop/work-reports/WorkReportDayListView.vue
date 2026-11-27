@@ -4,25 +4,27 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchReportingContext, fetchWorkReports, fetchWorkReportTasks } from '@/api/workshopReporting'
+import { fetchReportingContext, fetchWorkReportProductOptions, fetchWorkReports, fetchWorkReportTaskOptions, fetchWorkReportWorkshops } from '@/api/workshopReporting'
 import { useAuthStore } from '@/stores/auth'
-import type { ReportingContext, ReportingOption, WorkReport, WorkReportLine, WorkReportPlanCategory, WorkReportSelection, WorkReportTask } from '@/types/workshopReporting'
+import type { ReportingContext, ReportingOption, WorkReport, WorkReportFilters, WorkReportLine, WorkReportProductOption, WorkReportTaskOption } from '@/types/workshopReporting'
 import { formatWageMoney } from '@/utils/wageMoney'
 import { workReportWorkshopChoices } from '@/utils/workReportWorkshopChoices'
-import WorkReportTaskSelectDialog from './WorkReportTaskSelectDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
 const context = ref<ReportingContext | null>(null)
-const selectedTask = ref<WorkReportTask | null>(null)
-const taskSelectorVisible = ref(false)
-const selectionSubmitting = ref(false)
-const selectionError = ref('')
+const workshops = ref<ReportingOption[]>([])
+const selectedWorkshopKey = ref('')
+const selectedTasks = ref<WorkReportTaskOption[]>([])
+const selectedProducts = ref<WorkReportProductOption[]>([])
+const foundTasks = ref<WorkReportTaskOption[]>([])
+const foundProducts = ref<WorkReportProductOption[]>([])
+const optionsLoading = ref({ tasks: false, products: false })
+const optionsError = ref('')
+const activeFilters = ref<WorkReportFilters | null>(null)
 const reports = ref<WorkReport[]>([])
-const selectedWorkshopId = ref('')
-const selectedPlanCategory = ref<WorkReportPlanCategory | ''>('')
 const selectedReportId = ref('')
 const reportPage = ref(1)
 const reportPageSize = ref(20)
@@ -43,52 +45,58 @@ const invalidScopeQuery = computed(() => ['schedule_product_id', 'production_tas
   const value = route.query[key]
   return value !== undefined && (typeof value !== 'string' || !value.trim())
 }) || Boolean(scheduleProductId.value && productionTaskId.value)
-  || Boolean(!scheduleProductId.value && !productionTaskId.value && routeWorkshopId.value)
   || (route.query.plan_category !== undefined && !routePlanCategory.value))
 const scheduleProduct = computed(() => context.value?.schedule_product || null)
-const hasSelection = computed(() => Boolean((scheduleProduct.value || selectedTask.value) && selectedWorkshop.value))
-const canCreate = computed(() => Boolean(scheduleProduct.value) && (auth.user?.is_superuser || (
+const canCreate = computed(() => Boolean(activeFilters.value?.schedule_product_id) && (auth.user?.is_superuser || (
   auth.hasPermission('workshop_reporting.add_workreport')
   && auth.hasPermission('workshop_reporting.view_workreport')
 )))
 const canEdit = computed(() => auth.user?.is_superuser || auth.hasPermission('workshop_reporting.change_workreport'))
 
-const workshops = computed<ReportingOption[]>(() => {
-  if (productionTaskId.value) return selectedTask.value?.workshops || []
-  const source = context.value?.workshops || []
-  if (!scheduleProductId.value) return source
-  const linkedIds = new Set((context.value?.crafts || []).map(item => item.workshop_id).filter(Boolean))
-  return linkedIds.size ? source.filter(item => linkedIds.has(item.id)) : source
-})
-const selectedWorkshop = computed(() => workshops.value.find(item => item.id === selectedWorkshopId.value) || null)
 const workshopChoices = computed(() => workReportWorkshopChoices(workshops.value))
-const selectedChoice = computed(() => workshopChoices.value.find(item =>
-  item.workshopId === selectedWorkshopId.value && item.planCategory === (selectedPlanCategory.value || undefined),
-))
-const selectedWorkshopName = computed(() => selectedChoice.value?.name || selectedWorkshop.value?.name)
-const selectedCraftId = computed(() => {
-  const crafts = (context.value?.crafts || []).filter(item => item.workshop_id === selectedWorkshopId.value)
-  const requested = crafts.find(item => item.id === routeCraftId.value)
-  if (requested && (!selectedPlanCategory.value || routePlanCategory.value === selectedPlanCategory.value
-    || requested.plan_category === selectedPlanCategory.value)) return requested.id
-  const matching = selectedPlanCategory.value ? crafts.filter(item => item.plan_category === selectedPlanCategory.value) : crafts
-  return matching.length === 1 ? matching[0]!.id : ''
+const selectedWorkshop = computed(() => workshopChoices.value.find(item => item.key === selectedWorkshopKey.value))
+const fixedWorkshop = computed(() => {
+  const option = workshopChoices.value[0]
+  const roles = auth.user?.effective_access?.roles
+  return !auth.user?.is_superuser && workshopChoices.value.length === 1 && (
+    (option?.name === '金工车间' && roles?.some(role => role.code === 'METAL_DIRECTOR'))
+    || (option?.name === '装配车间' && roles?.some(role => role.code === 'ASSEMBLY_DIRECTOR'))
+  )
 })
+const draftWorkshop = computed(() => ({
+  workshop_id: selectedWorkshop.value?.workshopId,
+  plan_category: selectedWorkshop.value?.planCategory,
+}))
+const activeWorkshopName = computed(() => workshopChoices.value.find(item =>
+  item.workshopId === activeFilters.value?.workshop_id && item.planCategory === activeFilters.value?.plan_category,
+)?.name || workshops.value.find(item => item.id === activeFilters.value?.workshop_id)?.name)
+const taskOptions = computed(() => withSelected(foundTasks.value, selectedTasks.value))
+const productOptions = computed(() => withSelected(foundProducts.value, selectedProducts.value))
 const selectedReport = computed(() => reports.value.find(item => item.id === selectedReportId.value) || null)
 const showCuttingLength = computed(() => selectedReport.value?.workshop.name === '金工车间')
 const newReportQuery = computed(() => ({
-  ...(scheduleProductId.value ? { schedule_product_id: scheduleProductId.value } : {}),
-  ...(selectedWorkshopId.value ? { workshop_id: selectedWorkshopId.value } : {}),
-  ...(selectedCraftId.value ? { craft_id: selectedCraftId.value } : {}),
-  ...(selectedPlanCategory.value ? { plan_category: selectedPlanCategory.value } : {}),
+  schedule_product_id: activeFilters.value?.schedule_product_id,
+  workshop_id: activeFilters.value?.workshop_id,
+  craft_id: activeFilters.value?.craft_id,
+  plan_category: activeFilters.value?.plan_category,
 }))
 
 let contextRequest = 0
 let reportRequest = 0
+const optionRequests = { tasks: 0, products: 0 }
 
-function apiError(error: unknown) {
+function withSelected<T extends { id: string }>(matches: T[], selected: T[]) {
+  return [...new Map([...selected, ...matches].map(item => [item.id, item])).values()]
+}
+
+function productLabel(product: WorkReportProductOption) {
+  const code = product.code || (product.number ? `编号 ${product.number}` : '无编码')
+  return `${code} · ${product.name} · ${product.task_number}`
+}
+
+function apiError(error: unknown, fallback = '报工记录加载失败，请重试。') {
   return (error as { response?: { data?: { error?: { message?: string } } } })
-    ?.response?.data?.error?.message || '报工记录加载失败，请重试。'
+    ?.response?.data?.error?.message || fallback
 }
 
 function quantityText(value: string | number | null | undefined) {
@@ -115,16 +123,6 @@ function progressText(line: WorkReportLine) {
   return `已报 ${quantityText(line.cumulative_quantity)} / 总需 ${quantityText(line.required_quantity)}`
 }
 
-function reportTimeText(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? '—'
-    : date.toLocaleString('zh-CN', {
-      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    })
-}
-
 function reportRowClassName({ row }: { row: WorkReport }) {
   return row.id === selectedReportId.value ? 'is-current-work-report' : ''
 }
@@ -141,17 +139,13 @@ async function loadReports(resetSelection = false) {
   const previousReportId = resetSelection ? '' : selectedReportId.value
   clearReports(false)
   const requestId = reportRequest
-  if (!hasSelection.value) return
+  if (!activeFilters.value) return
   reportLoading.value = true
   try {
     const result = await fetchWorkReports({
       page: reportPage.value,
       page_size: reportPageSize.value,
-      schedule_product_id: scheduleProductId.value || undefined,
-      production_task_id: productionTaskId.value || undefined,
-      workshop_id: selectedWorkshopId.value,
-      craft_id: (productionTaskId.value ? routeCraftId.value : selectedCraftId.value) || undefined,
-      ...(selectedPlanCategory.value ? { plan_category: selectedPlanCategory.value } : {}),
+      ...activeFilters.value,
     })
     if (requestId !== reportRequest) return
     reports.value = result.data
@@ -170,151 +164,191 @@ async function loadReports(resetSelection = false) {
   }
 }
 
+type OptionKind = 'tasks' | 'products'
+
+function clearOptions(kind: OptionKind) {
+  optionRequests[kind] += 1
+  optionsLoading.value[kind] = false
+  if (kind === 'tasks') foundTasks.value = []
+  else foundProducts.value = []
+  optionsError.value = ''
+}
+
+async function searchOptions(kind: OptionKind, query = '') {
+  const requestId = ++optionRequests[kind]
+  optionsLoading.value[kind] = true
+  optionsError.value = ''
+  const params = { ...draftWorkshop.value, q: query.trim() || undefined }
+  try {
+    if (kind === 'tasks') {
+      const options = await fetchWorkReportTaskOptions(params)
+      if (requestId === optionRequests.tasks) foundTasks.value = options
+    } else {
+      const options = await fetchWorkReportProductOptions({
+        ...params, production_task_ids: selectedTasks.value.map(item => item.id),
+      })
+      if (requestId === optionRequests.products) foundProducts.value = options
+    }
+  } catch (error) {
+    if (requestId !== optionRequests[kind]) return
+    clearOptions(kind)
+    optionsError.value = apiError(error, '筛选选项加载失败，请重试。')
+  } finally {
+    if (requestId === optionRequests[kind]) optionsLoading.value[kind] = false
+  }
+}
+
+function changeTasks() {
+  if (selectedTasks.value.length) {
+    const ids = new Set(selectedTasks.value.map(item => item.id))
+    selectedProducts.value = selectedProducts.value.filter(item => ids.has(item.production_task_id))
+  }
+  clearOptions('products')
+}
+
+function defaultWorkshopKey() {
+  return (workshopChoices.value.length === 2 && workshopChoices.value[0]?.workshopId === workshopChoices.value[1]?.workshopId
+    ? workshopChoices.value.find(item => item.planCategory === 'SEWING')
+    : workshopChoices.value[0])?.key || ''
+}
+
 async function initialize() {
   const requestId = ++contextRequest
   clearReports()
-  contextLoading.value = false
+  clearOptions('tasks')
+  clearOptions('products')
   context.value = null
-  selectedTask.value = null
-  selectedWorkshopId.value = ''
-  selectedPlanCategory.value = ''
+  activeFilters.value = null
+  workshops.value = []
+  selectedWorkshopKey.value = ''
+  selectedTasks.value = []
+  selectedProducts.value = []
   errorMessage.value = ''
-  taskSelectorVisible.value = false
-  if (invalidScopeQuery.value) {
-    errorMessage.value = '报工记录地址中的任务或车间参数无效，请重新选择。'
-    return
-  }
-  if (!scheduleProductId.value && !productionTaskId.value) {
-    openTaskSelector()
-    return
-  }
   contextLoading.value = true
   try {
-    if (productionTaskId.value) {
-      const taskId = productionTaskId.value
-      const result = await fetchWorkReportTasks({ production_task_id: taskId, page: 1, page_size: 20 })
-      if (requestId !== contextRequest) return
-      selectedTask.value = result.data.find(item => item.id === taskId) || null
-      if (!selectedTask.value) {
-        errorMessage.value = '生产任务单不存在或无查看权限，请重新选择。'
-        return
-      }
-      if (!routeWorkshopId.value && workshopChoices.value.length !== 1) {
-        openTaskSelector()
-        return
-      }
-    } else {
-      const result = await fetchReportingContext(scheduleProductId.value, 'work_report')
-      if (requestId !== contextRequest) return
-      if (result.schedule_product?.id !== scheduleProductId.value) {
-        errorMessage.value = '排产产品不存在或无查看权限，请重新选择。'
-        return
-      }
-      context.value = result
-    }
-    const requestedWorkshop = workshops.value.find(item => item.id === routeWorkshopId.value)
-    if (routeWorkshopId.value && !requestedWorkshop) {
-      errorMessage.value = '该车间不属于当前任务或无查看权限，请重新选择。'
+    const [workshopsResult, contextResult] = await Promise.allSettled([
+      fetchWorkReportWorkshops(),
+      scheduleProductId.value && !invalidScopeQuery.value
+        ? fetchReportingContext(scheduleProductId.value, 'work_report') : Promise.resolve(null),
+    ])
+    if (requestId !== contextRequest) return
+    if (workshopsResult.status === 'rejected') throw workshopsResult.reason
+    workshops.value = workshopsResult.value
+    selectedWorkshopKey.value = defaultWorkshopKey()
+    if (invalidScopeQuery.value) {
+      errorMessage.value = '报工记录地址中的任务或车间参数无效，请重新筛选。'
       return
     }
-    const choice = routePlanCategory.value ? workshopChoices.value.find(item =>
-      item.planCategory === routePlanCategory.value && (!requestedWorkshop || item.workshopId === requestedWorkshop.id),
-    ) : undefined
-    if (routePlanCategory.value && !choice) {
-      errorMessage.value = '该计划分类不属于当前任务的授权车间，请重新选择。'
+    if (contextResult.status === 'rejected') throw contextResult.reason
+    const sourceContext = contextResult.value
+    context.value = sourceContext
+    if (scheduleProductId.value && scheduleProduct.value?.id !== scheduleProductId.value) {
+      errorMessage.value = '排产产品不存在或无查看权限，请重新筛选。'
       return
     }
-    selectedWorkshopId.value = requestedWorkshop?.id || choice?.workshopId || workshopChoices.value[0]?.workshopId || ''
-    selectedPlanCategory.value = routePlanCategory.value
+    const sourceCrafts = sourceContext?.crafts || []
+    const requestedCraft = sourceCrafts.find(item => item.id === routeCraftId.value)
+    const workshopId = routeWorkshopId.value || requestedCraft?.workshop_id || sourceCrafts[0]?.workshop_id
+    const category = routePlanCategory.value || requestedCraft?.plan_category
+    if (workshopId || routePlanCategory.value) {
+      const choice = workshopChoices.value.find(item => (!workshopId || item.workshopId === workshopId)
+        && (routePlanCategory.value ? item.planCategory === routePlanCategory.value
+          : !['CUTTING', 'SEWING'].includes(category || '') || item.planCategory === category))
+      if (!choice || (sourceCrafts.length && !sourceCrafts.some(item => item.workshop_id === choice.workshopId))) {
+        errorMessage.value = '该车间或计划分类不在当前查看范围，请重新筛选。'
+        return
+      }
+      selectedWorkshopKey.value = choice.key
+    }
+    if (!selectedWorkshop.value) return
+    const source = scheduleProduct.value
+    if (source) {
+      selectedTasks.value = [{ id: source.production_task_id, task_number: source.task_number }]
+      selectedProducts.value = [{
+        id: source.product_line_id, production_task_id: source.production_task_id, task_number: source.task_number,
+        code: source.product_code || '', name: source.product_name, number: source.product_number,
+      }]
+    } else if (productionTaskId.value) {
+      const tasks = await fetchWorkReportTaskOptions({
+        ...(routeWorkshopId.value || routePlanCategory.value ? draftWorkshop.value : {}),
+        production_task_ids: [productionTaskId.value],
+      })
+      if (requestId !== contextRequest) return
+      const task = tasks.find(item => item.id === productionTaskId.value)
+      if (!task) {
+        errorMessage.value = '生产任务单不存在或无查看权限，请重新筛选。'
+        return
+      }
+      selectedTasks.value = [task]
+    }
+    const matchingCrafts = sourceCrafts.filter(item => item.workshop_id === draftWorkshop.value.workshop_id
+      && (!draftWorkshop.value.plan_category || item.plan_category === draftWorkshop.value.plan_category))
+    activeFilters.value = {
+      ...draftWorkshop.value,
+      production_task_id: productionTaskId.value || undefined,
+      schedule_product_id: source?.id,
+      craft_id: (matchingCrafts.find(item => item.id === routeCraftId.value)
+        || (matchingCrafts.length === 1 ? matchingCrafts[0] : undefined))?.id
+        || (!source ? routeCraftId.value || undefined : undefined),
+    }
     reportPage.value = 1
     await loadReports(true)
   } catch (error) {
-    if (requestId !== contextRequest) return
-    context.value = null
-    selectedTask.value = null
-    reports.value = []
-    errorMessage.value = apiError(error)
+    if (requestId === contextRequest) errorMessage.value = apiError(error)
   } finally {
     if (requestId === contextRequest) contextLoading.value = false
   }
 }
 
-function openTaskSelector() {
-  selectionError.value = ''
-  taskSelectorVisible.value = true
+function changeWorkshop() {
+  clearOptions('tasks')
+  clearOptions('products')
 }
 
-function scopeNavigationFailed() {
-  selectionError.value = '报工记录页面打开失败，请重试。'
-  if (!taskSelectorVisible.value) {
-    selectedWorkshopId.value = routeWorkshopId.value
-    selectedPlanCategory.value = routePlanCategory.value
-    errorMessage.value = selectionError.value
+function applyFilters() {
+  if (!selectedWorkshop.value) return
+  const filters: WorkReportFilters = {
+    ...draftWorkshop.value,
+    production_task_ids: selectedTasks.value.map(item => item.id),
+    product_line_ids: selectedProducts.value.map(item => item.id),
   }
-}
-
-async function selectTaskScope(value: WorkReportSelection) {
-  if (selectionSubmitting.value) return
-  if (productionTaskId.value === value.productionTaskId && routeWorkshopId.value === value.workshopId
-    && routePlanCategory.value === (value.planCategory || '')) {
-    taskSelectorVisible.value = false
-    await initialize()
-    return
-  }
-  selectionSubmitting.value = true
-  selectionError.value = ''
-  try {
-    const failure = await router.replace({ name: 'work-report-days', query: {
-      production_task_id: value.productionTaskId,
-      workshop_id: value.workshopId,
-      ...(value.planCategory ? { plan_category: value.planCategory } : {}),
-    } })
-    if (failure) {
-      scopeNavigationFailed()
-      return
+  const source = scheduleProduct.value
+  if (source && selectedTasks.value.length === 1 && selectedTasks.value[0]?.id === source.production_task_id
+    && selectedProducts.value.length === 1 && selectedProducts.value[0]?.id === source.product_line_id) {
+    const crafts = (context.value?.crafts || []).filter(item => item.workshop_id === filters.workshop_id
+      && (!filters.plan_category || item.plan_category === filters.plan_category))
+    if (crafts.length) {
+      filters.schedule_product_id = source.id
+      filters.craft_id = (crafts.find(item => item.id === routeCraftId.value) || (crafts.length === 1 ? crafts[0] : undefined))?.id
     }
-    taskSelectorVisible.value = false
-  } catch {
-    scopeNavigationFailed()
-  } finally {
-    selectionSubmitting.value = false
   }
+  activeFilters.value = filters
+  reportPage.value = 1
+  void loadReports(true)
+}
+
+function resetFilters() {
+  selectedTasks.value = []
+  selectedProducts.value = []
+  selectedWorkshopKey.value = defaultWorkshopKey()
+  changeWorkshop()
+  applyFilters()
 }
 
 function selectReport(row: WorkReport) {
   selectedReportId.value = row.id
 }
 
-function resetWorkshop() {
-  selectedPlanCategory.value = routePlanCategory.value
-  if (productionTaskId.value) {
-    selectedWorkshopId.value = routeWorkshopId.value
-    void loadReports(true)
-    return
-  }
-  selectedWorkshopId.value = workshops.value.find(item => item.id === routeWorkshopId.value)?.id || workshops.value[0]?.id || ''
-  changeWorkshop()
-}
-function changeWorkshop() {
-  if (productionTaskId.value) {
-    if (!selectedWorkshop.value) return
-    clearReports()
-    void selectTaskScope({
-      productionTaskId: productionTaskId.value, workshopId: selectedWorkshopId.value,
-      ...(selectedPlanCategory.value ? { planCategory: selectedPlanCategory.value } : {}),
-    })
-    return
-  }
-  reportPage.value = 1
-  void loadReports(true)
-}
-
-function selectWorkshopChoice(key: string) {
-  const choice = workshopChoices.value.find(item => item.key === key)
-  if (!choice) return
-  selectedWorkshopId.value = choice.workshopId
-  selectedPlanCategory.value = choice.planCategory || ''
-  changeWorkshop()
+function editReport(report: WorkReport) {
+  const filters = activeFilters.value
+  const taskId = filters?.production_task_id || (filters?.production_task_ids?.length === 1 ? report.production_task.id : undefined)
+  const category = filters?.plan_category
+  void router.push({
+    name: 'work-report-edit', params: { reportId: report.id },
+    ...(taskId || category ? { query: {
+      ...(taskId ? { production_task_id: taskId } : {}), ...(category ? { plan_category: category } : {}),
+    } } : {}),
+  })
 }
 
 function changeReportPage() {
@@ -322,11 +356,17 @@ function changeReportPage() {
 }
 
 function refresh() {
-  void loadReports(false)
+  if (activeFilters.value) void loadReports(false)
+  else void initialize()
 }
 
-watch([scheduleProductId, productionTaskId, routeWorkshopId, routeCraftId, routePlanCategory, invalidScopeQuery], () => { void initialize() }, { immediate: true })
-onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
+watch([scheduleProductId, productionTaskId, routeWorkshopId, routeCraftId, routePlanCategory, invalidScopeQuery], initialize, { immediate: true })
+onBeforeUnmount(() => {
+  contextRequest += 1
+  reportRequest += 1
+  optionRequests.tasks += 1
+  optionRequests.products += 1
+})
 </script>
 
 <template>
@@ -334,7 +374,6 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
     <section v-glass-spotlight class="erp-list-filter">
     <header class="wr-report-records__heading erp-list-heading">
       <h1>报工记录</h1>
-      <ElButton data-testid="work-report-select-task" class="erp-button-motion" @click="openTaskSelector">{{ selectedTask || scheduleProduct ? '切换任务' : '选择任务' }}</ElButton>
       <ElButton
         v-if="canCreate"
         class="erp-button-motion wr-report-records__create"
@@ -344,54 +383,67 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
       >新增报工</ElButton>
     </header>
 
-    <section v-if="scheduleProduct || selectedTask" class="wr-report-context erp-list-filters" aria-label="当前生产任务信息">
+    <section class="wr-report-context erp-list-filters" aria-label="报工记录筛选">
       <div class="wr-report-context__items">
-        <span><b>生产任务：</b>{{ selectedTask?.task_number || scheduleProduct?.task_number || '—' }}</span>
-        <i aria-hidden="true" />
-        <span><b>生产订单：</b>{{ selectedTask?.order_number || scheduleProduct?.order_number || '—' }}</span>
-        <i aria-hidden="true" />
-        <label class="wr-report-context__workshop">
-          <b>车间：</b>
+        <label class="wr-report-context__field">
+          <b>生产任务单</b>
           <ElSelect
-            v-if="workshopChoices.length > 1"
-            :model-value="selectedChoice?.key || ''"
-            :loading="contextLoading"
+            v-model="selectedTasks" value-key="id" multiple filterable remote clearable collapse-tags collapse-tags-tooltip
+            data-testid="work-report-task-filter" aria-label="生产任务单" placeholder="搜索任务单号"
+            :disabled="contextLoading || !selectedWorkshop" :loading="optionsLoading.tasks"
+            :remote-method="(query: string) => searchOptions('tasks', query)"
+            @visible-change="(visible: boolean) => visible && searchOptions('tasks')" @change="changeTasks"
+          >
+            <ElOption v-for="item in taskOptions" :key="item.id" :label="item.task_number" :value="item" />
+          </ElSelect>
+        </label>
+        <label class="wr-report-context__field wr-report-context__product">
+          <b>订单产品</b>
+          <ElSelect
+            v-model="selectedProducts" value-key="id" multiple filterable remote clearable collapse-tags collapse-tags-tooltip
+            data-testid="work-report-product-filter" aria-label="订单产品" placeholder="搜索产品编码或名称"
+            :disabled="contextLoading || !selectedWorkshop" :loading="optionsLoading.products"
+            :remote-method="(query: string) => searchOptions('products', query)"
+            @visible-change="(visible: boolean) => visible && searchOptions('products')"
+          >
+            <ElOption v-for="item in productOptions" :key="item.id" :label="productLabel(item)" :value="item" />
+          </ElSelect>
+        </label>
+        <label class="wr-report-context__field wr-report-context__workshop">
+          <b>车间</b>
+          <ElSelect
+            v-if="workshopChoices.length && !fixedWorkshop"
+            v-model="selectedWorkshopKey"
+            data-testid="work-report-workshop-filter" aria-label="车间"
+            :disabled="contextLoading"
             placeholder="选择车间"
-            @change="selectWorkshopChoice"
+            @change="changeWorkshop"
           >
             <ElOption v-for="item in workshopChoices" :key="item.key" :label="item.name" :value="item.key" />
           </ElSelect>
-          <span v-else>{{ selectedWorkshopName || '—' }}</span>
+          <span v-else>{{ selectedWorkshop?.name || '—' }}</span>
         </label>
-        <i aria-hidden="true" />
-        <span><b>产品：</b>{{ selectedTask ? '全部产品' : scheduleProduct?.product_name || '—' }}</span>
-        <template v-if="!selectedTask">
-        <i aria-hidden="true" />
-        <span><b>产品编号：</b>{{ scheduleProduct?.product_number || '—' }}</span>
-        <i aria-hidden="true" />
-        <span><b>规格：</b>{{ scheduleProduct?.product_specification || '—' }}</span>
-        <i aria-hidden="true" />
-        <span><b>颜色：</b>{{ scheduleProduct?.product_color || '—' }}</span>
-        <i aria-hidden="true" />
-        <span><b>订单数量：</b>{{ quantityText(scheduleProduct?.order_quantity) }} {{ scheduleProduct?.unit_name || '' }}</span>
-        </template>
       </div>
-      <ElButton class="erp-button-motion wr-report-context__refresh" :icon="Refresh" :loading="reportLoading" @click="refresh">刷新</ElButton>
-      <div v-if="workshopChoices.length > 1" class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetWorkshop">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="changeWorkshop">应用筛选</ElButton></div>
+      <div class="erp-list-filter-actions">
+        <ElButton class="erp-button-motion" :icon="Refresh" :loading="reportLoading" :disabled="contextLoading" @click="refresh">刷新</ElButton>
+        <ElButton class="erp-button-motion" :disabled="contextLoading || !selectedWorkshop" @click="resetFilters">重置</ElButton>
+        <ElButton class="erp-button-motion" type="primary" :disabled="contextLoading || !selectedWorkshop" @click="applyFilters">应用筛选</ElButton>
+      </div>
     </section>
 
     </section>
+    <ElAlert v-if="optionsError" type="warning" :closable="false" show-icon :title="optionsError" />
     <ElAlert v-if="errorMessage" class="wr-report-records__error" type="error" :closable="false" show-icon :title="errorMessage">
-      <template #default><ElButton link type="primary" @click="initialize">重新加载</ElButton></template>
+      <template #default><ElButton link type="primary" @click="refresh">重新加载</ElButton></template>
     </ElAlert>
 
-    <ElEmpty v-else-if="!hasSelection" v-loading="contextLoading" description="请先选择生产任务单和车间" />
+    <ElEmpty v-else-if="!activeFilters" v-loading="contextLoading" :description="contextLoading ? '正在读取报工记录' : '当前账号没有可查看的车间报工'" />
 
     <div v-else class="wr-report-records__layout">
       <section class="wr-report-days-panel wr-report-list-panel erp-list-data" aria-label="每次报工记录列表">
         <header class="wr-report-days-panel__header erp-list-toolbar">
           <h2>报工列表</h2>
-          <span>当前车间：{{ selectedWorkshopName || '—' }}</span>
+          <span>当前车间：{{ activeWorkshopName || '—' }}</span>
         </header>
         <div class="wr-report-days-panel__table wr-report-list-panel__table erp-list-table-frame" v-loading="reportLoading">
           <ElTable
@@ -408,8 +460,8 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
                 <b class="wr-report-number" :title="row.production_task.task_number">{{ row.production_task.task_number }}</b>
               </template>
             </ElTableColumn>
-            <ElTableColumn label="报工时间" min-width="160" show-overflow-tooltip>
-              <template #default="{ row }"><span class="wr-report-time">{{ reportTimeText(row.created_at) }}</span></template>
+            <ElTableColumn label="生产日期" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }"><span class="wr-report-date">{{ row.production_date }}</span></template>
             </ElTableColumn>
             <ElTableColumn prop="line_count" label="工序数" width="76" align="center" />
             <ElTableColumn label="金额" width="90" align="right"><template #default="{ row }"><strong>{{ formatWageMoney(row.total_amount) }}</strong></template></ElTableColumn>
@@ -434,7 +486,7 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
       <section class="wr-report-details-panel erp-list-data" aria-label="所选报工明细">
         <header class="wr-report-details-panel__header erp-list-toolbar">
           <div>
-            <h2>报工详情<template v-if="selectedWorkshopName"> · {{ selectedWorkshopName }}</template></h2>
+            <h2>报工详情<template v-if="activeWorkshopName"> · {{ activeWorkshopName }}</template></h2>
             <span v-if="selectedReport">{{ selectedReport.line_count }} 条工序</span>
           </div>
           <div>本次金额 <strong>{{ formatWageMoney(selectedReport?.total_amount) }}</strong></div>
@@ -446,8 +498,6 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
               <div>
                 <template v-if="selectedReport.product.code"><b>{{ selectedReport.product.code }}</b><i aria-hidden="true" /></template>
                 <span>生产日期：{{ selectedReport.production_date }}</span>
-                <i aria-hidden="true" />
-                <span>报工时间：{{ reportTimeText(selectedReport.created_at) }}</span>
                 <i aria-hidden="true" />
                 <span>录入人：{{ selectedReport.recorder || '—' }}</span>
                 <i aria-hidden="true" />
@@ -461,7 +511,7 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
                 v-if="canEdit"
                 link
                 type="primary"
-                @click="router.push({ name: 'work-report-edit', params: { reportId: selectedReport.id }, ...((productionTaskId || selectedPlanCategory) ? { query: { ...(productionTaskId ? { production_task_id: productionTaskId } : {}), ...(selectedPlanCategory ? { plan_category: selectedPlanCategory } : {}) } } : {}) })"
+                @click="editReport(selectedReport)"
               >编辑</ElButton>
             </header>
             <div class="erp-list-table-frame"><ElTable :data="selectedReport.lines" border>
@@ -498,7 +548,6 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
         </div>
       </section>
     </div>
-    <WorkReportTaskSelectDialog v-model="taskSelectorVisible" :initial-task="selectedTask" :initial-workshop-id="selectedWorkshopId" :initial-plan-category="selectedPlanCategory || undefined" :submitting="selectionSubmitting" :selection-error="selectionError" @select="selectTaskScope" />
   </section>
 </template>
 
@@ -506,7 +555,7 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
 
 <style scoped lang="scss">
 .wr-report-number { font-size: 12px; font-weight: 500; white-space: nowrap; }
-.wr-report-time { color: var(--erp-color-text-secondary); font-size: 12px; white-space: nowrap; }
+.wr-report-date { color: var(--erp-color-text-secondary); font-size: 12px; white-space: nowrap; }
 
 .wr-report-list-panel {
   .erp-list-footer { flex-wrap: wrap; gap: 8px; }

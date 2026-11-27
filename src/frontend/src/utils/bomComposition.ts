@@ -67,16 +67,17 @@ export function setComponentUnit(line: BomLineInput, unit: string) {
 }
 
 export function changeComponentKind(line: BomLineInput, kind: 'SEWN_PART' | 'CUT_PIECE') {
+  const previousKind = line.component_kind
   line.component_kind = kind
   if (kind === 'SEWN_PART') {
     line.parent_part_id = line.parent_part_client_key = null
     line.pieces_per_part = null
     line.parts_per_product = line.parts_per_product || 1
-    setComponentUnit(line, line.unit)
+    setComponentUnit(line, !line.unit || line.unit === '片' ? '套' : line.unit)
   } else {
     line.parts_per_product = null
     line.pieces_per_part = line.pieces_per_part || 1
-    setComponentUnit(line, line.unit || '片')
+    setComponentUnit(line, !line.unit || (previousKind === 'SEWN_PART' && line.unit === '套') ? '片' : line.unit)
   }
   // 只有明确切换类型时清理旧套口径及原料直绑；图片、备注、档案属性和独立尺寸保留。
   line.cutting_pieces_per_set = line.cutting_sets_per_product = null

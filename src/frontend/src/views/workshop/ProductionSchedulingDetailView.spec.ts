@@ -45,6 +45,15 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('排产详情执行汇总接入', () => {
+  it('在基本信息先显示生产任务单号，再显示排产计划号', async () => {
+    const wrapper = await createView()
+    const fields = wrapper.findAll('.detail-basic dl > div').slice(0, 2)
+    expect(fields.map(field => [field.get('dt').text(), field.get('dd').text()])).toEqual([
+      ['生产任务单号', 'HT-001'],
+      ['排产计划号', 'PC-001'],
+    ])
+  })
+
   it.each([
     ['READY', 'ACTIVE', false, true, true],
     ['IN_PRODUCTION', 'ACTIVE', false, true, true],

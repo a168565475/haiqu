@@ -61,13 +61,14 @@ class PurchaseReceiptRecordsResponseSerializer(serializers.Serializer):
 
 class PurchaseReceiptRecordDetailSerializer(ReadInboundSerializer):
     purchase_order_id = serializers.UUIDField()
+    sample_number = serializers.CharField(source='purchase_order.sample_number_snapshot', read_only=True)
     status_display = serializers.SerializerMethodField()
 
     def get_status_display(self, instance) -> str:
         return RECEIPT_STATUSES[instance.record_status]
 
     class Meta(ReadInboundSerializer.Meta):
-        fields = ReadInboundSerializer.Meta.fields + ['purchase_order_id']
+        fields = ReadInboundSerializer.Meta.fields + ['purchase_order_id', 'sample_number']
 
 
 class ReceiptRecordDetailQuerySerializer(serializers.Serializer):

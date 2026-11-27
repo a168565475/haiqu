@@ -34,6 +34,7 @@ import type {
 import type { ProductionTaskProductInput } from '@/types/productionTask'
 
 const basePath = '/api/v1/boms/'
+const bomSaveTimeout = 60_000
 const workbookRequestTimeout = 180_000
 
 export async function previewBomHardwareWeight(payload: HardwareWeightInput): Promise<HardwareWeightPreview> {
@@ -177,7 +178,7 @@ export async function previewBomMaterialSave(id: string, sections: BomSectionInp
   const { data } = await apiClient.post<DataResponse<BomMaterialSavePreview>>(
     `${basePath}${encodeURIComponent(id)}/material-save-preview/`,
     { sections: writableBomSections(sections), ...options },
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: bomSaveTimeout },
   )
   return data.data
 }
@@ -186,7 +187,7 @@ export async function saveBomDraft(id: string, sections: BomSectionInput[], etag
   return versionedBom(await apiClient.patch<DataResponse<BomDetail>>(
     `${basePath}${encodeURIComponent(id)}/`,
     { sections: writableBomSections(sections), ...options },
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: bomSaveTimeout },
   ))
 }
 
@@ -202,7 +203,7 @@ export async function verifyBom(id: string, quantityConfirmationReason: string, 
   return versionedBom(await apiClient.post<DataResponse<BomDetail>>(
     `${basePath}${encodeURIComponent(id)}/verify/`,
     { quantity_confirmation_reason: quantityConfirmationReason },
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: bomSaveTimeout },
   ))
 }
 
@@ -214,7 +215,7 @@ export async function confirmBomProduct(
   return versionedBom(await apiClient.post<DataResponse<BomDetail>>(
     `${basePath}${encodeURIComponent(id)}/confirm-product/`,
     payload,
-    { headers: { 'If-Match': etag } },
+    { headers: { 'If-Match': etag }, timeout: bomSaveTimeout },
   ))
 }
 

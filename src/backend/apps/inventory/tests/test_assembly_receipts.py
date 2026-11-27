@@ -1,6 +1,8 @@
 import uuid
 from datetime import timedelta
 from django.contrib.auth.models import Permission
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft
@@ -75,6 +77,24 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         inventory=self.client.get('/api/v1/finished-goods-inventory/',{'page_size':100})
         self.assertEqual(inventory.status_code,200,inventory.data)
         self.assertEqual(inventory.data['count'],0)
+
+    def test_preview_separates_confirmed_quantity_from_pending_reservations(self):
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=4, quantity_per_box=None)
+        response = self.post(self.payload(received_quantity=3))
+        self.assertEqual(response.status_code, 201, response.data)
+        before = self.preview()
+        self.assertEqual(
+            (before['confirmed_received_total'], before['received_total'], before['remaining_receivable']),
+            (4, 7, 4),
+        )
+
+        self.confirm(response)
+        after = self.preview()
+        self.assertEqual(
+            (after['confirmed_received_total'], after['received_total'], after['remaining_receivable']),
+            (7, 7, 4),
+        )
 
     def test_confirm_activates_inventory_and_is_idempotent(self):
         response=self.post(self.payload(quantity_per_box=5))
@@ -336,3 +356,49 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         self.client.force_authenticate(user)
         self.assertEqual(self.client.get('/api/v1/assembly-finished-receipts/preview/',{'schedule_product_id':self.plan.pk}).status_code,404)
         self.assertEqual(self.post(payload,etag).status_code,404)
+
+
+class AssemblyReceiptPlacementTests(AssemblyFixture, APITestCase):
+    def setUp(self):
+        self.prepare(quantity=100, tolerance='0')
+
+    def test_old_schema_keeps_assigned_receipts_and_rejects_unassigned_requests(self):
+        connection.check_constraints()
+        MigrationExecutor(connection).migrate([("inventory", "0036_purchase_return_weight_only")])
+        payload = self.payload(received_quantity=30)
+        payload.pop("location_id")
+        blocked = self.post(payload)
+        self.assertEqual(blocked.status_code, 409, blocked.data)
+        self.assertEqual(blocked.data["error"]["code"], "DATABASE_MIGRATION_REQUIRED")
+        self.assertFalse(AssemblyReceiptSource.objects.exists())
+        assigned = self.post(self.payload(received_quantity=30))
+        self.confirm(assigned)
+        record = FinishedGoodsReceipt.objects.get(pk=assigned.data["data"]["id"])
+        self.assertEqual(str(record.location_id), self.location_id)
+        self.assertEqual(record.remaining_quantity, 30)
+
+    def test_assembly_request_without_location_waits_for_warehouse_assignment(self):
+        WarehouseLocation.objects.filter(pk=self.location_id).update(capacity_box_slots=3)
+        response = self.post({key: value for key, value in self.payload(received_quantity=30).items()
+                              if key in {'request_id', 'schedule_product_id', 'receipt_date', 'received_quantity'}})
+        self.assertEqual(response.status_code, 201, response.data)
+        receipt_id = response.data['data']['id']
+        receipt = FinishedGoodsReceipt.objects.get(pk=receipt_id)
+        self.assertIsNone(receipt.location_id)
+        self.assertEqual(receipt.remaining_quantity, 0)
+        self.assertEqual(self.preview()['remaining_receivable'], 70)
+        url = f'/api/v1/assembly-finished-receipts/{receipt_id}/confirm/'
+        missing = self.client.post(url, {}, format='json', HTTP_IF_MATCH=response['ETag'])
+        self.assertEqual(missing.status_code, 400, missing.data)
+        confirmed = self.client.post(url, {'location_id': self.location_id, 'quantity_per_box': 10},
+                                     format='json', HTTP_IF_MATCH=response['ETag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        replay = self.client.post(url, {'location_id': self.location_id, 'quantity_per_box': 10},
+                                  format='json', HTTP_IF_MATCH=response['ETag'])
+        self.assertTrue(replay.data['data']['replayed'])
+        different_pack = self.client.post(url, {'location_id': self.location_id, 'quantity_per_box': 5},
+                                          format='json', HTTP_IF_MATCH=response['ETag'])
+        self.assertEqual(different_pack.status_code, 409, different_pack.data)
+        receipt.refresh_from_db()
+        self.assertEqual(str(receipt.location_id), self.location_id)
+        self.assertEqual((receipt.remaining_quantity, receipt.remaining_box_slots), (30, 3))

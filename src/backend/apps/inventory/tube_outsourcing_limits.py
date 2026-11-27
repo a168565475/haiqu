@@ -23,6 +23,7 @@ from apps.workshop_config.models import Craft
 from apps.outsourcing.tube_prices import parse_unit_area
 from .models import WarehouseZone
 from .public_stock_identity import build_pipe_stock_identity, build_semi_finished_identity, profile_spray_color
+from .public_stock_services import raw_pipe_warehouse_filter
 from .public_bom_snapshot import build_output_identity
 from .processing_material_snapshots import freeze_processing_materials, tube_processing_not_enabled, KILOGRAM_TUBE_PROCESSING_MESSAGE
 from .stock_services import InventoryStockValidationError
@@ -52,10 +53,13 @@ def _zone(zone, source_kind):
     if zone is None:
         _fail('请选择发出库区。')
     zone_id = getattr(zone, 'pk', zone)
-    value = WarehouseZone.objects.select_related('warehouse').filter(pk=zone_id).first()
     warehouse_type = 'MATERIAL' if source_kind == 'RAW_PIPE' else 'SEMI_FINISHED'
-    if (not value or value.status != 'ACTIVE' or value.warehouse.status != 'ACTIVE'
-            or value.warehouse.warehouse_type != warehouse_type):
+    locations = Q(warehouse__warehouse_type=warehouse_type)
+    if source_kind == 'PUBLIC_SEMI':
+        locations |= raw_pipe_warehouse_filter()
+    value = WarehouseZone.objects.select_related('warehouse').filter(
+        locations, pk=zone_id, status='ACTIVE', warehouse__status='ACTIVE').first()
+    if value is None:
         _fail('库区已停用或仓库类型不符合本次来源。')
     return value
 

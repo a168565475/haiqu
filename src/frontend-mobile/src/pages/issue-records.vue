@@ -90,14 +90,15 @@ onBeforeUnmount(() => { active = false; generation += 1 })
       <div v-else-if="loadError" class="error-panel" role="alert"><p>{{ loadError }}</p><VanButton block @click="load">重新加载</VanButton></div>
       <template v-else-if="detail">
         <section class="section-card record-overview">
-          <div class="record-heading"><h2>{{ detail.issue_number }}</h2><VanTag plain :type="statusType(detail.status)">{{ statusLabels[detail.status] || detail.status_display }}</VanTag></div>
+          <div class="record-heading"><h2>{{ detail.production_task?.task_number || '生产任务单号未记录' }}</h2><VanTag plain :type="statusType(detail.status)">{{ statusLabels[detail.status] || detail.status_display }}</VanTag></div>
           <h3>{{ detail.product?.product_name || '产品未记录' }}</h3>
           <p class="muted">{{ detail.product?.product_number }} · {{ detail.product?.specification_display || detail.product?.specification || '规格未记录' }}</p>
-          <dl class="record-fields"><dt>生产单</dt><dd>{{ detail.production_task?.task_number || '未记录' }}</dd><dt>车间</dt><dd>{{ detail.workshop?.name || '未记录' }}</dd><dt>领料人</dt><dd>{{ detail.recipient?.name || '未记录' }}</dd><dt>领料时间</dt><dd>{{ dateText(detail.issue_at) }}</dd><dt>申请人</dt><dd>{{ detail.created_by.name }}</dd><dt>提交时间</dt><dd>{{ dateText(detail.submitted_at) }}</dd><dt>发料时间</dt><dd>{{ dateText(detail.issued_at) }}</dd></dl>
+          <dl class="record-fields"><dt>领料单号</dt><dd>{{ detail.issue_number }}</dd><dt>车间</dt><dd>{{ detail.workshop?.name || '未记录' }}</dd><dt>领料人</dt><dd>{{ detail.recipient?.name || '未记录' }}</dd><dt>领料时间</dt><dd>{{ dateText(detail.issue_at) }}</dd><dt>申请人</dt><dd>{{ detail.created_by.name }}</dd><dt>提交时间</dt><dd>{{ dateText(detail.submitted_at) }}</dd><dt>发料时间</dt><dd>{{ dateText(detail.issued_at) }}</dd></dl>
           <p v-if="detail.remark" class="record-remark">备注：{{ detail.remark }}</p>
         </section>
         <div v-if="detail.status === 'RETURNED'" class="error-panel" role="alert"><b>仓库退回原因</b><p>{{ returnReason || '未记录退回说明，请联系仓库。' }}</p></div>
-        <p v-if="detail.status === 'PENDING_REVIEW'" class="muted pending-note">申请已提交，实际发料由仓库在 ERP 中确认。</p>
+        <p v-if="detail.stock_quantities_unavailable" class="error-panel" role="alert">该单保存的库存标识与当前规则不一致，已显示原申请明细。仓库需核对库存。</p>
+        <p v-else-if="detail.status === 'PENDING_REVIEW'" class="muted pending-note">申请已提交，实际发料由仓库在 ERP 中确认。</p>
         <h2 class="section-title detail-section-title">申请材料</h2>
         <article v-for="line in detail.lines" :key="line.id" class="section-card line-card">
           <p v-if="line.source_kind === 'CUTTING_DIRECT'" class="muted">领取来源：裁剪直交</p>
@@ -116,8 +117,8 @@ onBeforeUnmount(() => { active = false; generation += 1 })
       <template v-else>
         <p v-if="!records.length" class="section-card empty-records">当前筛选范围内暂无领料申请。</p>
         <button v-for="record in records" :key="record.id" type="button" class="section-card record-button" @click="openDetail(record)">
-          <div class="record-heading"><b>{{ record.issue_number }}</b><VanTag plain :type="statusType(record.status)">{{ statusLabels[record.status] || record.status_display }}</VanTag></div>
-          <h3>{{ record.product?.product_name || '产品未记录' }}</h3><p>{{ record.production_task?.task_number || '生产单未记录' }} · {{ record.workshop?.name || '车间未记录' }}</p>
+          <div class="record-heading"><b>{{ record.production_task?.task_number || '生产任务单号未记录' }}</b><VanTag plain :type="statusType(record.status)">{{ statusLabels[record.status] || record.status_display }}</VanTag></div>
+          <h3>{{ record.product?.product_name || '产品未记录' }}</h3><p>{{ record.issue_number }} · {{ record.workshop?.name || '车间未记录' }}</p>
           <p class="muted">领料人 {{ record.recipient?.name || '未记录' }} · {{ record.line_count }} 项材料</p><div class="record-footer"><span class="muted">{{ dateText(record.created_at) }}</span><span class="view-detail">查看申请详情</span></div>
         </button>
         <div v-if="totalPages > 1" class="pagination"><VanButton :disabled="page <= 1" @click="changePage(page - 1)">上一页</VanButton><span>{{ page }} / {{ totalPages }} · 共 {{ total }} 条</span><VanButton :disabled="page >= totalPages" @click="changePage(page + 1)">下一页</VanButton></div>

@@ -1,5 +1,6 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import ElementPlus, { ElMessage } from 'element-plus'
+import { AxiosError } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/productionTasks'
 import * as salesApi from '@/api/salesOrders'
@@ -128,8 +129,13 @@ describe('生产建单与独立跟单员', () => {
     wrapper.unmount()
   })
 
-  it('销售来源建单提交人工HT编号，不带销售跟单员或默认计划员', async () => {
+  it.each(['成功', '等待超时', '校验未通过'])('销售来源建单保留人工 HT 编号及提交结果：%s', async outcome => {
+    const showError = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: vi.fn() }))
     vi.mocked(api.createProductionOrderFromSalesOrder).mockResolvedValue({ data: { id: 'new-task', task_number: 'HT26200' }, etag: 'v1' } as never)
+    if (outcome === '等待超时') vi.mocked(api.createProductionOrderFromSalesOrder).mockRejectedValueOnce(new AxiosError('timeout', 'ECONNABORTED'))
+    if (outcome === '校验未通过') vi.mocked(api.createProductionOrderFromSalesOrder).mockRejectedValueOnce(
+      new AxiosError('400', 'ERR_BAD_REQUEST', undefined, undefined, { status: 400, data: { error: { field_errors: { quantity: ['数量超过剩余额度'] } } } } as never),
+    )
     const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     const page = wrapper.vm as unknown as {
@@ -142,6 +148,14 @@ describe('生产建单与独立跟单员', () => {
     page.colorLines = [{ key: 'draft-1', sourceLineId: 'batch-line-1', productColorId: 'color-1', quantity: 100, specialRequirements: '', packagingMethod: '' }]
     Object.assign(page.plan, { followerIds: ['factory-follower'], orderDate: '2026-10-15', deliveryDate: '2026-11-15', salespersonId: 'salesperson' })
     await page.save(false)
+    expect(api.createProductionOrderFromSalesOrder).toHaveBeenCalledTimes(1)
+    if (outcome !== '成功') {
+      expect(showError).toHaveBeenCalledWith(outcome === '等待超时'
+        ? expect.stringContaining('生产任务列表按 HT26200 查看状态') : '数量超过剩余额度')
+      expect(router.replace).not.toHaveBeenCalled()
+      expect(page.taskNumberSuffix).toBe('26200')
+      expect(page.colorLines).toHaveLength(1)
+    }
     expect(api.createProductionOrderFromSalesOrder).toHaveBeenCalledWith(expect.objectContaining({ task_number: 'HT26200', delivery_batch_id: 'batch-1' }))
     const payload = vi.mocked(api.createProductionOrderFromSalesOrder).mock.calls[0]![0]
     expect(payload).toHaveProperty('follower_ids', ['factory-follower'])

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -9,6 +9,11 @@ import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import ProtectedAttachmentLink from '@/components/common/ProtectedAttachmentLink.vue'
 import type { FinishedGoodsOutboundDetail } from '@/types/inventory'
 const route = useRoute(); const router = useRouter(); const detail = ref<FinishedGoodsOutboundDetail | null>(null); const loading = ref(false); const errorMessage = ref('')
+const taskNumbers = computed(() => {
+  if (!detail.value) return ''
+  const numbers = detail.value.lines.map(line => line.task_number_snapshot).filter(Boolean)
+  return [...new Set(numbers)].join('、') || detail.value.task_number_snapshot || detail.value.production_task_number || '—'
+})
 const message = (error: unknown) => error instanceof AxiosError ? (error.response?.data as { error?: { message?: string } })?.error?.message || '出货单读取失败，请重试。' : '出货单读取失败，请重试。'
 const money = (value: string | number | null | undefined) => compactDecimal(Number(value || 0).toFixed(2))
 const time = (value: string) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
@@ -31,6 +36,7 @@ watch(() => route.params.outboundId, () => { void load() }, { immediate: true })
     <div v-else-if="errorMessage" class="detail-state error-state" role="alert"><p>{{ errorMessage }}</p><button type="button" class="detail-button erp-list-button erp-button-motion" @click="load">重新加载</button></div>
     <template v-else-if="detail">
       <dl class="info-card">
+        <div><dt>生产任务单号</dt><dd><strong>{{ taskNumbers }}</strong></dd></div>
         <div><dt>出货单号</dt><dd>{{ detail.outbound_number }}</dd></div>
         <div><dt>出货日期</dt><dd>{{ detail.shipment_date || '—' }}</dd></div>
         <div><dt>出库负责人</dt><dd>{{ detail.responsible_employee_name || detail.responsible_name_snapshot || '—' }}</dd></div>

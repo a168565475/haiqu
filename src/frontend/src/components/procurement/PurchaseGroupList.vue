@@ -125,10 +125,10 @@ onBeforeUnmount(() => { requestVersion++ })
           <col style="width: 170px"><col style="width: 110px"><col style="width: 100px"><col style="width: 115px">
           <col style="width: 170px"><col style="width: 130px"><col style="width: 65px"><col style="width: 110px"><col style="width: 72px">
         </colgroup>
-        <thead><tr><th>{{ packaging ? '生产任务单号' : '采购需求' }}</th><th>{{ packaging ? '采购需求' : '来源订单' }}</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead>
+        <thead><tr><th>生产任务单号</th><th>采购需求单号</th><th>产品</th><th>规格</th><th>颜色</th><th>材质</th><th>订单量</th><th>订单交期</th><th>总采购进度</th><th>材料进度</th><th>批次</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead>
         <tbody><tr v-for="{ row, products, totalPercent, batchCount, hasConfirmedBatch, deletionBlock } in displayRows" :key="row.id">
-          <td><strong>{{ packaging ? row.production_task_number_snapshot : row.group_number }}</strong><small v-if="row.combined_into_group_id">已并入合并需求</small></td>
-          <td>{{ packaging ? row.group_number : row.production_task_number_snapshot }}</td>
+          <td><strong>{{ row.production_task_number_snapshot || '—' }}</strong></td>
+          <td>{{ row.group_number }}<small v-if="row.combined_into_group_id">已并入合并需求</small></td>
           <td class="product-values">{{ products.name }}</td>
           <td class="product-values">{{ products.specification }}</td>
           <td class="product-values">{{ products.color }}</td>

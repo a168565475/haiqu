@@ -12,12 +12,14 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.access_control.module_policy import has_permission
 from apps.core.api.permissions import HasActiveEmployee, BusinessActionPermission
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.outsourcing.plan_correction_stock import CORRECTION_SOURCES
 from ..internal_receipt_quantities import ReceiptQuantityError
-from ..internal_receipt_services import load_receipt_context, preview_data, submit_receipt, confirm_receipt, delete_pending_receipt
-from ..receipt_permissions import can_delete_pending_receipt
+from ..internal_receipt_services import (load_receipt_context, preview_data, submit_receipt, confirm_receipt,
+    delete_pending_receipt, semi_receipt_zone_options)
+from ..receipt_permissions import can_delete_pending_receipt, receipt_record_workshops
 from ..models import InternalReceiptStatus, PublicStockMovement, InternalSemiFinishedReceipt
 
 
@@ -30,10 +32,13 @@ class ReceiptInput(serializers.Serializer):
     request_id = serializers.UUIDField()
     schedule_product_id = serializers.UUIDField()
     plan_category = serializers.ChoiceField(choices=['METAL','CUTTING','SEWING'])
-    zone_id = serializers.UUIDField()
+    zone_id = serializers.UUIDField(required=False, help_text='车间申请可留空，由仓库确认时分配。')
     receipt_date = serializers.DateField()
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     lines = ReceiptLineInput(many=True, allow_empty=False, max_length=300)
+
+class ReceiptConfirmationInput(serializers.Serializer):
+    zone_id = serializers.UUIDField(required=False, help_text='未分配库区的入库单须指定有效半成品库区。')
 
 
 class MetalReceiptQuantity(serializers.Field):
@@ -196,7 +201,10 @@ def pending_record_data(receipt, request=None):
         output_material_selection_snapshot=first.get('output_material_selection_snapshot', {}),
         lines=lines, **receipt_summary(lines),
         receipt_date=str(receipt.receipt_date), status=receipt.status,
-        warehouse=receipt.zone.warehouse.warehouse_name, zone=receipt.zone.zone_name,
+        plan_category=receipt.plan_category,
+        zone_id=str(receipt.zone_id) if receipt.zone_id else None,
+        warehouse=receipt.zone.warehouse.warehouse_name if receipt.zone_id else '',
+        zone=receipt.zone.zone_name if receipt.zone_id else '',
         actor=receipt.actor_employee.display_name if receipt.actor_employee_id else '', remark=receipt.remark,
         submitted_by=receipt.submitted_by_employee.display_name if receipt.submitted_by_employee_id else '',
         submitted_at=receipt.submitted_at.isoformat() if receipt.submitted_at else None,
@@ -230,7 +238,7 @@ def pending_data(receipt, request=None):
         'plan_category': receipt.plan_category,
         'production_order': receipt.schedule_product.schedule.production_task.task_number,
         'receipt_date': str(receipt.receipt_date),
-        'zone': receipt.zone.zone_name,
+        'zone': receipt.zone.zone_name if receipt.zone_id else '',
         'submitted_by': receipt.submitted_by_employee.display_name if receipt.submitted_by_employee_id else
             receipt.actor_employee.display_name,
         'lines': [
@@ -240,6 +248,15 @@ def pending_data(receipt, request=None):
             for line in receipt.lines.all()
         ],
     }
+
+
+def visible_internal_receipt_submissions(request, workshops):
+    receipts = InternalSemiFinishedReceipt.objects.all()
+    if workshops is not None:
+        return receipts.filter(completed_craft__workshop_id__in=workshops)
+    return receipts.filter(
+        schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
+    )
 
 
 class InternalReceiptViewSet(viewsets.ViewSet):
@@ -283,12 +300,16 @@ class InternalReceiptViewSet(viewsets.ViewSet):
             raise ValidationError({'detail':str(error),'code':error.code})
         return Response({'data':receipt_result(receipt, replayed=replay)}, status=200 if replay else 201)
 
-    @extend_schema(request=None, responses={200:ReceiptResponse})
+    @extend_schema(request=ReceiptConfirmationInput,
+                   parameters=[OpenApiParameter('If-Match', str, location='header', required=True)],
+                   responses={200:ReceiptResponse})
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm(self, request, pk=None):
         pk = serializers.UUIDField().run_validation(pk)
+        serializer = ReceiptConfirmationInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
         try:
-            receipt, replay = confirm_receipt(request, pk)
+            receipt, replay = confirm_receipt(request, pk, zone_id=serializer.validated_data.get('zone_id'))
         except ReceiptQuantityError as error:
             raise ValidationError({'detail':str(error),'code':error.code})
         return Response({'data':receipt_result(receipt, replayed=replay)})
@@ -296,9 +317,9 @@ class InternalReceiptViewSet(viewsets.ViewSet):
     @extend_schema(responses={200:ReceiptResponse})
     @action(detail=False, methods=['get'], url_path='pending')
     def pending(self, request):
-        receipts = InternalSemiFinishedReceipt.objects.filter(
+        workshops = receipt_record_workshops(request, self.action_permission_map['pending'])
+        receipts = visible_internal_receipt_submissions(request, workshops).filter(
             status=InternalReceiptStatus.PENDING,
-            schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
         ).select_related('schedule_product__schedule__production_task', 'completed_craft',
                          'zone', 'submitted_by_employee', 'actor_employee').prefetch_related('lines').order_by('-submitted_at', '-id')
         return Response({'data': {'total': receipts.count(), 'items': [pending_data(receipt, request) for receipt in receipts]}})
@@ -315,7 +336,10 @@ class InternalReceiptViewSet(viewsets.ViewSet):
     def records(self, request):
         params = RecordFilter(data=request.query_params)
         params.is_valid(raise_exception=True)
+        workshops = receipt_record_workshops(request, self.action_permission_map['list'])
         if params.validated_data['direction'] == 'OUT':
+            if workshops is not None:
+                return PublicStockMovement.objects.none()
             return PublicStockMovement.objects.filter(direction='OUT', balance__stock_kind__in=['SEMI', 'CATALOG_SEMI'],
                 production_task_id__in=accessible_production_tasks(request).values('id')).select_related(
                     'balance__zone__warehouse','production_task','product_line','actor_employee').annotate(
@@ -334,9 +358,14 @@ class InternalReceiptViewSet(viewsets.ViewSet):
                 'tube_outsourcing_receipt_line__receipt__receipt_date', 'outsourcing_plan_receipt_line__receipt__receipt_date',
             ),
         )
-        return PublicStockMovement.objects.filter(direction='IN',balance__stock_kind__in=['SEMI', 'CATALOG_SEMI'],
-            production_task_id__in=accessible_production_tasks(request).values('id'),
-                    source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN', *CORRECTION_SOURCES]).select_related(
+        rows = PublicStockMovement.objects.filter(direction='IN', balance__stock_kind__in=['SEMI', 'CATALOG_SEMI'],
+            source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN', *CORRECTION_SOURCES])
+        if workshops is None:
+            rows = rows.filter(production_task_id__in=accessible_production_tasks(request).values('id'))
+        else:
+            receipts = visible_internal_receipt_submissions(request, workshops)
+            rows = rows.filter(source_type='INTERNAL_SEMI_RECEIPT', source_id__in=receipts.order_by().values('pk'))
+        return rows.select_related(
                     'balance__zone__warehouse','balance__unit','production_task','product_line','actor_employee').annotate(
                     # 旧金工回货的 source_id 指委外单，source_line_id 才是该次回货凭证。
                     inbound_document_id=Case(When(source_type='METAL_P4_EXTERNAL_RETURN', then=F('source_line_id')),
@@ -385,9 +414,9 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         if params.get('date_to'):
             rows = rows.filter(business_date__lte=params['date_to'])
         if params['direction'] == 'IN':
-            pending = InternalSemiFinishedReceipt.objects.filter(
+            workshops = receipt_record_workshops(request, self.action_permission_map['list'])
+            pending = visible_internal_receipt_submissions(request, workshops).filter(
                 status=InternalReceiptStatus.PENDING,
-                schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
             ).select_related('zone__warehouse', 'completed_craft__workshop', 'actor_employee', 'submitted_by_employee').prefetch_related('lines__unit')
             if params['source'] == 'EXTERNAL':
                 pending = pending.none()
@@ -426,12 +455,15 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         rows = self.records(request)
         inbound = request.query_params.get('direction', 'IN') == 'IN'
         if inbound:
-            pending = InternalSemiFinishedReceipt.objects.filter(
+            workshops = receipt_record_workshops(request, self.action_permission_map['retrieve'])
+            pending = visible_internal_receipt_submissions(request, workshops).filter(
                 pk=pk, status=InternalReceiptStatus.PENDING,
-                schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
             ).select_related('zone__warehouse', 'completed_craft__workshop', 'actor_employee', 'submitted_by_employee').prefetch_related('lines__unit').first()
             if pending is not None:
-                return Response({'data': pending_record_data(pending, request)})
+                data = pending_record_data(pending, request)
+                if has_permission(request, self.action_permission_map['confirm']):
+                    data['zones'] = semi_receipt_zone_options(pending.plan_category)
+                return Response({'data': data})
             # 历史链接和外发链接使用流水 ID，厂内单据链接直接使用入库单 ID。
             document = rows.filter(pk=pk).order_by().values_list('source_type', 'inbound_document_id').first()
             source_type, document_id = document or ('INTERNAL_SEMI_RECEIPT', pk)

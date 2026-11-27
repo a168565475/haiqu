@@ -142,8 +142,13 @@ function openDetail(row: UnifiedOutsourcingOrder): void {
   void router.push(unifiedOutsourcingDetailPath(row, warehouseWorkspace.value))
 }
 
+function offersWarehouseAction(row: UnifiedOutsourcingOrder, action: 'dispatch' | 'return'): boolean {
+  const remaining = row.plan_summary?.receivable_quantity
+  return row.warehouse_actions?.includes(action) === true && (action !== 'return' || remaining === undefined || Number(remaining) > 0)
+}
+
 function openWarehouseAction(row: UnifiedOutsourcingOrder, action: 'dispatch' | 'return'): void {
-  if (!warehouseWorkspace.value || loading.value || accessDenied.value || warehouseAction.value || !row.warehouse_actions?.includes(action)) return
+  if (!warehouseWorkspace.value || loading.value || accessDenied.value || warehouseAction.value || !offersWarehouseAction(row, action)) return
   warehouseAction.value = { row, action }
 }
 
@@ -247,8 +252,8 @@ watch([canViewOrders, warehouseWorkspace], () => {
     <section v-if="canViewOrders" class="erp-list-data">
     <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建车缝外发单</ElButton><ElButton v-if="canCreatePrint" class="erp-button-motion" type="primary" @click="router.push({ name: 'cut-piece-printing-new' })">新建丝印外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">历史单数量仅含所选加工厂；委外总单显示全单累计 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
       <div class="d4-list-table-area erp-list-table-frame"><ElTable :data="rows" border height="100%" row-key="row_key" class="d4-list-table" @row-click="openDetail">
+        <ElTableColumn label="生产任务单" width="130" show-overflow-tooltip><template #default="{ row }"><strong>{{ row.production_task_number || '—' }}</strong></template></ElTableColumn>
         <ElTableColumn prop="order_number" label="外发单号" width="170" show-overflow-tooltip><template #default="{ row }"><RouterLink class="order-number-link" :to="unifiedOutsourcingDetailPath(row, warehouseWorkspace)" @click.stop>{{ row.order_number }}</RouterLink></template></ElTableColumn>
-        <ElTableColumn label="生产任务单" width="130" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
         <ElTableColumn label="产品名称" min-width="155" show-overflow-tooltip><template #default="{ row }"><span class="table-product">{{ productName(row) }}</span></template></ElTableColumn>
         <ElTableColumn label="产品材质" width="95" class-name="outsourcing-product-material" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'material') }}</template></ElTableColumn>
         <ElTableColumn label="货号" width="85" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'item_number') }}</template></ElTableColumn>
@@ -272,8 +277,8 @@ watch([canViewOrders, warehouseWorkspace], () => {
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem command="detail">查看详情</ElDropdownItem>
-                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('dispatch')" command="dispatch" :disabled="loading || accessDenied || Boolean(warehouseAction)">材料发出</ElDropdownItem>
-                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" command="return" :disabled="loading || accessDenied || Boolean(warehouseAction)">外发入库</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && offersWarehouseAction(row, 'dispatch')" command="dispatch" :disabled="loading || accessDenied || Boolean(warehouseAction)">材料发出</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && offersWarehouseAction(row, 'return')" command="return" :disabled="loading || accessDenied || Boolean(warehouseAction)">外发入库</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintRow(row)" command="print-processing" :aria-label="`${row.order_number} 加工单打印`" :disabled="loading || Boolean(printRequest)">加工单打印</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintSpray(row)" command="print-spray" :aria-label="`${row.order_number} 管材喷塑打印`" :disabled="loading || Boolean(printRequest)">管材喷塑打印</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintRow(row)" command="pdf-processing" :aria-label="`${row.order_number} 下载加工单 PDF`" :disabled="loading || Boolean(printRequest)">下载加工单 PDF</ElDropdownItem>

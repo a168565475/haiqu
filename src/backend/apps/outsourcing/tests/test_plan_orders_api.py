@@ -7,7 +7,9 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
-from apps.inventory.models import PublicStockMovement
+from apps.inventory.models import PublicStockBalance, PublicStockMovement
+from apps.inventory.public_stock_identity import build_semi_finished_identity
+from apps.inventory.public_stock_services import credit_public_stock
 from apps.inventory.tube_processing_services import _usage, assert_tube_reports_cover_usage
 from apps.inventory.tube_outsourcing_reservations import tube_raw_reserved_quantities
 from apps.workshop_reporting.models import WorkReportLine
@@ -133,6 +135,90 @@ class PlanOrdersApiTests(PlanApiFixture, APITestCase):
         self.assertEqual(TubeOutsourcingOrder.objects.filter(plan_id=order['id']).count(), 1)
         order = self.write_plan(order, 'dispatch', self.dispatch_payload(quantity='100'))
         self.assertEqual(order['plan_summary']['dispatched_quantity'], '300')
+
+    def test_dispatch_from_workshop_and_two_stock_zones_is_atomic_and_replay_safe(self):
+        first_stock = self.receive(45).stock_movement.balance
+        second_zone = self.make_zone('SECOND-SEMI', 'SEMI_FINISHED')
+        identity = build_semi_finished_identity(bom_line=self.metal_bom_line, completed_craft=self.craft, unit=self.piece_unit)
+        second_stock = credit_public_stock(identity=identity, zone=second_zone, quantity=25,
+            source_type='TEST_TUBE_OPENING', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(),
+            actor_employee=self.employee).balance
+        order = self.plan()
+        self.assertTrue(order['plan_options']['per_line_sources'])
+        payload = self.dispatch_payload(quantity='10')
+        first_batch = {key: payload.pop(key) for key in ('source_kind', 'zone_id', 'lines')}
+        stock_batch = {**first_batch, 'source_kind': 'PUBLIC_SEMI', 'zone_id': str(self.semi_zone.pk),
+            'lines': [{**first_batch['lines'][0], 'quantity': '16'}]}
+        payload['batches'] = [first_batch, stock_batch, {**stock_batch, 'zone_id': str(second_zone.pk),
+            'lines': [{**stock_batch['lines'][0], 'quantity': '26'}]}]
+
+        self.write_plan(order, 'dispatch', payload, expected=400)
+        self.assertFalse(TubeOutsourcingOrder.objects.filter(plan_id=order['id']).exists())
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').exists())
+        first_stock.refresh_from_db()
+        second_stock.refresh_from_db()
+        self.assertEqual((first_stock.quantity, second_stock.quantity), (45, 25))
+
+        payload['batches'][2]['lines'][0]['quantity'] = '20'
+        saved = self.write_plan(order, 'dispatch', payload)
+        replay = self.write_plan(order, 'dispatch', payload)
+        self.assertEqual(saved['version'], replay['version'])
+        self.assertEqual(replay['plan_summary']['dispatched_quantity'], '46')
+        self.assertCountEqual(
+            TubeOutsourcingOrder.objects.filter(plan_id=order['id']).values_list('source_kind', 'zone_id'),
+            [('METAL', None), ('PUBLIC_SEMI', self.semi_zone.pk), ('PUBLIC_SEMI', second_zone.pk)])
+        first_stock.refresh_from_db()
+        second_stock.refresh_from_db()
+        self.assertEqual((first_stock.quantity, second_stock.quantity), (29, 5))
+        self.assertEqual(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').count(), 2)
+
+    @override_settings(PUBLIC_STOCK_ISSUES_ENABLED=True)
+    def test_metal_receipt_and_outsourcing_use_processed_stock_in_the_raw_pipe_warehouse(self):
+        warehouse = self.raw_zone.warehouse
+        warehouse.warehouse_name = '原料管材仓'
+        warehouse.save(update_fields=['warehouse_name'])
+        self.source.completed_pieces = 0
+        self.source.save(update_fields=['completed_pieces'])
+        raw_quantity = self.raw_balance.quantity
+        receipt_url = '/api/v1/semi-finished-receipts/'
+        zone_id = str(self.raw_zone.pk)
+        preview = self.client.get(receipt_url + 'preview/', {
+            'schedule_product_id': str(self.schedule_product.pk), 'plan_category': 'METAL'}, HTTP_HOST='localhost')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertIn(zone_id, [zone['id'] for zone in preview.data['data']['zones']])
+        submitted = self.client.post(receipt_url, {'request_id': str(uuid.uuid4()),
+            'schedule_product_id': str(self.schedule_product.pk), 'plan_category': 'METAL',
+            'receipt_date': str(timezone.localdate()), 'lines': [
+                {'bom_line_id': str(self.metal_bom_line.pk), 'quantity': '30'}]},
+            format='json', HTTP_HOST='localhost', HTTP_IF_MATCH=preview['ETag'])
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        detail_url = receipt_url + submitted.data['data']['receipt_id'] + '/'
+        detail = self.client.get(detail_url, HTTP_HOST='localhost')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertIn(zone_id, [zone['id'] for zone in detail.data['data']['zones']])
+        confirmed = self.client.post(detail_url + 'confirm/', {'zone_id': zone_id},
+            format='json', HTTP_HOST='localhost', HTTP_IF_MATCH=detail.data['data']['etag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        order = self.plan()
+        sources = [item['value'] for item in order['plan_options']['source_kinds']]
+        self.assertEqual(sources, ['METAL', 'PUBLIC_SEMI'])
+        query = {'plan_id': order['id'], 'schedule_product_id': str(self.schedule_product.pk),
+            'source_kind': 'PUBLIC_SEMI', 'zone_id': zone_id}
+        preview = self.client.get(BASE + 'source-context/', query, HTTP_HOST='localhost')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['data']['rows'][0]['max_quantity'], '30')
+        outside = self.make_zone('OTHER-RAW', 'MATERIAL')
+        invalid = self.client.get(BASE + 'source-context/', {**query, 'zone_id': str(outside.pk)}, HTTP_HOST='localhost')
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+        payload = {**self.dispatch_payload(source='PUBLIC_SEMI', quantity='12'), 'zone_id': zone_id}
+        sent = self.write_plan(order, 'dispatch', payload)
+        self.assertEqual(sent['plan_summary']['dispatched_quantity'], '12')
+        balance = PublicStockBalance.objects.get(zone=self.raw_zone, stock_kind='SEMI',
+            identity_snapshot__completed_craft__code='METAL')
+        self.assertEqual(balance.quantity, 18)
+        self.raw_balance.refresh_from_db()
+        self.assertEqual(self.raw_balance.quantity, raw_quantity)
 
     def test_receipt_above_dispatch_and_target_keeps_actual_stock_and_can_continue(self):
         order = self.plan(quantity='1000')

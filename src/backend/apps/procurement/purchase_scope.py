@@ -1,4 +1,5 @@
 from django.db.models import Case, Q, Value, When
+from django.db.models.functions import Trim
 from rest_framework.exceptions import ValidationError
 
 from apps.access_control.module_operations import PACKAGING_PURCHASE as PACKAGING_PERMISSION
@@ -38,16 +39,25 @@ def packaging_order_filter(prefix=""):
     return Q(**{f"{prefix}purchase_group__purchase_scope": PurchaseScope.PACKAGING})
 
 
-def packaging_bom_lines(queryset):
+def _with_packaging_flag(queryset, section_type, title, category):
     saved_key = "material_selection_snapshot__category_key"
     return queryset.alias(is_packaging=Case(
         When(**{saved_key: "PACKAGING"}, then=Value(True)),
         When(**{f"{saved_key}__in": list(RAW_SECTIONS)}, then=Value(False)),
-        When(section__section_type="PROFILE", then=Value(False)),
+        When(**{section_type: "PROFILE"}, then=Value(False)),
         *(When(**{f"{field}__in": aliases}, then=Value(key == "PACKAGING"))
-          for field in ("section__title", "category") for key, (_, aliases) in RAW_SECTIONS.items()),
+          for field in (title, category) for key, (_, aliases) in RAW_SECTIONS.items()),
         default=Value(False),
-    )).filter(is_packaging=True)
+    ))
+
+
+def packaging_bom_lines(queryset):
+    return _with_packaging_flag(queryset, "section__section_type", "section__title", "category").filter(is_packaging=True)
+
+
+def standard_order_lines(queryset):
+    queryset = queryset.exclude(packaging_order_filter("purchase_order__")).alias(trimmed_title=Trim("section_title_snapshot"))
+    return _with_packaging_flag(queryset, "section_type_snapshot", "trimmed_title", "category_snapshot").filter(is_packaging=False)
 
 
 def validate_source_scope(packaging, purchase_scope, number):

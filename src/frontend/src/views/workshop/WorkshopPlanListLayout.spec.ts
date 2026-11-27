@@ -9,11 +9,15 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
   fetchScheduleItems: vi.fn(),
+  fetchSchedulePlanCategories: vi.fn().mockResolvedValue(['METAL', 'CUTTING', 'SEWING', 'ASSEMBLY']),
   fetchPlanWageStatuses: vi.fn(),
 }))
 vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: state.push, replace: state.replace }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: true }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }) }))
-vi.mock('@/api/productionScheduling', () => ({ fetchScheduleItems: state.fetchScheduleItems }))
+vi.mock('@/api/productionScheduling', () => ({
+  fetchScheduleItems: state.fetchScheduleItems,
+  fetchSchedulePlanCategories: state.fetchSchedulePlanCategories,
+}))
 vi.mock('@/api/workshopReporting', () => ({ fetchPlanWageStatuses: state.fetchPlanWageStatuses }))
 vi.mock('@/views/workshop/wage-schemes/WageSchemeDetailDialog.vue', () => ({ default: { template: '<div />' } }))
 
@@ -40,7 +44,7 @@ async function setup() {
   return wrapper
 }
 
-describe('内部计划列表布局与独立产品字段', () => {
+describe('作业计划列表布局与独立产品字段', () => {
   it.each([
     ['workshop-metalworking-plan', 'METAL'], ['workshop-cutting-plan', 'CUTTING'],
     ['workshop-sewing-plan', 'SEWING'], ['workshop-assembly-plan', 'ASSEMBLY'],
@@ -49,7 +53,7 @@ describe('内部计划列表布局与独立产品字段', () => {
     const view = await setup()
     expect(view.find('.erp-list-filter .internal-plan-tabs').exists()).toBe(false)
     expect(view.get('.erp-list-data .internal-plan-tabs').findAll('[role="tab"]')).toHaveLength(4)
-    expect(view.get('.erp-list-heading').text()).toBe('内部计划')
+    expect(view.get('.erp-list-heading').text()).toBe('作业计划')
     const headers = view.findAll('.el-table__header th .cell').map(cell => cell.text())
     expect(headers.filter(label => label === '颜色')).toHaveLength(1)
     expect(headers.slice(headers.indexOf('规格'), headers.indexOf('规格') + 3)).toEqual(['规格', '颜色', '材质'])

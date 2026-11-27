@@ -9,7 +9,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 import { formatTime, purchaseQuantityText, quantityValue } from '@/views/procurement/purchaseOrderDetailDisplay'
 import { isHardwareWeightLine, isKilogramUnit } from '@/views/procurement/purchaseWeight'
 
-const props = defineProps<{ purchaseOrderId: string; materialSection?: string; hideMaterialSection?: boolean; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean; expandSingle?: boolean; showPipeRoots?: boolean }>()
+const props = defineProps<{ purchaseOrderId: string; materialSection?: string; hideMaterialSection?: boolean; refreshKey?: number; inbounds?: PurchaseReadInbound[]; colors?: Record<string, string>; embedded?: boolean; expandSingle?: boolean; showPipeRoots?: boolean; receiptReference?: { label: string; number?: string; purchaseOrderNumber: string } }>()
 const accordionName = useId()
 const auth = useAuthStore()
 const records = ref<PurchaseReadInbound[]>([])
@@ -106,7 +106,12 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <ElIcon class="expand-icon"><ArrowRight /></ElIcon>
           <span class="summary-main" tabindex="0" aria-label="批次信息，可横向滚动">
           <strong v-if="!expandSingle" class="batch-label">第 {{ records.length - index }} 批</strong>
-          <strong>{{ record.inbound_number }}</strong>
+          <template v-if="receiptReference">
+            <span v-if="receiptReference.number">{{ receiptReference.label }} <strong>{{ receiptReference.number }}</strong></span>
+            <span>入库单号 {{ record.inbound_number }}</span>
+            <span v-if="receiptReference.purchaseOrderNumber">采购单号 {{ receiptReference.purchaseOrderNumber }}</span>
+          </template>
+          <strong v-else>{{ record.inbound_number }}</strong>
           <span v-if="!hideMaterialSection" class="summary-text" data-testid="inbound-material-section">材料分区 {{ record.material_section_display || '未登记' }}</span>
           <span class="summary-text">到货日期 {{ formatTime(record.inbound_date, true) }}</span>
           <span class="summary-text">{{ record.lines.length }} 项材料</span>

@@ -6,7 +6,7 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
-from apps.inventory.models import MaterialStockBalance, MaterialStockMovement, PublicStockMovement
+from apps.inventory.models import MaterialStockBalance, MaterialStockMovement, PublicStockBalance, PublicStockMovement
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.production_scheduling.tests.test_production_scheduling_api import ensure_schedule_test_references
 from apps.reference_data.models import ProductCategory, ProductionUnit
@@ -133,6 +133,42 @@ class CuttingIssueRegressionTests(APITestCase):
         self.assertEqual(submitted.data["data"]["status"], "PENDING_REVIEW")
         self.assert_stock_unchanged()
 
+    def test_zero_fabric_is_hidden_only_when_creating_an_issue(self):
+        created = self.client.post("/api/v1/material-issues/", self.payload("3"), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        issue_id = created.data["data"]["id"]
+        query = {
+            "production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+            "workshop_id": self.workshop.pk, "plan_category": "CUTTING",
+        }
+        url = "/api/v1/material-issues/requirements/"
+        MaterialStockBalance.objects.filter(pk=self.stock.pk).update(quantity=3)
+        positive = self.client.get(url, query)
+        self.assertEqual(Decimal(positive.data["data"]["items"][0]["max_issue_quantity"]), 3)
+        MaterialStockBalance.objects.filter(pk=self.stock.pk).update(quantity=0)
+        self.assertEqual(self.client.get(url, query).data["data"]["items"], [])
+        existing = self.client.get(url, {**query, "issue_id": issue_id})
+        self.assertEqual(existing.data["data"]["items"][0]["requirement_id"], self.requirement_id)
+        self.assert_fabric_line(self.client.get(f"/api/v1/material-issues/{issue_id}/"), "3")
+
+    def test_external_fabric_is_hidden_from_candidates_but_saved_detail_remains(self):
+        created = self.client.post("/api/v1/material-issues/", self.payload("3"), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        issue_id = created.data["data"]["id"]
+        self.bom_line.raw_values = {**self.bom_line.raw_values, "purchase_required": False}
+        self.bom_line.save(update_fields=["raw_values"])
+        url = "/api/v1/material-issues/requirements/"
+        query = {"production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+                 "workshop_id": self.workshop.pk, "plan_category": "CUTTING"}
+        candidates = self.client.get(url, query)
+        self.assertEqual(candidates.status_code, 200, candidates.data)
+        self.assertEqual(candidates.data["data"]["items"], [])
+        existing = self.client.get(url, {**query, "issue_id": issue_id})
+        self.assertEqual(existing.status_code, 200, existing.data)
+        self.assertEqual(existing.data["data"]["items"][0]["requirement_id"], self.requirement_id)
+        self.assert_fabric_line(self.client.get(f"/api/v1/material-issues/{issue_id}/"), "3")
+        self.assert_stock_unchanged()
+
 
 @override_settings(PUBLIC_STOCK_ISSUES_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class PublicPipeIssueRegressionTests(public_fixture.PublicIssueFixture, APITestCase):
@@ -148,3 +184,62 @@ class PublicPipeIssueRegressionTests(public_fixture.PublicIssueFixture, APITestC
     test_pipe_must_be_whole_bar_and_multiple_components_share_one_stock_pool = (
         public_fixture.PublicIssueServiceTests.test_pipe_must_be_whole_bar_and_multiple_components_share_one_stock_pool
     )
+
+    def test_saved_issue_detail_survives_an_invalid_stock_identity_without_permitting_issue(self):
+        issue = self.submit(self.create("12"))
+        line = issue.lines.get()
+        line.conversion_snapshot["public_identity"]["identity_key"] = "0" * 64
+        line.save(update_fields=["conversion_snapshot"])
+        self.client.force_authenticate(user=self.reviewer_user)
+        path = f"/api/v1/material-issues/{issue.pk}/"
+
+        detail = self.client.get(path)
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertTrue(detail.data["data"]["stock_quantities_unavailable"])
+        saved_line, = detail.data["data"]["lines"]
+        self.assertEqual(saved_line["material_name"], line.material_name_snapshot)
+        self.assertEqual(Decimal(saved_line["requested_quantity"]), 12)
+        self.assertIsNone(saved_line["max_issue_quantity"])
+
+        confirm = self.client.post(
+            path + "confirm-issue/", {"request_id": str(uuid.uuid4())},
+            format="json", HTTP_IF_MATCH=detail["ETag"],
+        )
+        self.assertEqual(confirm.status_code, 400, confirm.data)
+        self.assertEqual(confirm.data["error"]["code"], "PUBLIC_STOCK_IDENTITY_INVALID")
+        issue.refresh_from_db()
+        self.assertEqual(issue.status, "PENDING_REVIEW")
+        self.public_pipe.refresh_from_db()
+        self.assertEqual(self.public_pipe.quantity, 10)
+
+    def test_assembly_new_candidates_hide_zero_raw_pipe_and_follow_semi_stock(self):
+        url = "/api/v1/material-issues/requirements/"
+        query = {"production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+                 "workshop_id": self.assembly.pk, "plan_category": "ASSEMBLY"}
+
+        def candidates():
+            response = self.client.get(url, query)
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data["data"]["items"]
+
+        self.assertTrue(any(row["line_type"] == "RAW" and row["section_code"] == "PROFILE"
+                            and Decimal(row["max_issue_quantity"]) > 0 for row in candidates()))
+        PublicStockBalance.objects.filter(pk=self.public_pipe.pk).update(quantity=0, meter_quantity=0)
+        PublicStockBalance.objects.filter(pk=self.public_semi.pk).update(quantity=0)
+        self.assertFalse(any(row["line_type"] == "RAW" and row["section_code"] == "PROFILE" for row in candidates()))
+        self.credit(self.semi_identity, self.semi_zone, 20)
+        updated = candidates()
+        self.assertFalse(any(row["line_type"] == "RAW" and row["section_code"] == "PROFILE" for row in updated))
+        self.assertTrue(any(row["line_type"] == "SEMI" and Decimal(row["max_issue_quantity"]) > 0 for row in updated))
+
+    def test_external_raw_pipe_does_not_hide_available_semi_finished_stock(self):
+        self.bom_line.raw_values["purchase_required"] = False
+        self.bom_line.save(update_fields=["raw_values"])
+        response = self.client.get("/api/v1/material-issues/requirements/", {
+            "production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+            "workshop_id": self.assembly.pk, "plan_category": "ASSEMBLY",
+        })
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["data"]["items"]
+        self.assertFalse(any(row["line_type"] == "RAW" and row["section_code"] == "PROFILE" for row in rows))
+        self.assertTrue(any(row["line_type"] == "SEMI" and Decimal(row["max_issue_quantity"]) > 0 for row in rows))

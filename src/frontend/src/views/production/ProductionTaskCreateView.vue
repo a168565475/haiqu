@@ -19,6 +19,7 @@ import { importImageUrl, recoverSavedProductionTaskImport } from '@/api/producti
 import { importedBoolean, importedText } from '@/utils/productionTaskImport'
 import type { ImportPayload, ProductionTaskImport } from '@/types/productionTaskImport'
 import type { ProductEntryDraft } from '@/types/productCatalog'
+import { taskWriteResultNotice } from './productionTaskDisplay'
 
 interface ColorProductionLine {
   key: string
@@ -300,7 +301,7 @@ function nextStep() {
 
 async function save(submitToPmc: boolean) {
   if (importActive.value && (submitToPmc || !appliedImportId.value)) { ElMessage.warning('请先填入并核对导入内容，本次只能保存草稿。'); return }
-  if (!validateStepOne() || !validateLines() || !validatePlan() ) return
+  if (submitting.value || !validateStepOne() || !validateLines() || !validatePlan()) return
   submitting.value = true
   let createdId = ''
   try {
@@ -330,20 +331,21 @@ async function save(submitToPmc: boolean) {
         const submitted = await submitProductionTask(created.data.id, created.etag)
         ElMessage.success(`生产任务单 ${submitted.data.task_number} 已提交 PMC。`)
       } catch (error) {
-        ElMessage.warning(`生产任务单已保存为草稿，但提交 PMC 失败：${apiError(error)}`)
+        ElMessage.warning(taskWriteResultNotice(error, created.data.task_number, '提交 PMC') ?? `生产任务单已保存为草稿，但提交 PMC 失败：${apiError(error)}`)
       }
     } else {
       ElMessage.success(`生产任务单 ${created.data.task_number} 已保存为草稿。`)
     }
     await router.replace({ name: 'production-task-detail', params: { taskId: created.data.id } })
   } catch (error) {
-    if (!createdId) ElMessage.error(apiError(error))
+    if (!createdId) ElMessage.error(taskWriteResultNotice(error, `HT${taskNumberSuffix.value}`, '建单') ?? apiError(error))
   } finally {
     submitting.value = false
   }
 }
 
 watch(manualMode, async value => {
+  if (!options.value) return
   activeStep.value = 1
   if (value && !categories.value.length) await loadCatalog()
   if (!value) {

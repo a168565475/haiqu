@@ -15,7 +15,7 @@ from apps.inventory.models import MaterialStockBalance, PublicStockBalance, Ware
 from apps.inventory.public_stock_identity import build_pipe_stock_identity, validate_public_identity
 from apps.inventory.public_bom_snapshot import freeze_bom_line
 from apps.inventory.public_stock_mode import public_flow_enabled
-from apps.inventory.public_stock_services import _lock_source, debit_public_stock, lock_public_stock_locations
+from apps.inventory.public_stock_services import _lock_source, debit_public_stock, lock_public_stock_locations, stock_warehouse_filter
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 
@@ -117,13 +117,8 @@ def _public_filter(identities):
                          raw_bar_length_m=identity["raw_bar_length_m"],
                          raw_material__archived_at__isnull=True, raw_material__unit_id=identity["unit_id"],
                          raw_material__item_type="MATERIAL", raw_material__category__category_name="管材",
-                         raw_material__category__status="ACTIVE", raw_material__category__archived_at__isnull=True,
-                         zone__warehouse__warehouse_type="MATERIAL")
-        elif identity["stock_kind"] == "CATALOG_RAW":
-            current &= Q(zone__warehouse__warehouse_type="MATERIAL")
-        else:
-            current &= Q(zone__warehouse__warehouse_type="SEMI_FINISHED")
-        result |= current
+                         raw_material__category__status="ACTIVE", raw_material__category__archived_at__isnull=True)
+        result |= current & stock_warehouse_filter(identity)
     return result
 
 

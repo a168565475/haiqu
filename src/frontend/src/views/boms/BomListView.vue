@@ -269,8 +269,8 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
       <div class="erp-list-table-frame">
       <ElAlert v-if="errorMessage" type="error" :closable="false" show-icon>{{ errorMessage }}</ElAlert>
       <ElTable v-else v-loading="loading" :data="rows" height="100%" border row-key="id" empty-text="暂无 BOM，可从生产任务单新建">
+        <ElTableColumn label="生产任务单号" width="120"><template #default="scope"><strong class="cell-single">{{ scope.row.production_task_number || '—' }}</strong></template></ElTableColumn>
         <ElTableColumn prop="bom_number" label="BOM 编号" width="150" />
-        <ElTableColumn label="生产任务单" width="120"><template #default="scope"><span class="cell-single">{{ scope.row.production_task_number || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="产品编码" width="160"><template #default="scope"><span class="cell-single">{{ scope.row.product_code_snapshot || scope.row.product_number_snapshot || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="产品名称" width="220"><template #default="scope"><span class="cell-single">{{ scope.row.product_name_snapshot || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="规格" width="180" show-overflow-tooltip><template #default="scope"><span class="cell-single">{{ scope.row.specification_snapshot || '—' }}</span></template></ElTableColumn>

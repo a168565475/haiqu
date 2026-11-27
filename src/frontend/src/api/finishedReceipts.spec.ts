@@ -17,10 +17,11 @@ it('库位详情携带与库存汇总一致的样品排除参数', async () => {
   }))
 })
 
-it('仓管确认成品待入库记录使用独立确认动作', async () => {
+it('仓管确认成品待入库时一起提交库位、包装和单据版本', async () => {
   post.mockResolvedValue({ data: { data: { id: 'receipt-1', receipt_number: 'CPRK-001', status: 'CONFIRMED', replayed: false } } })
-  await expect(confirmAssemblyReceiptRecord('receipt-1')).resolves.toMatchObject({ status: 'CONFIRMED' })
-  expect(post).toHaveBeenCalledWith('/api/v1/assembly-finished-receipts/receipt-1/confirm/', undefined, { timeout: 30000 })
+  const placement = { location_id: 'location-1', quantity_per_box: 10 }
+  await expect(confirmAssemblyReceiptRecord('receipt-1', placement, '"v1"')).resolves.toMatchObject({ status: 'CONFIRMED' })
+  expect(post).toHaveBeenCalledWith('/api/v1/assembly-finished-receipts/receipt-1/confirm/', placement, { headers: { 'If-Match': '"v1"' }, timeout: 30000 })
 })
 
 it('删除装配待入库记录携带If-Match并接受204空响应', async () => {

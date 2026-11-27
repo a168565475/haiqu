@@ -11,7 +11,7 @@ from apps.workshop_reporting.models import (
     WageScheme, WageSchemeLineStatus, WageSchemeStatus, WorkReportLine,
     WorkshopPlanExecution, WorkshopPlanStatus,
 )
-from apps.workshop_reporting.selectors import accessible_work_reports, allowed_workshop_ids
+from apps.workshop_reporting.selectors import accessible_work_reports, allowed_workshop_ids, schedule_wage_line_prefetch
 from apps.workshop_reporting.services import wage_scheme_progress
 from apps.workshop_reporting.tube_plan_services import tube_plan_is_complete
 
@@ -125,7 +125,8 @@ def reporting_summary(request, schedule, products):
                     active_by_scope.setdefault(key, []).append(scheme)
         # 保留全部方案头以显示最新状态；金额和进度只需当前有效版本的明细。
         prefetch_related_objects(
-            [scheme for candidates in active_by_scope.values() for scheme in candidates], "lines",
+            [scheme for candidates in active_by_scope.values() for scheme in candidates],
+            schedule_wage_line_prefetch(),
         )
 
     amounts = {}

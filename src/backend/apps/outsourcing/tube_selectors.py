@@ -14,6 +14,7 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.exceptions import Conflict
 from apps.inventory.models import WarehouseZone
 from apps.inventory.public_stock_mode import public_flow_enabled
+from apps.inventory.public_stock_services import raw_pipe_warehouse_filter
 from apps.production_scheduling.models import ProductionScheduleProduct, ProductionScheduleProductCraft
 from apps.production_tasks.selectors import production_task_product_image
 from apps.sales_orders.presentation import specification_display
@@ -150,8 +151,11 @@ def source_zone(source_kind, zone_id):
     if not zone_id:
         raise ValidationError({'zone_id': '请选择来源仓库和库区。'})
     warehouse_type = 'MATERIAL' if source_kind == TubeSourceKind.RAW_PIPE else 'SEMI_FINISHED'
-    zone = WarehouseZone.objects.select_related('warehouse').filter(pk=zone_id, status='ACTIVE',
-        warehouse__status='ACTIVE', warehouse__warehouse_type=warehouse_type).first()
+    locations = Q(warehouse__warehouse_type=warehouse_type)
+    if source_kind == TubeSourceKind.PUBLIC_SEMI:
+        locations |= raw_pipe_warehouse_filter()
+    zone = WarehouseZone.objects.select_related('warehouse').filter(
+        locations, pk=zone_id, status='ACTIVE', warehouse__status='ACTIVE').first()
     if zone is None:
         raise ValidationError({'zone_id': '来源库区已停用或与所选材料来源不符。'})
     return zone

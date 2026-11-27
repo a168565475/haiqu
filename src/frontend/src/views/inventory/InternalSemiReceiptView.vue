@@ -14,7 +14,7 @@ import '@/styles/metalInternalReceipt.scss'
 const route = useRoute(), router = useRouter()
 const preview = ref<ReceiptPreview | null>(null), loading = ref(false), saving = ref(false), error = ref('')
 const previewReady = ref(false)
-const zoneId = ref(''), receiptDate = ref(''), remark = ref('')
+const receiptDate = ref(''), remark = ref('')
 const quantities = ref<Record<string,string | number>>({}), selected = ref<Record<string,boolean>>({})
 const pending = ref<{payload:ReceiptPayload; etag:string} | null>(null)
 const sourceId = String(route.query.schedule_product_id), sourceCategory = String(route.query.plan_category)
@@ -48,9 +48,6 @@ const quantityTotal = computed(() => {
   for (const line of selection.value) totals.set(lineUnit(line), (totals.get(lineUnit(line)) || 0) + Number(quantities.value[line.bom_line_id] || 0))
   return [...totals].map(([unit, quantity]) => `${quantity.toLocaleString('zh-CN')} ${unit}`).join('、') || '0'
 })
-const warehouses = computed(() => [...new Set(preview.value?.zones.map(zone => zone.warehouse) || [])])
-const warehouse = ref('')
-const zones = computed(() => preview.value?.zones.filter(zone => zone.warehouse === warehouse.value) || [])
 const number = (value:string) => Number(value).toLocaleString('zh-CN')
 const info = computed(() => [
   ['生产任务单号', preview.value?.production_order], ['产品名称', preview.value?.product],
@@ -85,8 +82,6 @@ async function load() {
     owned.assertCurrent()
     preview.value = data
     receiptDate.value ||= preview.value.receipt_date
-    warehouse.value ||= preview.value.zones.find(zone => zone.id === zoneId.value)?.warehouse || warehouses.value[0] || ''
-    zoneId.value ||= zones.value[0]?.id || ''
     if (!pending.value) { quantities.value = {}; selected.value = {} }
     previewReady.value = true
   } catch (cause) { if (isCancel(cause) || !owned.isCurrent()) return; error.value = errorText(cause) }
@@ -97,7 +92,7 @@ async function submit() {
   if (!pending.value) {
     if (!preview.value || !previewReady.value) return
     error.value = ''
-    if (!zoneId.value || !receiptDate.value) { error.value = '请选择库区和日期。'; return }
+    if (!receiptDate.value) { error.value = '请选择收货日期。'; return }
     if (usesRowQuantities.value) {
       for (const line of preview.value.lines) {
         const raw = String(quantities.value[line.bom_line_id] ?? '').trim()
@@ -117,7 +112,7 @@ async function submit() {
     }
     const original = { etag: preview.value.etag, payload: { request_id: crypto.randomUUID(),
       schedule_product_id: preview.value.schedule_product_id, plan_category: preview.value.plan_category,
-      zone_id: zoneId.value, receipt_date: receiptDate.value, remark: remark.value.trim(),
+      receipt_date: receiptDate.value, remark: remark.value.trim(),
       lines: selection.value.map(line => ({bom_line_id:line.bom_line_id,quantity:String(quantities.value[line.bom_line_id])})),
     } }
     try {
@@ -139,7 +134,7 @@ async function submit() {
     if (isCancel(cause) || !owned.isCurrent()) return
     const status = cause instanceof AxiosError ? cause.response?.status : undefined
     const code = cause instanceof AxiosError ? cause.response?.data?.error?.code : undefined
-    if (status && ([400, 412, 428].includes(status) || (status === 409 && code === 'RECEIPT_REQUEST_DELETED'))) {
+    if (status && ([400, 412, 428].includes(status) || (status === 409 && ['RECEIPT_REQUEST_DELETED', 'DATABASE_MIGRATION_REQUIRED'].includes(code ?? '')))) {
       if (!consumePending()) return
       error.value = errorText(cause)
       if (status === 412) error.value += ' 请刷新后重新填写。'
@@ -158,7 +153,7 @@ onMounted(() => {
         || pending.value.payload.plan_category !== sourceCategory
         || !Array.isArray(pending.value.payload.lines)) throw new Error('未确认请求格式不完整')
       const payload = pending.value.payload
-      zoneId.value = payload.zone_id; receiptDate.value = payload.receipt_date; remark.value = payload.remark
+      receiptDate.value = payload.receipt_date; remark.value = payload.remark
       quantities.value = Object.fromEntries(payload.lines.map(line => [line.bom_line_id,line.quantity]))
       selected.value = Object.fromEntries(payload.lines.map(line => [line.bom_line_id,true]))
     }
@@ -178,8 +173,6 @@ onMounted(() => {
         <div class="section-heading"><div><h2>本次入库</h2><span class="muted">{{ usesRowQuantities ? '按 BOM 中各项需求登记，已入库和车间直发数量不重复入库' : '按订单净需求和实际已领投入共同控制上限' }}</span></div><ElButton :icon="Refresh" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" @click="load">刷新</ElButton></div>
         <div class="field-grid d1-fields erp-flat-form">
           <label class="form-field required"><span>收货日期</span><ElDatePicker v-model="receiptDate" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" popper-class="schedule-date-popper" aria-label="收货日期" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" /></label>
-          <label class="form-field required"><span>材料仓</span><ElSelect v-model="warehouse" aria-label="材料仓" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" @change="zoneId = zones[0]?.id || ''"><ElOption v-for="name in warehouses" :key="name" :label="name" :value="name" /></ElSelect></label>
-          <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending"><ElOption v-for="zone in zones" :key="zone.id" :label="zone.name" :value="zone.id" /></ElSelect></label>
           <label class="form-field"><span>入库人</span><ElInput :model-value="preview.actor" disabled aria-label="入库人" /></label>
         </div>
         <MetalReceiptTable :columns="columns" :rows="preview.lines" row-key="bom_line_id" class="erp-table-editor d1-lines" :empty="preview.excluded.length ? '本计划管材需外发喷塑，请在原外发单登记回库。' : '暂无可入库部位'">
@@ -199,6 +192,6 @@ onMounted(() => {
       </section>
     </template>
     <section v-else class="panel d1-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton :icon="Refresh" @click="load">重新加载</ElButton></template></section>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal }}</strong> <span class="muted"> · {{ selection.length }} 种{{ isCutting ? '裁片' : '部位' }}</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="storageBlocked || !owned.isCurrent() || !preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageBlocked || !owned.isCurrent() || loading || saving || (!pending && (!preview || !previewReady || !selection.length))" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal }}</strong> <span class="muted"> · {{ selection.length }} 种{{ isCutting ? '裁片' : '部位' }}</span><small>提交后由仓库分配库区并确认入库</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="storageBlocked || !owned.isCurrent() || !preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageBlocked || !owned.isCurrent() || loading || saving || (!pending && (!preview || !previewReady || !selection.length))" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 </template>

@@ -7,7 +7,7 @@ import '@icon-park/vue-next/styles/index.css'
 import { useAuthStore } from '@/stores/auth'
 import { systemSettings, canOpenSystemSetting } from '@/config/systemSettings'
 import { sidebarMenuItems as menuItems, settingsMenu, type MenuItem } from '@/config/sidebarMenu'
-import { canOpenMenu } from '@/router/pageAccess'
+import { canOpenMenu, hasWorkshopOnlyPlanAccess } from '@/router/pageAccess'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -15,17 +15,21 @@ const activeMenu = computed(() => {
   return typeof route.meta.activeMenu === 'string' ? route.meta.activeMenu : ''
 })
 
+const workshopOnlyScheduling = computed(() => hasWorkshopOnlyPlanAccess(authStore))
+
 const canShowMenuItem = (item: MenuItem) => {
+  if (workshopOnlyScheduling.value) {
+    if (item.key === 'workshop-scheduling') return false
+    if (item.key === 'warehouse-management' && !authStore.hasPermission('inventory.receive_material')) return false
+  }
   return canOpenMenu(item, authStore)
 }
 
 const visibleMenuItems = computed(() => {
-  return menuItems.flatMap((item) => {
-    if (item.children) {
-      const visibleChildren = item.children.filter(canShowMenuItem)
-      return visibleChildren.length > 0 ? [{ ...item, children: visibleChildren }] : []
-    }
-    return canShowMenuItem(item) ? [item] : []
+  return menuItems.filter(canShowMenuItem).flatMap((item) => {
+    if (!item.children) return [item]
+    const visibleChildren = item.children.filter(canShowMenuItem)
+    return visibleChildren.length > 0 ? [{ ...item, children: visibleChildren }] : []
   })
 })
 

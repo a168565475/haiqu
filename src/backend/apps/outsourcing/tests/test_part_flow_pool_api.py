@@ -18,7 +18,7 @@ from apps.material_issues.public_semi_requirements import public_semi_requiremen
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.reference_data.models import ProductCategory, ProductionUnit
 from apps.workshop_config.models import Craft, Workshop
-from apps.outsourcing.models import OutsourcingFactoryCraft, TubeOutsourcingInput
+from apps.outsourcing.models import OutsourcingFactory, OutsourcingFactoryCraft, TubeOutsourcingInput
 from . import test_part_flow_plan_api as plan_fixture
 
 BASE = plan_fixture.BASE
@@ -59,9 +59,28 @@ class PartFlowPoolApiTests(D1Fixture, APITestCase):
             defaults={'craft_name_snapshot': self.external_sewing.name})
 
     def test_combined_inputs_cannot_consume_stock_reserved_for_another_issue(self):
+        sewing, _ = Craft.objects.get_or_create(craft_type='INTERNAL', plan_category='SEWING',
+            defaults={'name': '本厂车缝', 'workshop': self.sewing_workshop})
+        ProductionScheduleProductCraft.objects.create(schedule_product=self.schedule_product, craft=sewing,
+            plan_category='SEWING', craft_type_snapshot='INTERNAL', craft_name_snapshot=sewing.name)
+        own_factory = OutsourcingFactory.objects.create(factory_number='POOL-INTERNAL', name='本厂',
+            processing_type='车缝', created_by_employee=self.employee, updated_by_employee=self.employee)
+        OutsourcingFactoryCraft.objects.create(factory=own_factory, craft=self.external_sewing,
+            craft_name_snapshot=self.external_sewing.name)
+        own_part = BomLine.objects.create(section=self.part.section, line_number=4, component_kind='SEWN_PART',
+            part_name='本厂部位', unit=self.part.unit, parts_per_product=1)
+        original = self.parts[0]
+        own_piece = BomLine.objects.create(section=original.section, line_number=5, component_kind='CUT_PIECE',
+            parent_part=own_part, pieces_per_part=original.pieces_per_part, part_name=original.part_name,
+            unit=original.unit, category=original.category, material=original.material, specification=original.specification,
+            fabric_source_line=original.fabric_source_line)
+        order = self.create_part_plan(source='PUBLIC_PIECE', additional_lines=[{
+            'component_identity': str(own_part.component_identity), 'quantity': str(int(self.product_line.quantity)),
+            'factory_id': str(own_factory.pk), 'unit_price': '1.20',
+        }])
         identities = [build_semi_finished_identity(bom_line=piece, completed_craft=self.cut_craft,
-            unit=self.piece_unit) for piece in self.parts]
-        self.assertEqual(identities[0]['identity_key'], identities[1]['identity_key'])
+            unit=self.piece_unit) for piece in [*self.parts, own_piece]]
+        self.assertEqual(len({identity['identity_key'] for identity in identities}), 1)
         credit_public_stock(identity=identities[0], zone=self.semi_zone, quantity=100, actor_employee=self.employee,
             source_type='TUBE_OUTSOURCING_RETURN', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(),
             production_task=self.task, product_line=self.product_line, bom_line=self.parts[0])
@@ -72,12 +91,12 @@ class PartFlowPoolApiTests(D1Fixture, APITestCase):
         issue._material_issue_plan_category = 'SEWING'
         rows, blockers = public_semi_requirement_rows(self.task.pk, self.product_line.pk, plan_category='SEWING')
         self.assertFalse(blockers, blockers)
-        row = next(row for row in rows if row['conversion_snapshot']['component_identity'] == str(self.parts[0].component_identity))
-        replace_public_issue_lines(issue, [{'requirement_id': uuid.UUID(row['requirement_id']),
+        own_rows = [row for row in rows if row['conversion_snapshot']['component_identity'] == str(own_piece.component_identity)]
+        self.assertEqual(len(own_rows), 1, rows)
+        replace_public_issue_lines(issue, [{'requirement_id': uuid.UUID(own_rows[0]['requirement_id']),
             'requested_quantity': Decimal(50), 'source_kind': 'STOCK'}])
         issue.status = 'PENDING_REVIEW'
         issue.save(update_fields=['status'])
-        order = self.create_part_plan(source='PUBLIC_PIECE')
         for quantity, expected in [(40, 409), (25, 200)]:
             payload = {'client_request_id': str(uuid.uuid4()), 'actual_dispatch_date': str(timezone.localdate()),
                 'source_kind': 'PUBLIC_PIECE', 'zone_id': str(self.semi_zone.pk),

@@ -7,14 +7,18 @@ import 'vant/es/popup/style'
 
 const props = defineProps<{
   label: string
-  modelValue: string
+  modelValue?: string
+  selectedValues?: string[]
   choices: { value: string; label: string }[]
   disabled?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:selectedValues': [value: string[]] }>()
 const show = ref(false)
 const trigger = ref<HTMLButtonElement>()
-const selectedLabel = computed(() => props.choices.find(option => option.value === props.modelValue)?.label)
+function selected(value: string) {
+  return props.selectedValues ? props.selectedValues.includes(value) : props.modelValue === value
+}
+const selectedLabel = computed(() => props.choices.filter(option => selected(option.value)).map(option => option.label).join('、'))
 
 function close() {
   show.value = false
@@ -22,6 +26,10 @@ function close() {
 }
 
 function select(value: string) {
+  if (props.selectedValues) {
+    emit('update:selectedValues', selected(value) ? props.selectedValues.filter(id => id !== value) : [...props.selectedValues, value])
+    return
+  }
   close()
   if (value !== props.modelValue) emit('update:modelValue', value)
 }
@@ -61,10 +69,11 @@ function keepFocus(event: KeyboardEvent) {
       </div>
       <div class="wage-picker-options">
         <VanCell v-for="option in choices" :key="option.value" tag="button" type="button" clickable center
-          class="wage-picker-option" :title="option.label" :aria-pressed="option.value === modelValue" @click="select(option.value)">
-          <template v-if="option.value === modelValue" #right-icon><VanIcon name="success" aria-hidden="true" /></template>
+          class="wage-picker-option" :title="option.label" :aria-pressed="selected(option.value)" @click="select(option.value)">
+          <template v-if="selected(option.value)" #right-icon><VanIcon name="success" aria-hidden="true" /></template>
         </VanCell>
       </div>
+      <button v-if="selectedValues" type="button" class="wage-picker-done" @click="close">完成</button>
     </VanPopup>
   </div>
 </template>
@@ -83,4 +92,5 @@ function keepFocus(event: KeyboardEvent) {
 .wage-picker-option { min-height: 48px; border: 0; text-align: left; overflow-wrap: anywhere; }
 .wage-picker-option[aria-pressed="true"] { background: var(--mobile-primary-soft); color: var(--mobile-primary); font-weight: 600; }
 .wage-picker-option:focus-visible { outline-offset: -3px; }
+.wage-picker-done { width: 100%; min-height: 44px; border: 0; background: var(--mobile-primary-soft); color: var(--mobile-primary); font-weight: 600; }
 </style>

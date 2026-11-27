@@ -22,9 +22,13 @@ beforeEach(() => {
 afterEach(() => wrapper?.unmount())
 
 it('详情展示产品数量、来源仓库、负责人、费用和装卸图片', async () => {
+  const detail = await api.detail()
+  detail.lines.push({ ...detail.lines[0], id: 'line-2', task_number_snapshot: 'SC-OTHER' }, { ...detail.lines[0], id: 'line-3' })
   wrapper = mount(FinishedGoodsOutboundDetailView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
   for (const text of ['CK-TEST', 'SC-TEST', '钢管', '测试负责人']) expect(wrapper.text()).toContain(text)
+  expect(wrapper.findAll('.info-card dt').slice(0, 2).map(label => label.text())).toEqual(['生产任务单号', '出货单号'])
+  expect(wrapper.get('.info-card dd strong').text()).toBe('SC-TEST、SC-OTHER')
   const fees = wrapper.findAll('dt').filter(label => ['装卸费用', '其他费用'].includes(label.text()))
   expect(fees.map(label => label.element.nextElementSibling?.textContent)).toEqual(['12.5', '2'])
   const cells = wrapper.findAll('tbody tr:first-child td').map(cell => cell.text())

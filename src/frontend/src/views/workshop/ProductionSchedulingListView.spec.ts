@@ -137,7 +137,7 @@ describe('计划排产列表展示', () => {
     })], meta: { total: 1 } })
     const wrapper = await createView()
     const headers = wrapper.findAll('.el-table__header-wrapper th .cell').map(cell => cell.text())
-    expect(headers).toEqual(['排产单号', '生产任务单', '产品', '计划开始', '交货日期', '总进度', '工序进度', '总工价', '报工总额', '工厂跟单员', '操作'])
+    expect(headers).toEqual(['生产任务单号', '排产单号', '产品', '计划开始', '交货日期', '总进度', '工序进度', '总工价', '报工总额', '工厂跟单员', '操作'])
     expect(headers).not.toEqual(expect.arrayContaining(['创建人', '创建时间', '创建日期', '计划日期范围']))
     expect(wrapper.get('.schedule-products-summary').text()).toBe('2 项产品 · 共 150 套')
     const row = wrapper.get('.el-table__body-wrapper tbody tr')

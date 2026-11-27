@@ -3,6 +3,7 @@ import ElementPlus from 'element-plus'
 import { reactive } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
+import AssemblyFinishedReceiptDialog from './AssemblyFinishedReceiptDialog.vue'
 import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
 
 const api = vi.hoisted(() => ({ stock: vi.fn(), outbounds: vi.fn(), options: vi.fn(), warehouses: vi.fn(), zones: vi.fn(), locations: vi.fn() }))
@@ -35,7 +36,7 @@ afterEach(() => wrapper?.unmount())
 
 it('保留成品入库入口，库存汇总、入库记录、出库记录在同一页面切换', async () => {
   wrapper = mount(FinishedGoodsInventoryView, { global: {
-    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true,
+    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, AssemblyFinishedReceiptDialog: true,
       FinishedReceiptRecordsPanel: { template: '<section data-testid="receipt-panel"><slot/></section>' },
     },
   } })
@@ -43,7 +44,16 @@ it('保留成品入库入口，库存汇总、入库记录、出库记录在同�
   expect(wrapper.text()).not.toContain('其他入库')
   expect(wrapper.findAllComponents({ name: 'ElDialog' }).map(dialog => dialog.props('title'))).not.toContain('批量入库')
   await wrapper.findAll('button').find(button => button.text() === '成品入库')!.trigger('click')
-  expect(wrapper.findComponent({ name: 'AssemblyPlanPicker' }).props('modelValue')).toBe(true)
+  const picker = wrapper.getComponent({ name: 'AssemblyPlanPicker' })
+  expect(picker.props('modelValue')).toBe(true)
+  picker.vm.$emit('select', 'plan-1')
+  await flushPromises()
+  const dialog = wrapper.getComponent(AssemblyFinishedReceiptDialog)
+  expect(dialog.props('scheduleProductId')).toBe('plan-1')
+  expect(router.push).not.toHaveBeenCalled()
+  dialog.vm.$emit('closed')
+  await flushPromises()
+  expect(wrapper.findComponent(AssemblyFinishedReceiptDialog).exists()).toBe(false)
   await wrapper.findAll('button').find(button => button.text() === '出库记录')!.trigger('click')
   await flushPromises()
   expect(router.push).not.toHaveBeenCalled()

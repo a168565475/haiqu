@@ -12,6 +12,7 @@ from apps.boms.models import BomLine, BomSection
 from apps.inventory.models import PublicStockMovement, WarehouseZone
 from apps.inventory.part_flow_quantities import first_output_available
 from apps.inventory.part_flow_receipts import component_stock_craft
+from apps.inventory.public_inventory_queries import public_semi_inventory_page
 from apps.inventory.public_stock_identity import build_semi_finished_identity
 from apps.inventory.public_stock_services import credit_public_stock
 from apps.inventory.tests.test_internal_receipt_sewing import SewingFixture
@@ -84,14 +85,14 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
                 self.assertEqual(context['rows'][0]['bom_line_id'], str(self.part.pk))
                 self.assertEqual(context['rows'][0]['order_required'], '100')
 
-    def create_part_plan(self, source='CUTTING', craft=None, price='1.20', expected=201):
+    def create_part_plan(self, source='CUTTING', craft=None, price='1.20', expected=201, *, additional_lines=()):
         context = self.part_context(source, craft)
         payload = {'is_plan': True, 'client_request_id': str(uuid.uuid4()), 'source_revision': context['source_revision'],
             'schedule_product_id': str(self.schedule_product.pk), 'source_kind': source,
             'craft_id': str((craft or self.external_sewing).pk), 'zone_id': context['zone_id'],
             'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
             'lines': [{'component_identity': str(self.part.component_identity), 'quantity': '100',
-                'factory_id': str(self.factory.pk), 'unit_price': price}]}
+                'factory_id': str(self.factory.pk), 'unit_price': price}, *additional_lines]}
         response = self.client.post(BASE, payload, format='json')
         self.assertEqual(response.status_code, expected, response.data)
         return response.data.get('data')
@@ -143,10 +144,11 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response.data['data'], payload
 
-    def receive_part(self, order, quantity):
+    def receive_part(self, order, quantity, *, zone=None):
+        zone = zone or self.semi_zone
         payload = {'client_request_id': str(uuid.uuid4()), 'receipt_date': str(timezone.localdate()),
-            'warehouse_id': str(self.semi_zone.warehouse_id), 'lines': [{'order_line_id': order['lines'][0]['id'],
-            'received_quantity': str(quantity), 'zone_id': str(self.semi_zone.pk)}]}
+            'warehouse_id': str(zone.warehouse_id), 'lines': [{'order_line_id': order['lines'][0]['id'],
+                'received_quantity': str(quantity), 'zone_id': str(zone.pk)}]}
         response = self.client.post(BASE + order['id'] + '/plan-receipt/', payload, format='json', HTTP_IF_MATCH=order['etag'])
         self.assertEqual(response.status_code, 200, response.data)
         return response.data['data']
@@ -182,6 +184,8 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
 
     def test_sewing_assignment_keeps_internal_price_out_of_dispatch_receipts_and_external_totals(self):
         from apps.outsourcing.sewing_assignments import internal_sewing_products, sewing_part_scope
+        self.part.specification = '120×65'
+        self.part.save(update_fields=['specification'])
         response = self.sewing_assignment(external=True)
         self.assertEqual(response.status_code, 201, response.data)
         order = response.data['data']
@@ -189,6 +193,9 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual({row['component_identity'] for row in order['inputs']}, {str(self.parts[1].component_identity)})
         own = order['internal_sewing_parts'][0]
         self.assertEqual((own['part_name'], Decimal(own['unit_price'])), ('床面', Decimal('2.25')))
+        self.assertEqual((own['bom_quantity'], own['specification']), (str(own['quantity']), '120×65'))
+        cotton_id = str(self.cotton.fabric_source_line_id)
+        self.assertIn(cotton_id, [row['source_bom_line_id'] for row in own['component_source_materials']])
         self.assertEqual(order['plan_summary']['planned_quantity'], str(int(self.product_line.quantity)))
         self.assertTrue(internal_sewing_products().filter(pk=self.schedule_product.pk).exists())
         self.assertEqual(sewing_part_scope(product_line_id=self.product_line.pk),
@@ -209,6 +216,10 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
         returned = self.receive_part(order, 2)
         self.assertEqual(Decimal(returned['plan_summary']['received_amount']), Decimal('3'))
+        BomLine.objects.filter(pk=self.part.pk).update(specification='改版后规格')
+        BomLine.objects.filter(pk=cotton_id).update(specification='改版后棉料')
+        reopened = self.client.get(BASE + order['id'] + '/')
+        self.assertEqual(reopened.data['data']['internal_sewing_parts'], [own])
 
     def test_all_internal_assignment_has_no_warehouse_order(self):
         response = self.sewing_assignment()
@@ -311,6 +322,11 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual({row.balance.identity_snapshot['semi_kind'] for row in returns}, {'SEWN_PART'})
         self.assertEqual({row.balance.unit_id for row in returns}, {self.part_unit.pk})
         self.assertFalse(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH').exists())
+        cutting = public_semi_inventory_page(page=1, page_size=20, bom_section='FABRIC_SEMI')
+        parts = public_semi_inventory_page(page=1, page_size=20, bom_section='SEWN_PART')
+        self.assertEqual(cutting['count'], 0)
+        row, = parts['results']
+        self.assertEqual(row['inventory_quantity'], 10002)
 
     def test_stock_pieces_debit_without_first_output_recount_and_dispatch_can_be_reduced(self):
         order = self.create_part_plan('PUBLIC_PIECE')
@@ -679,7 +695,13 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         query = {**product_ref, 'plan_id': order['id'], 'craft_id': str(self.print_craft.pk)}
         direct = self.client.get(BASE + 'source-context/', {**query, 'source_kind': 'CUTTING'})
         self.assertEqual(direct.status_code, 200, direct.data)
-        self.assertTrue(all(Decimal(row['max_quantity']) == 0 for row in direct.data['data']['rows']))
+        direct_rows = direct.data['data']['rows']
+        self.assertTrue(all(Decimal(row['max_quantity']) == 0 for row in direct_rows))
+        component = str(self.parts[0].component_identity)
+        direct_piece = next(row for row in direct_rows if row['component_identity'] == component)
+        self.assertEqual({item['zone_id']: Decimal(item['available_quantity']) for item in direct_piece['stock_zones']},
+                         {str(self.semi_zone.pk): 100})
+        self.assertTrue(all('stock_zones' not in row for row in direct_rows if row['component_identity'] != component))
         invalid = self.client.post(BASE + order['id'] + '/plan-dispatch/', {'client_request_id': str(uuid.uuid4()),
             'source_kind': 'CUTTING', 'actual_dispatch_date': str(timezone.localdate()), 'lines': [{
                 'component_identity': str(self.parts[0].component_identity), 'factory_id': str(self.factory.pk), 'quantity': 1}]},
@@ -687,6 +709,8 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(invalid.status_code, 409, invalid.data)
         stock = self.client.get(BASE + 'source-context/', {**query, 'source_kind': 'PUBLIC_PIECE', 'zone_id': str(self.semi_zone.pk)})
         self.assertEqual(stock.status_code, 200, stock.data)
+        stock_piece = next(row for row in stock.data['data']['rows'] if row['component_identity'] == component)
+        self.assertEqual(Decimal(stock_piece['max_quantity']), 100)
         order = self.send_to_printer(order, self.factory, 7)
         order = self.receive_part(order, 5)
         self.assertEqual(order['plan_summary']['received_quantity'], '5')
@@ -768,6 +792,52 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         printing = self.receive_part(printing, 20)
         check_issue_ceiling(sewing, 32)
         reject_correction(printing, 'DISPATCH', printing['dispatch_records'][0]['id'], 49)
+
+    def test_sewing_dispatches_warehouse_and_processor_pieces_in_one_confirmation(self):
+        sewing = self.create_part_plan()
+        printing = self.receive_part(self.send_to_printer(self.create_print_plan(self.factory), self.factory, 100), 30)
+        second_zone = WarehouseZone.objects.create(warehouse=self.semi_zone.warehouse, zone_name='丝印回仓二区')
+        printing = self.receive_part(printing, 12, zone=second_zone)
+        component = str(self.parts[0].component_identity)
+        line_id = printing['lines'][0]['id']
+        context = self.part_context(order=sewing)
+        row = next(row for row in context['inputs'] if row['component_identity'] == component)
+        self.assertTrue(context['sewing_print_sources'])
+        zones = {zone['zone_id']: Decimal(zone['available_quantity']) for zone in row['stock_zones']}
+        self.assertEqual(zones, {str(self.semi_zone.pk): Decimal(30), str(second_zone.pk): Decimal(12)})
+        self.assertEqual(row['processor_source']['available_quantity'], '58')
+        self.assertTrue(all('processor_source' not in item for item in context['inputs'] if item is not row))
+
+        payload = {'client_request_id': str(uuid.uuid4()), 'actual_dispatch_date': str(timezone.localdate()), 'batches': [
+            {'source_kind': 'CUTTING', 'inputs': [{'component_identity': str(self.parts[1].component_identity), 'quantity': 3}]},
+            {'source_kind': 'PUBLIC_PIECE', 'zone_id': str(self.semi_zone.pk),
+             'inputs': [{'component_identity': component, 'quantity': 18}]},
+            {'source_kind': 'PUBLIC_PIECE', 'zone_id': str(second_zone.pk),
+             'inputs': [{'component_identity': component, 'quantity': 7}]},
+            {'source_kind': 'PROCESSOR', 'inputs': [{'component_identity': component, 'quantity': 59,
+                                                    'print_order_line_id': line_id}]},
+        ]}
+        url = f"{BASE}{sewing['id']}/plan-dispatch/"
+        movement_count = PublicStockMovement.objects.count()
+        rejected = self.client.post(url, payload, format='json', HTTP_IF_MATCH=sewing['etag'])
+        self.assertEqual(rejected.status_code, 409, rejected.data)
+        self.assertFalse(TubeOutsourcingInput.objects.filter(order__plan_id=sewing['id']).exists())
+        self.assertEqual(PublicStockMovement.objects.count(), movement_count)
+
+        payload['batches'][3]['inputs'][0]['quantity'] = 50
+        for _ in range(2):
+            saved = self.client.post(url, payload, format='json', HTTP_IF_MATCH=sewing['etag'])
+            self.assertEqual(saved.status_code, 200, saved.data)
+        result = saved.data['data']
+        self.assertCountEqual([(record['source_kind'], record['zone_name'], record['total_quantity'])
+                               for record in result['dispatch_records']],
+            [('CUTTING', '', '3'), ('PUBLIC_PIECE', self.semi_zone.zone_name, '18'),
+             ('PUBLIC_PIECE', second_zone.zone_name, '7'), ('PROCESSOR', '', '50')])
+        row = next(row for row in result['inputs'] if row['component_identity'] == component)
+        self.assertEqual(row['dispatched_quantity'], '75')
+        self.assertEqual(PublicStockMovement.objects.count(), movement_count + 2)
+        printing = self.client.get(f"{BASE}{printing['id']}/").data['data']
+        self.assertEqual(printing['lines'][0]['receivable_quantity'], '8')
 
     def test_printer_transfers_and_warehouse_receipts_share_one_remaining_quantity(self):
         from apps.outsourcing.models import OutsourcingFactory

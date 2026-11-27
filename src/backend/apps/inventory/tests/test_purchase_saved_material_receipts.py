@@ -1,4 +1,5 @@
 """采购收货与质检只使用已保存的采购材料，不回读 BOM 重新定料。"""
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -129,6 +130,27 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
             self.assertEqual(detail.data['data']['status_display'], '已入库' if result == 'CONFIRMED' else '全部退货')
             self.assertEqual(len(detail.data['data']['lines']), 1)
         self.assertEqual(MaterialInbound.objects.filter(pk__in=pending_ids).count(), 2)
+
+    def test_quality_confirmation_records_term_from_the_inbound_business_date(self):
+        today = timezone.localdate()
+        inbound_date = today.replace(day=1) - timedelta(days=1)
+        url = f"/api/v1/suppliers/{self.supplier.pk}/"
+        response = self.client.patch(url, {"payment_term": {
+            "months": 1, "effective_month": inbound_date.strftime("%Y-%m"), "basis": "材料采购协议",
+        }}, format="json", HTTP_IF_MATCH=self.client.get(url)["ETag"])
+        self.assertEqual(response.status_code, 200, response.data)
+        version_id = response.data["data"]["payment_term_versions"][0]["id"]
+        receipt = self.receive(inbound_date=inbound_date.isoformat())
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        inbound = MaterialInbound.objects.get(pk=receipt.data["data"]["id"])
+        pending_payable = inbound.purchase_payables.get()
+        confirmed = self.confirm_quality(receipt, return_quantity="1.2500")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        payable = inbound.purchase_payables.get()
+        self.assertEqual(payable.pk, pending_payable.pk)
+        self.assertEqual((str(payable.payment_term_id), payable.payment_term_months, payable.due_month),
+                         (version_id, 1, date(today.year, today.month, 1)))
+        self.assertEqual(payable.lines.get().accepted_quantity, Decimal("3.0000"))
 
     @override_settings(SALES_ACCESS_ENABLED=False)
     def test_receipt_prices_before_quality_and_reduces_payable_after_return(self):

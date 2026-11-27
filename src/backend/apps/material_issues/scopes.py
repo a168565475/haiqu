@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+
 WORKSHOP_MATERIAL_SECTION_CODES = {
     "金工车间": frozenset({"PROFILE", "HARDWARE", "PLASTIC", "SEMI"}),
     "车缝车间": frozenset({"FABRIC", "AUXILIARY", "SEMI"}),
@@ -38,7 +41,20 @@ def issue_plan_category(issue):
 
 
 def semi_plan_category(workshop_name, plan_category=None):
-    return plan_category or {'装配车间': 'ASSEMBLY', '车缝车间': 'SEWING', '金工车间': 'METAL'}.get(workshop_name, '')
+    return (plan_category or "").strip().upper() or {
+        '装配车间': 'ASSEMBLY', '车缝车间': 'SEWING', '金工车间': 'METAL',
+    }.get(workshop_name, '')
+
+
+def visible_new_issue_requirements(rows, plan_category):
+    raw_section = {"ASSEMBLY": "PROFILE", "CUTTING": "FABRIC"}.get(plan_category)
+    if not raw_section:
+        return rows
+    return [
+        row for row in rows
+        if row["line_type"] != "RAW" or row["section_code"] != raw_section
+        or Decimal(row["max_issue_quantity"]) > 0
+    ]
 
 
 def material_section_codes_for_issue(issue):

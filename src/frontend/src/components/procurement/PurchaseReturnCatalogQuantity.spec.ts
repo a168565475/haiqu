@@ -3,6 +3,24 @@ import { describe, expect, it } from 'vitest'
 import type { PurchaseReturn } from '@/types/purchaseReturn'
 import PurchaseReturnConfirmDialog from './PurchaseReturnConfirmDialog.vue'
 
+describe('退货基础信息', () => {
+  it('样品退货先显示打样单号，其后依次显示退货、采购、入库单号', () => {
+    const record = {
+      sample_number: 'DY01', return_number: 'TH01', order_number: 'CG01', inbound_number: 'RK01',
+      status: 'QUALITY_GENERATED', lines: [],
+    } as unknown as PurchaseReturn
+    const wrapper = shallowMount(PurchaseReturnConfirmDialog, {
+      props: { visible: true, record, submitting: false, action: 'view' },
+      global: { renderStubDefaultSlot: true },
+    })
+    try {
+      const info = wrapper.get('.return-confirm-summary')
+      expect(info.get('header strong').text()).toBe('DY01')
+      expect(info.findAll('dd').slice(0, 3).map(cell => cell.text())).toEqual(['TH01', 'CG01', 'RK01'])
+    } finally { wrapper.unmount() }
+  })
+})
+
 describe('新目录管材退货保留原根米显示', () => {
   it('按根退货在仓库详情只显示实际退根数', () => {
     const record = { status: 'QUALITY_GENERATED', lines: [{ id: 'line', raw_bar_length_m: '3.05',

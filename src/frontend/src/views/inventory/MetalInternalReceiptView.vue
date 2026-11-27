@@ -35,7 +35,7 @@ function checkStorage(): boolean {
 const conflictMessage = '原请求编号的保存内容与本次内容不一致，已保留原请求，请先核对入库记录。'
 const preview = ref<MetalReceiptPreview | null>(null), rows = ref<ReceiptRow[]>([])
 const loading = ref(true), saving = ref(false), error = ref(''), forbidden = ref(false), storageError = ref(false)
-const receiptDate = ref(''), warehouseId = ref(''), zoneId = ref(''), remark = ref('')
+const receiptDate = ref(''), remark = ref('')
 const pending = ref<PendingReceipt | null>(null), dialog = ref(''), selectedPart = ref<ReceiptRow | null>(null)
 let loadVersion = 0, disposed = false
 const canReceive = computed(() => !!auth.user?.is_superuser || (auth.hasPermission('inventory.add_internalsemifinishedreceipt') && auth.hasPermission('inventory.view_internalsemifinishedreceipt')))
@@ -44,10 +44,6 @@ const processingUnavailable = computed(() => [...new Set(rows.value.map(row => r
 const futureBlockers = computed(() => preview.value?.metal_processing.future_blockers || [])
 const formLocked = computed(() => !owned.isCurrent() || loading.value || saving.value || !!pending.value || storageError.value || !canReceive.value || forbidden.value || !!error.value || !!pageBlockers.value.length || !!futureBlockers.value.length)
 const showForm = computed(() => !!preview.value && !loading.value && !forbidden.value && canReceive.value)
-const warehouses = computed(() => Array.from(new Map((preview.value?.zones || []).map(zone => [zone.warehouse_id, { id: zone.warehouse_id, name: zone.warehouse }])).values()))
-const zones = computed(() => (preview.value?.zones || []).filter(zone => zone.warehouse_id === warehouseId.value))
-const warehouseName = computed(() => warehouses.value.find(item => item.id === warehouseId.value)?.name || '—')
-const zoneName = computed(() => zones.value.find(item => item.id === zoneId.value)?.name || '—')
 const entered = computed(() => rows.value.filter(row => (wholeQuantity(row.quantity) || 0) > 0))
 const total = computed(() => entered.value.reduce((sum, row) => sum + (wholeQuantity(row.quantity) || 0), 0))
 const info = computed(() => [
@@ -114,7 +110,7 @@ function validate(): boolean {
   if (formLocked.value) return false
   for (const row of rows.value) if (!validQuantity(row)) return false
   if (!entered.value.length) { warn('请至少填写一项大于 0 的本次入库数量。'); return false }
-  if (!receiptDate.value || !warehouseId.value || !zones.value.some(zone => zone.id === zoneId.value)) { warn('请选择收货日期、材料仓和库区。'); return false }
+  if (!receiptDate.value) { warn('请选择收货日期。'); return false }
   return true
 }
 function openBasis(row: ReceiptRow) { selectedPart.value = row; dialog.value = 'basis' }
@@ -127,7 +123,7 @@ function closeDialog(value: boolean) { if (!value && !saving.value) dialog.value
 
 async function load(preserve = true) {
   if (!checkStorage()) return
-  if (!planId) { error.value = '缺少金工计划，请从内部计划的产品行进入半成品入库。'; loading.value = false; return }
+  if (!planId) { error.value = '缺少金工计划，请从作业计划的产品行进入半成品入库。'; loading.value = false; return }
   if (!canReceive.value) { forbidden.value = true; loading.value = false; return }
   const version = ++loadVersion
   const quantities = new Map(rows.value.map(row => [row.bom_line_id, row.quantity]))
@@ -148,15 +144,6 @@ async function load(preserve = true) {
       quantity: String(pending.value?.payload.lines.find(item => item.bom_line_id === line.bom_line_id)?.quantity ?? (preserve ? quantities.get(line.bom_line_id) || '' : '')),
     }))
     if (!receiptDate.value) receiptDate.value = data.receipt_date
-    if (pending.value) {
-      zoneId.value = pending.value.payload.zone_id
-      warehouseId.value = data.zones.find(zone => zone.id === zoneId.value)?.warehouse_id || ''
-    } else if (!warehouseId.value) {
-      warehouseId.value = data.zones[0]?.warehouse_id || ''
-      zoneId.value = data.zones[0]?.id || ''
-    } else if (!data.zones.some(zone => zone.warehouse_id === warehouseId.value)) {
-      warehouseId.value = ''; zoneId.value = ''
-    } else if (!data.zones.some(zone => zone.id === zoneId.value && zone.warehouse_id === warehouseId.value)) zoneId.value = ''
   } catch (cause) {
     if (isCancel(cause) || !owned.isCurrent() || disposed || version !== loadVersion) return
     forbidden.value = isAxiosError(cause) && cause.response?.status === 403
@@ -193,7 +180,7 @@ async function postPending(recovering = false) {
     if (isCancel(cause) || !owned.isCurrent()) return
     const status = isAxiosError(cause) ? cause.response?.status : undefined
     const code = isAxiosError(cause) ? cause.response?.data?.error?.code : undefined
-    if (status === 409 && code === 'RECEIPT_REQUEST_DELETED') {
+    if (status === 409 && ['RECEIPT_REQUEST_DELETED', 'DATABASE_MIGRATION_REQUIRED'].includes(code ?? '')) {
       if (!clearPending()) return
       dialog.value = ''; error.value = ''
       warn(errorText(cause, '本次待入库记录已删除，不能重复提交；如需重新入库，请重新填写。'))
@@ -263,7 +250,7 @@ async function save() {
       const original: PendingReceipt = {
         etag: preview.value.etag,
         payload: {
-          request_id: crypto.randomUUID(), schedule_product_id: planId, plan_category: 'METAL', zone_id: zoneId.value,
+          request_id: crypto.randomUUID(), schedule_product_id: planId, plan_category: 'METAL',
           receipt_date: receiptDate.value, remark: remark.value.trim(),
           lines: entered.value.map(row => ({ bom_line_id: row.bom_line_id, quantity: String(wholeQuantity(row.quantity)) })),
         },
@@ -287,13 +274,14 @@ onMounted(async () => {
       const payload = original?.payload
       if (!original || typeof original.etag !== 'string' || !original.etag || !payload
         || payload.schedule_product_id !== planId || payload.plan_category !== 'METAL'
-        || ![payload.request_id, payload.zone_id, payload.receipt_date].every(value => typeof value === 'string' && value.length > 0)
+        || ![payload.request_id, payload.receipt_date].every(value => typeof value === 'string' && value.length > 0)
+        || (payload.zone_id !== undefined && (typeof payload.zone_id !== 'string' || !payload.zone_id))
         || typeof payload.remark !== 'string' || !Array.isArray(payload.lines) || !payload.lines.length
         || !payload.lines.every(line => typeof line.bom_line_id === 'string' && (
           typeof line.quantity === 'string' ? (wholeQuantity(line.quantity) || 0) > 0
             : typeof line.quantity === 'number' && Number.isSafeInteger(line.quantity) && line.quantity > 0
         ))) throw new Error('待核对记录不完整')
-      pending.value = original; receiptDate.value = payload.receipt_date; zoneId.value = payload.zone_id; remark.value = payload.remark
+      pending.value = original; receiptDate.value = payload.receipt_date; remark.value = payload.remark
     }
   } catch { storageError.value = true; loading.value = false; error.value = '本地待核对请求记录无法读取，已暂停新入库。请先核对之前的提交结果。'; return }
   await load(false)
@@ -316,8 +304,6 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
         <div class="section-heading"><div><h2>本次入库</h2><span class="muted">填写数量即可办理 · 数量单位：支</span></div><ElButton :icon="Refresh" :disabled="saving || !!pending || loading || storageError" @click="load(true)">刷新</ElButton></div>
         <div class="field-grid d1-fields erp-flat-form">
           <label class="form-field required"><span>收货日期</span><ElDatePicker v-model="receiptDate" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" popper-class="schedule-date-popper" placeholder="选择日期" aria-label="收货日期" :disabled="formLocked" /></label>
-          <label class="form-field required"><span>材料仓</span><ElSelect v-model="warehouseId" aria-label="材料仓" :disabled="formLocked" @change="zoneId = ''"><ElOption v-for="item in warehouses" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
-          <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" placeholder="请选择库区" :disabled="formLocked"><ElOption v-for="item in zones" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
           <label class="form-field"><span>加工状态</span><ElInput model-value="未喷塑" aria-label="加工状态" disabled /></label>
         </div>
         <MetalReceiptTable :columns="columns" :rows="rows" class="erp-table-editor d1-lines" empty="此金工计划暂无管材明细">
@@ -340,7 +326,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
       <ElEmpty v-else-if="forbidden || !canReceive" description="当前账号没有半成品入库权限，请联系管理员" />
       <template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton v-if="!storageError" :icon="Refresh" @click="load(true)">重新加载</ElButton></template>
     </div>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>提交后由仓库确认，确认后增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!owned.isCurrent() || storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>仓库分配库区并确认后，增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!owned.isCurrent() || storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 
   <AppWindowDialog :model-value="dialog === 'basis'" :title="`${selectedPart?.part || ''} · 加工完成依据`" :width="960" modal-class="metal-receipt-dialog" @update:model-value="closeDialog">
@@ -359,14 +345,14 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
     <template #footer><ElButton type="primary" @click="dialog = ''">我知道了</ElButton></template>
   </AppWindowDialog>
 
-  <AppWindowDialog :model-value="dialog === 'confirm'" title="确认半成品入库" :width="1120" modal-class="metal-receipt-dialog" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
+  <AppWindowDialog :model-value="dialog === 'confirm'" title="确认提交半成品入库申请" :width="1120" modal-class="metal-receipt-dialog" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
     <div class="d1-confirm">
-      <div class="info-grid"><div class="info-cell"><span>收货日期</span><strong>{{ receiptDate }}</strong></div><div class="info-cell"><span>材料仓</span><strong>{{ warehouseName }}</strong></div><div class="info-cell"><span>库区</span><strong>{{ zoneName }}</strong></div><div class="info-cell"><span>生产任务单号</span><strong>{{ preview?.production_order }}</strong></div><div class="info-cell"><span>产品</span><strong>{{ preview?.product }}</strong></div><div class="info-cell"><span>加工状态</span><strong>未喷塑</strong></div></div>
+      <div class="info-grid"><div class="info-cell"><span>收货日期</span><strong>{{ receiptDate }}</strong></div><div class="info-cell"><span>生产任务单号</span><strong>{{ preview?.production_order }}</strong></div><div class="info-cell"><span>产品</span><strong>{{ preview?.product }}</strong></div><div class="info-cell"><span>加工状态</span><strong>未喷塑</strong></div></div>
       <MetalReceiptTable :columns="confirmColumns" :rows="entered" class="d1-confirm-lines"><template #cell-part="{ row }"><ProcessingMaterialDetails :materials="row"><strong>{{ row.part }}</strong></ProcessingMaterialDetails></template><template #cell-available="{ row }">{{ format(capacity(row)) }}</template><template #cell-quantity="{ row }"><strong class="brand">{{ format(row.quantity) }}</strong></template></MetalReceiptTable>
       <p v-if="remark" class="d1-confirm-remark"><span class="muted">入库备注：</span>{{ remark }}</p>
       <div class="d1-confirm-total">本次入库 <strong class="brand">{{ format(total) }}</strong> 支 · {{ entered.length }} 个部位</div>
-      <p class="muted d1-basis-note">提交后由仓库确认，确认后增加未喷塑公共半成品库存，已领原料不重复扣减。</p>
+      <p class="muted d1-basis-note">仓库分配库区并确认后，增加未喷塑公共半成品库存。</p>
     </div>
-    <template #footer><ElButton :disabled="saving" @click="dialog = ''">返回修改</ElButton><ElButton type="primary" :loading="saving" @click="save">确认入库</ElButton></template>
+    <template #footer><ElButton :disabled="saving" @click="dialog = ''">返回修改</ElButton><ElButton type="primary" :loading="saving" @click="save">提交申请</ElButton></template>
   </AppWindowDialog>
 </template>

@@ -67,7 +67,8 @@ describe('BOM 动态部位与裁片', () => {
     piece.notes = '保留备注'
     piece.material_selection = { catalog_version: 'v1', scope: 'BASE', processing_state: 'PROCESSED', attributes: { material: '棉' }, unit_name: '片', semi_kind: 'CUTTING', completed_craft: { id: 'cut', code: 'CUTTING', craft_type: 'INTERNAL' } }
     changeComponentKind(piece, 'SEWN_PART')
-    expect(piece.unit).toBe('片')
+    expect(piece.unit).toBe('套')
+    expect(piece.material_selection?.unit_name).toBe('套')
     expect(piece).toMatchObject({ material_catalog_id: 'piece-catalog', specification: '20×30cm', notes: '保留备注', pieces_per_part: null, parts_per_product: 1, parent_part_client_key: null, fabric_source_client_key: source.client_key })
     setComponentUnit(piece, '个')
     expect(piece.material_selection).toEqual({ catalog_version: 'v1', scope: 'BASE', processing_state: 'PROCESSED', attributes: {}, unit_name: '个' })
@@ -75,6 +76,17 @@ describe('BOM 动态部位与裁片', () => {
     expect(piece.fabric_source_client_key).toBe(source.client_key)
     expect(piece.unit).toBe('个')
     expect(piece.material_selection?.unit_name).toBe('个')
+  })
+  it('新部位默认套，已有其他单位的裁片切换为部位时保留自选单位', () => {
+    const part = blankLine()
+    changeComponentKind(part, 'SEWN_PART')
+    expect(part.unit).toBe('套')
+    changeComponentKind(part, 'CUT_PIECE')
+    expect(part.unit).toBe('片')
+    const { piece } = fixture()
+    setComponentUnit(piece, '件')
+    changeComponentKind(piece, 'SEWN_PART')
+    expect(piece.unit).toBe('件')
   })
   it('新裁片仅空单位默认片，修改单位同步引用快照且用量不做换算', () => {
     const fresh = blankLine()

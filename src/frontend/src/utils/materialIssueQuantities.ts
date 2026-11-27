@@ -42,6 +42,13 @@ export function issueQuantityText(value: unknown): string {
   return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text
 }
 
+export function issuePipeLengthText(row: IssueQuantityRow, field: 'raw_bar_length_m' | 'cutting_length_mm'): string {
+  if (!isRawIssuePipe(row)) return '—'
+  const length = issueQuantityText(row.conversion_snapshot?.[field])
+  const unit = field === 'raw_bar_length_m' ? 'm' : 'mm'
+  return length ? `${length} ${unit}` : '—'
+}
+
 export function issueMeterText(value: unknown): string {
   const [whole, fraction = ''] = String(value ?? '').split('.')
   return whole ? `${whole}.${fraction.slice(0, 2).padEnd(2, '0')}` : '—'

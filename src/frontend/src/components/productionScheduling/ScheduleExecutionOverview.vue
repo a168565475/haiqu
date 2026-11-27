@@ -102,14 +102,14 @@ function openInventoryRecords(kind: 'finished-inbound' | 'finished-outbound' | '
     <p v-if="loading" class="schedule-execution__state" role="status">正在加载内部作业、外发和领料信息…</p>
     <p v-else-if="failed || !summary" class="schedule-execution__state">关联信息未能加载，请使用上方“重试关联信息”。</p>
     <template v-else>
-      <section class="schedule-execution__section" aria-label="内部作业计划">
-        <header class="schedule-execution__heading"><h3>内部作业计划</h3><span>共 {{ summary.internal_plans.length }} 项工艺</span><div class="schedule-execution__record-links" aria-label="本产品入库出库记录"><button class="schedule-execution__link" @click="openInventoryRecords('finished-inbound')">成品入库</button><button class="schedule-execution__link" @click="openInventoryRecords('finished-outbound')">成品出库</button><button class="schedule-execution__link" @click="openInventoryRecords('semi-inbound')">半成品入库</button><button class="schedule-execution__link" @click="openInventoryRecords('semi-outbound')">半成品出库</button></div></header>
-        <div v-if="summary.internal_plans.length" class="schedule-execution__scroll" tabindex="0" aria-label="内部作业计划表，可横向滚动">
+      <section class="schedule-execution__section" aria-label="作业计划">
+        <header class="schedule-execution__heading"><h3>作业计划</h3><span>共 {{ summary.internal_plans.length }} 项工艺</span><div class="schedule-execution__record-links" aria-label="本产品入库出库记录"><button class="schedule-execution__link" @click="openInventoryRecords('finished-inbound')">成品入库</button><button class="schedule-execution__link" @click="openInventoryRecords('finished-outbound')">成品出库</button><button class="schedule-execution__link" @click="openInventoryRecords('semi-inbound')">半成品入库</button><button class="schedule-execution__link" @click="openInventoryRecords('semi-outbound')">半成品出库</button></div></header>
+        <div v-if="summary.internal_plans.length" class="schedule-execution__scroll" tabindex="0" aria-label="作业计划表，可横向滚动">
           <table class="schedule-execution__table schedule-execution__table--internal" data-testid="internal-plans-table">
             <colgroup><col style="width: 96px"><col style="width: 240px"><col style="width: 100px"><col style="width: 100px"><col style="width: 116px"><col style="width: 132px"><col style="width: 160px"><col style="width: 160px"><col style="width: 124px"><col style="width: 64px"><col style="width: 64px"><col style="width: 64px"></colgroup>
             <thead><tr><th>作业计划</th><th>厂内工艺</th><th>排产数量</th><th>计划节点</th><th>计划日期</th><th>报工进度</th><th class="is-money">报工总价（预计）</th><th class="is-money">已报工金额</th><th>工价状态</th><th>计划</th><th>工价</th><th>报工</th></tr></thead>
             <tbody><tr v-for="row in summary.internal_plans" :key="row.craft_id" :data-craft-id="row.craft_id">
-              <td>{{ categories[row.category]?.label || '内部计划' }}</td>
+              <td>{{ categories[row.category]?.label || '作业计划' }}</td>
               <td :title="`${row.craft_name}${row.workshop_name ? ` · ${row.workshop_name}` : ''}`">{{ row.craft_name || '—' }}</td>
               <td>{{ formatScheduleQuantity(row.planned_quantity, row.unit_name) }}</td>
               <td :title="row.category === 'CUTTING' ? '裁剪沿用车缝回货日期' : row.milestone">{{ row.milestone.replace(/日期$/, '') || '—' }}</td>
@@ -118,13 +118,13 @@ function openInventoryRecords(kind: 'finished-inbound' | 'finished-outbound' | '
               <td class="is-money" data-field="estimated_wage" :title="row.estimated_wage === null ? scheduleAmountReason(row.estimated_amount_status) : ''">{{ formatScheduleMoney(row.estimated_wage) }}</td>
               <td class="is-money" data-field="reported_amount" :title="row.reported_amount === null ? scheduleAmountReason(row.reported_amount_status) : ''">{{ formatScheduleMoney(row.reported_amount) }}</td>
               <td><span class="erp-list-tag" :class="`erp-list-tag--${statusTone(row.wage_status)}`" :title="row.reason">{{ wageLabels[row.wage_status] || '暂不可用' }}</span></td>
-              <td><button class="schedule-execution__link" :disabled="!active" :title="active ? `查看${row.craft_name}所属计划` : '本排产已作废，内部计划列表不再显示该排产'" @click="openPlan(row)">查看</button></td>
+              <td><button class="schedule-execution__link" :disabled="!active" :title="active ? `查看${row.craft_name}所属计划` : '本排产已作废，作业计划列表不再显示该排产'" @click="openPlan(row)">查看</button></td>
               <td><button class="schedule-execution__link" :disabled="!row.can_view_wage || !row.scheme_id" :title="!row.can_view_wage ? '没有工价查看权限' : !row.scheme_id ? '尚无可查看的工价方案' : `查看${row.craft_name}工价`" @click="openWage(row)">查看</button></td>
               <td><button class="schedule-execution__link" :disabled="!row.can_view_reports || !row.workshop_id" :title="!row.can_view_reports ? '没有报工记录查看权限' : `查看${row.craft_name}报工记录`" @click="openReports(row)">记录</button></td>
             </tr></tbody>
           </table>
         </div>
-        <p v-else class="schedule-execution__state">本产品未选择内部计划工艺。</p>
+        <p v-else class="schedule-execution__state">本产品未选择作业计划工艺。</p>
         <p v-if="summary.internal_plans.length" class="schedule-execution__note">裁剪沿用车缝回货日期；报工进度按工序次数统计，已报工金额按历史报工金额累计，两者分别统计。</p>
         <p v-if="summary.internal_plans.length && summary.estimated_wage === null" class="schedule-execution__note" data-testid="estimated-amount-reason">预计金额：{{ scheduleAmountReason(summary.estimated_amount_status) }}</p>
         <p v-if="summary.internal_plans.length && summary.reported_amount === null" class="schedule-execution__note" data-testid="reported-amount-reason">已报工金额：{{ scheduleAmountReason(summary.reported_amount_status) }}</p>

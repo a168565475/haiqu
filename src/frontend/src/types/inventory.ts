@@ -100,8 +100,8 @@ export interface FinishedGoodsReceipt {
   order_number_snapshot: string; category_snapshot: string; product_number_snapshot: string; product_code_snapshot: string
   product_name_snapshot: string; item_number_snapshot: string; specification_snapshot: string; material_snapshot?: string; actual_color: string
   supplier_id: string | null; supplier_name: string | null; unit_id: string; unit_code: string; unit_name: string
-  warehouse_id: string; warehouse_number: string; warehouse_name: string; zone_id: string; zone_name: string
-  location_id: string; location_number: string; received_quantity: number; remaining_quantity: number
+  warehouse_id: string | null; warehouse_number: string | null; warehouse_name: string | null; zone_id: string | null; zone_name: string | null
+  location_id: string | null; location_number: string | null; received_quantity: number; remaining_quantity: number
   quantity_per_box: number | null; box_count: number | null; tail_quantity: number | null; occupied_box_slots: number | null
   remaining_box_slots: number | null; remark: string; received_by_name: string; received_at: string
 }
@@ -219,7 +219,7 @@ export interface PurchaseReceiptRecord {
   can_quality_confirm: boolean
 }
 export type ReceiptRecordDetail =
-  | { source: 'PURCHASE'; data: import('./purchaseOrderReadDetail').PurchaseReadInbound & { purchase_order_id: string } }
+  | { source: 'PURCHASE'; data: import('./purchaseOrderReadDetail').PurchaseReadInbound & { purchase_order_id: string; sample_number?: string } }
   | { source: 'TRANSFER'; data: MaterialTransferRecord }
 export interface PurchaseReceiptRecordsPage {
   data: PurchaseReceiptRecord[]
@@ -271,6 +271,7 @@ export interface MaterialInboundLine {
 }
 export interface MaterialInbound {
   id: string; inbound_number: string; purchase_order_id: string | null; purchase_order_number: string | null
+  sample_number?: string
   source_type: 'PURCHASE' | 'MANUAL'; source_type_display: string
   inbound_date: string; status: 'PENDING_QUALITY' | 'CONFIRMED'; status_display: string; remark: string
   material_section?: PurchaseReceivingSection | ''; material_section_display?: string

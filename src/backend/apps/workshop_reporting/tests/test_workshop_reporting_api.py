@@ -8,8 +8,10 @@ from threading import Barrier
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.db import IntegrityError, close_old_connections, connections, transaction
+from django.db import IntegrityError, close_old_connections, connection, connections, transaction
+from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
@@ -167,6 +169,183 @@ class WorkshopReportingApiTests(APITestCase):
         self.assertEqual(approved.status_code, 200, approved.data)
         return approved
 
+    def test_cutting_group_price_and_withdrawal_keep_the_same_application(self):
+        workshop, _ = Workshop.objects.get_or_create(name="车缝车间")
+        craft = Craft.objects.create(
+            craft_type=CraftType.INTERNAL, workshop=workshop, name="裁剪组测试",
+            plan_category=PlanCategory.CUTTING,
+        )
+        ProductionScheduleProductCraft.objects.create(
+            schedule_product=self.schedule_product, craft=craft, craft_type_snapshot=CraftType.INTERNAL,
+            craft_name_snapshot=craft.name, plan_category=PlanCategory.CUTTING,
+        )
+        operation = Operation.objects.create(
+            operation_number="WG-GROUP", product_name="前侧片方案", craft=craft, name="裁剪",
+        )
+        section = BomSection.objects.create(bom=self.bom, line_number=2, section_type=BomSectionType.FABRIC, title="裁剪明细")
+        part = BomLine.objects.create(section=section, line_number=1, part_name="布套", component_kind="SEWN_PART",
+                                      parts_per_product=1, unit="套")
+        front = BomLine.objects.create(section=section, line_number=2, part_name="前片", parent_part=part,
+                                       component_kind="CUT_PIECE", pieces_per_part=1, unit="张")
+        side = BomLine.objects.create(section=section, line_number=3, part_name="侧片", parent_part=part,
+                                      component_kind="CUT_PIECE", pieces_per_part=2, unit="张")
+        schemes = "/api/v1/workshop-reporting/wage-schemes/"
+        line = {"craft_id": str(craft.pk), "operation_id": str(operation.pk), "display_name": "",
+                "bom_line_ids": [str(front.pk), str(side.pk)], "declared_price": "2"}
+        payload = {
+            "product_line_id": str(self.product_line.pk), "schedule_product_id": str(self.schedule_product.pk),
+            "workshop_id": str(workshop.pk), "craft_ids": [str(craft.pk)], "operation_product_name": "前侧片方案",
+            "lines": [line],
+        }
+        with transaction.atomic():
+            MigrationExecutor(connection).migrate([("workshop_reporting", "0016_wageschemeline_component_snapshots")])
+            blocked = self.client.post(schemes, payload, format="json")
+            self.assertEqual(blocked.status_code, 409, blocked.data)
+            self.assertEqual(blocked.data["error"]["code"], "DATABASE_MIGRATION_REQUIRED")
+            self.assertFalse(WageScheme.objects.filter(scope_craft=craft).exists())
+            transaction.set_rollback(True)
+        created = self.client.post(schemes, payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        saved = created.data["data"]["lines"][0]
+        self.assertEqual(saved["required_quantity"], "100.0000")
+        self.assertEqual(saved["counting_mode"], "GROUP")
+        self.assertEqual([item["quantity_per_group"] for item in saved["cutting_components"]], [1, 2])
+        detail = f"{schemes}{created.data['data']['id']}/"
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        original_storage = ("workshop_reporting", "0017_cutting_groups_and_scheme_withdrawals")
+        executor = MigrationExecutor(connection)
+        old_apps = executor.migrate([original_storage]).apps
+        old_line = old_apps.get_model("workshop_reporting", "WageSchemeLine").objects.get(pk=saved["id"])
+        self.assertEqual(old_line.cutting_components, saved["cutting_components"])
+        MigrationExecutor(connection).migrate([("workshop_reporting", "0018_wage_scheme_cutting_group_storage")])
+        self.assertEqual(self.client.get(detail).data["data"]["lines"][0]["cutting_components"], saved["cutting_components"])
+        submitted = self.client.post(f"{detail}submit/", {}, format="json", HTTP_IF_MATCH=created["ETag"])
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertTrue(self.client.get(detail).data["data"]["can_withdraw"])
+        approver = get_user_model().objects.create_superuser(username="wage-director", password="test")
+        Employee.objects.create(user=approver, employee_code="WAGE-DIRECTOR", display_name="厂长")
+        other = APIClient()
+        other.force_authenticate(approver)
+        forbidden = other.post(f"{detail}withdraw/", {}, format="json", HTTP_IF_MATCH=submitted["ETag"])
+        self.assertEqual(forbidden.status_code, 403, forbidden.data)
+        withdrawn = self.client.post(f"{detail}withdraw/", {}, format="json", HTTP_IF_MATCH=submitted["ETag"])
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.data)
+        self.assertEqual(withdrawn.data["data"]["lines"][0]["id"], saved["id"])
+        self.assertEqual(withdrawn.data["data"]["events"][-1]["action"], "WITHDRAWN")
+        self.assertEqual(other.get(schemes, {"status": "PENDING_APPROVAL"}).data["meta"]["total"], 0)
+        changed = self.client.patch(detail, {"lines": [{
+            **line, "work_item_id": saved["work_item_id"], "declared_price": "2.5",
+            "bom_line_ids": list(reversed(line["bom_line_ids"])),
+        }]}, format="json", HTTP_IF_MATCH=withdrawn["ETag"])
+        self.assertEqual(changed.status_code, 200, changed.data)
+        resubmitted = self.client.post(f"{detail}submit/", {}, format="json", HTTP_IF_MATCH=changed["ETag"])
+        self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+        queue = other.get(schemes, {"status": "PENDING_APPROVAL"})
+        self.assertEqual(queue.data["meta"]["total"], 1)
+        self.assertEqual(queue.data["data"][0]["id"], created.data["data"]["id"])
+        approved = other.post(f"{detail}approve/", {}, format="json", HTTP_IF_MATCH=resubmitted["ETag"])
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["data"]["lines"][0]["declared_price"], "2.5000")
+        self.assertEqual(approved.data["data"]["lines"][0]["work_item_id"], saved["work_item_id"])
+        worker = production_employee(workshop=workshop, position="裁剪工", name="裁剪员工", is_supervisor=False)
+        report_url = "/api/v1/workshop-reporting/work-reports/"
+        report_payload = {
+            "client_request_id": str(uuid.uuid4()), "production_date": str(timezone.localdate()),
+            "schedule_product_id": str(self.schedule_product.pk), "scheme_id": approved.data["data"]["id"],
+            "scheme_revision": approved.data["data"]["revision"], "lines": [{
+                "scheme_line_id": approved.data["data"]["lines"][0]["id"],
+                "workshop_employee_id": str(worker.pk), "quantity": "10",
+            }],
+        }
+        report = self.client.post(report_url, report_payload, format="json")
+        self.assertEqual(report.status_code, 201, report.data)
+        self.assertEqual(report.data["data"]["total_amount"], "25.00")
+        self.assertEqual(report.data["data"]["lines"][0]["unit_name"], "组")
+        today = timezone.localdate()
+        next_day = str(today + timedelta(days=1))
+        change = self.client.post(f"{detail}change/", {
+            "product_line_id": str(self.product_line.pk), "schedule_product_id": str(self.schedule_product.pk),
+            "workshop_id": str(workshop.pk), "craft_ids": [str(craft.pk)], "operation_product_name": "前侧片方案",
+            "lines": [{**line, "work_item_id": saved["work_item_id"], "previous_price": "2.5", "declared_price": "2"}],
+        }, format="json", HTTP_IF_MATCH=approved["ETag"])
+        self.assertEqual(change.status_code, 201, change.data)
+        change_url = f"{schemes}{change.data['data']['id']}/"
+        sent = self.client.post(f"{change_url}submit/", {}, format="json", HTTP_IF_MATCH=change["ETag"])
+        self.assertEqual(sent.status_code, 200, sent.data)
+        amended = other.post(f"{change_url}approve/", {"effective_from": next_day},
+                             format="json", HTTP_IF_MATCH=sent["ETag"])
+        self.assertEqual(amended.status_code, 200, amended.data)
+        new_price = amended.data["data"]
+        next_report = self.client.post(report_url, {
+            **report_payload, "client_request_id": str(uuid.uuid4()), "production_date": next_day,
+            "scheme_id": new_price["id"], "scheme_revision": new_price["revision"],
+            "lines": [{**report_payload["lines"][0], "scheme_line_id": new_price["lines"][0]["id"]}],
+        }, format="json")
+        self.assertEqual(next_report.status_code, 201, next_report.data)
+        self.assertEqual(next_report.data["data"]["total_amount"], "20.00")
+        historic = self.client.get(f"{report_url}{report.data['data']['id']}/").data["data"]["lines"][0]
+        self.assertEqual((historic["unit_price"], historic["amount"]), ("2.5000", "25.00"))
+
+    def test_assembly_team_counts_and_last_successful_roster(self):
+        from apps.inventory.assembly_reporting_limits import assembly_reporting_limit
+
+        workshop, _ = Workshop.objects.get_or_create(name="装配车间")
+        craft = Craft.objects.create(craft_type=CraftType.INTERNAL, workshop=workshop, name="组装测试",
+                                     plan_category=PlanCategory.ASSEMBLY)
+        ProductionScheduleProductCraft.objects.create(
+            schedule_product=self.schedule_product, craft=craft, craft_type_snapshot=CraftType.INTERNAL,
+            craft_name_snapshot=craft.name, plan_category=PlanCategory.ASSEMBLY,
+        )
+        operation = Operation.objects.create(
+            operation_number="WG-ASSEMBLY-TEAM", product_name="装配队组", craft=craft, name="组装",
+        )
+        worker_a, worker_b = [
+            production_employee(workshop=workshop, position="装配工", name=name, is_supervisor=False)
+            for name in ("组员甲", "组员乙")
+        ]
+        schemes = "/api/v1/workshop-reporting/wage-schemes/"
+        created = self.client.post(schemes, {
+            **self.scheme_payload(), "workshop_id": str(workshop.pk), "craft_ids": [str(craft.pk)],
+            "operation_product_name": "装配队组", "lines": [{
+                "craft_id": str(craft.pk), "operation_id": str(operation.pk), "display_name": "组装",
+                "declared_price": "2",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        detail = f"{schemes}{created.data['data']['id']}/"
+        submitted = self.client.post(f"{detail}submit/", {}, format="json", HTTP_IF_MATCH=created["ETag"])
+        approved = self.client.post(f"{detail}approve/", {}, format="json", HTTP_IF_MATCH=submitted["ETag"])
+        self.assertEqual(approved.status_code, 200, approved.data)
+        scheme = approved.data["data"]
+        today = timezone.localdate().isoformat()
+        reports = "/api/v1/workshop-reporting/work-reports/"
+        payload = {
+            "client_request_id": str(uuid.uuid4()), "production_date": today,
+            "schedule_product_id": str(self.schedule_product.pk), "scheme_id": scheme["id"],
+            "scheme_revision": scheme["revision"], "confirm_plan_completion": True,
+            "lines": [{"scheme_line_id": scheme["lines"][0]["id"], "workshop_employee_id": str(worker.pk),
+                       "production_line": index, "quantity": "60"} for index, worker in enumerate((worker_a, worker_b), 1)],
+        }
+        rejected = self.client.post(reports, payload, format="json")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("超出 20", str(rejected.data))
+        payload["lines"][1]["quantity"] = "40"
+        saved = self.client.post(reports, payload, format="json")
+        self.assertEqual(saved.status_code, 201, saved.data)
+        self.assertEqual([line["amount"] for line in saved.data["data"]["lines"]], ["120.00", "80.00"])
+        self.assertEqual(assembly_reporting_limit(self.product_line)["reported_minimum"], 100)
+        context = self.client.get(f"{reports}price-context/", {
+            "product_line_id": self.product_line.pk, "schedule_product_id": self.schedule_product.pk,
+            "workshop_id": workshop.pk, "craft_id": craft.pk, "production_date": today,
+        })
+        line = context.data["data"]["lines"][0]
+        self.assertEqual(line["cumulative_quantity"], "100.0000")
+        self.assertEqual(line["last_employees"], [
+            {"workshop_employee_id": str(worker_a.pk), "production_line": 1},
+            {"workshop_employee_id": str(worker_b.pk), "production_line": 2},
+        ])
+
     def test_scheme_approval_defaults_to_server_date_when_date_is_omitted(self):
         created = self.client.post("/api/v1/workshop-reporting/wage-schemes/", self.scheme_payload(), format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -231,6 +410,59 @@ class WorkshopReportingApiTests(APITestCase):
         self.assertEqual(reports.status_code, 200, reports.data)
         self.assertEqual(reports.data["data"][0]["product"]["code"], "WG-CODE")
         self.assertEqual(reports.data["data"][0]["lines"][0]["cutting_length_mm"], 500)
+
+    def test_existing_work_plan_reports_with_legacy_wage_schema(self):
+        MigrationExecutor(connection).migrate([("workshop_reporting", "0016_wageschemeline_component_snapshots")])
+        scheme = self.create_approved_scheme().data["data"]
+        date = timezone.localdate().isoformat()
+        product_id = str(self.schedule_product.pk)
+        api = "/api/v1/workshop-reporting/"
+        report_payload = {
+            "client_request_id": str(uuid.uuid4()), "production_date": date,
+            "schedule_product_id": product_id, "scheme_id": scheme["id"], "scheme_revision": scheme["revision"],
+            "lines": [{
+                "scheme_line_id": scheme["lines"][0]["id"], "workshop_employee_id": str(self.worker.pk), "quantity": "1",
+            }],
+        }
+        with CaptureQueriesContext(connection) as queries:
+            status = self.client.get(f"{api}plan-wage-statuses/", {
+                "schedule_product_ids": product_id, "plan_category": self.craft.plan_category, "production_date": date,
+            })
+            self.assertEqual(status.status_code, 200, status.data)
+            self.assertTrue(status.data["data"][0]["can_report"], status.data)
+            price = self.client.get(f"{api}work-reports/price-context/", {
+                "product_line_id": str(self.product_line.pk), "schedule_product_id": product_id,
+                "workshop_id": str(self.workshop.pk), "craft_id": str(self.craft.pk), "production_date": date,
+            })
+            self.assertEqual(price.status_code, 200, price.data)
+            self.assertEqual(price.data["data"]["lines"][0]["cutting_components"], [])
+            wage_detail = self.client.get(f"{api}wage-schemes/{scheme['id']}/")
+            self.assertEqual(wage_detail.status_code, 200, wage_detail.data)
+            report = self.client.post(f"{api}work-reports/", report_payload, format="json")
+            self.assertEqual(report.status_code, 201, report.data)
+            self.assertEqual(report.data["data"]["total_amount"], "2.35")
+            detail = self.client.get(f"{api}work-reports/{report.data['data']['id']}/")
+            self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertFalse(any("workshop_wage_scheme_cutting_group" in query["sql"] for query in queries))
+
+    def test_legacy_wage_application_can_be_withdrawn_edited_and_resubmitted(self):
+        MigrationExecutor(connection).migrate([("workshop_reporting", "0016_wageschemeline_component_snapshots")])
+        schemes = "/api/v1/workshop-reporting/wage-schemes/"
+        created = self.client.post(schemes, self.scheme_payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        path = f"{schemes}{created.data['data']['id']}/"
+        submitted = self.client.post(f"{path}submit/", {}, format="json", HTTP_IF_MATCH=created["ETag"])
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        withdrawn = self.client.post(f"{path}withdraw/", {}, format="json", HTTP_IF_MATCH=submitted["ETag"])
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.data)
+        self.assertEqual(withdrawn.data["data"]["lines"][0]["id"], created.data["data"]["lines"][0]["id"])
+        lines = self.scheme_payload()["lines"]
+        lines[0]["declared_price"] = "2.5"
+        edited = self.client.patch(path, {"lines": lines}, format="json", HTTP_IF_MATCH=withdrawn["ETag"])
+        self.assertEqual(edited.status_code, 200, edited.data)
+        resubmitted = self.client.post(f"{path}submit/", {}, format="json", HTTP_IF_MATCH=edited["ETag"])
+        self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+        self.assertEqual(resubmitted.data["data"]["lines"][0]["declared_price"], "2.5000")
 
     def test_reporting_context_includes_readonly_production_order(self):
         response = self.client.get(
@@ -637,13 +869,15 @@ class WorkshopReportingApiTests(APITestCase):
 
     def test_cutting_uses_pieces_and_sewing_uses_parts(self):
         sewing_workshop, _ = Workshop.objects.get_or_create(name="车缝车间")
+        set_unit, _ = ProductionUnit.objects.get_or_create(unit_name="套", catalog_owner=None, defaults={"unit_code": "WG-SET"})
+        piece_unit, _ = ProductionUnit.objects.get_or_create(unit_name="片", catalog_owner=None, defaults={"unit_code": "WG-PIECE"})
         sewing_craft = Craft.objects.create(
             craft_type=CraftType.INTERNAL, workshop=sewing_workshop,
             name="工价测试车缝", plan_category=PlanCategory.SEWING,
         )
         sewing_operation = Operation.objects.create(
             operation_number="WG-SEW-SET", product_name="布套", craft=sewing_craft,
-            name="整套车缝", reporting_unit=ProductionUnit.objects.create(unit_code="WG-SET", unit_name="套"),
+            name="整套车缝", reporting_unit=set_unit,
         )
         ProductionScheduleProductCraft.objects.create(
             schedule_product=self.schedule_product, craft=sewing_craft,
@@ -703,26 +937,25 @@ class WorkshopReportingApiTests(APITestCase):
 
         wrong_unit_operation = Operation.objects.create(
             operation_number="WG-SEW-PIECE-UNIT", product_name="布套", craft=sewing_craft,
-            name="错误单位车缝", reporting_unit=ProductionUnit.objects.create(
-                unit_code="WG-SEW-PIECE", unit_name="片",
-            ),
+            name="错误单位车缝", reporting_unit=piece_unit,
         )
         wrong_unit = {**sewing_payload, "lines": [{
             **sewing_payload["lines"][0], "operation_id": str(wrong_unit_operation.pk),
         }]}
-        wrong_unit_response = self.client.post(
-            "/api/v1/workshop-reporting/wage-schemes/", wrong_unit, format="json",
+        sewing_url = f"/api/v1/workshop-reporting/wage-schemes/{response.data['data']['id']}/"
+        wrong_unit_response = self.client.patch(
+            sewing_url, wrong_unit, format="json", HTTP_IF_MATCH=response["ETag"],
         )
-        self.assertEqual(wrong_unit_response.status_code, 201, wrong_unit_response.data)
+        self.assertEqual(wrong_unit_response.status_code, 200, wrong_unit_response.data)
 
-        cutting_workshop, _ = Workshop.objects.get_or_create(name="裁剪车间")
+        cutting_workshop = sewing_workshop
         cutting_craft = Craft.objects.create(
             craft_type=CraftType.INTERNAL, workshop=cutting_workshop,
             name="工价测试裁剪", plan_category=PlanCategory.CUTTING,
         )
         cutting_operation = Operation.objects.create(
             operation_number="WG-CUT-PIECE", product_name="布套", craft=cutting_craft,
-            name="裁片裁剪", reporting_unit=ProductionUnit.objects.create(unit_code="WG-PIECE", unit_name="片"),
+            name="裁片裁剪", reporting_unit=piece_unit,
         )
         ProductionScheduleProductCraft.objects.create(
             schedule_product=self.schedule_product, craft=cutting_craft,
@@ -752,8 +985,8 @@ class WorkshopReportingApiTests(APITestCase):
             "bom_line_id": str(cutting_piece.pk), "display_name": "椅套面片-A款",
             "counting_mode": "PIECE", "declared_price": "1", "status": "ACTIVE",
         }]}
-        rejected = self.client.post(
-            "/api/v1/workshop-reporting/wage-schemes/", wrong_kind, format="json",
+        rejected = self.client.patch(
+            sewing_url, wrong_kind, format="json", HTTP_IF_MATCH=wrong_unit_response["ETag"],
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertIn("车缝部位", str(rejected.data))

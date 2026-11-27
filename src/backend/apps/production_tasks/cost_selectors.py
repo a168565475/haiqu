@@ -104,17 +104,25 @@ def _task_cost_summary(*, task):
         warnings.append('生产任务尚无产品金额，订单金额未确定。')
         order_missing += 1
     for product in products:
-        code = product.currency.code
+        code = getattr(product.currency, 'code', None)
+        if product.total_amount is None or code is None:
+            order_missing += 1
+            warnings.append('订单产品价格或币种尚未完善。')
+            continue
         if code == 'CNY':
             order_amount += product.total_amount
-        elif product.exchange_rate_snapshot and product.exchange_rate > ZERO:
+        elif product.exchange_rate_snapshot and product.exchange_rate is not None and product.exchange_rate > ZERO:
             order_amount += product.total_amount * product.exchange_rate
         else:
             order_missing += 1
             warnings.append('订单产品缺少已保存人民币汇率快照。')
     # 任务运费和其他收费沿用任务币种；不拿某条产品汇率替整单收费换算。
-    extra = task.freight_amount + task.other_fee_amount
-    if extra and (not task.currency or task.currency.code != 'CNY'):
+    extra = (None if task.freight_amount is None or task.other_fee_amount is None
+             else task.freight_amount + task.other_fee_amount)
+    if extra is None:
+        order_missing += 1
+        warnings.append('订单运费或其他收费尚未完善。')
+    elif extra and (not task.currency or task.currency.code != 'CNY'):
         order_missing += 1
         warnings.append('订单运费或其他收费缺少人民币换算依据。')
     else:

@@ -8,7 +8,7 @@ import 'vant/es/loading/style'
 import 'vant/es/search/style'
 import WorkPage from '@/components/WorkPage.vue'
 import WageSchemeForm from '@/components/WageSchemeForm.vue'
-import { fetchWageScheme, fetchWageSubmissions, fetchWageTargets } from '@/api/wageSchemes'
+import { fetchWageScheme, fetchWageSubmissions, fetchWageTargets, withdrawWageScheme } from '@/api/wageSchemes'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
 import { displayQuantity } from '@/utils/planDisplay'
@@ -30,6 +30,7 @@ const submissionDetail = ref<{ id: string; scheme?: SavedWageScheme; error?: str
 const nextPage = ref<number | null>(null)
 const selected = ref<WageTarget | null>(null)
 const loading = ref(false)
+const withdrawing = ref('')
 const failure = ref('')
 const notice = ref('')
 let request: AbortController | undefined
@@ -141,6 +142,26 @@ async function toggleSubmission(id: string) {
   }
 }
 
+async function withdraw(record: WageSubmission) {
+  if (!record.can_withdraw || withdrawing.value) return
+  withdrawing.value = record.id
+  try {
+    const saved = await fetchWageScheme(record.id)
+    if (!saved.data.can_withdraw) throw new Error('申请状态已经变化，请刷新后查看')
+    await withdrawWageScheme(saved)
+    view.value = 'pending'
+    keyword.value = record.production_task.task_number
+    const linkedTarget = record.schedule_product_id && record.scope_craft.id
+      ? { schedule_product_id: record.schedule_product_id, craft_id: record.scope_craft.id } : undefined
+    await loadList(keyword.value, 1, linkedTarget)
+    notice.value = '修改完成后提交即可'
+  } catch (error) {
+    failure.value = errorMessage(error, '修改入口打开失败，请重新核对申请状态')
+  } finally {
+    withdrawing.value = ''
+  }
+}
+
 onMounted(() => {
   const { task_number, schedule_product_id, craft_id } = route.query
   keyword.value = typeof task_number === 'string' ? task_number.trim() : ''
@@ -209,7 +230,9 @@ onBeforeUnmount(() => { request?.abort(); detailRequest?.abort() })
               <VanButton type="primary" size="small" plain :aria-expanded="submissionDetail?.id === record.id" @click="toggleSubmission(record.id)">
                 {{ submissionDetail?.id === record.id ? '收起' : '查看明细' }}
               </VanButton>
-              <VanButton v-if="record.change_target" type="primary" size="small" @click="openTarget(record.change_target)">变更工价</VanButton>
+              <VanButton v-if="record.can_withdraw" type="primary" plain size="small"
+                :loading="withdrawing === record.id" :disabled="!!withdrawing" @click="withdraw(record)">修改</VanButton>
+              <VanButton v-if="record.change_target" type="primary" size="small" @click="openTarget(record.change_target)">{{ cardAction(record.change_target) }}</VanButton>
             </div>
           </div>
           <template v-if="submissionDetail?.id === record.id">
@@ -217,8 +240,9 @@ onBeforeUnmount(() => { request?.abort(); detailRequest?.abort() })
             <VanLoading v-else-if="!submissionDetail.scheme" size="20">正在读取工价明细</VanLoading>
             <ul v-else class="wage-submission-lines">
               <li v-for="line in submissionDetail.scheme.lines" :key="line.work_item_id">
-                <span>{{ line.display_name === line.operation_name ? line.display_name : `${line.display_name} · ${line.operation_name}` }}</span>
-                <strong>{{ line.status === 'VOID' ? '已作废' : `${displayQuantity(line.declared_price)} 元/次` }}</strong>
+                <span v-if="line.cutting_components?.length">{{ line.operation_name }} · {{ line.cutting_components.map(item => `${item.name} ${item.quantity_per_group}${item.unit}`).join('、') }}</span>
+                <span v-else>{{ line.display_name === line.operation_name ? line.display_name : `${line.display_name} · ${line.operation_name}` }}</span>
+                <strong>{{ line.status === 'VOID' ? '已作废' : `${displayQuantity(line.declared_price)} ${line.counting_mode === 'GROUP' ? '元/套' : '元/次'}` }}</strong>
               </li>
             </ul>
           </template>

@@ -22,6 +22,7 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOptions: vi.fn(), fetchTubeSo
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { warning: vi.fn(), success: vi.fn() } }))
 
 const key = 'tube-outsourcing-pending:v1:7'
+const planHeaderFields = ['生产任务单', '产品', '计划发出日期', '预计回货日期']
 const productDisplay = { specification: '47*55*79 红色 PE', specification_display: '47*55*79', material: 'PE', image_file_id: 'product-image', image_url: '/api/v1/tube-outsourcing-orders/product-images/schedule-product/product-image/' }
 const options: TubeOptions = {
   tasks: [{ id: 'task', task_number: 'SC-test', order_number: 'DD-test', products: [{ id: 'product', schedule_product_id: 'schedule-product', schedule_number: 'PC-test', product_number: 'CP-test', item_number: 'HT-test', product_name: '测试椅', quantity: '1000', unit: '把', color: '黑色', ...productDisplay }] }],
@@ -207,12 +208,14 @@ describe('管材建单与异常恢复', () => {
   it('沿用原表单新建委外总单，管材不再选择或提交五金', async () => {
     vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), material_rows: [structuredClone(hardware)], material_source_revision: 'material-revision' })
     const { wrapper, vm } = await mountPage()
+    expect(wrapper.findAll('.field-grid > label').map(field => field.attributes('title'))).toEqual(planHeaderFields)
+    expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-product', category: 'tube', is_plan: true })
     expect(vm.rows[0]!.quantity).toBe('2000')
     expect(vm.materialRows).toEqual([])
     expect(wrapper.find('[aria-controls="hardware-items"]').exists()).toBe(false)
     expect(wrapper.find('#hardware-items').exists()).toBe(false)
     fill(vm); await vm.save()
-    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ is_plan: true, lines: [{ component_identity: 'front', quantity: '600', factory_id: 'factory', price_unit: 'SQUARE_METER', unit_price: '0.15' }] }))
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ is_plan: true, schedule_product_id: 'schedule-product', lines: [{ component_identity: 'front', quantity: '600', factory_id: 'factory', price_unit: 'SQUARE_METER', unit_price: '0.15' }] }))
     expect(vi.mocked(api.createTubeOrder).mock.calls[0]![0]).not.toHaveProperty('materials')
     wrapper.unmount()
   })
@@ -548,6 +551,7 @@ describe('原管材表单复用裁片模式', () => {
     const { wrapper, vm } = await mountPage(true)
     try {
       expect(printApi.fetchPrintSource).toHaveBeenCalledWith('product', 'printing')
+      expect(wrapper.findAll('.field-grid > label').map(field => field.attributes('title'))).toEqual(planHeaderFields)
       expect(wrapper.find('input[aria-label="面片外发片数"]').exists()).toBe(false)
       expect(vm.rows.map(item => item.quantity)).toEqual(['', ''])
       await wrapper.get('input[aria-label="选择面片丝印"]').setValue(true)
@@ -580,6 +584,8 @@ describe('原管材表单复用裁片模式', () => {
       expect(printApi.fetchPrintSource).toHaveBeenCalledWith('product', 'printing')
       expect(printApi.findPrintOrder).toHaveBeenCalledWith('print-retry')
       expect(vm.pending).toEqual(frozen)
+      expect(vm.error).toContain('暂未查到这笔外发单')
+      expect(printApi.createPrintOrder).not.toHaveBeenCalled()
       await vm.save()
       expect(printApi.createPrintOrder).toHaveBeenCalledExactlyOnceWith(frozen)
     } finally { routing.name = ''; wrapper.unmount() }
@@ -688,7 +694,7 @@ describe('原管材表单复用裁片模式', () => {
     expect(api.fetchTubeOptions).toHaveBeenCalledWith('cutting')
     expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-product', category: 'cutting', craft_id: 'sewing-craft', is_plan: true })
     expect(wrapper.get('h1').text()).toBe('新建车缝外发单')
-    expect(wrapper.findAll('.field-grid > label').map(item => item.attributes('title'))).toEqual(['生产任务单', '产品', '计划发出日期', '预计回货日期'])
+    expect(wrapper.findAll('.field-grid > label').map(item => item.attributes('title'))).toEqual(planHeaderFields)
     expect(wrapper.find('#hardware-items').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('辅料')
     expect(wrapper.text()).toContain('420×380')

@@ -25,7 +25,7 @@ import ProductionTaskScheduleDialog from '@/components/productionScheduling/Prod
 import { useAuthStore } from '@/stores/auth'
 import type { ProductionTask, ProductionTaskOptions, ProductionDeliveryMethod, ProductionTaskStatus, ProductionTaskHoldAction } from '@/types/productionTask'
 
-import { quantityWithUnits, localAmountTotal } from './productionTaskDisplay'
+import { quantityWithUnits, localAmountTotal, taskWriteResultNotice } from './productionTaskDisplay'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,7 +192,7 @@ async function submitTask() {
     etag.value = result.etag
     ElMessage.success('已提交 PMC 确认。')
   } catch (error) {
-    ElMessage.error(apiError(error))
+    ElMessage.error(taskWriteResultNotice(error, task.value.task_number, '提交 PMC') ?? apiError(error))
   } finally {
     actionLoading.value = false
   }
@@ -280,7 +280,7 @@ async function decideByPmc() {
     pmcDialogVisible.value = false
     ElMessage.success(pmcMode.value === 'RETURN' ? '已退回修改。' : 'PMC 已确认。')
   } catch (error) {
-    ElMessage.error(apiError(error))
+    ElMessage.error(taskWriteResultNotice(error, task.value.task_number, 'PMC 处理') ?? apiError(error))
   } finally {
     actionLoading.value = false
   }

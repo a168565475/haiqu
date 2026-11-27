@@ -17,15 +17,18 @@ import { errorMessage } from '@/utils/errors'
 
 type BatchResult = { succeeded: number; failed: { id: string; name: string; message: string }[] }
 
+const props = defineProps<{ workshopId?: string }>()
+const emit = defineEmits<{ back: [] }>()
 const auth = useAuthStore()
 const canView = computed(() => auth.hasPermission('workshop_config.view_workshopemployee'))
 const canChange = computed(() => auth.hasPermission('workshop_config.change_workshopemployee'))
 const rows = ref<WorkshopEmployee[]>([])
 const options = ref<WorkshopEmployeeOptions>({ workshops: [], editable_workshops: [] })
-const editableWorkshops = computed(() => options.value.editable_workshops.filter(item => item.status === 'ACTIVE'))
+const editableWorkshops = computed(() => options.value.editable_workshops.filter(item => item.status === 'ACTIVE'
+  && (!props.workshopId || item.id === props.workshopId)))
 const search = ref('')
-const workshop = ref('')
-const viewMode = ref<'pending' | 'all'>('pending')
+const workshop = ref(props.workshopId || '')
+const viewMode = ref<'pending' | 'all'>(props.workshopId ? 'all' : 'pending')
 const page = ref(1)
 const total = ref(0)
 const totalPages = ref(0)
@@ -82,7 +85,7 @@ async function load(refreshOptions = false) {
       const value = await fetchWorkshopEmployeeOptions(current.signal)
       if (!active || current !== listController) return
       options.value = value
-      if (!value.workshops.some(item => item.id === workshop.value)) workshop.value = ''
+      if (!props.workshopId && !value.workshops.some(item => item.id === workshop.value)) workshop.value = ''
     }
     const result = await fetchWorkshopEmployees({
       page: page.value,
@@ -112,6 +115,7 @@ async function load(refreshOptions = false) {
 }
 
 function searchList() { page.value = 1; void load() }
+function backToReport() { if (!busy.value) emit('back') }
 function changePage(value: number) { page.value = value; void load() }
 function changeViewMode(value: 'pending' | 'all') {
   if (viewMode.value === value || busy.value) return
@@ -292,7 +296,10 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
 </script>
 
 <template>
-  <WorkPage title="车间配置" :subtitle="options.workshops.map(item => item.name).join(' · ') || '按角色对应车间'" section="configuration" home class="employee-page">
+  <WorkPage :title="workshopId ? '员工管理' : '车间配置'"
+    :subtitle="options.workshops.filter(item => !workshopId || item.id === workshopId).map(item => item.name).join(' · ') || '按角色对应车间'"
+    :section="workshopId ? undefined : 'configuration'" :home="!workshopId" :back-action="workshopId ? backToReport : undefined" class="employee-page">
+    <template v-if="workshopId" #header-action><button type="button" class="action-link" :disabled="busy" @click="backToReport">返回报工</button></template>
     <VanEmpty v-if="!canView" description="无权查看车间员工，请联系管理员" />
     <template v-else>
       <div class="employee-view-switch" role="tablist" aria-label="员工名单范围">
@@ -302,7 +309,7 @@ onUnmounted(() => { active = false; listController?.abort(); lifetime.abort() })
 
       <section class="employee-tools" aria-label="查找车间员工">
         <div class="employee-search"><VanSearch v-model="search" aria-label="搜索员工" placeholder="姓名、角色或岗位" @search="searchList" @clear="searchList" /><button class="action-link" :disabled="busy" @click="searchList">搜索</button></div>
-        <label v-if="options.workshops.length > 1" class="workshop-filter"><span>车间</span><select v-model="workshop" aria-label="筛选车间" :disabled="busy || loading" @change="searchList"><option value="">授权车间</option><option v-for="item in options.workshops" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+        <label v-if="!workshopId && options.workshops.length > 1" class="workshop-filter"><span>车间</span><select v-model="workshop" aria-label="筛选车间" :disabled="busy || loading" @change="searchList"><option value="">授权车间</option><option v-for="item in options.workshops" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
       </section>
       <div class="employee-list-heading">
         <h2>{{ viewMode === 'pending' ? '待设置岗位' : '车间员工' }} <span>{{ total }} 人</span></h2>

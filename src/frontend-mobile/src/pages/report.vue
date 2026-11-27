@@ -5,6 +5,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 import { showConfirmDialog, showDialog } from 'vant'
 import type { PickerConfirmEventParams, PickerOption } from 'vant'
 import WorkPage from '@/components/WorkPage.vue'
+import WorkshopConfiguration from './configuration.vue'
 import { createWorkReport, fetchReportingContext, fetchReportingScheme } from '@/api/reporting'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/utils/errors'
@@ -12,7 +13,7 @@ import { createRequestId } from '@/utils/requestId'
 import { loadReportEmployees, saveReportEmployees } from '@/utils/reportEmployeeMemory'
 import { canEnterWageSchemes } from '@/utils/wageSchemes'
 import {
-  estimatedLineAmount, needsCompletionConfirmation, prepareReportAttempt, quantityText,
+  estimatedLineAmount, needsCompletionConfirmation, prepareReportAttempt, quantityText, reportEntryTotal,
   remainingQuantity, reportingScope, shanghaiToday, uncertainSubmission,
   validateReportEntries, validProductionDate,
 } from '@/utils/reporting'
@@ -31,8 +32,10 @@ const changingDate = ref(false)
 const pickerDate = ref<string[]>([])
 const entries = ref<ReportEntry[]>([])
 const rememberedEmployees = ref<Record<string, string>>({})
-const prefilledEmployees = ref<Record<number, string>>({})
+const prefilledEmployees = ref<Record<number, Pick<ReportEntry, 'workshop_employee_id' | 'production_line'>>>({})
 const employeeMemoryNotice = ref('')
+const employeeManagerOpen = ref(false)
+const previousEmployeeNames = ref<Record<string, string>>({})
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
@@ -55,9 +58,10 @@ const wageFormLink = computed(() => {
 })
 const workshop = computed(() => context.value?.workshops.find(item => item.id === scope.value?.workshop_id))
 const craft = computed(() => context.value?.crafts.find(item => item.id === scope.value?.craft_id))
-const assembly = computed(() => workshop.value?.name === '装配车间')
+const assembly = computed(() => scope.value?.plan_category === 'ASSEMBLY' || workshop.value?.name === '装配车间')
 const employees = computed(() => context.value?.employees.filter(item => item.workshop_id === scope.value?.workshop_id) ?? [])
 const operations = computed(() => scheme.value?.lines.filter(item => item.status === 'ACTIVE') ?? [])
+const canManageEmployees = computed(() => !!workshop.value && auth.hasPermission('workshop_config.view_workshopemployee'))
 const canCreate = computed(() => auth.hasPermission('workshop_reporting.add_workreport') && auth.hasPermission('workshop_reporting.view_workreport'))
 const locked = computed(() => saving.value || uncertain.value || completed.value !== null)
 watch([locked, loading], ([isLocked, isLoading]) => { if (isLocked || isLoading) showReportDate.value = false })
@@ -65,8 +69,16 @@ const pickerYear = computed(() => Number(productionDate.value.slice(0, 4)))
 const minPickerDate = computed(() => new Date(Math.min(Number(shanghaiToday().slice(0, 4)) - 10, pickerYear.value), 0, 1))
 const maxPickerDate = computed(() => new Date(Math.max(Number(shanghaiToday().slice(0, 4)) + 10, pickerYear.value), 11, 31))
 // 记忆带入的员工不算本次填写，避免未填次数的其他工序被一并提交或提示必填。
-const filledEntries = computed(() => entries.value.filter(row => row.quantity !== '' || row.production_line !== null
-  || row.workshop_employee_id !== '' && row.workshop_employee_id !== prefilledEmployees.value[row.key]))
+const filledEntries = computed(() => entries.value.filter(row => row.quantity !== ''
+  || (row.production_line !== null && row.production_line !== prefilledEmployees.value[row.key]?.production_line)
+  || (row.workshop_employee_id !== '' && row.workshop_employee_id !== prefilledEmployees.value[row.key]?.workshop_employee_id)))
+const operationGroups = computed(() => operations.value.map(line => {
+  const rows = entries.value.filter(row => row.scheme_line_id === line.id)
+  const participants = new Set(rows.filter(row => Number(row.quantity) > 0 && row.workshop_employee_id)
+    .map(row => row.workshop_employee_id)).size
+  return { line, rows, participants, total: reportEntryTotal(rows) }
+}))
+const filledOperationCount = computed(() => new Set(filledEntries.value.map(row => row.scheme_line_id)).size)
 const hasInput = computed(() => filledEntries.value.length > 0)
 const pickerHasInput = computed(() => entries.value.some(row => row.key === picker.rowKey
   && (row.workshop_employee_id !== '' || row.quantity !== '' || row.production_line !== null)))
@@ -78,8 +90,30 @@ const filteredOptions = computed(() => {
   return employees.value.filter(item => item.name.toLocaleLowerCase().includes(keyword))
 })
 
-function lineFor(row: ReportEntry) { return operations.value.find(item => item.id === row.scheme_line_id) }
-function employeeName(id: string) { return employees.value.find(item => item.id === id)?.name ?? '' }
+function employeeName(id: string) {
+  return employees.value.find(item => item.id === id)?.name
+    ?? (previousEmployeeNames.value[id] ? `${previousEmployeeNames.value[id]}（已不可用）` : '')
+}
+function addEmployee(id: string) {
+  entries.value.push({ key: ++nextRowKey, scheme_line_id: id, workshop_employee_id: '', production_line: null, quantity: '' })
+}
+function removeEmployee(key: number) {
+  entries.value = entries.value.filter(row => row.key !== key)
+  clearValidation()
+}
+async function returnFromEmployeeManager() {
+  employeeManagerOpen.value = false
+  const current = context.value
+  if (!current || !scope.value) return
+  try {
+    const updated = await fetchReportingContext(scope.value.schedule_product_id)
+    if (context.value !== current) return
+    previousEmployeeNames.value = { ...previousEmployeeNames.value, ...Object.fromEntries(employees.value.map(item => [item.id, item.name])) }
+    context.value = { ...current, employees: updated.employees }
+  } catch (error) {
+    submitError.value = errorMessage(error, '员工选项刷新失败，请重试。')
+  }
+}
 function rowError(row: ReportEntry, field: keyof ReportValidation['rows'][number]) { return validation.value.rows[row.key]?.[field] }
 function formatReportQuantity(value: string, row: ReportEntry) {
   // 小数、符号或文字整次拒绝，不能把 1.5 次静默变成 15 次。
@@ -135,23 +169,28 @@ async function loadData(preserve = false) {
     scheme.value = price
     rememberedEmployees.value = {}
     employeeMemoryNotice.value = ''
-    if (auth.user?.id) {
+    if (auth.user?.id && operations.value.some(line => line.last_employees === undefined)) {
       try { rememberedEmployees.value = loadReportEmployees(auth.user.id, selected) }
       catch { employeeMemoryNotice.value = '无法读取上次员工，请手动选择；成功报工后会重新记住。' }
     }
-    const previousEntries = new Map(entries.value.map(row => [row.scheme_line_id, row]))
+    const previousEntries = entries.value
     const removedInput = filledEntries.value.some(row => !operations.value.some(line => line.id === row.scheme_line_id))
     // 工序顺序及版本会更新，填写内容只能按工序行 ID 对应，不能按位置复用。
-    entries.value = operations.value.map(line => {
-      const previous = previousEntries.get(line.id)
-      if (previous) return previous
-      const employeeId = rememberedEmployees.value[line.work_item_id]
-      const selectedEmployee = employeeIds.value.has(employeeId) ? employeeId : ''
-      const key = ++nextRowKey
-      prefilledEmployees.value[key] = selectedEmployee
-      return { key, scheme_line_id: line.id, workshop_employee_id: selectedEmployee, production_line: null, quantity: '' }
+    entries.value = operations.value.flatMap(line => {
+      const previous = previousEntries.filter(row => row.scheme_line_id === line.id)
+      if (previous.length) return previous
+      const roster = line.last_employees ?? [{
+        workshop_employee_id: rememberedEmployees.value[line.work_item_id] || '', production_line: null,
+      }]
+      const available = roster.filter(member => employeeIds.value.has(member.workshop_employee_id))
+      const selected = assembly.value ? available : available.slice(0, 1)
+      return (selected.length ? selected : [{ workshop_employee_id: '', production_line: null }]).map(member => {
+        const key = ++nextRowKey
+        const prefill = { ...member, production_line: assembly.value ? member.production_line : null }
+        prefilledEmployees.value[key] = prefill
+        return { key, scheme_line_id: line.id, ...prefill, quantity: '' }
+      })
     })
-    prefilledEmployees.value = Object.fromEntries(entries.value.map(row => [row.key, prefilledEmployees.value[row.key] ?? '']))
     if (preserve && (removedInput || previousScheme?.id !== price.id || previousScheme.revision !== price.revision)) {
       submitError.value = removedInput
         ? '部分已填写工序已停用或移除，对应内容已清空，请重新核对后提交。'
@@ -228,7 +267,7 @@ async function sendAttempt() {
   }
   finally { saving.value = false }
   // 本地偏好写入失败不能把已经成功的报工变成失败或触发重复提交。
-  if (completed.value && userId && selected) {
+  if (completed.value && userId && selected && operations.value.some(line => line.last_employees === undefined)) {
     try {
       saveReportEmployees(userId, selected, employeesToRemember)
       rememberedEmployees.value = employeesToRemember
@@ -285,6 +324,7 @@ onBeforeRouteLeave(allowLeave)
 onBeforeRouteUpdate(allowLeave)
 window.addEventListener('beforeunload', beforeUnload)
 watch(() => route.fullPath, () => {
+  employeeManagerOpen.value = false; previousEmployeeNames.value = {}
   completed.value = null; attempt = null; uncertain.value = false; productionDate.value = shanghaiToday(); showReportDate.value = false
   clearValidation(); void loadData()
 }, { immediate: true })
@@ -292,7 +332,8 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
 </script>
 
 <template>
-  <WorkPage class="report-work-page" title="生产报工" :subtitle="workshop && craft ? `${workshop.name} · ${craft.name}` : '班组长填写本次完成情况'" section="report" back-to="/production-report">
+  <WorkshopConfiguration v-if="employeeManagerOpen && scope" :workshop-id="scope.workshop_id" @back="returnFromEmployeeManager" />
+  <WorkPage v-show="!employeeManagerOpen" class="report-work-page" title="生产报工" :subtitle="workshop && craft ? `${workshop.name} · ${craft.name}` : '班组长填写本次完成情况'" section="report" back-to="/production-report">
     <div class="page-stack report-page">
       <section v-if="completed" class="section-card report-success" role="status">
         <van-icon name="passed" size="40" />
@@ -338,6 +379,8 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
             <span class="field-label">生产日期</span>
             <span class="report-date-value">{{ productionDate }}<van-icon name="calendar-o" aria-hidden="true" /></span>
           </button>
+          <button v-if="canManageEmployees" class="action-link report-manage-employees" type="button" :disabled="locked"
+            @click="employeeManagerOpen = true">员工管理</button>
         </section>
 
         <template v-if="scheme && !loading">
@@ -346,11 +389,19 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
           <section v-if="blockedConfiguration" class="error-panel" role="alert">{{ blockedConfiguration }}</section>
           <section v-if="!employees.length" class="error-panel" role="alert">当前车间没有可选择的有效员工，请联系主管维护员工资料。</section>
 
-          <section v-for="row in entries" :key="row.key" class="section-card report-entry" :data-row-key="row.key">
+          <section v-for="{ line, rows, participants, total } in operationGroups" :key="line.id" class="section-card report-entry">
             <div class="report-entry-header">
-              <h3 class="report-operation-name">{{ lineFor(row)?.display_name }}<span> · {{ lineFor(row)?.operation_name }}</span></h3>
-              <p class="report-remaining">剩余 <strong>{{ remainingQuantity(lineFor(row)) }}</strong> 次</p>
+              <h3 class="report-operation-name">{{ line.display_name }}<span> · {{ line.operation_name }}</span></h3>
+              <p class="report-remaining">提交前剩余 <strong>{{ remainingQuantity(line) }}</strong> {{ line.cutting_components?.length ? '套' : '次' }}</p>
             </div>
+            <p v-if="line.cutting_components?.length" class="muted">
+              每套 {{ line.cutting_components.map(item => `${item.name} ${item.quantity_per_group}${item.unit}`).join('、') }}，全部做齐才算 1 套。
+            </p>
+            <template v-if="assembly && rows.length > 1">
+              <p class="report-team-total">{{ participants }} 人合计 {{ quantityText(total.toString()) }} 次</p>
+              <p class="muted">请核对合计，同一批完成量只计一次。</p>
+            </template>
+            <div v-for="row in rows" :key="row.key" class="report-employee-row" :data-row-key="row.key">
             <van-field class="report-choice" :model-value="employeeName(row.workshop_employee_id)" label="员工" placeholder="选择实际完成的员工" readonly is-link required :disabled="locked" :error-message="rowError(row, 'workshop_employee_id')" @click="openPicker(row)" />
             <div v-if="assembly" class="report-assembly">
               <p class="field-label">装配线 <span aria-hidden="true">*</span></p>
@@ -359,17 +410,23 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
               </van-radio-group>
               <p v-if="rowError(row, 'production_line')" class="report-field-error">{{ rowError(row, 'production_line') }}</p>
             </div>
-            <van-field v-model="row.quantity" class="report-quantity" label="本次次数" placeholder="请输入次数" type="text" inputmode="numeric" required :formatter="value => formatReportQuantity(value, row)" :disabled="locked" :error-message="rowError(row, 'quantity')" @update:model-value="clearValidation">
-              <template #button><span class="report-quantity-unit">次</span></template>
+            <van-field v-model="row.quantity" class="report-quantity" :label="line.cutting_components?.length ? '本次套数' : '本次次数'" :placeholder="line.cutting_components?.length ? '请输入做齐的套数' : '请输入次数'" type="text" inputmode="numeric" required :formatter="value => formatReportQuantity(value, row)" :disabled="locked" :error-message="rowError(row, 'quantity')" @update:model-value="clearValidation">
+              <template #button><span class="report-quantity-unit">{{ line.cutting_components?.length ? '套' : '次' }}</span></template>
             </van-field>
-            <details v-if="lineFor(row)" class="report-line-details">
+            <p v-if="assembly && rows.length > 1" class="report-person-amount">
+              <span>本人工费 {{ estimatedLineAmount(line, row.quantity) }} 元</span>
+              <button type="button" class="action-link" :disabled="locked" @click="removeEmployee(row.key)">移除</button>
+            </p>
+            </div>
+            <button v-if="assembly" type="button" class="action-link report-add-employee" :disabled="locked" @click="addEmployee(line.id)">加员工</button>
+            <details class="report-line-details">
               <summary>工序要求与工价<van-icon name="arrow-down" aria-hidden="true" /></summary>
-              <p>{{ lineFor(row)!.production_description || '未填写制作说明' }}</p>
+              <p>{{ line.production_description || '未填写制作说明' }}</p>
               <dl class="summary-grid">
-                <div><dt>需完成次数</dt><dd>{{ quantityText(lineFor(row)!.required_quantity) }}</dd></div>
-                <div><dt>累计已报</dt><dd>{{ quantityText(lineFor(row)!.cumulative_quantity) }}</dd></div>
-                <div><dt>工价</dt><dd>{{ quantityText(lineFor(row)!.declared_price) }} 元 / 次</dd></div>
-                <div><dt>本条预计金额</dt><dd>{{ estimatedLineAmount(lineFor(row), row.quantity) }} 元</dd></div>
+                <div><dt>需完成次数</dt><dd>{{ quantityText(line.required_quantity) }}</dd></div>
+                <div><dt>累计已报</dt><dd>{{ quantityText(line.cumulative_quantity) }}</dd></div>
+                <div><dt>工价</dt><dd>{{ quantityText(line.declared_price) }} 元 / {{ line.cutting_components?.length ? '套' : '次' }}</dd></div>
+                <div v-if="rows.length === 1"><dt>本条预计金额</dt><dd>{{ estimatedLineAmount(line, rows[0]!.quantity) }} 元</dd></div>
               </dl>
             </details>
           </section>
@@ -383,7 +440,7 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
     </div>
 
     <template v-if="!completed" #footer>
-      <p class="report-submit-count">本次填写 <strong>{{ filledEntries.length }}</strong> 道工序</p>
+      <p class="report-submit-count">本次填写 <strong>{{ filledOperationCount }}</strong> 道工序</p>
       <van-button block type="primary" :loading="saving" :disabled="!canCreate || loading || (!uncertain && (!scheme || Boolean(blockedConfiguration) || !employees.length))" @click="submit">{{ uncertain ? '核对并重试本次报工' : '提交报工' }}</van-button>
     </template>
 
@@ -432,6 +489,10 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
 .report-record-link { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; padding: 8px 0 0; border-top: 1px solid var(--mobile-border, #e2e8f0); font-size: 14px; font-weight: 500; }
 .report-loading { padding: 32px 16px; text-align: center; }
 .report-date { padding: 0 12px; }
+.report-manage-employees, .report-add-employee { min-height: 44px; }
+.report-employee-row + .report-employee-row { border-top: 1px solid var(--mobile-border); }
+.report-person-amount { display: flex; justify-content: space-between; align-items: center; }
+.report-team-total { font-weight: 600; }
 .report-date-control { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 48px; gap: 12px; padding: 0; border: 0; background: transparent; color: var(--mobile-text, #172b4d); font: inherit; text-align: left; cursor: pointer; }
 .report-date .field-label { margin: 0; flex-shrink: 0; color: var(--mobile-text, #172b4d); font-size: 14px; font-weight: 500; }
 .report-date-value { display: flex; align-items: center; gap: 8px; font-size: 14px; font-variant-numeric: tabular-nums; }

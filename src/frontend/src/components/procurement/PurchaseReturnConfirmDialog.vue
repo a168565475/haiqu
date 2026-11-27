@@ -8,6 +8,7 @@ import { materialAttributeFields, materialSpecificationValue } from '@/utils/mat
 const props = defineProps<{ visible: boolean; record: PurchaseReturn | null; submitting: boolean; action?: 'confirm' | 'complete' | 'view'; showPipeRoots?: boolean }>()
 const isComplete = computed(() => props.action === 'complete')
 const isView = computed(() => props.action === 'view')
+const sourceNumber = computed(() => props.record?.production_task_number || props.record?.sample_number || '—')
 const confirmationDone = computed(() => !!props.record && props.record.status !== 'QUALITY_GENERATED')
 const completionDone = computed(() => !!props.record && props.record.status === 'COMPLETED')
 const hoveredRowId = ref('')
@@ -62,11 +63,11 @@ function time(value: string | null): string {
         </aside>
         <section class="return-detail-content">
           <section class="return-confirm-summary" aria-label="退货基础信息">
-            <header><div><h3>基础信息</h3><span>{{ record.return_number || '—' }}</span></div><span class="return-confirm-status" :class="`status-${record.status}`">{{ record.status_display || '—' }}</span></header>
+            <header><div><h3>基础信息</h3><span :title="sourceNumber"><strong>{{ sourceNumber }}</strong></span></div><span class="return-confirm-status" :class="`status-${record.status}`">{{ record.status_display || '—' }}</span></header>
             <dl>
+              <div><dt>退货单号</dt><dd>{{ record.return_number || '—' }}</dd></div>
               <div><dt>采购单号</dt><dd>{{ record.order_number || '—' }}</dd></div>
               <div><dt>入库单号</dt><dd>{{ record.inbound_number || '—' }}</dd></div>
-              <div><dt>生产任务单</dt><dd>{{ record.production_task_number || '—' }}</dd></div>
               <div class="supplier-field"><dt>供应商</dt><dd>{{ record.supplier_name || '—' }}</dd></div>
               <div><dt>采购确认</dt><dd>{{ record.confirmed_by_name || '—' }}　{{ time(record.confirmed_at) }}</dd></div>
               <div><dt>完成退货</dt><dd>{{ record.completed_by_name || '—' }}　{{ time(record.completed_at) }}</dd></div>

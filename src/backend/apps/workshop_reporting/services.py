@@ -28,11 +28,12 @@ from apps.workshop_config.models import (
 from apps.workshop_config.selectors import locked_active_employees
 
 from .models import (
-    WageScheme, WageSchemeAction, WageSchemeCraft, WageSchemeEvent, WageSchemeLine,
+    WageScheme, WageSchemeAction, WageSchemeCraft, WageSchemeEvent, WageSchemeLine, WageSchemeLineCuttingGroup,
     WageSchemeLineStatus, WageSchemeStatus, WorkCountingMode, WorkItem, WorkReport, WorkReportLine,
     WorkshopPlanExecution, WorkshopPlanStatus,
 )
 from .report_history import history_enabled, existing_submission, remember_report, scheme_was_used
+from .selectors import require_wage_line_storage, wage_line_cutting_components
 
 
 EDITABLE_SCHEME_STATUSES = {WageSchemeStatus.DRAFT, WageSchemeStatus.RETURNED}
@@ -215,6 +216,8 @@ def payload_hash(value):
 
 
 def _snapshot(scheme):
+    lines = list(scheme.lines.order_by("line_number", "id"))
+    cutting_components = wage_line_cutting_components(lines)
     return {
         "status": scheme.status,
         "revision": scheme.revision,
@@ -224,13 +227,14 @@ def _snapshot(scheme):
             {
                 "id": str(line.pk), "work_item_id": str(line.work_item_id),
                 "price": str(line.declared_price), "status": line.status,
+                "cutting_components": cutting_components.get(line.pk, []),
                 "counting_mode": line.counting_mode,
                 "required_quantity": (
                     str(line.required_quantity_snapshot)
                     if line.required_quantity_snapshot is not None else None
                 ),
             }
-            for line in scheme.lines.all().order_by("line_number", "id")
+            for line in lines
         ],
     }
 
@@ -288,6 +292,21 @@ def _resolve_source(product_line_id, workshop_id, schedule_product_id, craft_ids
     return product_line, workshop, schedule_product, crafts
 
 
+def _cutting_component(option):
+    if not option or option["component_kind"] != "CUT_PIECE":
+        raise ValidationError({"lines": "裁片必须从当前已确认 BOM 的裁片中选择。"})
+    name = option["label"]
+    parts, pieces = option["parts_per_product"], option["pieces_per_part"]
+    if not parts or parts <= 0 or not pieces or pieces <= 0:
+        raise ValidationError({"lines": f"裁片“{name}”缺少每产品部位数或每部位裁片数，请先完善 BOM。"})
+    if not (option.get("unit") or "").strip():
+        raise ValidationError({"lines": f"裁片“{name}”缺少计数单位，请先完善 BOM。"})
+    return {
+        "component_identity": option["component_identity"], "name": name,
+        "quantity_per_group": parts * pieces, "unit": option["unit"],
+    }
+
+
 def _line_counting_basis(*, craft, item, bom_options, order_quantity):
     plan_category = (
         PlanCategory.METAL
@@ -295,10 +314,20 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
         else craft.plan_category
     )
     bom_option = None
+    cutting_components = []
     counting_mode = WorkCountingMode.ORDER
     display_name = item.get("display_name", "").strip()
 
-    if plan_category in {PlanCategory.METAL, PlanCategory.CUTTING, PlanCategory.SEWING}:
+    if "bom_line_ids" in item:
+        if plan_category != PlanCategory.CUTTING:
+            raise ValidationError({"lines": "只有裁剪工价可以选择一组裁片。"})
+        cutting_components = [_cutting_component(bom_options.get(str(line_id))) for line_id in item["bom_line_ids"]]
+        display_name = "、".join(component["name"] for component in cutting_components)
+        if len(display_name) > 200:
+            display_name = f"{display_name[:199]}…"
+        counting_mode = WorkCountingMode.GROUP
+        required_quantity = Decimal(order_quantity)
+    elif plan_category in {PlanCategory.METAL, PlanCategory.CUTTING, PlanCategory.SEWING}:
         bom_line_id = str(item.get("bom_line_id") or "")
         bom_option = bom_options.get(bom_line_id)
         expected_source = PlanCategory.METAL if plan_category == PlanCategory.METAL else PlanCategory.CUTTING
@@ -327,14 +356,8 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
                 raise ValidationError({"lines": f"BOM“{display_name}”缺少每件支数，请先完善 BOM。"})
             required_quantity = Decimal(order_quantity) * Decimal(factor)
         elif plan_category == PlanCategory.CUTTING:
-            parts = bom_option["parts_per_product"]
-            pieces = bom_option["pieces_per_part"]
-            if parts is None or parts <= 0 or pieces is None or pieces <= 0:
-                raise ValidationError({"lines": f"裁片“{display_name}”缺少每产品部位数或每部位裁片数，请先完善 BOM。"})
-            if not (bom_option.get("unit") or "").strip():
-                raise ValidationError({"lines": f"裁片“{display_name}”缺少计数单位，请先完善 BOM。"})
             counting_mode = WorkCountingMode.PIECE
-            required_quantity = Decimal(order_quantity) * Decimal(parts) * Decimal(pieces)
+            required_quantity = Decimal(order_quantity) * _cutting_component(bom_option)["quantity_per_group"]
         else:
             parts = bom_option["parts_per_product"]
             if parts is None or parts <= 0:
@@ -357,6 +380,7 @@ def _line_counting_basis(*, craft, item, bom_options, order_quantity):
         raise ValidationError({"lines": f"明细“{display_name}”的需完成次数超出系统可保存范围。"})
     return {
         "bom_option": bom_option,
+        "cutting_components": cutting_components,
         "counting_mode": counting_mode,
         "display_name": display_name,
         "order_quantity": order_quantity,
@@ -376,6 +400,10 @@ def _work_item_for_line(*, product_line, workshop, craft_map, item, basis):
     bom_option = basis["bom_option"]
     component_identity = bom_option["component_identity"] if bom_option else None
     counting_mode = basis["counting_mode"]
+    group_identities = ",".join(sorted(component["component_identity"] for component in basis["cutting_components"]))
+    identity_part = group_identities or component_identity or display_name.casefold()
+    identity_source = f"{craft.pk}:{operation.pk}:{identity_part}:{counting_mode}"
+    identity_key = hashlib.sha256(identity_source.encode()).hexdigest()
     if item.get("work_item_id"):
         try:
             work_item = WorkItem.objects.select_related("unit").get(
@@ -385,7 +413,10 @@ def _work_item_for_line(*, product_line, workshop, craft_map, item, basis):
             raise ValidationError({"lines": "原工作项不存在或不属于当前订单产品。"}) from exc
         if work_item.craft_id != craft.pk or work_item.operation_id != operation.pk:
             raise ValidationError({"lines": "变更方案不能改变原工作项的工艺或工序。"})
-        if component_identity:
+        if group_identities or work_item.counting_mode == WorkCountingMode.GROUP:
+            if work_item.identity_key != identity_key:
+                raise ValidationError({"lines": "更换裁片组合需作为新工作项保存。"})
+        elif component_identity:
             if work_item.bom_component_identity and str(work_item.bom_component_identity) != component_identity:
                 raise ValidationError({"lines": "变更方案不能把原工作项改为其他 BOM 名称/部位。"})
             if work_item.counting_mode != counting_mode and work_item.bom_component_identity:
@@ -405,9 +436,6 @@ def _work_item_for_line(*, product_line, workshop, craft_map, item, basis):
         elif work_item.display_name != display_name:
             raise ValidationError({"lines": "变更方案不能改变原工作项的名称/部位。"})
         return work_item, craft, operation
-    identity_part = component_identity or display_name.casefold()
-    identity_source = f"{craft.pk}:{operation.pk}:{identity_part}:{counting_mode}"
-    identity_key = hashlib.sha256(identity_source.encode()).hexdigest()
     work_item, _ = WorkItem.objects.get_or_create(
         product_line=product_line, workshop=workshop, identity_key=identity_key,
         defaults={
@@ -422,6 +450,9 @@ def _work_item_for_line(*, product_line, workshop, craft_map, item, basis):
 def _replace_scheme_lines(scheme, items, crafts):
     if scheme_was_used(scheme):
         raise Conflict("已有报工引用的方案不能修改明细，请发起变更版本。")
+    require_wage_line_storage(grouped=any("bom_line_ids" in item for item in items))
+    if scheme.lines.filter(counting_mode=WorkCountingMode.GROUP).exists():
+        WageSchemeLineCuttingGroup.objects.filter(line__scheme=scheme).delete()
     scheme.lines.all().delete()
     craft_map = {item.pk: item for item in crafts}
     is_metal_scope = _is_metal_craft_scope(crafts)
@@ -433,8 +464,10 @@ def _replace_scheme_lines(scheme, items, crafts):
         scheme.schedule_product.source_quantity_snapshot
         if scheme.schedule_product_id else scheme.product_line.quantity
     )
+    source_lines = dict(scheme.parent_scheme.lines.values_list("work_item_id", "pk")) if scheme.parent_scheme_id else {}
     seen = set()
     created = []
+    cutting_groups = []
     for index, item in enumerate(items, start=1):
         craft = craft_map.get(item["craft_id"])
         if not craft:
@@ -447,17 +480,18 @@ def _replace_scheme_lines(scheme, items, crafts):
             item=item, basis=basis,
         )
         if not is_metal_scope and operation.product_name != scheme.operation_product_name_snapshot:
-            raise ValidationError({"lines": f"工序 {operation.name} 不属于当前选择的工序品名。"})
+            raise ValidationError({"lines": f"工序 {operation.name} 不属于当前选择的工价方案。"})
         if work_item.pk in seen:
             raise ValidationError({"lines": "同一方案不能重复添加同一工作项。"})
         seen.add(work_item.pk)
-        created.append(WageSchemeLine(
+        line = WageSchemeLine(
             scheme=scheme, work_item=work_item, line_number=index,
             display_name_snapshot=basis["display_name"],
             production_description=item.get("production_description", "").strip(),
             craft_name_snapshot=craft.name,
             operation_name_snapshot=operation.name, operation_number_snapshot=operation.operation_number,
-            unit_name_snapshot=work_item.unit.unit_name if work_item.unit_id else "",
+            unit_name_snapshot="组" if basis["cutting_components"] else (work_item.unit.unit_name if work_item.unit_id else ""),
+            source_line_id=source_lines.get(work_item.pk),
             bom_component_identity_snapshot=(
                 basis["bom_option"]["component_identity"] if basis["bom_option"] else None
             ),
@@ -482,8 +516,13 @@ def _replace_scheme_lines(scheme, items, crafts):
             previous_price=item.get("previous_price"), revised_price=item.get("revised_price"),
             declared_price=item["declared_price"], status=item.get("status", WageSchemeLineStatus.ACTIVE),
             note=item.get("note", ""),
-        ))
+        )
+        created.append(line)
+        if basis["cutting_components"]:
+            cutting_groups.append(WageSchemeLineCuttingGroup(line=line, components=basis["cutting_components"]))
     WageSchemeLine.objects.bulk_create(created)
+    if cutting_groups:
+        WageSchemeLineCuttingGroup.objects.bulk_create(cutting_groups)
 
 
 def _refresh_scheme_required_quantities(scheme):
@@ -495,27 +534,37 @@ def _refresh_scheme_required_quantities(scheme):
             sewing_product_id = product.pk
     options = bom_options_for_product_line(scheme.product_line_id, schedule_product_id=sewing_product_id)
     options_by_component = {item["component_identity"]: item for item in options}
+    options_by_id = {item["id"]: item for item in options}
     order_quantity = (
         scheme.schedule_product.source_quantity_snapshot
         if scheme.schedule_product_id else scheme.product_line.quantity
     )
-    changed = []
-    for line in scheme.lines.select_related("work_item").all():
+    lines = list(scheme.lines.select_related("work_item"))
+    cutting_components = wage_line_cutting_components(lines)
+    cutting_groups = []
+    for line in lines:
         bom_option = (
             options_by_component.get(str(line.bom_component_identity_snapshot))
             if line.bom_component_identity_snapshot else None
         )
+        group = [
+            options_by_component.get(component["component_identity"], {}).get("id")
+            for component in cutting_components.get(line.pk, [])
+        ]
         basis = _line_counting_basis(
             craft=scheme.scope_craft,
             item={
                 "bom_line_id": bom_option["id"] if bom_option else None,
+                **({"bom_line_ids": group} if group else {}),
                 "display_name": line.display_name_snapshot,
                 "counting_mode": line.counting_mode,
             },
-            bom_options={item["id"]: item for item in options},
+            bom_options=options_by_id,
             order_quantity=order_quantity,
         )
         line.display_name_snapshot = basis["display_name"]
+        if basis["cutting_components"]:
+            cutting_groups.append(WageSchemeLineCuttingGroup(line=line, components=basis["cutting_components"]))
         line.order_quantity_snapshot = basis["order_quantity"]
         line.required_quantity_snapshot = basis["required_quantity"]
         line.bom_sets_per_product_snapshot = (
@@ -533,13 +582,14 @@ def _refresh_scheme_required_quantities(scheme):
         line.bom_pieces_per_part_snapshot = (
             basis["bom_option"]["pieces_per_part"] if basis["bom_option"] else None
         )
-        changed.append(line)
-    if changed:
-        WageSchemeLine.objects.bulk_update(changed, [
+    if lines:
+        WageSchemeLine.objects.bulk_update(lines, [
             "display_name_snapshot", "order_quantity_snapshot", "required_quantity_snapshot",
             "bom_sets_per_product_snapshot", "bom_pieces_per_set_snapshot", "bom_component_kind_snapshot",
             "bom_parts_per_product_snapshot", "bom_pieces_per_part_snapshot",
         ])
+    if cutting_groups:
+        WageSchemeLineCuttingGroup.objects.bulk_update(cutting_groups, ["components"])
 
 
 @transaction.atomic
@@ -613,8 +663,10 @@ def update_scheme(*, scheme_id, data, actor, request):
         raise Conflict("当前状态不允许修改工价方案。")
     from apps.access_control.sales_policy import access_for
     edit_scopes = access_for(request)["actions"].get("workshop_reporting.change_wagescheme", {}).get("scopes", [])
-    if scheme.created_by_employee_id != actor.pk and not request.user.is_superuser and not set(edit_scopes) & {"MODULE", "ALL"}:
-        raise PermissionDenied("只有创建人可以修改该工价方案。")
+    if not request.user.is_superuser and not set(edit_scopes) & {"MODULE", "ALL"}:
+        from .selectors import wage_scheme_editor_filter
+        if not WageScheme.objects.filter(wage_scheme_editor_filter(actor.pk), pk=scheme.pk).exists():
+            raise PermissionDenied("只有创建人或撤回人可以修改该工价方案。")
     craft_ids = data.pop("craft_ids", None)
     lines = data.pop("lines", None)
     operation_product_name = data.pop("operation_product_name", scheme.operation_product_name_snapshot).strip()
@@ -674,14 +726,6 @@ def create_change_scheme(*, source_scheme_id, data, actor, request):
     if set(data.get("craft_ids") or []) != {source.scope_craft_id}:
         raise ValidationError({"craft_ids": "变更版本必须保持原所属工艺。"})
     new_scheme = create_scheme(data=data, actor=actor, parent_scheme=source, request=request)
-    source_lines = {item.work_item_id: item.pk for item in source.lines.all()}
-    changed_lines = []
-    for line in new_scheme.lines.all():
-        line.source_line_id = source_lines.get(line.work_item_id)
-        if line.source_line_id:
-            changed_lines.append(line)
-    if changed_lines:
-        WageSchemeLine.objects.bulk_update(changed_lines, ["source_line"])
     source.revision += 1
     source.updated_by_employee = actor
     source.save(update_fields=["revision", "updated_by_employee", "updated_at"])
@@ -714,6 +758,26 @@ def submit_scheme(*, scheme_id, actor, request, comment=""):
     _event(scheme, WageSchemeAction.SUBMITTED, actor, comment)
     from apps.wecom.workshop_notifications import scheme_changed
     scheme_changed(scheme, actor, submitted=True)
+    return scheme
+
+
+@transaction.atomic
+def withdraw_scheme(*, scheme_id, actor, request):
+    scheme = WageScheme.objects.select_for_update().get(pk=scheme_id)
+    require_workshop(request, "workshop_reporting.submit_wagescheme", scheme.workshop_id)
+    require_matching_etag(request, scheme)
+    if scheme.status != WageSchemeStatus.PENDING_APPROVAL:
+        raise Conflict("只有待审批方案可以撤回。")
+    submitter = scheme.events.filter(action=WageSchemeAction.SUBMITTED).order_by(
+        "-scheme_revision", "-created_at", "-id",
+    ).values_list("actor_employee_id", flat=True).first()
+    if submitter != actor.pk:
+        raise PermissionDenied("只有本次提交人可以撤回工价申请。")
+    scheme.status = WageSchemeStatus.DRAFT
+    scheme.revision += 1
+    scheme.updated_by_employee = actor
+    scheme.save(update_fields=["status", "revision", "updated_by_employee", "updated_at"])
+    _event(scheme, WageSchemeAction.WITHDRAWN, actor)
     return scheme
 
 
@@ -905,7 +969,7 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
     ))}
     if len(employees) != len(set(row["workshop_employee_id"] for row in data["lines"])):
         raise ValidationError({"lines": "存在非本车间或无效员工。"})
-    is_assembly = scheme.workshop.name == "装配车间"
+    is_assembly = scheme.scope_craft.plan_category == PlanCategory.ASSEMBLY or scheme.workshop.name == "装配车间"
     built = []
     total = Decimal("0.00")
     for index, row in enumerate(data["lines"], start=1):
@@ -957,7 +1021,8 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
             raise ValidationError({
                 "lines": (
                     f"“{line.display_name_snapshot} / {line.operation_name_snapshot}”"
-                    f"剩余可报 {max(remaining, Decimal('0'))}，本次不能报 {submitted_quantity}。"
+                    f"剩余可报 {max(remaining, Decimal('0')):g}，本次合计 {submitted_quantity:g}，"
+                    f"超出 {submitted_quantity - max(remaining, Decimal('0')):g} 次。"
                 )
             })
     plan_will_complete = all(

@@ -4,7 +4,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, DocumentChecked } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   createMaterialIssue, fetchEligibleMaterialIssueProducts, fetchMaterialIssue, fetchMaterialIssueOptions,
@@ -15,10 +15,12 @@ import { isRawIssuePipe, issueOrderOverages, issuePipeRootCount, issueRequestedQ
 import { decimalUnits } from '@/utils/outsourcingQuantities'
 import type { MaterialIssueBatch } from '@/types/materialIssue'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
-import { router } from '@/router'
+import { useAuthStore } from '@/stores/auth'
 import type { MaterialIssueOptions, MaterialIssueProduct, MaterialRequirement, MaterialRequirementBlocker } from '@/types/materialIssue'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
 const issueId = computed(() => String(route.params.issueId || ''))
 const editing = computed(() => Boolean(issueId.value))
 const loading = ref(false)
@@ -58,6 +60,7 @@ const planCategoryLabels: Record<string, string> = {
   METAL: '金工计划', CUTTING: '裁剪计划', SEWING: '车缝计划', ASSEMBLY: '装配计划',
 }
 const planContextActive = computed(() => !editing.value && Boolean(planWorkshopNames[planCategory.value]))
+const showSemiPartition = computed(() => editing.value || !['METAL', 'CUTTING'].includes(planCategory.value))
 const workshopName = computed(() => savedWorkshopName.value || options.value.workshops.find(item => item.id === form.workshop_id)?.name)
 const isAssemblyIssue = computed(() => planCategory.value === 'ASSEMBLY' || workshopName.value === '装配车间')
 const pipeInRoots = computed(() => workshopName.value === '金工车间')
@@ -317,6 +320,9 @@ async function loadPlanContext() {
     return
   }
   Object.assign(form, { production_task_id: taskId, product_line_id: productLineId, workshop_id: workshop.id })
+  if (!form.recipient_workshop_employee_id) {
+    form.recipient_workshop_employee_id = recipients.value.find(item => item.id === auth.user?.employee?.id)?.id || ''
+  }
   originalTaskId.value = taskId
   await loadProducts(false)
   if (!products.value.some((item) => item.id === productLineId)) {
@@ -399,7 +405,7 @@ onMounted(initialize)
         </section>
 
         <details v-if="blockers.length" class="requirement-warning">
-          <summary><span><strong>当前车间有 {{ blockers.length }} 项材料资料需要处理</strong><small>请先核对下方资料提示，系统按原材料与半成品分别校验。</small></span><em>查看明细</em></summary>
+          <summary><span><strong>当前车间有 {{ blockers.length }} 项材料资料需要处理</strong><small>请先核对下方资料提示<template v-if="showSemiPartition">，系统按原材料与半成品分别校验</template>。</small></span><em>查看明细</em></summary>
           <ul><li v-for="item in blockerSummary" :key="item.detail"><span>{{ item.detail }}</span><b v-if="item.count > 1">{{ item.count }} 项</b></li></ul>
         </details>
 
@@ -409,13 +415,14 @@ onMounted(initialize)
           :selected="selected"
           :allocations="allocations"
           :pipe-in-roots="pipeInRoots"
+          :show-semi-partition="showSemiPartition"
           :show-pipe-deduction-columns="!isAssemblyIssue"
         />
         <section v-else class="mi-surface mi-empty empty-requirements">请先从作业计划带入生产订单与产品。</section>
       </div>
 
       <footer class="form-action-footer">
-        <span><b>原材料 {{ recordedRows.filter(r => r.line_type === 'RAW').length }} 项 · 半成品 {{ recordedRows.filter(r => r.line_type === 'SEMI').length }} 项</b><i></i>不同单位的物料 / 半成品，按各自计量单位领料</span>
+        <span><b>原材料 {{ recordedRows.filter(r => r.line_type === 'RAW').length }} 项<template v-if="showSemiPartition"> · 半成品 {{ recordedRows.filter(r => r.line_type === 'SEMI').length }} 项</template></b><i></i>不同单位的物料<template v-if="showSemiPartition"> / 半成品</template>，按各自计量单位领料</span>
         <div>
           <ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">{{ editing ? '返回详情' : '返回' }}</ElButton>
           <ElButton :loading="saving" :icon="DocumentChecked" @click="save(false)">保存草稿</ElButton>

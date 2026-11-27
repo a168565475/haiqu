@@ -1,9 +1,9 @@
 import uuid
 from decimal import Decimal
 from datetime import timedelta
+from django.contrib.auth.models import Permission
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
 from apps.boms.models import BomLine, BomSection
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine, MaterialIssueAuditEvent, OrderMaterialRequirement, RequirementContribution
 from apps.reference_data.models import ProductionUnit, ProductCategory
@@ -56,30 +56,63 @@ class SewingFixture(PublicStockFixture):
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True,PUBLIC_STOCK_ISSUES_ENABLED=True)
 class InternalSewingReceiptTests(SewingFixture,TestCase):
     url='/api/v1/semi-finished-receipts/'
+
+    def setUp(self):
+        super().setUp()
+        plan_permission = Permission.objects.get(
+            content_type__app_label='production_scheduling', codename='view_productionschedule')
+        self.user.user_permissions.add(plan_permission)
+        self.user = type(self.user).objects.get(pk=self.user.pk)
+        self.client.force_authenticate(self.user)
+
     def preview(self):
         response=self.client.get(self.url+'preview/',{'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING'})
         self.assertEqual(response.status_code,200,response.data)
         return response.data['data']
-    def receive(self, seat=0, back=0, date=None):
+    def receive(self, seat=0, back=0, date=None, *, with_zone=True):
         payload={'request_id':str(uuid.uuid4()),'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING',
-            'zone_id':str(self.semi_zone.pk),'receipt_date':str(date or timezone.localdate()),'remark':'车缝测试',
+            'receipt_date':str(date or timezone.localdate()),'remark':'车缝测试',
             'lines':[{'bom_line_id':str(line.pk),'quantity':str(quantity)} for line,quantity in zip(self.parts,[seat,back]) if quantity]}
+        if with_zone:
+            payload['zone_id'] = str(self.semi_zone.pk)
         return self.client.post(self.url,payload,format='json',HTTP_IF_MATCH=self.preview()['etag'])
 
+    def confirm(self, submitted, zone_id=None):
+        receipt_id = submitted.data['data']['receipt_id']
+        detail = self.client.get(f'{self.url}{receipt_id}/')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['status'], 'PENDING')
+        payload = {'zone_id': str(zone_id)} if zone_id else {}
+        return self.client.post(f'{self.url}{receipt_id}/confirm/', payload, format='json',
+                                HTTP_IF_MATCH=detail.data['data']['etag'])
+
     def test_actual_sewing_sets_are_limited_by_order_demand_without_shared_meter_cap(self):
-        response=self.receive(501,500)
+        response=self.receive(501,500,with_zone=False)
         self.assertEqual(response.status_code,400,response.data)
         self.assertFalse(InternalSemiFinishedReceiptLine.objects.exists())
-        response=self.receive(500,500)
+        response=self.receive(500,500,with_zone=False)
         self.assertEqual(response.status_code,201,response.data)
         self.assertEqual(set(InternalSemiFinishedReceiptLine.objects.values_list('input_per_output','input_quantity')), {(None,None)})
-        self.assertEqual(InternalSemiFinishedReceipt.objects.get().source_snapshot['quantity_basis'],'ORDER_REMAINING')
+        receipt = InternalSemiFinishedReceipt.objects.get()
+        self.assertEqual(receipt.source_snapshot['quantity_basis'],'ORDER_REMAINING')
+        self.assertIsNone(receipt.zone_id)
         self.assertTrue(all(Decimal(row['can_receive'])==0 for row in self.preview()['lines']))
+        self.assertEqual(response.data['data']['record_ids'], [])
+        self.assertEqual(self.confirm(response).status_code, 400)
+        confirmed = self.confirm(response, self.semi_zone.pk)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(len(confirmed.data['data']['record_ids']), 2)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.zone_id, self.semi_zone.pk)
+        self.assertEqual(set(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT')
+                            .values_list('balance__zone_id', flat=True)), {self.semi_zone.pk})
         self.fabric_issue_line.refresh_from_db()
         self.assertEqual(self.fabric_issue_line.issued_quantity,100)
-        detail=self.client.get(self.url+response.data['data']['record_ids'][0]+'/')
+        detail=self.client.get(self.url+response.data['data']['receipt_id']+'/')
         self.assertEqual(detail.status_code,200,detail.data)
-        self.assertIsNone(detail.data['data']['source_detail']['input_quantity'])
+        lines = detail.data['data']['lines']
+        self.assertEqual({row['bom_line_id'] for row in lines}, {str(part.pk) for part in self.parts})
+        self.assertEqual([row['progress']['input_quantity'] for row in lines], [None, None])
 
     def test_unissued_material_and_missing_meter_usage_do_not_limit_actual_sewing_sets(self):
         self.fabric_issue.status='DRAFT'
@@ -94,10 +127,14 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
             self.assertEqual((row['input_remaining'],row['input_supported'],row['consumes_input']), (None,None,None))
         response=self.receive(500,500)
         self.assertEqual(response.status_code,201,response.data)
+        confirmed = self.confirm(response)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
     def test_legacy_receipt_meter_values_remain_and_only_its_sets_reduce_remaining_demand(self):
         response=self.receive(100)
         self.assertEqual(response.status_code,201,response.data)
+        confirmed = self.confirm(response)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
         legacy=InternalSemiFinishedReceiptLine.objects.get()
         InternalSemiFinishedReceiptLine.objects.filter(pk=legacy.pk).update(input_per_output=Decimal('0.6'),input_quantity=60)
         self.parts[0].fabric_meters_per_piece=Decimal('2')
@@ -109,6 +146,8 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
         self.assertEqual(self.receive(1).status_code,400)
 
     def test_missing_cutting_specification_names_part_and_preserves_error(self):
+        submitted = self.receive(1)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
         part=self.parts[0]
         part.specification='/'
         part.save(update_fields=['specification'])
@@ -119,10 +158,13 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
         query={'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING'}
         payload={**query,'request_id':str(uuid.uuid4()),'zone_id':str(self.semi_zone.pk),
             'receipt_date':str(timezone.localdate()),'lines':[{'bom_line_id':str(part.pk),'quantity':'1'}]}
-        for action in ('preview','confirm'):
+        replies = {
+            'preview': self.client.get(self.url+'preview/', query),
+            'submit': self.client.post(self.url, payload, format='json', HTTP_IF_MATCH='"stale"'),
+            'confirm': self.confirm(submitted),
+        }
+        for action, response in replies.items():
             with self.subTest(action=action):
-                response=(self.client.get(self.url+'preview/',query) if action=='preview'
-                    else self.client.post(self.url,payload,format='json',HTTP_IF_MATCH='"stale"'))
                 self.assertEqual(response.status_code,400,response.data)
                 error=response.data['error']
                 self.assertEqual(error['code'],'PUBLIC_STOCK_IDENTITY_INCOMPLETE')
@@ -135,22 +177,26 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
                 self.assertEqual(InternalSemiFinishedReceipt.objects.count(),receipts)
                 self.assertEqual(InternalSemiFinishedReceiptLine.objects.count(),receipt_lines)
 
-    def test_internal_and_external_same_piece_share_balance_and_total_cap(self):
+    def test_internal_and_external_same_piece_share_stock_and_internal_receipt_keeps_cap(self):
         identity=build_semi_finished_identity(bom_line=self.parts[0],completed_craft=self.external_sewing,unit=self.set_unit)
         external=credit_public_stock(identity=identity,zone=self.semi_zone,quantity=450,actor_employee=self.employee,
             source_type='OUTSOURCING_RETURN',source_id=uuid.uuid4(),source_line_id=uuid.uuid4(),
             production_task=self.task,product_line=self.product_line,bom_line=self.parts[0])
         self.assertEqual(self.receive(51).status_code,400)
-        self.assertEqual(self.receive(50).status_code,201)
+        submitted = self.receive(50)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        confirmed = self.confirm(submitted)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
         row=InternalSemiFinishedReceiptLine.objects.get()
         self.assertEqual(row.stock_movement.balance_id,external.balance_id)
         self.assertEqual(row.received_before,450)
         self.assertIsNone(row.input_quantity)
-        with self.assertRaises(ValidationError):
-            credit_public_stock(identity=identity,zone=self.semi_zone,quantity=1,actor_employee=self.employee,
-                source_type='OUTSOURCING_RETURN',source_id=uuid.uuid4(),source_line_id=uuid.uuid4(),
-                production_task=self.task,product_line=self.product_line,bom_line=self.parts[0])
         self.assertEqual(PublicStockBalance.objects.get(pk=external.balance_id).quantity,500)
+        self.assertEqual(self.receive(1).status_code, 400)
+        credit_public_stock(identity=identity,zone=self.semi_zone,quantity=1,actor_employee=self.employee,
+            source_type='OUTSOURCING_RETURN',source_id=uuid.uuid4(),source_line_id=uuid.uuid4(),
+            production_task=self.task,product_line=self.product_line,bom_line=self.parts[0])
+        self.assertEqual(PublicStockBalance.objects.get(pk=external.balance_id).quantity,501)
 
     def test_receipt_date_filter_uses_entered_date(self):
         yesterday=timezone.localdate()-timedelta(days=1)
@@ -159,8 +205,13 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
         records=self.client.get(self.url,{'date_from':str(yesterday),'date_to':str(yesterday)}).data['data']
         self.assertEqual(records['total'],1)
         self.assertEqual(records['items'][0]['receipt_date'],str(yesterday))
-        record_id=response.data['data']['record_ids'][0]
-        self.assertEqual(self.client.get(self.url+record_id+'/').status_code,200)
+        receipt_id = response.data['data']['receipt_id']
+        self.assertEqual(records['items'][0]['id'], receipt_id)
+        confirmed = self.confirm(response)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        records = self.client.get(self.url, {'date_from': str(yesterday), 'date_to': str(yesterday)}).data['data']
+        self.assertEqual([(row['id'], row['receipt_date']) for row in records['items']], [(receipt_id, str(yesterday))])
+        self.assertEqual(self.client.get(self.url+receipt_id+'/').status_code,200)
 
     def test_disabled_public_flow_rejects_first_receipt(self):
         with override_settings(PUBLIC_STOCK_FLOW_ENABLED=False,PUBLIC_STOCK_ISSUES_ENABLED=False):

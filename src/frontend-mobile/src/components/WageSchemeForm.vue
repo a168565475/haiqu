@@ -10,11 +10,13 @@ import WageOptionPicker from '@/components/WageOptionPicker.vue'
 import WorkPage from '@/components/WorkPage.vue'
 import { createWageSchemeChange, fetchWageForm, fetchWageScheme, saveWageScheme, submitWageScheme } from '@/api/wageSchemes'
 import { useAuthStore } from '@/stores/auth'
-import type { SavedWageScheme, VersionedWageScheme, WageBomOption, WageFormOptions, WageLineInput, WageOperation, WageSchemeInput, WageTarget } from '@/types/wageSchemes'
+import type { CuttingGroupComponent, SavedWageScheme, VersionedWageScheme, WageBomOption, WageFormOptions, WageLineInput, WageOperation, WageSchemeInput, WageTarget } from '@/types/wageSchemes'
 import { errorMessage } from '@/utils/errors'
 import { displayQuantity } from '@/utils/planDisplay'
 
-type WageRow = Omit<WageLineInput, 'craft_id' | 'bom_line_id'> & { key: number; bom_line_id: string; operation_name?: string }
+type WageRow = Omit<WageLineInput, 'craft_id' | 'bom_line_id'> & {
+  key: number; bom_line_id: string; operation_name?: string; seededOperationId?: string; savedCuttingComponents?: CuttingGroupComponent[]
+}
 const pricePattern = /^(?:[0-9]{1,14}(?:\.[0-9]{1,4})?|\.[0-9]{1,4})$/
 
 const props = defineProps<{ target: WageTarget }>()
@@ -39,6 +41,8 @@ let nextKey = 0
 let readRequest: AbortController | undefined
 
 const bom = computed(() => options.value?.bom_options ?? null)
+const isCutting = computed(() => options.value?.plan_category === 'CUTTING')
+const showOperationRows = computed(() => Boolean(options.value?.requires_product_name))
 const productNames = computed(() => [...new Set(
   options.value?.operations.map(operation => operation.product_name).filter(Boolean) ?? [],
 )])
@@ -55,6 +59,7 @@ const partChoices = computed(() => bom.value?.map(part => ({
 })) ?? [])
 const operationChoices = computed(() => operations.value.map(operation => ({ value: operation.id, label: operation.name })))
 const isChange = computed(() => Boolean(changeSource.value || saved.value?.data.parent_scheme))
+const quickPriceChange = computed(() => Boolean(changeSource.value && !isCutting.value))
 const formTitle = computed(() => isChange.value || props.target.scheme?.can_change || props.target.scheme?.is_change
   ? '变更工价' : props.target.scheme ? '填写工价' : '新建工价')
 const existingStatus = computed(() => {
@@ -90,16 +95,33 @@ function openRow(key: number, scroll = true) {
   if (scroll) void nextTick(() => document.getElementById(`wage-row-${key}`)?.scrollIntoView({ block: 'nearest' }))
 }
 
-function addRow(part = '', scroll = false) {
-  const bomLine = part || (bom.value?.length === 1 && bom.value[0]!.required_quantity !== null ? bom.value[0]!.id : '')
+function addRow(part = '', scroll = false, seededOperationId?: string) {
+  const bomLine = part || (!isCutting.value && !seededOperationId && bom.value?.length === 1
+    && bom.value[0]!.required_quantity !== null ? bom.value[0]!.id : '')
   const candidates = bomLine ? unusedOperations(bomLine) : operations.value
   const key = ++nextKey
   rows.value.push({
-    key, bom_line_id: bomLine, operation_id: candidates.length === 1 ? candidates[0]!.id : '',
+    key, bom_line_id: bomLine, operation_id: seededOperationId || (candidates.length === 1 ? candidates[0]!.id : ''),
+    seededOperationId,
+    ...(isCutting.value ? { counting_mode: 'GROUP', bom_line_ids: [] } : {}),
     display_name: '', declared_price: '', previous_price: null, revised_price: null,
     production_description: '', status: 'ACTIVE', note: '',
   })
   openRow(key, scroll)
+}
+
+function fillOperations() {
+  if (showOperationRows.value) {
+    for (const operation of operations.value) addRow('', false, operation.id)
+  } else {
+    addRow()
+  }
+}
+
+function rowStarted(row: WageRow) {
+  return !row.seededOperationId || row.seededOperationId !== row.operation_id
+    || Boolean(row.bom_line_id || row.bom_line_ids?.length || row.display_name.trim() || row.declared_price.trim()
+      || row.previous_price || row.revised_price || row.production_description.trim() || row.note.trim() || row.status !== 'ACTIVE')
 }
 
 function removeRow(key: number) {
@@ -114,6 +136,7 @@ function existingRow(line: SavedWageScheme['lines'][number], form: WageFormOptio
     const matches = form.bom_options.filter(item => item.name === line.display_name.trim())
     if (matches.length === 1) part = matches[0]
   }
+  const group = line.cutting_components || []
   return {
     key: ++nextKey, bom_line_id: part?.id ?? '', work_item_id: line.work_item_id, counting_mode: line.counting_mode,
     operation_id: line.operation_id, operation_name: line.operation_name, display_name: line.display_name,
@@ -121,6 +144,11 @@ function existingRow(line: SavedWageScheme['lines'][number], form: WageFormOptio
     previous_price: changeSource.value ? line.declared_price : line.previous_price,
     revised_price: changeSource.value ? null : line.revised_price, status: line.status,
     production_description: line.production_description, note: line.note,
+    ...(group.length ? {
+      savedCuttingComponents: group,
+      bom_line_ids: group.map(component => form.bom_options?.find(item => item.identity === component.component_identity)?.id
+        || component.component_identity),
+    } : {}),
   }
 }
 
@@ -151,9 +179,9 @@ async function load() {
     } else {
       productName.value = form.requires_product_name && productNames.value.length === 1 ? productNames.value[0]! : ''
     }
-    if (!isChange.value) {
+    if (!quickPriceChange.value) {
       if (rows.value.length) editingRowKey.value = rows.value.find(row => rowProblem(row))?.key
-      else addRow()
+      else if (!scheme) fillOperations()
     }
     baseline = formSnapshot()
   } catch (error) {
@@ -173,16 +201,37 @@ async function confirmChange(message: string, confirmButtonText: string) {
 }
 
 async function changeProductName(name: string) {
-  if (productName.value && (saved.value || formSnapshot() !== baseline)
-    && !await confirmChange('更换工序品名后，需要重新填写已录入的工价。', '更换')) return
+  if (name === productName.value) return
+  if (productName.value && rows.value.some(rowStarted)
+    && !await confirmChange('更换工价方案后，需要重新填写已录入的工价。', '更换')) return
   productName.value = name
   rows.value = []
   rowError.value = undefined
-  addRow()
+  fillOperations()
 }
 
 function partFor(row: WageRow) {
   return bom.value?.find(item => item.id === row.bom_line_id)
+}
+
+function groupIds(row: WageRow) {
+  return row.bom_line_ids ?? (row.bom_line_id ? [row.bom_line_id] : [])
+}
+
+function groupChoices(row: WageRow) {
+  return [
+    ...partChoices.value,
+    ...(row.savedCuttingComponents || []).filter(component => !bom.value?.some(item => item.identity === component.component_identity))
+      .map(component => ({ value: component.component_identity, label: component.name })),
+  ]
+}
+
+function changeCuttingGroup(row: WageRow, ids: string[]) {
+  row.bom_line_ids = ids
+  row.bom_line_id = ''
+  row.counting_mode = 'GROUP'
+  row.work_item_id = undefined
+  rowError.value = undefined
 }
 
 function operationFor(row: WageRow) {
@@ -190,18 +239,26 @@ function operationFor(row: WageRow) {
 }
 
 function rowTitle(row: WageRow) {
+  if (showOperationRows.value) return operationFor(row)?.name || row.operation_name || '待选工序'
   const part = (!isChange.value && partFor(row)?.name) || row.display_name.trim()
   const operation = isChange.value ? row.operation_name : operationFor(row)?.name
   return part && operation && part !== operation ? `${part} · ${operation}` : operation || part || '待填工序'
 }
 
 function requiredQuantity(row: WageRow) {
-  const quantity = bom.value ? partFor(row)?.required_quantity : options.value?.order_quantity
+  const quantity = row.counting_mode === 'GROUP'
+    ? groupIds(row).length ? options.value?.order_quantity : undefined
+    : bom.value ? partFor(row)?.required_quantity : options.value?.order_quantity
   return quantity?.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')
 }
 
 function rowProblem(row: WageRow, part: WageBomOption | undefined = partFor(row), operation: WageOperation | undefined = operationFor(row)) {
-  if (bom.value && !part) return isChange.value ? '原部位在当前产品资料中找不到，请联系负责人核对' : '请选择要做的部位'
+  if (row.counting_mode === 'GROUP') {
+    if (!groupIds(row).length) return '请选择这道工序的裁片'
+    if (groupIds(row).some(id => !bom.value?.some(item => item.id === id && item.required_quantity !== null))) {
+      return '请选择当前 BOM 中资料齐全的裁片'
+    }
+  } else if (bom.value && !part) return isChange.value ? '原部位在当前产品资料中找不到，请联系负责人核对' : '请选择要做的部位'
   if (part?.required_quantity === null) return part.problem
   if (!operation) return isChange.value ? '原工序已不可用，请联系负责人核对' : '请选择工序'
   const price = row.declared_price.trim()
@@ -221,7 +278,7 @@ function showRowProblem(row: WageRow, message: string) {
 function addNextRow(part = '') {
   rowError.value = undefined
   submitError.value = ''
-  for (const row of rows.value) {
+  for (const row of rows.value.filter(rowStarted)) {
     const message = rowProblem(row)
     if (message) {
       showRowProblem(row, message)
@@ -235,20 +292,21 @@ function collectInput(): WageSchemeInput | null {
   const form = options.value!
   const { target } = form
   if (form.requires_product_name && !productNames.value.includes(productName.value)) {
-    submitError.value = isChange.value ? '原方案的工序品名已不可用，请联系负责人核对' : '请选择工序品名'
+    submitError.value = isChange.value ? '原工价方案已不可用，请联系负责人核对' : '请选择工价方案'
     return null
   }
-  if (!rows.value.some(row => row.status === 'ACTIVE')) {
+  const entered = rows.value.filter(rowStarted)
+  if (!entered.some(row => row.status === 'ACTIVE')) {
     submitError.value = '请先填写一道工序的工价'
     return null
   }
   const lines: WageLineInput[] = []
   const seen = new Set<string>()
-  for (const row of rows.value) {
+  for (const row of entered) {
     const part = partFor(row)
     const operation = operationFor(row)
     const display = part?.name || row.display_name.trim() || operation?.name || ''
-    const identity = JSON.stringify([operation?.id, part?.id || display.toLowerCase()])
+    const identity = JSON.stringify([operation?.id, row.counting_mode === 'GROUP' ? [...groupIds(row)].sort() : part?.id || display.toLowerCase()])
     const message = rowProblem(row, part, operation) || (seen.has(identity) ? '这个部位的这道工序已填写' : '')
     if (message) {
       showRowProblem(row, message)
@@ -257,7 +315,8 @@ function collectInput(): WageSchemeInput | null {
     seen.add(identity)
     lines.push({
       craft_id: target.craft_id, bom_line_id: part?.id ?? null, operation_id: row.operation_id,
-      ...(isChange.value ? { work_item_id: row.work_item_id, counting_mode: row.counting_mode } : {}),
+      ...(row.work_item_id ? { work_item_id: row.work_item_id } : {}),
+      ...(row.counting_mode === 'GROUP' ? { bom_line_ids: groupIds(row), counting_mode: row.counting_mode } : {}),
       display_name: display, declared_price: row.declared_price.trim(), status: row.status,
       previous_price: row.previous_price?.trim() || null, revised_price: row.revised_price?.trim() || null,
       production_description: row.production_description.trim(), note: row.note.trim(),
@@ -307,7 +366,9 @@ async function submit() {
     checkSavedScheme = true
     emit('submitted', await submitWageScheme(saved.value))
   } catch (error) {
-    if (creating && (!isAxiosError(error) || !error.response || error.response.status === 409 || error.response.status >= 500)) {
+    const response = isAxiosError<{ error?: { code?: string } }>(error) ? error.response : undefined
+    if (creating && (!response || response.status >= 500
+      || (response.status === 409 && response.data?.error?.code !== 'DATABASE_MIGRATION_REQUIRED'))) {
       checkNewScheme.value = true
     }
     submitError.value = errorMessage(error, '提交失败，已保留填写内容')
@@ -348,7 +409,7 @@ onBeforeRouteLeave(allowLeave)
       </section>
       <p v-else-if="existingStatus" class="section-card" role="status">当前方案 · {{ existingStatus }}</p>
       <p v-else-if="missingSetup" class="error-panel" role="alert">{{ missingSetup }}</p>
-      <div v-else-if="isChange" class="wage-lines">
+      <div v-else-if="quickPriceChange" class="wage-lines">
         <article v-for="row in rows" :id="`wage-row-${row.key}`" :key="row.key" class="section-card wage-line wage-change-line">
           <h3>{{ rowTitle(row) }}</h3>
           <p class="muted">原工价 {{ row.previous_price === null ? '—' : `${displayQuantity(row.previous_price)} 元/次` }}</p>
@@ -365,38 +426,44 @@ onBeforeRouteLeave(allowLeave)
       </div>
       <template v-else-if="options">
         <WageOptionPicker v-if="options.requires_product_name && (productNames.length > 1 || !productNames.includes(productName))"
-          class="section-card wage-product-choice" label="工序品名" :model-value="productName" :choices="productChoices" :disabled="locked"
+          class="section-card wage-product-choice" label="工价方案" :model-value="productName" :choices="productChoices" :disabled="locked"
           @update:model-value="changeProductName" />
+        <div v-else-if="options.requires_product_name" class="section-card wage-inline-field wage-fixed-part">
+          <span>工价方案</span><strong>{{ productName }}</strong>
+        </div>
         <div v-if="!options.requires_product_name || productName" class="wage-lines">
           <article v-for="(row, index) in rows" :id="`wage-row-${row.key}`" :key="row.key" class="wage-line">
-            <div v-if="editingRowKey === row.key" class="section-card wage-line-edit" @input="rowError = undefined">
+            <div v-if="showOperationRows || editingRowKey === row.key" class="section-card wage-line-edit" @input="rowError = undefined">
               <div class="wage-line-heading">
-                <h3>填写第 {{ index + 1 }} 道工序</h3>
-                <button v-if="rows.length > 1 || saved" type="button" class="action-link" :disabled="locked" @click="removeRow(row.key)">删除这道</button>
+                <h3>{{ showOperationRows ? rowTitle(row) : `填写第 ${index + 1} 道工序` }}</h3>
+                <button v-if="showOperationRows || rows.length > 1 || saved" type="button" class="action-link" :disabled="locked" @click="removeRow(row.key)">移除</button>
               </div>
-              <WageOptionPicker v-if="bom && (bom.length !== 1 || !row.bom_line_id)" class="wage-line-choice"
+              <WageOptionPicker v-if="isCutting" class="wage-line-choice" label="裁片" :selected-values="groupIds(row)"
+                :choices="groupChoices(row)" :disabled="locked" @update:selected-values="changeCuttingGroup(row, $event)" />
+              <WageOptionPicker v-else-if="bom && (bom.length !== 1 || !row.bom_line_id)" class="wage-line-choice"
                 label="部位" :model-value="row.bom_line_id" :choices="partChoices" :disabled="locked"
-                @update:model-value="value => { row.bom_line_id = value; rowError = undefined }" />
+                @update:model-value="value => { row.bom_line_id = value; row.work_item_id = undefined; rowError = undefined }" />
               <div v-else-if="partFor(row)" class="wage-inline-field wage-fixed-part">
                 <span>部位</span>
                 <strong>{{ partFor(row)?.name }}</strong>
               </div>
-              <WageOptionPicker class="wage-line-choice" label="工序" :model-value="row.operation_id" :choices="operationChoices" :disabled="locked"
-                @update:model-value="value => { row.operation_id = value; rowError = undefined }" />
+              <WageOptionPicker v-if="!showOperationRows || !row.seededOperationId" class="wage-line-choice"
+                label="工序" :model-value="row.operation_id" :choices="operationChoices" :disabled="locked"
+                @update:model-value="value => { row.operation_id = value; row.work_item_id = undefined; rowError = undefined }" />
               <label class="wage-inline-field wage-price">
-                <span>每次工价</span>
+                <span>{{ row.counting_mode === 'GROUP' ? '每套工价' : '每次工价' }}</span>
                 <span class="wage-money-input">
                   <input v-model="row.declared_price" inputmode="decimal" placeholder="输入金额" :disabled="locked">
-                  <small>元/次</small>
+                  <small>{{ row.counting_mode === 'GROUP' ? '元/套' : '元/次' }}</small>
                 </span>
               </label>
               <p v-if="requiredQuantity(row)" class="muted wage-quantity">
-                需做 {{ requiredQuantity(row) }} {{ operationFor(row)?.unit || '次' }}
+                需做 {{ requiredQuantity(row) }} {{ row.counting_mode === 'GROUP' ? '套' : operationFor(row)?.unit || '次' }}
               </p>
               <p v-if="row.status === 'VOID'" class="muted">这道工序已作废</p>
               <p v-if="rowError?.key === row.key" class="wage-error" role="alert">{{ rowError.message }}</p>
               <p v-else-if="partFor(row)?.problem" class="wage-error">{{ partFor(row)?.problem }}</p>
-              <button v-if="row.bom_line_id && row.operation_id && unusedOperations(row.bom_line_id).length" type="button" class="action-link wage-same-part" :disabled="locked" @click="addNextRow(row.bom_line_id)">
+              <button v-if="!showOperationRows && row.bom_line_id && row.operation_id && unusedOperations(row.bom_line_id).length" type="button" class="action-link wage-same-part" :disabled="locked" @click="addNextRow(row.bom_line_id)">
                 同部位再加一道
               </button>
               <details class="wage-more">
@@ -419,7 +486,7 @@ onBeforeRouteLeave(allowLeave)
             </button>
           </article>
           <VanButton class="wage-add-row" block plain type="primary" :disabled="locked" @click="addNextRow()">
-            {{ rows.length ? '再加一道工序' : '添加工序' }}
+            {{ showOperationRows ? '补行' : rows.length ? '再加一道工序' : '添加工序' }}
           </VanButton>
           <details class="section-card wage-more">
             <summary>方案备注</summary>
@@ -431,7 +498,7 @@ onBeforeRouteLeave(allowLeave)
     </div>
     <template v-if="ready && !loading && !loadError && !missingSetup" #footer>
       <VanButton block type="primary" :loading="saving" @click="submit">
-        {{ checkNewScheme ? '核对并重试提交' : '提交厂长审批' }}
+        {{ checkNewScheme ? '核对并重试提交' : '提交' }}
       </VanButton>
     </template>
   </WorkPage>

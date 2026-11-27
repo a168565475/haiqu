@@ -10,8 +10,9 @@ const detailApi = vi.hoisted(() => vi.fn())
 vi.mock('@/api/materialIssues', () => ({
   fetchMaterialIssue: detailApi, confirmMaterialIssue: vi.fn(), previewMaterialIssue: vi.fn(), returnMaterialIssue: vi.fn(),
 }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { issueId: 'issue-1' }, query: {} }) }))
-vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { issueId: 'issue-1' }, query: {} }), useRouter: () => ({ push: vi.fn() }),
+}))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: null, hasPermission: () => false }) }))
 
 const requirement = {
@@ -23,11 +24,35 @@ const requirement = {
 const raw = {
   ...requirement, requirement_id: 'raw-1', line_type: 'RAW', material_name: '管材原料',
   part_names: ['前脚'], internal_issued_quantity: '3', warehouse_zones: ['原料库'],
-  conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' },
+  conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05', cutting_length_mm: 500 },
 } as MaterialRequirement
 const wrappers: ReturnType<typeof mount>[] = []
 const globalOptions = { plugins: [ElementPlus], stubs: { AppWindowDialog: true } }
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.clearAllMocks() })
+
+it('向下键按原材料、半成品顺序聚焦下一行申请数量', async () => {
+  const wrapper = mount(MaterialIssuePartitions, {
+    attachTo: document.body,
+    props: {
+      requirements: [raw, { ...raw, requirement_id: 'raw-2' }, requirement, { ...requirement, requirement_id: 'semi-2' }],
+      selected: { 'raw-1': '6', 'raw-2': '12', 'semi-1': '3', 'semi-2': '4' },
+      allocations: {},
+      showPipeDeductionColumns: false,
+    },
+    global: globalOptions,
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+
+  const quantities = wrapper.findAll<HTMLInputElement>('.quantity-input input')
+  expect(quantities).toHaveLength(4)
+  quantities[0]!.element.focus()
+  for (const [index, input] of quantities.entries()) {
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement).toBe((quantities[index + 1] ?? input).element)
+  }
+  expect(quantities.map(input => input.element.value)).toEqual(['6', '12', '3', '4'])
+})
 
 describe('领料候选整行选择', () => {
   it.each([
@@ -75,6 +100,36 @@ describe('领料候选整行选择', () => {
     expect(selected).toEqual({ [row.requirement_id]: '0' })
   })
 
+  it('金工添加原材料只列管材，确认选择保留原单五金', async () => {
+    const hardware: MaterialRequirement = {
+      ...raw, requirement_id: 'hardware-1', section_code: 'HARDWARE',
+      material_name: '螺丝', unit: '件', conversion_snapshot: undefined,
+    }
+    const selected = { [hardware.requirement_id]: '4' }
+    const wrapper = mount(MaterialIssuePartitions, {
+      props: { requirements: [raw, hardware], selected, allocations: {}, pipeInRoots: true },
+      global: {
+        plugins: [ElementPlus],
+        stubs: { AppWindowDialog: { template: '<div data-testid="picker"><slot /><slot name="footer" /></div>' } },
+      },
+    })
+    wrappers.push(wrapper)
+    await wrapper.get('[data-testid="raw-partition"] header button').trigger('click')
+    await flushPromises()
+    const candidates = wrapper.findAll('.candidate-table tbody tr')
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]!.text()).toContain('管材原料')
+    const headers = wrapper.findAll('.candidate-table thead th').map(cell => cell.text())
+    const cells = candidates[0]!.findAll('td')
+    expect(cells[headers.indexOf('原管长度')]!.text()).toBe('3.05 m')
+    expect(cells[headers.indexOf('切割长度')]!.text()).toBe('500 mm')
+    expect(wrapper.findAll('.candidate-table thead th.pipe-length-cell').map(cell => cell.text())).toEqual(['原管长度', '切割长度'])
+    expect(wrapper.get<HTMLInputElement>('.candidate-table thead input[type="checkbox"]').element.checked).toBe(false)
+    await candidates[0]!.trigger('click')
+    await wrapper.get('[data-testid="picker"] > button').trigger('click')
+    expect(selected).toEqual({ [hardware.requirement_id]: '4', [raw.requirement_id]: '0' })
+  })
+
   it('已有材料取消后重新选回，确认时保留原数量和库存分配', async () => {
     const selected = { [raw.requirement_id]: '6' }
     const batches = [{ inbound_line_id: 'inbound-1', inbound_number: '入库-1', zone_name: '原料库', requested_pieces: '6', available_quantity: '2', available_meters: '6.10' }]
@@ -119,6 +174,12 @@ describe('半成品按整数支领用显示', () => {
 
     const semi = wrapper.get('[data-testid="semi-partition"]')
     const selectedHeaders = semi.findAll('thead th').map(cell => cell.text())
+    expect(selectedHeaders).not.toContain('可用说明')
+    expect(selectedHeaders.filter(Boolean).slice(-3)).toEqual(['预计结余', '申请数量', '操作'])
+    for (const partition of [wrapper.get('[data-testid="raw-partition"]'), semi]) {
+      expect(partition.findAll('thead th.el-table-fixed-column--right').map(cell => cell.text())).toEqual(['申请数量', '操作'])
+      expect(partition.get('thead th.el-table-fixed-column--right.is-center').text()).toBe('申请数量')
+    }
     expect(selectedHeaders).toContain('规格')
     expect(selectedHeaders).toContain('颜色')
     expect(selectedHeaders).toContain('库区')
@@ -132,7 +193,7 @@ describe('半成品按整数支领用显示', () => {
     await flushPromises()
     const pickerHeaders = wrapper.get('[data-testid="picker"] .candidate-table').findAll('thead th').map(cell => cell.text())
     expect(pickerHeaders).toContain('加工状态')
-    expect(pickerHeaders).toContain('匹配依据')
+    expect(pickerHeaders).not.toContain('匹配依据')
     expect(pickerHeaders).toContain('操作')
     expect(pickerHeaders).not.toContain('工艺')
     expect(wrapper.get('[data-testid="picker"]').text()).toContain('添加')

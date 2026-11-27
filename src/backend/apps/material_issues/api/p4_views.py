@@ -253,7 +253,12 @@ class MetalProcessingExternalOrderViewSet(viewsets.GenericViewSet):
         return Response({"data": rows, "meta": {"total": len(rows)}})
 
     def retrieve(self, request, pk=None):
-        return Response({"data": _order_result(get_object_or_404(self.get_queryset(), pk=pk), request)})
+        queryset = self.get_queryset().select_related("source__issue_line__issue__production_task")
+        order = get_object_or_404(queryset, pk=pk)
+        result = _order_result(order, request)
+        task = order.source.issue_line.issue.production_task
+        result["production_task_number"] = task.task_number if task else ""
+        return Response({"data": result})
 
     @extend_schema(request=P4AllocationWriteSerializer, responses=P4OrderResponseSerializer,
                    parameters=[OpenApiParameter("If-Match", str, OpenApiParameter.HEADER, required=True)])

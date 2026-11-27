@@ -21,6 +21,7 @@ export interface P4OriginalHandoff {
   id: string
   original_order_id: string
   original_order_number?: string
+  original_production_task_number?: string
   factory_id: string
   factory_name?: string
   handoff_pieces: number
@@ -147,6 +148,7 @@ export interface P4OriginalOrderClosure {
 export interface P4OriginalOrderContext {
   original_order_id: string
   original_order_number: string
+  production_task_number: string
   original_order_status: string
   etag: string
   parts: P4OriginalOrderPart[]
@@ -197,6 +199,7 @@ export interface P4ExternalOrder {
   planned_amount?: string | null
   id: string
   order_number: string
+  production_task_number?: string
   source_id: string
   rework_id: string
   original_return_id: string

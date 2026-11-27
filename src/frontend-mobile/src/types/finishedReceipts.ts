@@ -14,8 +14,8 @@ export interface FinishedReceiptOptions {
   locations: { id: string; zone: string; warehouse_id: string; location_number: string; status: string; remaining_box_slots: number | null }[]
 }
 export interface FinishedReceiptPayload {
-  request_id: string; schedule_product_id: string; location_id: string; receipt_date: string
-  received_quantity: number; quantity_per_box: number | null; actual_color: string; remark: string
+  request_id: string; schedule_product_id: string; receipt_date: string; received_quantity: number
+  location_id?: string; quantity_per_box?: number | null; actual_color?: string; remark?: string
 }
 export interface PendingFinishedReceipt { payload: FinishedReceiptPayload; etag: string }
 export interface FinishedReceiptResult { id: string; receipt_number: string; status: 'PENDING' | 'CONFIRMED'; replayed: boolean }

@@ -52,7 +52,7 @@ const goodContext = {
     zone_name: '半成品A区', received_by_employee_name: '接收人', return_date: '2026-09-22', remark: '',
   }],
 }
-const handoffDetail = { id: 'handoff-1', handoff_pieces: 12, returned_unsprayed_pieces: 0,
+const handoffDetail = { id: 'handoff-1', handoff_pieces: 12, returned_unsprayed_pieces: 0, original_production_task_number: '任务-原单',
   original_order_id: 'original-order', original_order_number: '原单-001', original_order_status: 'PARTIAL_RETURN',
   source_etag: '"source-1"', remaining_return_pieces: 12, return_blockers: [], good_return_context: goodContext }
 const wrappers: ReturnType<typeof mount>[] = []
@@ -120,12 +120,13 @@ describe('统一入口内的单据与来源范围', () => {
   })
 
   it('重加工详情显示实际加工价格并去掉金额尾零', async () => {
-    api.externalOrder.mockResolvedValue({ id: 'priced-order', order_number: '新单-价格', source_id: 'source-1',
+    api.externalOrder.mockResolvedValue({ id: 'priced-order', order_number: '新单-价格', source_id: 'source-1', production_task_number: '任务-重加工',
       original_return_id: 'return-1', rework_id: 'rework-1', factory_name: '喷塑厂', craft_name: '喷塑',
       allocated_pieces: 5, handoff_pieces: 0, returned_good_pieces: 0, remaining_return_pieces: 0,
       unit_price: '2.0000', planned_amount: '10.00', status: 'PENDING_HANDOFF', etag: '"priced"',
       handoff: null, good_returns: [], closure: null, allocation_history: [] })
     const wrapper = await createView({ mode: 'rework', externalOrderId: 'priced-order' })
+    expect(wrapper.findAll('.unified-record-card.rework-identity strong').slice(0, 2).map(value => value.text())).toEqual(['任务-重加工', '新单-价格'])
     expect(wrapper.get('[data-testid="rework-pricing"]').text()).toContain('2 元/支')
     expect(wrapper.get('[data-testid="rework-pricing"]').text()).toContain('10 元')
     expect(wrapper.get('[data-testid="rework-pricing"]').text()).not.toContain('10.00')
@@ -150,6 +151,7 @@ describe('统一入口内的单据与来源范围', () => {
     const wrapper = await createView({ mode: 'original', embedded: true, originalOrderId: 'original-order' })
     expect(api.sources).toHaveBeenCalledWith(expect.objectContaining({ original_order_id: 'original-order' }))
     expect(api.orders).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.original-identity strong').map(value => value.text())).toEqual(['任务-原单', '原单-001'])
     expect(wrapper.text()).toContain('本单加工厂')
     expect(wrapper.text()).not.toContain('其他单加工厂')
     expect(wrapper.text()).toContain('整单含不可访问来源')

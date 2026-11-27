@@ -7,7 +7,7 @@ from apps.material_catalog.snapshots import material_identity_key
 
 from .catalog_stock_identity import build_catalog_stock_identity
 from .models import PublicStockBalance
-from .public_stock_services import _database_identity, _uuid
+from .public_stock_services import _database_identity, _uuid, stock_warehouse_filter
 from .pipe_weight_quantities import issued_pipe_weight
 from .hardware_stock_weights import catalog_piece_weight_identity, piece_weight_change
 
@@ -27,10 +27,9 @@ def available_catalog_balances(*, material_catalog_id, material_selection_snapsh
         identity = _database_identity(build_catalog_stock_identity(material_catalog_id=material_catalog_id,
             material_selection_snapshot=selected, raw_bar_length_m=raw_bar_length_m))
         identity_filter = {"identity_key": identity["identity_key"]}
-    query = PublicStockBalance.objects.filter(
+    query = PublicStockBalance.objects.filter(stock_warehouse_filter(identity),
         **identity_filter, stock_kind=identity["stock_kind"], unit_id=identity["unit_id"],
         quality="AVAILABLE", quantity__gt=0, zone__status="ACTIVE", zone__warehouse__status="ACTIVE",
-        zone__warehouse__warehouse_type="MATERIAL" if identity["stock_kind"] == "CATALOG_RAW" else "SEMI_FINISHED",
         unit__status="ACTIVE", unit__archived_at__isnull=True,
     ).select_related("zone__warehouse", "unit").order_by("zone_id", "id")
     if zone_id is not None:

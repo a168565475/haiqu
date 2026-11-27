@@ -3,7 +3,8 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
-  Paginated, PlanWageStatus, ReportingContext, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput, WorkReport, WorkReportDay, WorkReportPlanCategory, WorkReportTask,
+  Paginated, PlanWageStatus, ReportingContext, ReportingOption, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput,
+  WorkReport, WorkReportDay, WorkReportFilters, WorkReportProductOption, WorkReportTaskOption,
 } from '@/types/workshopReporting'
 
 const basePath = '/api/v1/workshop-reporting/'
@@ -55,6 +56,11 @@ export async function submitWageScheme(id: string, etag: string): Promise<Versio
     `${basePath}wage-schemes/${encodeURIComponent(id)}/submit/`, {}, { headers: { 'If-Match': etag } },
   ))
 }
+export async function withdrawWageScheme(id: string, etag: string): Promise<Versioned<WageScheme>> {
+  return versioned(await apiClient.post<DataResponse<WageScheme>>(
+    `${basePath}wage-schemes/${encodeURIComponent(id)}/withdraw/`, {}, { headers: { 'If-Match': etag } },
+  ))
+}
 export async function approveWageScheme(id: string, etag: string): Promise<Versioned<WageScheme>> {
   return versioned(await apiClient.post<DataResponse<WageScheme>>(
     `${basePath}wage-schemes/${encodeURIComponent(id)}/approve/`, {}, { headers: { 'If-Match': etag } },
@@ -76,8 +82,10 @@ export async function createWorkReport(payload: Record<string, unknown>): Promis
 export async function fetchWorkReport(id: string): Promise<Versioned<WorkReport>> {
   return versioned(await apiClient.get<DataResponse<WorkReport>>(`${basePath}work-reports/${encodeURIComponent(id)}/`))
 }
-export async function fetchWorkReports(params: { page?: number; page_size?: number; production_task_id?: string; schedule_product_id?: string; workshop_id?: string; craft_id?: string; plan_category?: WorkReportPlanCategory } = {}): Promise<Paginated<WorkReport>> {
-  const { data } = await apiClient.get<Paginated<WorkReport>>(`${basePath}work-reports/`, { params })
+const reportFilterParams = { indexes: null }
+
+export async function fetchWorkReports(params: WorkReportFilters & { page?: number; page_size?: number } = {}): Promise<Paginated<WorkReport>> {
+  const { data } = await apiClient.get<Paginated<WorkReport>>(`${basePath}work-reports/`, { params, paramsSerializer: reportFilterParams })
   return data
 }
 export async function deleteWorkReport(id: string, reason: string, etag: string): Promise<void> {
@@ -94,9 +102,27 @@ export async function fetchWorkReportDays(params: Record<string, unknown> = {}):
   const { data } = await apiClient.get<Paginated<WorkReportDay>>(`${basePath}work-report-days/`, { params })
   return data
 }
-export async function fetchWorkReportTasks(params: { q?: string; page?: number; page_size?: number; production_task_id?: string } = {}): Promise<Paginated<WorkReportTask>> {
-  const { data } = await apiClient.get<Paginated<WorkReportTask>>(`${basePath}work-report-tasks/`, { params })
-  return data
+const reportFilterOptionsUrl = `${basePath}work-reports/filter-options/`
+
+export async function fetchWorkReportWorkshops(): Promise<ReportingOption[]> {
+  const { data } = await apiClient.get<DataResponse<ReportingOption[]>>(reportFilterOptionsUrl, { params: { kind: 'workshops' } })
+  return data.data
+}
+
+type ReportOptionParams = Pick<WorkReportFilters, 'workshop_id' | 'plan_category' | 'production_task_ids' | 'product_line_ids'> & { q?: string }
+
+export async function fetchWorkReportTaskOptions(params: ReportOptionParams): Promise<WorkReportTaskOption[]> {
+  const { data } = await apiClient.get<Paginated<WorkReportTaskOption>>(reportFilterOptionsUrl, {
+    params: { ...params, kind: 'tasks', page_size: 50 }, paramsSerializer: reportFilterParams,
+  })
+  return data.data
+}
+
+export async function fetchWorkReportProductOptions(params: ReportOptionParams): Promise<WorkReportProductOption[]> {
+  const { data } = await apiClient.get<Paginated<WorkReportProductOption>>(reportFilterOptionsUrl, {
+    params: { ...params, kind: 'products', page_size: 50 }, paramsSerializer: reportFilterParams,
+  })
+  return data.data
 }
 export async function fetchWorkReportDay(day: string, params: Record<string, unknown> = {}): Promise<Paginated<WorkReport>> {
   const { data } = await apiClient.get<Paginated<WorkReport>>(`${basePath}work-report-days/${encodeURIComponent(day)}/`, { params })

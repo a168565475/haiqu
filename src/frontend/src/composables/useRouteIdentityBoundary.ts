@@ -10,7 +10,7 @@ export function approveRouteIdentity(route: object, auth: AuthStore) {
   routeApprovals.set(route, { store: auth, generation: auth.identityGeneration })
 }
 
-const safeLandingNames = new Set(['home', 'production-overview', 'workshop-workbench', 'login', 'waiting-role'])
+const safeLandingNames = new Set(['home', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench', 'login', 'waiting-role'])
 
 export function isCleanIdentityLanding(route: Pick<RouteLocationNormalized, 'name' | 'params' | 'query' | 'hash'>) {
   return safeLandingNames.has(String(route.name)) && !Object.keys(route.params).length

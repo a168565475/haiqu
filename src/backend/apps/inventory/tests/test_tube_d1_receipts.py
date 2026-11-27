@@ -53,6 +53,15 @@ class D1Fixture(tube_fixture.TubeApiFixture):
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)
 class TubeD1ReceiptTests(D1Fixture, APITestCase):
+    def d1_confirm(self, submitted, zone_id=None):
+        receipt_id = submitted.data['data']['receipt_id']
+        detail = self.client.get(f'{URL}{receipt_id}/', HTTP_HOST='localhost')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['status'], 'PENDING')
+        payload = {'zone_id': str(zone_id)} if zone_id else {}
+        return self.client.post(f'{URL}{receipt_id}/confirm/', payload, format='json', HTTP_HOST='localhost',
+                                HTTP_IF_MATCH=detail.data['data']['etag'])
+
     def test_powder_plan_preview_has_fifteen_columns_and_real_basis(self):
         preview = self.d1_preview()
         row = preview['lines'][0]
@@ -72,13 +81,27 @@ class TubeD1ReceiptTests(D1Fixture, APITestCase):
     def test_partial_receipt_writes_once_without_raw_debit_or_manual_completion(self):
         raw_before = self.raw_balance.quantity
         raw_out_before = PublicStockMovement.objects.filter(direction='OUT').count()
-        self.d1_post()
+        payload = self.d1_payload()
+        del payload['zone_id']
+        submitted = self.d1_post(payload)
+        self.assertEqual(submitted.data['data']['status'], 'PENDING')
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.assertIsNone(receipt.zone_id)
         self.assertRegex(receipt.receipt_number, rf'^BNRK{timezone.localdate():%y%m%d}[0-9]{{3,}}$')
         line = InternalSemiFinishedReceiptLine.objects.get()
         self.assertEqual(receipt.source_snapshot['quantity_basis'], 'WORK_REPORT_MINIMUM')
         self.assertEqual((line.quantity, line.input_quantity, line.received_after), (7, 7, 7))
+        self.assertIsNone(line.stock_movement_id)
+        self.assertEqual(self.d1_preview()['lines'][0]['can_receive'], '93')
+        self.assertEqual(self.d1_confirm(submitted).status_code, 400)
+        self.assertEqual(self.d1_confirm(submitted, self.raw_zone.pk).status_code, 400)
+        confirmation = self.d1_confirm(submitted, self.semi_zone.pk)
+        self.assertEqual(confirmation.status_code, 200, confirmation.data)
+        self.assertEqual(confirmation.data['data']['status'], 'CONFIRMED')
+        self.assertEqual(len(confirmation.data['data']['record_ids']), 1)
+        line.refresh_from_db()
         self.assertEqual(line.stock_movement.balance.quantity, 7)
+        self.assertEqual(line.stock_movement.balance.zone_id, self.semi_zone.pk)
         self.source.refresh_from_db()
         self.raw_balance.refresh_from_db()
         self.assertEqual((self.source.completed_pieces, self.source.internal_received_pieces), (0, 0))
@@ -159,7 +182,8 @@ class TubeD1ReceiptTests(D1Fixture, APITestCase):
         self.d1_post(self.d1_payload('60'))
 
     def test_public_semi_outbound_does_not_consume_first_output_twice(self):
-        self.d1_post(self.d1_payload('30'))
+        confirmed = self.d1_confirm(self.d1_post(self.d1_payload('30')))
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
         self.post_order(self.order_payload('PUBLIC_SEMI', '7'))
         row = self.d1_preview()['lines'][0]
         self.assertEqual((row['received'], row['metal_processing']['reserved'], row['can_receive']), ('30', '0', '70'))
@@ -219,7 +243,8 @@ class TubeD1ReceiptTests(D1Fixture, APITestCase):
             self.assertEqual(self.client.get(URL + f"by-request/{payload['request_id']}/", HTTP_HOST='localhost').status_code, 200)
 
     def test_stock_out_does_not_restore_first_output_and_report_decrease_is_protected(self):
-        self.d1_post(self.d1_payload('80'))
+        confirmed = self.d1_confirm(self.d1_post(self.d1_payload('80')))
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
         line = InternalSemiFinishedReceiptLine.objects.get()
         debit_public_stock(balance_id=line.stock_movement.balance_id, quantity=80, source_type='TEST_D1_OUT',
             source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee)
@@ -230,43 +255,69 @@ class TubeD1ReceiptTests(D1Fixture, APITestCase):
             assert_tube_reports_cover_usage(self.product_line.pk)
 
     def test_public_credit_guard_checks_new_marker_and_unlinked_in_transaction_movements(self):
-        self.d1_post(self.d1_payload('80'))
+        submitted = self.d1_post(self.d1_payload('80'))
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.assertEqual(receipt.status, 'PENDING')
+        self.assertIsNone(receipt.lines.get().stock_movement_id)
         identity = build_semi_finished_identity(bom_line=self.metal_bom_line, completed_craft=self.craft, unit=self.piece_unit)
         def credit(quantity):
             return credit_public_stock(identity=identity, zone=self.semi_zone, quantity=quantity,
                 source_type='INTERNAL_SEMI_RECEIPT', source_id=receipt.pk, source_line_id=uuid.uuid4(),
                 actor_employee=self.employee, production_task=self.task, product_line=self.product_line,
                 bom_line=self.metal_bom_line)
-        with self.assertRaises(ValidationError), transaction.atomic():
+        with self.assertRaises(ValidationError) as over_limit, transaction.atomic():
             credit(21)
-        with self.assertRaises(ValidationError), transaction.atomic():
+        self.assertEqual(over_limit.exception.api_error_code, 'TUBE_REPORT_OUTPUT_LIMIT')
+        with self.assertRaises(ValidationError) as unlinked_over_limit, transaction.atomic():
             credit(20)
             credit(1)
-        self.assertEqual(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').count(), 1)
+        self.assertEqual(unlinked_over_limit.exception.api_error_code, 'TUBE_REPORT_OUTPUT_LIMIT')
+        movements = PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT')
+        self.assertFalse(movements.exists())
+        confirmed = self.d1_confirm(submitted)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(movements.get().quantity, 80)
 
     def test_failed_stock_credit_rolls_back_and_invalid_zone_cannot_create_header(self):
         payload = self.d1_payload()
         payload['zone_id'] = str(self.raw_zone.pk)
         self.d1_post(payload, expected=404)
-        payload = self.d1_payload()
-        with patch('apps.inventory.tube_receipt_services.credit_public_stock', side_effect=RuntimeError('模拟记账故障')):
-            with self.assertRaises(RuntimeError):
-                self.d1_post(payload)
         self.assertFalse(InternalSemiFinishedReceipt.objects.exists())
         self.assertFalse(InternalSemiFinishedReceiptLine.objects.exists())
+        submitted = self.d1_post()
+
+        def credit_then_fail(**kwargs):
+            credit_public_stock(**kwargs)
+            raise RuntimeError('模拟记账后故障')
+
+        with patch('apps.inventory.tube_receipt_services.credit_public_stock', side_effect=credit_then_fail):
+            with self.assertRaisesMessage(RuntimeError, '模拟记账后故障'):
+                self.d1_confirm(submitted)
+        receipt = InternalSemiFinishedReceipt.objects.get(pk=submitted.data['data']['receipt_id'])
+        self.assertEqual(receipt.status, 'PENDING')
+        self.assertIsNone(receipt.lines.get().stock_movement_id)
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').exists())
+        confirmed = self.d1_confirm(submitted)
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data['data']['receipt_id'], str(receipt.pk))
+        self.assertEqual(PublicStockMovement.objects.get(source_type='INTERNAL_SEMI_RECEIPT').quantity, 7)
 
     def test_permission_and_other_operator_recovery_are_rejected(self):
         payload = self.d1_payload()
         self.d1_post(payload)
         outsider = get_user_model().objects.create_user(username='d1-outsider')
-        Employee.objects.create(user=outsider, employee_code='D1-OUTSIDER', display_name='其他操作员')
+        employee = Employee.objects.create(user=outsider, employee_code='D1-OUTSIDER', display_name='其他操作员')
         self.client.force_authenticate(outsider)
         self.assertEqual(self.client.get(URL + 'preview/', {'schedule_product_id': str(self.schedule_product.pk),
             'plan_category': 'METAL'}, HTTP_HOST='localhost').status_code, 403)
         outsider.user_permissions.add(*Permission.objects.filter(content_type__app_label='inventory', codename='view_internalsemifinishedreceipt'))
         self.client.force_authenticate(get_user_model().objects.get(pk=outsider.pk))
-        self.assertEqual(self.client.get(URL + f"by-request/{payload['request_id']}/", HTTP_HOST='localhost').status_code, 403)
+        recovery = URL + f"by-request/{payload['request_id']}/"
+        self.assertEqual(self.client.get(recovery, HTTP_HOST='localhost').status_code, 404)
+        self.task.followers.add(employee)
+        rejected = self.client.get(recovery, HTTP_HOST='localhost')
+        self.assertEqual(rejected.status_code, 403, rejected.data)
+        self.assertIn('只能核对本人提交的入库结果', rejected.data['error']['message'])
 
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)

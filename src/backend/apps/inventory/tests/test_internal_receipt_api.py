@@ -79,16 +79,18 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
     def receive(self, quantity=100, payload=None, etag=None):
         return self.client.post(self.url,payload or self.payload(quantity),format='json',HTTP_IF_MATCH=etag or self.preview()['etag'])
 
-    def confirm_receipt(self, submitted):
+    def confirm_receipt(self, submitted, zone_id=None):
         self.assertEqual(submitted.status_code, 201, submitted.data)
         receipt_id = submitted.data['data']['receipt_id']
         detail = self.reviewer_client.get(f'{self.url}{receipt_id}/')
         self.assertEqual(detail.status_code, 200, detail.data)
-        return self.reviewer_client.post(f'{self.url}{receipt_id}/confirm/', {}, format='json',
+        payload = {'zone_id': str(zone_id)} if zone_id else {}
+        return self.reviewer_client.post(f'{self.url}{receipt_id}/confirm/', payload, format='json',
             HTTP_IF_MATCH=detail.data['data']['etag'])
 
     def test_submit_is_pending_until_warehouse_confirmation(self):
         payload, etag = self.payload(100), self.preview()['etag']
+        del payload['zone_id']
         response = self.client.post(self.url, payload, format='json', HTTP_IF_MATCH=etag)
         self.assertEqual(response.status_code, 201, response.data)
         result = response.data['data']
@@ -96,21 +98,25 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
         receipt = InternalSemiFinishedReceipt.objects.get(pk=result['receipt_id'])
         line = InternalSemiFinishedReceiptLine.objects.get(receipt=receipt)
         self.assertEqual(receipt.status, 'PENDING')
+        self.assertIsNone(receipt.zone_id)
         self.assertEqual(receipt.submitted_by_employee_id, self.employee.pk)
         self.assertIsNotNone(receipt.submitted_at)
         self.assertIsNone(receipt.confirmed_by_employee_id)
         self.assertIsNone(line.stock_movement_id)
         self.assertFalse(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').exists())
 
-        confirmed = self.confirm_receipt(response)
+        self.assertEqual(self.confirm_receipt(response).status_code, 400)
+        confirmed = self.confirm_receipt(response, self.semi_zone.pk)
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         self.assertEqual(confirmed.data['data']['status'], 'CONFIRMED')
         receipt.refresh_from_db()
         line.refresh_from_db()
         self.assertEqual(receipt.status, 'CONFIRMED')
+        self.assertEqual(receipt.zone_id, self.semi_zone.pk)
         self.assertEqual(receipt.confirmed_by_employee_id, self.reviewer_employee.pk)
         self.assertIsNotNone(receipt.confirmed_at)
         self.assertIsNotNone(line.stock_movement_id)
+        self.assertEqual(line.stock_movement.balance.zone_id, self.semi_zone.pk)
         self.assertEqual(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').count(), 1)
 
     def test_receipt_credits_public_inventory_and_consumes_processing_quota(self):
@@ -230,10 +236,13 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
         self.assertEqual(detail.data['data']['source_display'], self.workshop.name)
         self.assertEqual(Decimal(detail.data['data']['source_detail']['received_after']),100)
 
-    def test_rejects_cutting_and_missing_permission(self):
+    def test_rejects_unassigned_cutting_plan_and_missing_permission(self):
         payload = self.payload()
         payload['plan_category']='CUTTING'
-        self.assertEqual(self.receive(payload=payload).status_code,400)
+        rejected = self.receive(payload=payload)
+        self.assertEqual(rejected.status_code, 404, rejected.data)
+        self.assertFalse(InternalSemiFinishedReceipt.objects.exists())
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').exists())
         self.user.user_permissions.clear()
         self.user = type(self.user).objects.get(pk=self.user.pk)
         self.client.force_authenticate(self.user)

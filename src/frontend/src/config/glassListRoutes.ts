@@ -12,5 +12,6 @@ export const glassListRouteNames = [
   'workshop-outsourcing', 'workshop-outsourcing-factories', 'warehouse-outsourcing',
   'production-tasks', 'workshop-scheduling', 'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
   'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory', 'finished-goods-outbounds', 'material-inventory', 'material-inbound-details', 'material-inbound-records', 'semi-receipt-records',
+  'workshop-semi-receipt-records', 'workshop-finished-receipt-records',
   'email-account-settings', 'number-rules', 'master-data-center', 'reference-data-settings', 'production-data', 'employee-list', 'wecom-attendance',
 ] as const

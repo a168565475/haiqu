@@ -45,17 +45,45 @@ def _part_stock_by_zone(product_line, rows):
         yield row, by_zone
 
 
-def add_cut_piece_stock_zones(schedule_product, plan, inputs):
-    targets = {piece['component_identity']: quantity * piece['pieces_per_part']
-        for quantity, snapshot in plan.lines.values_list('quantity', 'snapshot') for piece in snapshot.get('pieces', [])}
-    short_rows = [row for row in inputs if not row['blockers']
-        and Decimal(row['max_quantity']) < targets.get(row['component_identity'], 0)]
-    for row, by_zone in _part_stock_by_zone(schedule_product.product_line, short_rows):
+def add_cut_piece_stock_zones(plan, rows, *, include_printed=False):
+    if plan.source_snapshot.get('screen_print_pieces'):
+        from .plan_selectors import plan_quantities
+        quantities = plan_quantities([plan])[str(plan.pk)]['lines']
+        targets = {
+            str(line.component_identity): line.quantity - int(quantities[str(line.pk)]['dispatched_quantity'])
+            for line in plan.lines.all()
+        }
+    else:
+        targets = {piece['component_identity']: quantity * piece['pieces_per_part']
+            for quantity, snapshot in plan.lines.values_list('quantity', 'snapshot') for piece in snapshot.get('pieces', [])}
+    short_rows = [row for row in rows if not row['blockers'] and row['component_identity'] in targets
+        and ((include_printed and row.get('screen_print_required'))
+             or Decimal(row['max_quantity']) < targets[row['component_identity']])]
+    for row, by_zone in _part_stock_by_zone(plan.product_line, short_rows):
         if row.get('screen_print_required'):
             limit = Decimal(row['printed_available_quantity'])
             by_zone = {key: (total, min(free, limit)) for key, (total, free) in by_zone.items()}
         row['stock_zones'] = [{'zone_id': str(zone_id), 'available_quantity': str(available)}
             for zone_id, (_, available) in by_zone.items() if available > 0]
+
+
+def add_sewing_print_sources(plan, context, request, allowed_kinds):
+    inputs = context['inputs']
+    components = {piece['component_identity']
+                  for snapshot in plan.lines.values_list('snapshot', flat=True)
+                  for piece in snapshot.get('pieces', [])}
+    printed = [row for row in inputs if row.get('screen_print_required') and row['component_identity'] in components]
+    if 'PUBLIC_PIECE' in allowed_kinds:
+        rows = inputs if context['source_kind'] == 'CUTTING' else printed
+        add_cut_piece_stock_zones(plan, rows, include_printed=True)
+    if printed:
+        context['sewing_print_sources'] = True
+        if 'PROCESSOR' in allowed_kinds:
+            from .printed_pieces import processor_sources
+            sources = processor_sources(plan.product_line_id, request)
+            for row in printed:
+                if row['component_identity'] in sources:
+                    row['processor_source'] = sources[row['component_identity']]
 
 
 def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False, request=None):

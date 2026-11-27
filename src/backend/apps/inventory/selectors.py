@@ -77,6 +77,20 @@ def visible_confirmed_material_receipts(request):
 
 
 def scoped_finished_receipts(queryset, request, permission='inventory.view_finishedgoodsreceipt'):
+    from .receipt_permissions import receipt_record_workshops
+
+    workshops = receipt_record_workshops(request, permission)
+    if workshops is not None:
+        from apps.production_scheduling.models import ProductionScheduleProductCraft
+
+        assembly_crafts = ProductionScheduleProductCraft.objects.filter(
+            schedule_product_id=OuterRef('assembly_source__schedule_product_id'),
+            plan_category='ASSEMBLY', craft_type_snapshot='INTERNAL',
+        )
+        return queryset.filter(
+            Exists(assembly_crafts.filter(craft__workshop_id__in=workshops)),
+            ~Exists(assembly_crafts.exclude(craft__workshop_id__in=workshops)),
+        )
     return scoped_inventory_records(queryset, request, permission,
         task_lookup='production_task_product__production_task',
         workshop_lookup='assembly_source__schedule_product__crafts__craft__workshop_id')
@@ -94,7 +108,10 @@ def scoped_finished_outbounds(queryset, request):
 def can_read_inventory_overview(request, permission):
     from apps.access_control.role_policy import role_scopes
     from apps.access_control.resource_scopes import has_legacy_permission
+    from .receipt_permissions import receipt_record_workshops
 
+    if permission == 'inventory.view_finishedgoodsreceipt' and receipt_record_workshops(request, permission) is not None:
+        return False
     return request.user.is_superuser or role_scopes(request, permission) != {'FOLLOWED'} or has_legacy_permission(request, permission)
 
 

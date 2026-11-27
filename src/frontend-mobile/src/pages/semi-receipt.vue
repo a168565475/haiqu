@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { Button as VanButton, Cell as VanCell, DatePicker as VanDatePicker, Field as VanField, Icon as VanIcon, Loading as VanLoading, Popup as VanPopup, showDialog } from 'vant'
+import { Button as VanButton, DatePicker as VanDatePicker, Field as VanField, Icon as VanIcon, Loading as VanLoading, Popup as VanPopup, showDialog } from 'vant'
 import type { PickerConfirmEventParams, PickerOption } from 'vant'
 import 'vant/es/button/style'
-import 'vant/es/cell/style'
 import 'vant/es/date-picker/style'
 import 'vant/es/field/style'
 import 'vant/es/icon/style'
@@ -28,19 +27,14 @@ const scope = computed(() => semiReceiptScope(route.query))
 const canView = computed(() => auth.hasPermission('inventory.view_internalsemifinishedreceipt'))
 const canCreate = computed(() => canView.value && auth.hasPermission('inventory.add_internalsemifinishedreceipt'))
 const preview = ref<SemiReceiptPreview | null>(null), pending = ref<PendingSemiReceipt | null>(null), result = ref<SemiReceiptResult | null>(null)
-const quantities = ref<Record<string, string>>({}), receiptDate = ref(''), remark = ref(''), warehouseId = ref(''), zoneId = ref('')
+const quantities = ref<Record<string, string>>({}), receiptDate = ref(''), remark = ref('')
 const loading = ref(false), saving = ref(false), storageBlocked = ref(false), needsRefresh = ref(false)
 const loadError = ref(''), actionError = ref('')
 const sourceUnavailable = ref(false)
-const showDate = ref(false), pickerDate = ref<string[]>([]), showWarehouse = ref(false), showZone = ref(false)
+const showDate = ref(false), pickerDate = ref<string[]>([])
 const current = () => alive && auth.user?.id === owner.userId && auth.generation === owner.generation
 const blockers = computed(() => preview.value ? semiPageBlockers(preview.value) : [])
 const locked = computed(() => loading.value || saving.value || Boolean(pending.value) || storageBlocked.value || needsRefresh.value || !current() || !canCreate.value || Boolean(blockers.value.length))
-const warehouseKey = (zone: SemiReceiptPreview['zones'][number]) => zone.warehouse_id || zone.warehouse
-const warehouses = computed(() => Array.from(new Map((preview.value?.zones ?? []).map(zone => [warehouseKey(zone), { id: warehouseKey(zone), name: zone.warehouse }])).values()))
-const zones = computed(() => preview.value?.zones.filter(zone => warehouseKey(zone) === warehouseId.value) ?? [])
-const warehouseName = computed(() => warehouses.value.find(item => item.id === warehouseId.value)?.name || '请选择半成品仓')
-const zoneName = computed(() => preview.value?.zones.find(item => item.id === zoneId.value)?.name || '请选择库区')
 const selectedLines = computed(() => (preview.value?.lines ?? []).filter(line => (semiWhole(quantities.value[line.bom_line_id] || '') ?? 0n) > 0n))
 const total = computed(() => semiReceiptTotal(selectedLines.value, quantities.value))
 const available = (line: SemiReceiptLine) => (semiPreviewWhole(line.can_receive) ?? 0n) > 0n && (scope.value?.plan_category !== 'METAL' || line.metal_processing?.basis_ready)
@@ -50,7 +44,7 @@ const canSubmit = computed(() => current() && !storageBlocked.value && !saving.v
 const minDate = computed(() => new Date(Math.min(Number(shanghaiToday().slice(0, 4)) - 10, Number(receiptDate.value.slice(0, 4)) || 9999), 0, 1))
 const maxDate = computed(() => new Date(Math.max(Number(shanghaiToday().slice(0, 4)) + 10, Number(receiptDate.value.slice(0, 4)) || 0), 11, 31))
 const conflictMessage = '原请求编号存在内容冲突，已保留原请求，请联系管理员在 ERP 核对入库记录，勿重新申请。'
-watch(locked, value => { if (value) { showDate.value = false; showWarehouse.value = false; showZone.value = false } })
+watch(locked, value => { if (value) showDate.value = false })
 
 function openDate() { if (!locked.value) { pickerDate.value = receiptDate.value.split('-'); showDate.value = true } }
 function confirmDate({ selectedValues }: PickerConfirmEventParams) {
@@ -59,15 +53,6 @@ function confirmDate({ selectedValues }: PickerConfirmEventParams) {
   if (validProductionDate(value)) { receiptDate.value = value; showDate.value = false }
 }
 function formatDate(type: string, option: PickerOption) { return { ...option, text: `${option.text}${({ year: '年', month: '月', day: '日' } as Record<string, string>)[type] || ''}` } }
-function selectWarehouse(id: string) {
-  if (locked.value || !warehouses.value.some(item => item.id === id)) return
-  if (warehouseId.value !== id) { warehouseId.value = id; zoneId.value = '' }
-  showWarehouse.value = false
-}
-function selectZone(id: string) {
-  if (locked.value || !zones.value.some(item => item.id === id)) return
-  zoneId.value = id; showZone.value = false
-}
 async function load() {
   if (!scope.value || !current() || storageBlocked.value || saving.value || !canView.value) return
   controller?.abort(); controller = new AbortController()
@@ -78,13 +63,6 @@ async function load() {
     if (!current() || request !== sequence) return
     preview.value = data; needsRefresh.value = false; receiptDate.value ||= data.receipt_date
     if (!pending.value) quantities.value = Object.fromEntries(data.lines.map(line => [line.bom_line_id, quantities.value[line.bom_line_id] || '']))
-    const restoredZone = data.zones.find(zone => zone.id === zoneId.value)
-    if (restoredZone) warehouseId.value = warehouseKey(restoredZone)
-    else if (!pending.value) {
-      zoneId.value = ''
-      if (!warehouses.value.some(item => item.id === warehouseId.value)) warehouseId.value = warehouses.value.length === 1 ? warehouses.value[0]!.id : ''
-    }
-    if (!warehouseId.value && warehouses.value.length === 1) warehouseId.value = warehouses.value[0]!.id
   }
   catch (error) {
     if (current() && request === sequence) {
@@ -100,9 +78,9 @@ async function load() {
 }
 function initialize() {
   controller?.abort(); sequence++; store = null
-  loading.value = false; saving.value = false; showDate.value = false; showWarehouse.value = false; showZone.value = false
+  loading.value = false; saving.value = false; showDate.value = false
   pending.value = null; pendingRaw = null; result.value = null; storageBlocked.value = false; needsRefresh.value = false
-  loadError.value = ''; actionError.value = ''; sourceUnavailable.value = false; preview.value = null; quantities.value = {}; receiptDate.value = ''; remark.value = ''; warehouseId.value = ''; zoneId.value = ''
+  loadError.value = ''; actionError.value = ''; sourceUnavailable.value = false; preview.value = null; quantities.value = {}; receiptDate.value = ''; remark.value = ''
   if (!scope.value) { loadError.value = '入库来源参数无效，请从金工、裁剪或车缝计划重新进入半成品入库。'; return }
   store = createSemiReceiptPending(scope.value.schedule_product_id, scope.value.plan_category, owner, () => ({ userId: alive ? auth.user?.id ?? null : null, generation: auth.generation }))
   try {
@@ -111,7 +89,7 @@ function initialize() {
       pending.value = parsePendingSemiReceipt(pendingRaw, scope.value.schedule_product_id, scope.value.plan_category)
       const payload = pending.value.payload
       quantities.value = Object.fromEntries(payload.lines.map(line => [line.bom_line_id, String(line.quantity)]))
-      receiptDate.value = payload.receipt_date; remark.value = payload.remark; zoneId.value = payload.zone_id
+      receiptDate.value = payload.receipt_date; remark.value = payload.remark
       if (pending.value.conflict) actionError.value = conflictMessage
     }
   }
@@ -183,9 +161,11 @@ async function submit() {
     }
     if (!preview.value || needsRefresh.value) return
     if (!validProductionDate(receiptDate.value)) { actionError.value = '请选择有效收货日期。'; return }
-    if (!zones.value.some(zone => zone.id === zoneId.value)) { actionError.value = '请选择当前半成品仓的有效库区。'; return }
     const lines = semiReceiptLines(preview.value, quantities.value)
-    const original: PendingSemiReceipt = { etag: preview.value.etag, payload: { request_id: createRequestId(), ...scope.value, zone_id: zoneId.value, receipt_date: receiptDate.value, remark: remark.value.trim(), lines } }
+    const original: PendingSemiReceipt = { etag: preview.value.etag, payload: {
+      request_id: createRequestId(), ...scope.value,
+      receipt_date: receiptDate.value, remark: remark.value.trim(), lines,
+    } }
     try {
       const raw = JSON.stringify(original)
       activeStore.write(raw); pending.value = original; pendingRaw = raw
@@ -235,10 +215,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
           </details>
           <section class="section-card semi-form">
             <button type="button" class="semi-choice semi-date" :disabled="locked" aria-label="选择收货日期" aria-haspopup="dialog" @click="openDate"><span>收货日期</span><span>{{ receiptDate }}<VanIcon name="calendar-o" /></span></button>
-            <button type="button" class="semi-choice semi-warehouse" :disabled="locked || !warehouses.length" aria-label="选择半成品仓" aria-haspopup="dialog" @click="showWarehouse = true"><span>半成品仓</span><span>{{ warehouseName }}<VanIcon name="arrow" /></span></button>
-            <button type="button" class="semi-choice semi-zone" :disabled="locked || !warehouseId" aria-label="选择库区" aria-haspopup="dialog" @click="showZone = true"><span>库区</span><span>{{ zoneName }}<VanIcon name="arrow" /></span></button>
             <p v-if="preview.processing_state" class="semi-stage">加工状态：{{ preview.processing_state }} · 仓库确认后增加该阶段半成品库存</p>
-            <p v-if="!preview.zones.length" class="semi-error">没有可用半成品库区，请联系仓库维护。</p>
           </section>
           <section v-if="blockers.length" class="error-panel" role="alert"><p v-for="message in blockers" :key="message">{{ message }}</p></section>
           <section v-if="!hasAvailable && !blockers.length" class="section-card muted">当前暂无可入库数量，请查看各明细的数量依据。</section>
@@ -268,10 +245,8 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
         <section v-if="actionError" class="error-panel" role="alert">{{ actionError }}</section>
       </template>
     </div>
-    <template v-if="!result && (preview || pending)" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项${total ? ` · ${total}` : ''}` }} · 仓库确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
+    <template v-if="!result && (preview || pending)" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项${total ? ` · ${total}` : ''}` }} · 仓库分配库区并确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
     <VanPopup v-model:show="showDate" position="bottom" round teleport="body" class="semi-popup"><VanDatePicker v-model="pickerDate" title="收货日期" :columns-type="['year', 'month', 'day']" :min-date="minDate" :max-date="maxDate" :formatter="formatDate" @confirm="confirmDate" @cancel="showDate = false" /></VanPopup>
-    <VanPopup v-model:show="showWarehouse" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>选择半成品仓</h2><div class="semi-options"><VanCell v-for="warehouse in warehouses" :key="warehouse.id" :title="warehouse.name" clickable :icon="warehouse.id === warehouseId ? 'success' : undefined" @click="selectWarehouse(warehouse.id)" /></div></VanPopup>
-    <VanPopup v-model:show="showZone" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>{{ warehouseName }} · 选择库区</h2><div class="semi-options"><VanCell v-for="zone in zones" :key="zone.id" :title="zone.name" clickable :icon="zone.id === zoneId ? 'success' : undefined" @click="selectZone(zone.id)" /><p v-if="!zones.length">当前仓库没有可用库区。</p></div></VanPopup>
   </WorkPage>
 </template>
 
@@ -336,10 +311,5 @@ summary::-webkit-details-marker { display: none; }
 .semi-success h2 { font-size: 20px; }
 .semi-success .van-button { margin-top: 16px; }
 .semi-popup { width: min(100%, 640px); left: 0; right: 0; margin-inline: auto; }
-.semi-picker { max-height: 75dvh; padding-top: 16px; }
-.semi-picker h2 { margin: 0 48px 12px 16px; font-size: 18px; }
-.semi-options { max-height: 60dvh; overflow-y: auto; overscroll-behavior: contain; }
-.semi-options :deep(.van-cell) { min-height: 48px; }
-.semi-options > p { padding: 16px; }
 .semi-choice:focus-visible, summary:focus-visible { outline: 2px solid var(--mobile-primary); outline-offset: 2px; }
 </style>

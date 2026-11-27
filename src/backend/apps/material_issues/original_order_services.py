@@ -54,7 +54,7 @@ def original_order_for_request(request, order_id, *, lock=False, permission=None
             | Q(pk__in=warehouse_original_handoffs(request).values('original_order_id')))
     if lock:
         queryset = queryset.select_for_update(of=("self",))
-    order = get_object_or_404(queryset.select_related("schedule", "craft"), pk=order_id)
+    order = get_object_or_404(queryset.select_related("schedule__production_task", "craft"), pk=order_id)
     handoffs = MetalProcessingOriginalHandoff.objects.filter(original_order=order)
     # 原单级操作不得借单一可见来源处理同单中超出本人范围的其他来源。
     outside_scope = handoffs.exclude(pk__in=warehouse_original_handoffs(request)) if warehouse_read else handoffs.exclude(source__issue_line__in=processing_lines(request))
@@ -192,6 +192,7 @@ def original_order_context(order, request=None):
             "actor_employee_id": str(row.actor_employee_id) if row.actor_employee_id else None,
             "actor_name": row.actor_name_snapshot, "created_at": row.occurred_at.isoformat()})
     return {"original_order_id": str(order.pk), "original_order_number": order.order_number,
+        "production_task_number": order.schedule.production_task.task_number,
         "original_order_status": order.status, "etag": '"' + digest({"order_id": str(order.pk), "version": order.version, "status": order.status,
             "parts": [{key: value for key, value in row.items() if key != "can_cancel_pending"} for row in parts]}) + '"',
         "parts": parts, "totals": totals, "schema_ready": schema_ready, "can_close": not blockers,

@@ -16,6 +16,7 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields, override_bom_attribute
+from apps.boms.models import BomLine
 from apps.inventory.models import MaterialStockBalance, MaterialStockQuality, SemiFinishedStockBalance
 from apps.organizations.models import Employee
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
@@ -339,6 +340,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         from apps.inventory.public_stock_mode import public_issues_enabled
         public_stock = public_issues_enabled()
         exclude_issue_id = None
+        saved_raw_requirements = set()
         issue_id = _uuid(request.query_params.get("issue_id"), "issue_id")
         if issue_id:
             current_issue = get_object_or_404(accessible_material_issues(request), pk=issue_id)
@@ -350,6 +352,9 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 raise ValidationError({"issue_id": "领料单与所选订单、产品或车间不一致。"})
             public_stock = current_issue.stock_mode == "PUBLIC_V2"
             exclude_issue_id = current_issue.pk
+            saved_raw_requirements = {str(pk) for pk in current_issue.lines.filter(
+                line_type="RAW", requirement_id__isnull=False,
+            ).values_list("requirement_id", flat=True)}
             allowed_section_codes = material_section_codes_for_issue(current_issue)
             from ..scopes import issue_plan_category
             plan_category = issue_plan_category(current_issue)
@@ -362,9 +367,18 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             from apps.outsourcing.sewing_assignments import sewing_part_scope
             if sewing_part_scope(product_line_id=product_line_id) == {}:
                 raise ValidationError({"plan_category": "当前产品没有已分给本厂的车缝部位，可在车间委外加工中核对分工。"})
-        from ..scopes import cutting_source_line_ids, raw_line_allowed_for_plan, semi_plan_category
+        from ..scopes import cutting_source_line_ids, raw_line_allowed_for_plan, semi_plan_category, visible_new_issue_requirements
         cutting_sources = cutting_source_line_ids(product_line_id)
         source_plan_category = semi_plan_category(workshop.name, plan_category)
+        external_supply_ids = {str(pk) for pk in BomLine.objects.filter(
+            section__bom__product_line_id=product_line_id, section__bom__archived_at__isnull=True,
+            raw_values__purchase_required=False,
+        ).values_list("pk", flat=True)}
+
+        def is_visible_bom_source(row):
+            return (row["requirement_id"] in saved_raw_requirements
+                    or row["conversion_snapshot"]["bom_line_id"] not in external_supply_ids)
+
         _, specs, blockers, revision_hash = build_requirement_specs(task.pk)
         blockers = filter_blockers_for_scope(
             blockers,
@@ -398,7 +412,10 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         for spec in specs:
             if spec["section_code"] not in allowed_section_codes:
                 continue
-            contributions = [item for item in spec["contributions"] if item["product_line"].pk == product_line_id]
+            order_contributions = spec["contributions"]
+            if str(spec["id"]) not in saved_raw_requirements:
+                order_contributions = [item for item in order_contributions if item["bom_line"].purchase_required]
+            contributions = [item for item in order_contributions if item["product_line"].pk == product_line_id]
             if not any(raw_line_allowed_for_plan(
                     item['bom_line'].pk, spec['section_code'], source_plan_category, cutting_sources)
                     for item in contributions):
@@ -407,7 +424,8 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             internal = current.internal_issued_quantity if current else 0
             outsourcing = current.outsourcing_issued_quantity if current else 0
             pending = pending_raw.get(spec["id"], 0)
-            remaining = spec["required_quantity"] - internal - outsourcing - pending
+            required = sum(item["quantity"] for item in order_contributions)
+            remaining = required - internal - outsourcing - pending
             product_remaining = sum(item["quantity"] for item in contributions) - used_by_product[spec["id"]]
             stock = ordinary_available_stock(spec["raw_material"].pk, spec["unit"].pk)
             stock_pending = public_pending.get((spec["raw_material"].pk, spec["unit"].pk), 0)
@@ -433,7 +451,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                     "specification": material.specification,
                     "color": material.color.color_name if material.color_id else material.color_snapshot,
                     "unit": spec["unit"].unit_name,
-                    "required_quantity": str(spec["required_quantity"]),
+                    "required_quantity": str(required),
                     "internal_issued_quantity": str(internal),
                     "outsourcing_issued_quantity": str(outsourcing),
                     "pending_issue_quantity": str(pending),
@@ -451,11 +469,12 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         if "PROFILE" in allowed_section_codes:
             pipe_rows, pipe_blockers = pipe_requirement_rows(task.pk, product_line_id,
                 exclude_issue_id=exclude_issue_id, public_stock=public_stock)
-            rows.extend(pipe_rows); blockers.extend(pipe_blockers)
+            rows.extend(row for row in pipe_rows if is_visible_bom_source(row))
+            blockers.extend(pipe_blockers)
         from ..catalog_requirements import catalog_requirement_rows
         catalog_rows, catalog_blockers = catalog_requirement_rows(task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
         blockers.extend(item for item in catalog_blockers if item["section_code"] in allowed_section_codes)
-        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes
+        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes and is_visible_bom_source(row)
             and raw_line_allowed_for_plan(_uuid(row['conversion_snapshot']['bom_line_id'], 'bom_line_id'),
                 row['section_code'], source_plan_category, cutting_sources)]
         if public_stock:
@@ -473,6 +492,8 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 blockers.extend(semi_blockers)
             for row in rows:
                 row["stock_mode"] = "PUBLIC_V2"
+            if not issue_id:
+                rows = visible_new_issue_requirements(rows, source_plan_category)
             return Response({"data": {"stock_mode": "PUBLIC_V2", "source_revision_hash": revision_hash,
                                        "items": rows, "blockers": blockers}})
         semi_balances = SemiFinishedStockBalance.objects.none()
@@ -544,4 +565,6 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                     for row in item["balances"]
                 ],
             })
+        if not issue_id:
+            rows = visible_new_issue_requirements(rows, source_plan_category)
         return Response({"data": {"source_revision_hash": revision_hash, "items": rows, "blockers": blockers}})

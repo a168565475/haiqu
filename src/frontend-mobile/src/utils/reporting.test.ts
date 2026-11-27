@@ -76,8 +76,8 @@ describe('班组多人报工校验', () => {
   it('按工作项身份合并多条工价行，防止相同工序身份分开绕过上限', () => {
     const sameWorkItem = { ...scheme, lines: [scheme.lines[0], { ...scheme.lines[0], id: 'line-a-copy' }] }
     const result = validateReportEntries(sameWorkItem, [row(1, '30'), row(2, '20', { scheme_line_id: 'line-a-copy' })], employees, false)
-    expect(result.rows[1]?.quantity).toContain('合计超过')
-    expect(result.rows[2]?.quantity).toContain('合计超过')
+    expect(result.rows[1]?.quantity).toContain('合计 50 次')
+    expect(result.rows[2]?.quantity).toContain('超出 10 次')
   })
 })
 

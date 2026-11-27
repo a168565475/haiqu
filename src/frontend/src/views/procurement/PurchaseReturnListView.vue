@@ -191,8 +191,8 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
         <div v-if="returnFrom" class="return-actions erp-list-toolbar"><ElButton class="erp-button-motion" @click="goBack">{{ backLabel }}</ElButton></div>
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="rows" row-key="id" row-class-name="return-row" class="return-table" height="100%" aria-label="退货明细表格">
-          <ElTableColumn label="生产任务单号" width="160" prop="production_task_number" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="退货单号" width="180" show-overflow-tooltip><template #default="{ row }"><strong class="return-number">{{ row.return_number }}</strong></template></ElTableColumn>
+          <ElTableColumn label="生产任务/打样单号" width="160" show-overflow-tooltip><template #default="{ row }"><strong>{{ row.production_task_number || row.sample_number || '—' }}</strong></template></ElTableColumn>
+          <ElTableColumn label="退货单号" width="180" show-overflow-tooltip><template #default="{ row }"><span class="return-number">{{ row.return_number }}</span></template></ElTableColumn>
           <ElTableColumn label="采购单号" width="160" prop="order_number" show-overflow-tooltip><template #default="{ row }">{{ row.order_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="入库单号" width="160" prop="inbound_number" show-overflow-tooltip><template #default="{ row }">{{ row.inbound_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="品名" min-width="148">
@@ -229,7 +229,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
 .page-head span, .page-head p { margin: 0; color: var(--erp-color-text-secondary); font-size: 12px; }
 .filters-row .return-search { width: min(250px, 100%); flex: none; }
 .filters-row > .el-select { width: 180px; flex: none; }
-.return-number { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.return-number { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .secondary, small { color: var(--erp-table-text); }
 small { font-size: 12px; line-height: 18px; }
 .stack { display: flex; flex-direction: column; }

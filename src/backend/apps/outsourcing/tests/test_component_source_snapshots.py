@@ -1,11 +1,25 @@
 from django.test import SimpleTestCase
 
 from apps.outsourcing.component_source_snapshots import frozen_component_source_materials
+from apps.outsourcing.plan_selectors import _internal_sewing_details
 
 
 class ComponentSourceSnapshotTests(SimpleTestCase):
     def identity(self, *sources):
         return {'identity_snapshot': {'composition': [{'piece': {'source': source}} for source in sources]}}
+
+    def test_internal_sewing_detail_matches_frozen_component_and_leaves_missing_data_empty(self):
+        selection = {'name': '外袋', 'attributes': {'specification': '50×30'}}
+        parts = [{'component_identity': identity, 'quantity': 1200} for identity in ('missing', 'bag')]
+        snapshot = {'rows': [{'component_identity': 'bag', 'specification': '50×30', 'snapshot': {
+            'component_material_selection_snapshot': selection,
+            'public_output_identity': self.identity({'material': '涤纶', 'color': '蓝色'})}}]}
+        missing, bag = _internal_sewing_details(snapshot, parts)
+        self.assertEqual(missing, {**parts[0], 'specification': '', 'component_material_selection_snapshot': {},
+                                  'component_source_materials': [], 'bom_quantity': '1200'})
+        self.assertEqual(bag['component_material_selection_snapshot'], selection)
+        self.assertEqual(bag['specification'], '50×30')
+        self.assertEqual(bag['component_source_materials'][0]['material'], '涤纶')
 
     def test_saved_grouped_sources_are_copied_without_reading_current_bom(self):
         rows = [{'source_bom_line_id': 'saved', 'name': '布料', 'material': '涤纶',

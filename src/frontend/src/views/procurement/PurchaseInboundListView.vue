@@ -154,10 +154,9 @@ onMounted(() => { if (canView.value) void loadRows() })
       <section class="list-card erp-list-data" aria-label="采购入库列表">
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="filteredRows" height="100%" class="purchase-table" row-key="id" :empty-text="loadError ? '采购入库列表加载失败' : loading ? '正在加载采购入库…' : '暂无采购入库订单'" @row-click="rowClicked">
-          <ElTableColumn label="生产任务单号" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="采购单号" min-width="174" show-overflow-tooltip><template #default="{ row }"><strong class="purchase-number">{{ row.order_number }}</strong></template></ElTableColumn>
+          <ElTableColumn label="生产任务/打样单号" min-width="150" show-overflow-tooltip><template #default="{ row }"><strong>{{ (row.source_type === 'SAMPLE' ? row.source_number : row.production_task_number) || '—' }}</strong></template></ElTableColumn>
+          <ElTableColumn label="采购单号" min-width="174" show-overflow-tooltip><template #default="{ row }"><span class="purchase-number">{{ row.order_number }}</span></template></ElTableColumn>
           <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.batch_number ? `第 ${row.batch_number} 批` : '—' }}</template></ElTableColumn>
-          <ElTableColumn label="打样单号" min-width="126" show-overflow-tooltip><template #default="{ row }">{{ row.source_type === 'SAMPLE' ? row.source_number || '—' : '—' }}</template></ElTableColumn>
           <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'product_name') }}</template></ElTableColumn>
           <ElTableColumn label="货号" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'item_number') }}</template></ElTableColumn>
           <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'specification') }}</template></ElTableColumn>
@@ -206,7 +205,7 @@ onMounted(() => { if (canView.value) void loadRows() })
 .page-head p { margin: 2px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; }
 .filters > .inbound-search { width: min(250px, 100%); flex: none; }
 .filters > .el-select { width: 190px; flex: none; }
-.purchase-number { font-size: 12px; font-weight: 600; }
+.purchase-number { font-size: 12px; }
 .receipt-progress { display: grid; grid-template-columns: 80px 44px; align-items: center; gap: 8px; }
 .receipt-progress > span { text-align: right; font-variant-numeric: tabular-nums; }
 .muted { color: var(--erp-table-text); font-size: 12px; }

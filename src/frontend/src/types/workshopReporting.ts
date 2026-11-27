@@ -2,7 +2,7 @@ import type { PageMeta } from './referenceData'
 
 export type WageSchemeStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'RETURNED' | 'SUPERSEDED'
 export type WageSchemeLineStatus = 'ACTIVE' | 'VOID'
-export type WorkCountingMode = 'ORDER' | 'SET' | 'PIECE'
+export type WorkCountingMode = 'ORDER' | 'SET' | 'PIECE' | 'GROUP'
 
 export interface ReportingOption { id: string; name: string; workshop_id?: string; plan_category?: string | null }
 export interface BomDisplayOption {
@@ -120,6 +120,13 @@ export interface ScheduleStageProgress {
   products: ScheduleProductStageProgress[]
 }
 
+export interface CuttingGroupComponent {
+  component_identity: string
+  name: string
+  quantity_per_group: number
+  unit: string
+}
+
 export interface WageSchemeLine {
   id: string
   line_number: number
@@ -132,6 +139,7 @@ export interface WageSchemeLine {
   operation_name: string
   operation_number: string
   bom_component_identity: string | null
+  cutting_components?: CuttingGroupComponent[]
   counting_mode: WorkCountingMode
   counting_mode_display: string
   order_quantity: string | number | null
@@ -147,6 +155,7 @@ export interface WageSchemeLine {
   cumulative_quantity?: string
   production_date_quantity?: string
   last_workshop_employee_id?: string | null
+  last_employees?: { workshop_employee_id: string; production_line: number | null }[]
   status: WageSchemeLineStatus
   note: string
 }
@@ -159,11 +168,14 @@ export interface WageScheme {
   version: number
   revision: number
   can_create_change: boolean
+  can_withdraw?: boolean
+  withdrawn_by_me?: boolean
+  pending_change_id?: string | null
   parent_scheme: null | { id: string; scheme_number: string; version: number; effective_from: string; effective_to: string | null }
   product_line_id: string
   schedule_product_id: string | null
   production_task: { id: string; task_number: string; order_number: string }
-  product: { name: string; number: string; specification: string }
+  product: { name: string; number: string; code?: string; specification: string }
   workshop: ReportingOption
   scope_craft: ReportingOption
   crafts: ReportingOption[]
@@ -187,6 +199,7 @@ export interface WageScheme {
 export interface WageSchemeLineInput {
   work_item_id?: string
   bom_line_id?: string | null
+  bom_line_ids?: string[]
   craft_id: string
   operation_id: string
   display_name: string
@@ -233,29 +246,27 @@ export interface WorkReportDay {
   production_date: string; report_count: number; order_count: number; product_count: number
   employee_count: number; line_count: number; total_amount: string; last_saved_at: string
 }
-export interface WorkReportTaskProgress {
-  status: 'READY' | 'NOT_CONFIGURED' | 'UNAVAILABLE'
-  percentage: number | null
-}
-export interface WorkReportTaskWorkshop extends ReportingOption {
-  reported_amount?: string
-  progress?: WorkReportTaskProgress
-}
 export type WorkReportPlanCategory = 'CUTTING' | 'SEWING'
-export interface WorkReportSelection {
-  productionTaskId: string
-  workshopId: string
-  planCategory?: WorkReportPlanCategory
-}
-export interface WorkReportTask {
+export interface WorkReportTaskOption {
   id: string
   task_number: string
-  order_number: string
-  product?: { id: string; name: string; number: string; image_url: string | null } | null
-  product_count?: number
-  reported_amount?: string
-  progress?: WorkReportTaskProgress
-  workshops: WorkReportTaskWorkshop[]
+}
+export interface WorkReportProductOption {
+  id: string
+  production_task_id: string
+  task_number: string
+  code: string
+  name: string
+  number: string
+}
+export interface WorkReportFilters {
+  production_task_ids?: string[]
+  product_line_ids?: string[]
+  production_task_id?: string
+  schedule_product_id?: string
+  workshop_id?: string
+  craft_id?: string
+  plan_category?: WorkReportPlanCategory
 }
 
 export interface Paginated<T> { data: T[]; meta: PageMeta }

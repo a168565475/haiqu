@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { NavBar as VanNavBar, Icon as VanIcon } from 'vant'
 import 'vant/es/nav-bar/style'
 import WorkshopMenu from '@/components/WorkshopMenu.vue'
-defineProps<{ title: string; subtitle?: string; backTo?: string; home?: boolean; section?: 'issue' | 'wages' | 'report' | 'receipt' | 'configuration' }>()
+defineProps<{ title: string; subtitle?: string; backTo?: string; backAction?: () => void; home?: boolean; section?: 'issue' | 'wages' | 'report' | 'receipt' | 'configuration' }>()
 const router = useRouter()
 </script>
 
@@ -11,7 +11,7 @@ const router = useRouter()
   <div class="work-page" :class="{ 'has-footer': $slots.footer }">
     <header v-show="!home || section" class="work-header" :class="{ 'is-home': home, 'has-navigation': section }">
       <van-nav-bar :border="false" :left-arrow="false">
-        <template #left><WorkshopMenu v-if="section && home" :active="section" /><button v-else-if="!home" class="back-button" aria-label="返回" @click="router.push(backTo || '/')"><van-icon name="arrow-left" size="22" /></button></template>
+        <template #left><WorkshopMenu v-if="section && home" :active="section" /><button v-else-if="!home" class="back-button" aria-label="返回" @click="backAction ? backAction() : router.push(backTo || '/')"><van-icon name="arrow-left" size="22" /></button></template>
         <template #title>
           <div class="work-title">
             <span v-if="home && !section" class="work-brand" aria-hidden="true"><van-icon name="apps-o" size="23" /></span>

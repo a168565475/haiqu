@@ -63,6 +63,27 @@ beforeEach(() => {
 })
 
 describe('BOM 面料保存时自动关联原料', () => {
+  it('裁片与部位只能新选本单面料，已有辅料关联能回看但不会带到下一条', async () => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      const sources = ['布料', '珍珠棉', '网布'].map(name => ({ ...vm.blankLine('米'), id: name, part_name: name }))
+      fabric.lines.push(...sources)
+      const auxiliary = vm.sections.find(section => section.title === '辅料类')!
+      auxiliary.lines.push(...['包边带', '织带'].map(name => ({ ...vm.blankLine('米'), id: name, part_name: name, specification: '25mm' })))
+      const oldPiece = { ...vm.blankLine('片'), component_kind: 'CUT_PIECE' as const, part_name: '旧裁片', fabric_source_line_id: '织带' }
+      cutting.lines.push(oldPiece)
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      const sourceSelect = wrapper.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '来源原料')!
+      expect(sourceSelect.findAllComponents(ElOption).map(item => item.props('value'))).toEqual(['布料', '珍珠棉', '网布'])
+      expect(vm.editingFabricSourceKey).toBe('织带')
+      const sourceSpec = wrapper.findAll('.drawer-field').find(field => field.find('span').text() === '原料规格')
+      expect(sourceSpec?.get('strong').text()).toBe('25mm')
+      expect(vm.followingLineDraft(cutting, oldPiece).fabric_source_line_id).toBeNull()
+      expect(vm.followingLineDraft(cutting, { ...oldPiece, fabric_source_line_id: '珍珠棉' }).fabric_source_line_id).toBe('珍珠棉')
+    } finally { wrapper.unmount() }
+  })
   it('裁片编辑草稿已有空属性对象时可继承来源属性，不修改来源快照', async () => {
     const { wrapper, vm, fabric } = await open()
     try {

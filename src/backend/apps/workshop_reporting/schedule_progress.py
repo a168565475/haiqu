@@ -8,6 +8,7 @@ from apps.production_scheduling.models import ProductionScheduleProduct, Product
 from apps.workshop_config.models import PlanCategory
 
 from .models import WageScheme, WageSchemeLineStatus, WageSchemeStatus, WorkReportLine
+from .selectors import schedule_wage_line_prefetch
 from .services import wage_scheme_progress
 
 
@@ -44,7 +45,7 @@ def schedule_progress_statuses(schedule_ids, production_date=None):
             effective_from__lte=production_date,
         ).filter(
             effective_to__isnull=True,
-        ).prefetch_related("lines")
+        ).prefetch_related(schedule_wage_line_prefetch())
     )
     # 同一天结束的版本仍然有效，因此把有截止日期的适用版本补入。
     schemes.extend(
@@ -55,7 +56,7 @@ def schedule_progress_statuses(schedule_ids, production_date=None):
             status=WageSchemeStatus.APPROVED,
             effective_from__lte=production_date,
             effective_to__gte=production_date,
-        ).prefetch_related("lines")
+        ).prefetch_related(schedule_wage_line_prefetch())
     )
     schemes_by_scope = {}
     for scheme in schemes:

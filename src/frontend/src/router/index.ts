@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
-import { canOpenPage } from './pageAccess'
+import { canOpenPage, hasWorkshopOnlyPlanAccess } from './pageAccess'
 
 import { useAuthStore } from '@/stores/auth'
 import { createClientUuid } from '@/utils/clientUuid'
@@ -178,13 +178,24 @@ export const router = createRouter({
     },
     {
       path: '/inventory/finished-goods/receive', name: 'assembly-finished-receipt',
-      component: () => import('@/views/inventory/AssemblyFinishedReceiptView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-internal-plan', headerTitle: '生产车间 / 内部计划 / 成品入库', breadcrumbs: [{label:'生产车间'},{label:'内部计划',to:'/workshop/plans/assembly'},{label:'成品入库'}], pageWidth: 'fluid', flushPage: true },
+      redirect: to => ({ name: 'workshop-assembly-plan', query: { receipt_plan_id: to.query.schedule_product_id } }),
+    },
+    {
+      path: '/workshop/receipts/semi-finished', name: 'workshop-semi-receipt-records',
+      component: () => import('@/views/inventory/SemiReceiptRecordsView.vue'),
+      props: { readOnly: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-semi-receipt-records', headerTitle: '车间 / 半成品入库记录', breadcrumbs: [{ label: '车间' }, { label: '半成品入库记录' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/workshop/receipts/finished', name: 'workshop-finished-receipt-records',
+      component: () => import('@/views/inventory/FinishedReceiptRecordsPanel.vue'),
+      props: { readOnly: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-finished-receipt-records', headerTitle: '车间 / 成品入库记录', breadcrumbs: [{ label: '车间' }, { label: '成品入库记录' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/semi-finished/receive', name: 'internal-semi-receipt',
       component: () => import('@/views/inventory/InternalSemiReceiptEntryView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '生产车间 / 内部计划 / 半成品入库', breadcrumbs: [{label:'生产车间'},{label:'内部计划',to:'/workshop/plans/metalworking'},{label:'半成品入库'}], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '生产车间 / 作业计划 / 半成品入库', breadcrumbs: [{label:'生产车间'},{label:'作业计划',to:'/workshop/plans/metalworking'},{label:'半成品入库'}], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/semi-finished/outbounds', name: 'semi-outbound-records',
@@ -256,11 +267,47 @@ export const router = createRouter({
     {
       path: '/workbench/workshop',
       name: 'workshop-workbench',
-      component: () => import('@/views/workbench/production/ProductionDashboardView.vue'),
+      component: () => import('@/views/workbench/WorkshopWorkbenchEntry.vue'),
       props: { role: 'workshop' },
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'workshop-workbench',
         headerTitle: '车间主管工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/purchase',
+      name: 'purchase-workbench',
+      component: () => import('@/views/workbench/PurchaseWorkbenchView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-workbench',
+        headerTitle: '采购工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/sewing-outsourcing',
+      name: 'sewing-outsourcing-workbench',
+      component: () => import('@/views/workbench/SewingOutsourcingWorkbench.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'sewing-outsourcing-workbench',
+        headerTitle: '车缝外协工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/merchandiser',
+      name: 'merchandiser-workbench',
+      component: () => import('@/views/workbench/MerchandiserWorkbench.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'merchandiser-workbench',
+        headerTitle: '跟单工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/warehouse',
+      name: 'warehouse-workbench',
+      component: () => import('@/views/workbench/WarehouseWorkbench.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-workbench',
+        headerTitle: '仓库工作台', pageWidth: 'fluid', flushPage: true,
       },
     },
     {
@@ -1079,9 +1126,9 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'workshop-internal-plan',
-        headerTitle: '生产车间 / 内部计划',
-        planTitle: '内部计划',
-        breadcrumbs: [{ label: '生产车间' }, { label: '内部计划' }],
+        headerTitle: '生产车间 / 作业计划',
+        planTitle: '作业计划',
+        breadcrumbs: [{ label: '生产车间' }, { label: '作业计划' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1094,9 +1141,9 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'workshop-internal-plan',
-        headerTitle: '生产车间 / 内部计划',
-        planTitle: '内部计划',
-        breadcrumbs: [{ label: '生产车间' }, { label: '内部计划' }],
+        headerTitle: '生产车间 / 作业计划',
+        planTitle: '作业计划',
+        breadcrumbs: [{ label: '生产车间' }, { label: '作业计划' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1109,9 +1156,9 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'workshop-internal-plan',
-        headerTitle: '生产车间 / 内部计划',
-        planTitle: '内部计划',
-        breadcrumbs: [{ label: '生产车间' }, { label: '内部计划' }],
+        headerTitle: '生产车间 / 作业计划',
+        planTitle: '作业计划',
+        breadcrumbs: [{ label: '生产车间' }, { label: '作业计划' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1124,9 +1171,9 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'workshop-internal-plan',
-        headerTitle: '生产车间 / 内部计划',
-        planTitle: '内部计划',
-        breadcrumbs: [{ label: '生产车间' }, { label: '内部计划' }],
+        headerTitle: '生产车间 / 作业计划',
+        planTitle: '作业计划',
+        breadcrumbs: [{ label: '生产车间' }, { label: '作业计划' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1389,7 +1436,8 @@ export const router = createRouter({
     },
     {
       path: '/workshop/outsourcing/screen-printing/:id', alias: '/workshop/cut-piece-printing/:id', name: 'cut-piece-printing-detail',
-      component: () => import('@/views/outsourcing/CutPiecePrintingDetailView.vue'),
+      component: () => import('@/views/outsourcing/TubeOutsourcingDetailView.vue'),
+      props: { printTracking: true },
       meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 丝印外发单',
         breadcrumbs: [{ label: '委外加工', to: '/workshop/outsourcing' }, { label: '丝印外发单' }], pageWidth: 'fluid', flushPage: true },
     },
@@ -2122,6 +2170,13 @@ router.beforeEach(async (to, from) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
+  if (hasWorkshopOnlyPlanAccess(authStore) && !authStore.hasPermission('inventory.receive_material')) {
+    const workshopRecords = to.name === 'semi-receipt-records' ? 'workshop-semi-receipt-records'
+      : to.name === 'finished-goods-inventory' ? 'workshop-finished-receipt-records' : ''
+    if (workshopRecords && canOpenPage(workshopRecords, authStore)) {
+      return { name: workshopRecords, query: to.query, replace: true }
+    }
+  }
   if (to.meta.requiresAuth && !canOpenPage(to.name, authStore)) {
     ElMessage.warning('当前岗位没有此页面的访问权限。')
     return { name: 'home', query: {}, hash: '', replace: true }
@@ -2129,6 +2184,20 @@ router.beforeEach(async (to, from) => {
 
   if (to.name === 'home') {
     const notificationQuery = to.query.notification === undefined ? {} : { notification: to.query.notification }
+    const user = authStore.user
+    if (user?.effective_access?.roles.some(role => role.code === 'WAREHOUSE_KEEPER')) {
+      return { name: 'warehouse-workbench', query: notificationQuery }
+    }
+    if (authStore.isWorkshopDirector && canOpenPage('workshop-workbench', authStore)) {
+      return { name: 'workshop-workbench', query: notificationQuery }
+    }
+    if (!user?.is_superuser && user?.effective_access?.roles.some(role => role.code === 'OUTSOURCING')
+      && canOpenPage('sewing-outsourcing-workbench', authStore)) {
+      return { name: 'sewing-outsourcing-workbench', query: notificationQuery }
+    }
+    if (!user?.is_superuser && canOpenPage('merchandiser-workbench', authStore)) {
+      return { name: 'merchandiser-workbench', query: notificationQuery }
+    }
     if (authStore.hasPermission('production_tasks.view_productiontask')) {
       return { name: 'production-overview', query: notificationQuery }
     }
@@ -2138,6 +2207,9 @@ router.beforeEach(async (to, from) => {
       'inventory.view_finishedgoodsreceipt',
     ])) {
       return { name: 'workshop-workbench', query: notificationQuery }
+    }
+    if (authStore.hasPermission('procurement.view_purchaseorder')) {
+      return { name: 'purchase-workbench', query: notificationQuery }
     }
   }
 

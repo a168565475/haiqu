@@ -77,6 +77,12 @@ export async function createWorkshopConfig<T extends WorkshopConfigRecord>(
   return versioned(response)
 }
 
+export async function copyOperationScheme(craft: string, sourceName: string, targetName: string): Promise<void> {
+  await apiClient.post(`${resourcePath('operations')}copy-scheme/`, {
+    craft, source_name: sourceName, target_name: targetName,
+  })
+}
+
 export async function updateWorkshopConfig<T extends WorkshopConfigRecord>(
   kind: EditableResourceKind,
   id: string,

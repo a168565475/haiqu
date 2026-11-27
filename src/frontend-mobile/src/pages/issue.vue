@@ -223,7 +223,11 @@ async function initialize() {
       Object.assign(selected, restoreIssueQuantities(originalIssue.lines, data.items, pipeInRoots.value))
       Object.assign(sources, restoreIssueSources(originalIssue.lines, data.items))
     }
-    if (!recipientId.value && recipients.value.length === 1) recipientId.value = recipients.value[0]!.id
+    if (!originalIssue) {
+      recipientId.value = recipients.value.find(person => person.id === auth.user?.employee?.id)?.id || ''
+    } else if (!recipientId.value && recipients.value.length === 1) {
+      recipientId.value = recipients.value[0]!.id
+    }
     if (originalIssue) {
       // 旧数量可能已超出现有库存，仍须允许加载并调低，不能在这里执行提交校验。
       savedContent = JSON.stringify({ ...context, recipient_workshop_employee_id: recipientId.value, issue_at: `${issueAt.value}:00+08:00`, remark: remark.value,

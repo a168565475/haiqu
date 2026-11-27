@@ -199,17 +199,21 @@ const fabricSourceLines = computed(() => sections.value.flatMap((section) => sec
     && snapshot.template_key === 'COTTON' && snapshot.processing_state === 'RAW' && ['米', 'm'].includes(snapshot.unit_name.trim().toLowerCase())
 })).filter((line) => (line.id || line.client_key)
     && (line.id || line.part_name.trim() || line.source_inventory_material_id || line.source_fabric_material_id || line.source_fabric_specification_id)))
-const componentSourceLines = computed(() => sections.value.filter(section => ['面料类', '辅料类'].includes(section.title))
+const componentSourceOptions = computed(() => sections.value.filter(section => section.title === '面料类')
   .flatMap(section => section.lines).filter(line => !line.component_kind && (line.id || line.client_key) && line.part_name.trim()
     && (!line.material_catalog_id || (line.material_selection || line.material_selection_snapshot)?.processing_state === 'RAW')))
+// 旧单的辅料关联仍用于回显，不进入新选项。
+const componentSourceLines = computed(() => [...componentSourceOptions.value,
+  ...sections.value.filter(section => section.title === '辅料类').flatMap(section => section.lines)])
 const editingSourceLines = computed(() => editingLineDraft.value?.component_kind ? componentSourceLines.value : fabricSourceLines.value)
+const editingSourceOptions = computed(() => editingLineDraft.value?.component_kind ? componentSourceOptions.value : fabricSourceLines.value)
 
 const editingFabricSourceKey = computed({
   get: () => editingLineDraft.value?.fabric_source_line_id || editingLineDraft.value?.fabric_source_client_key || '',
   set: (key: string) => {
     const draft = editingLineDraft.value
     if (!draft) return
-    const source = editingSourceLines.value.find((line) => (line.id || line.client_key) === key)
+    const source = editingSourceOptions.value.find((line) => (line.id || line.client_key) === key)
     draft.fabric_source_line_id = source?.id || null
     draft.fabric_source_client_key = source && !source.id ? source.client_key || null : null
     syncCuttingSourceAttributes(draft)
@@ -677,7 +681,9 @@ async function confirmProductInformation({ item }: { item: InquiryItem }) {
     selectEditorTab('materials')
     ElMessage.success(result.data.status === 'VERIFIED' ? '当前 BOM 产品信息已更新，未重复回写上游。' : '产品信息已核对；确认 BOM 时再按首次规则回写上游。')
   } catch (error) {
-    productConfirmError.value = apiError(error, '产品信息确认失败，当前填写内容已保留，请重试。')
+    productConfirmError.value = isTemporaryBomRequestError(error)
+      ? '尚未收到产品核对结果。当前填写已保留，请先在 BOM 列表查看本单的产品核对状态。'
+      : apiError(error, '产品信息确认失败，当前填写内容已保留，请检查后重试。')
   } finally {
     productConfirmLoading.value = false
   }
@@ -1188,7 +1194,7 @@ function apiError(error: unknown, fallback = 'BOM 请求失败，请稍后重试
   const message = data.error?.message || data.detail
   if (error.response.status === 412) return message && message !== '数据已被其他人修改，请刷新后重试。'
     ? message
-    : '该 BOM 已被其他人修改，请刷新后再编辑。'
+    : '该 BOM 的版本已更新。当前填写已保留，请先在 BOM 列表核对本单。'
   if (error.response.status === 428) return message && message !== '修改请求必须携带 If-Match。'
     ? `${message} 请重新读取对应资料后重试；当前草稿仍保留。`
     : '当前 BOM 页面缺少版本信息，请重新打开 BOM 后重试；当前草稿仍保留。'
@@ -1196,7 +1202,7 @@ function apiError(error: unknown, fallback = 'BOM 请求失败，请稍后重试
   return message || fallback
 }
 
-function isTemporaryBomLoadError(error: unknown) {
+function isTemporaryBomRequestError(error: unknown) {
   if (!(error instanceof AxiosError)) return false
   if (!error.response) return true
   return [500, 502, 503, 504].includes(error.response.status)
@@ -1226,7 +1232,7 @@ async function fetchBomForEditWithRetry(bomId: string, signal: AbortSignal) {
       return await fetchBomForEdit(bomId, signal)
     } catch (error) {
       if (signal.aborted) return
-      if (!isTemporaryBomLoadError(error) || attempt === maximumAttempts) throw error
+      if (!isTemporaryBomRequestError(error) || attempt === maximumAttempts) throw error
       if (!await waitBeforeBomReload(attempt, signal)) return
     }
   }
@@ -1861,6 +1867,10 @@ function followingLineDraft(section: BomSectionInput, current: BomLineInput): Bo
     next.material_selection_snapshot = undefined
     next.parts_per_product = current.component_kind === 'SEWN_PART' ? 1 : null
     next.pieces_per_part = current.component_kind === 'CUT_PIECE' ? 1 : null
+    if (!componentSourceOptions.value.some(line => (line.id || line.client_key) === (current.fabric_source_line_id || current.fabric_source_client_key))) {
+      next.fabric_source_line_id = null
+      next.fabric_source_client_key = null
+    }
   } else if (section.title === '裁剪明细') {
     next.unit = '套'
     next.cutting_pieces_per_set = null
@@ -2000,6 +2010,26 @@ function materialSaveSnapshotMatches(pending: PendingBomSave) {
     && (pending.options.intent !== 'verify' || quantityReason.value.trim() === pending.options.quantity_confirmation_reason)
 }
 
+async function reportBomWriteError(error: unknown, bomId: string, verifyingBom: boolean) {
+  if (!isTemporaryBomRequestError(error)) {
+    ElMessage.error(apiError(error))
+    return
+  }
+  const reviewDraft = '当前填写已保留，请先在 BOM 列表核对本单明细。'
+  if (!verifyingBom) {
+    ElMessage.warning('尚未收到保存结果。' + reviewDraft)
+    return
+  }
+  try {
+    const latest = await fetchBomForEdit(bomId)
+    if (bom.value?.id !== bomId) return
+    // 回读只证明服务器状态，不用它覆盖用户正在编辑的明细。
+    ElMessage.warning((latest.data.status === 'VERIFIED' ? '服务器上的 BOM 已确认。' : '尚未取得最终确认结果。') + reviewDraft)
+  } catch (readError) {
+    if (bom.value?.id === bomId) ElMessage.warning('尚未收到确认结果。' + reviewDraft + ' 回读提示：' + apiError(readError))
+  }
+}
+
 async function writeMaterialSave(pending: PendingBomSave, confirmationToken?: string) {
   try {
     const options = { ...pending.options, ...(confirmationToken ? { confirmation_token: confirmationToken } : {}) }
@@ -2011,7 +2041,7 @@ async function writeMaterialSave(pending: PendingBomSave, confirmationToken?: st
       : pending.deletedCount ? `BOM 草稿已保存，已删除 ${pending.deletedCount} 条旧明细。` : 'BOM 草稿已保存。')
     return true
   } catch (error) {
-    ElMessage.error(apiError(error))
+    await reportBomWriteError(error, pending.bomId, pending.options.intent === 'verify')
     return false
   }
 }
@@ -2063,7 +2093,8 @@ async function startMaterialSave(intent: 'draft' | 'verify', showMessage = true)
     }
     return await writeMaterialSave(pending)
   } catch (error) {
-    ElMessage.error(apiError(error))
+    if (isTemporaryBomRequestError(error)) ElMessage.warning('保存预检未完成，还没有提交本次修改。当前填写已保留，可以重新预检。')
+    else ElMessage.error(apiError(error))
     return false
   } finally {
     saving.value = false
@@ -2094,12 +2125,13 @@ async function submitVerification() {
     ElMessage.error('当前页面缺少版本信息，请刷新后重试。')
     return
   }
+  const bomId = bom.value.id
   verifying.value = true
   try {
-    applyVersioned(await verifyBom(bom.value.id, quantityReason.value.trim(), etag.value))
+    applyVersioned(await verifyBom(bomId, quantityReason.value.trim(), etag.value))
     ElMessage.success('BOM 已提交。')
   } catch (error) {
-    ElMessage.error(apiError(error))
+    await reportBomWriteError(error, bomId, true)
   } finally {
     verifying.value = false
   }
@@ -2176,7 +2208,7 @@ onBeforeUnmount(() => {
       <header class="editor-heading">
         <div>
           <div class="title-line">
-            <h1>编辑BOM&nbsp; {{ bom.bom_number }}</h1>
+            <h1>编辑BOM</h1>
             <span class="editor-status-tag" :class="{ verified: bom.status === 'VERIFIED' }">{{ editorStatusLabel }}</span>
           </div>
         </div>
@@ -2211,7 +2243,10 @@ onBeforeUnmount(() => {
         />
         <main class="card material-card">
           <header class="material-heading">
-            <div><h2>{{ activeSection?.title || '用料明细' }}</h2><span>{{ activeSection?.lines.length || 0 }} 行 · {{ materialReferenceHint }}</span></div>
+            <div>
+              <h2>{{ activeSection?.title || '用料明细' }}</h2>
+              <span><template v-if="bom.production_task_number">生产任务单号 <strong>{{ bom.production_task_number }}</strong> · </template>BOM 编号 {{ bom.bom_number }} · {{ activeSection?.lines.length || 0 }} 行 · {{ materialReferenceHint }}</span>
+            </div>
             <div v-if="canEdit && activeSection" class="material-actions">
               <ElButton type="primary" @click="addCatalogLine">添加材料</ElButton>
               <ElButton v-if="bomCatalogCategories[activeSection.title]" @click="openMaterialMaintenance">维护配置</ElButton>
@@ -2233,6 +2268,7 @@ onBeforeUnmount(() => {
               :catalog-refresh-key="catalogRefreshKey"
               :component-units="editorReferenceOptions?.component_units || []"
               :component-sources="componentSourceLines"
+              :source-options="componentSourceOptions"
               :change-component-type="requestComponentType"
               :is-plastic-section="isPlasticSection"
               :is-auxiliary-section="isAuxiliarySection"
@@ -2355,6 +2391,7 @@ onBeforeUnmount(() => {
           :set-fabric-width="setFabricWidth"
           :is-pipe-cutting-line="isPipeCuttingLine"
           :fabric-source-lines="editingSourceLines"
+          :source-options="editingSourceOptions"
           :legacy-pipe-cutting-values="legacyPipeCuttingValues"
           :editing-cutting-calculation="editingCuttingCalculation"
           :bom="bom"

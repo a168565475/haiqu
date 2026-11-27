@@ -12,9 +12,8 @@ import type { MaterialIssueProduct, MaterialRequirement } from '@/types/material
 const route = vi.hoisted(() => ({ params: {} as Record<string, string>, query: {} as Record<string, string> }))
 const api = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn(), products: vi.fn(), requirements: vi.fn(), detail: vi.fn(),
   create: vi.fn(), update: vi.fn(), submit: vi.fn(), preview: vi.fn(), confirm: vi.fn(), returned: vi.fn() }))
-vi.mock('vue-router', () => ({ useRoute: () => route }))
-vi.mock('@/router', () => ({ router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() } }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, is_superuser: true }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: () => true }) }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, is_superuser: true, employee: { id: 'recipient-1' } }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: () => true }) }))
 vi.mock('@/api/materialIssues', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/materialIssues')>(),
   fetchMaterialIssues: api.list,
@@ -35,7 +34,7 @@ const product: MaterialIssueProduct = { id: 'product-1', product_number: 'P001',
 const metalPipe: MaterialRequirement = {
   ...semi, requirement_id: 'pipe', line_type: 'RAW', section_code: 'PROFILE', material_name: '方管', unit: '支',
   required_quantity: '60', internal_issued_quantity: '6', pending_issue_quantity: '6', order_remaining: '48',
-  available_stock: '54', max_issue_quantity: '48', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' },
+  available_stock: '54', max_issue_quantity: '48', conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05', cutting_length_mm: 500 },
 }
 function detail(stockMode: 'PUBLIC_V2' | null = 'PUBLIC_V2') {
   return { id: 'issue-1', stock_mode: stockMode || undefined, issue_number: '领料-001', status: 'DRAFT', status_display: '草稿',
@@ -242,19 +241,25 @@ describe('提交仓库审核时核对本产品剩余需求', () => {
   it('金工原管显示按根可领，零碎根数不写入，整根由系统换算提交', async () => {
     route.query.plan_category = 'METAL'
     api.options.mockResolvedValue({ production_tasks: [{ id: 'task-1', task_number: '生产001', customer_name: '客户' }],
-      workshops: [{ id: 'workshop-1', name: '金工车间' }], recipients: [{ id: 'recipient-1', name: '领料人', workshop_id: 'workshop-1' }] })
+      workshops: [{ id: 'workshop-1', name: '金工车间' }], recipients: [
+        { id: 'recipient-2', name: '其他员工', workshop_id: 'workshop-1' },
+        { id: 'recipient-1', name: '登录员工', workshop_id: 'workshop-1' },
+      ] })
     api.requirements.mockResolvedValue({ items: [metalPipe], blockers: [] })
     api.create.mockResolvedValue(saved)
     api.submit.mockResolvedValue(saved)
     const wrapper = await formView(true)
     const vm = wrapper.vm as any
-    vm.form.recipient_workshop_employee_id = 'recipient-1'
+    expect(vm.form.recipient_workshop_employee_id).toBe('recipient-1')
+    expect(wrapper.find('[data-testid="semi-partition"]').exists()).toBe(false)
     vm.selected.pipe = '0'
     await flushPromises()
     const table = wrapper.get('[data-testid="raw-partition"]')
     const headers = table.findAll('thead th').map(cell => cell.text())
     const cells = table.get('tbody tr').findAll('td')
     expect(cells[headers.indexOf('单位')]!.text()).toBe('根')
+    expect(cells[headers.indexOf('原管长度')]!.text()).toBe('3.05 m')
+    expect(cells[headers.indexOf('切割长度')]!.text()).toBe('500 mm')
     expect(cells[headers.indexOf('本次可领')]!.text()).toBe('8')
     const input = table.get('input[aria-label="方管申请数量"]')
     await input.setValue('1.5')
@@ -269,8 +274,26 @@ describe('提交仓库审核时核对本产品剩余需求', () => {
     expect(api.create).not.toHaveBeenCalled()
     await input.setValue('3')
     await clickForm(wrapper, '提交仓库审核')
-    expect(api.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lines: [{ requirement_id: 'pipe', requested_quantity: '18' }] }))
+    expect(api.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      recipient_workshop_employee_id: 'recipient-1', lines: [{ requirement_id: 'pipe', requested_quantity: '18' }],
+    }))
     expect(api.submit).toHaveBeenCalledExactlyOnceWith('issue-1', saved.etag)
+  })
+
+  it.each([
+    { category: 'CUTTING', showSemi: false },
+    { category: 'SEWING', showSemi: true },
+  ])('$category 按计划类型展示半成品，领料人限定在当前车间', async ({ category, showSemi }) => {
+    route.query.plan_category = category
+    api.options.mockResolvedValue({ production_tasks: [{ id: 'task-1', task_number: '生产001', customer_name: '客户' }],
+      workshops: [{ id: 'workshop-1', name: '车缝车间' }], recipients: [
+        { id: 'recipient-2', name: '本车间员工', workshop_id: 'workshop-1' },
+        { id: 'recipient-1', name: '登录员工', workshop_id: 'other-workshop' },
+      ] })
+    const wrapper = await formView(true)
+    expect(wrapper.find('[data-testid="raw-partition"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="semi-partition"]').exists()).toBe(showSemi)
+    expect((wrapper.vm as any).form.recipient_workshop_employee_id).toBe('')
   })
 
   it('金工旧草稿读取原单根数，保存时保留原单和待扣数量', async () => {
@@ -388,6 +411,45 @@ describe('提交仓库审核时核对本产品剩余需求', () => {
 })
 
 describe('公共库存领料数量展示与实时预检', () => {
+  it('装配领料单只有原材料时隐藏半成品明细', async () => {
+    const value = detail()
+    value.status = 'ISSUED'
+    Object.assign(value.lines[0]!, metalPipe, { requested_quantity: '12', issued_quantity: '12' })
+    const wrapper = await detailView(value)
+    expect(wrapper.text()).toContain('方管')
+    expect(wrapper.text()).not.toContain('外发回库半成品领料')
+    expect(wrapper.get('.detail-footer').text()).not.toContain('半成品领用')
+  })
+
+  it.each([
+    { line: metalPipe, showSemi: false },
+    { line: semi, showSemi: true },
+  ])('金工详情按实际记录展示 $line.material_name 对应的明细', async ({ line, showSemi }) => {
+    const value = detail()
+    value.workshop.name = '金工车间'
+    value.status = 'ISSUED'
+    Object.assign(value.lines[0]!, line, { requested_quantity: '12', issued_quantity: '12' })
+    if (line.line_type === 'RAW') {
+      Object.assign(value.lines[0]!, { public_stock_allocations: [{
+        id: 'allocation-1', balance_id: 'balance-1', warehouse_zone: '管材仓 / 一楼',
+        requested_quantity: '12', stock_quantity: '2', stock_unit: '根', meter_quantity: '6.10',
+        before_quantity: '10', after_quantity: '8',
+      }] })
+    }
+    const wrapper = await detailView(value)
+    expect(wrapper.findAll('.detail-table h2').map(title => title.text()).includes('外发回库半成品领料')).toBe(showSemi)
+    expect(wrapper.get('.detail-footer').text().includes('半成品领用')).toBe(showSemi)
+    expect(wrapper.text()).toContain(line.material_name)
+    if (line.line_type === 'RAW') {
+      for (const table of [wrapper.get('.detail-table'), wrapper.get('[data-testid="public-stock-deductions"]')]) {
+        const headers = table.findAll('thead th').map(cell => cell.text())
+        const cells = table.get('tbody tr').findAll('td')
+        expect(cells[headers.indexOf('原管长度')]!.text()).toBe('3.05 m')
+        expect(cells[headers.indexOf('切割长度')]!.text()).toBe('500 mm')
+      }
+    }
+  })
+
   it('仓库审核金工管材时预检按整根显示', async () => {
     const value = detail()
     value.workshop.name = '金工车间'
@@ -399,6 +461,10 @@ describe('公共库存领料数量展示与实时预检', () => {
     await wrapper.findAll('button').find(button => button.text() === '审核通过并出库')!.trigger('click')
     await flushPromises()
     const preview = wrapper.get('[data-testid="issue-live-preview"]')
+    const headers = preview.findAll('thead th').map(cell => cell.text())
+    const cells = preview.get('tbody tr').findAll('td')
+    expect(cells[headers.indexOf('原管长度')]!.text()).toBe('3.05 m')
+    expect(cells[headers.indexOf('切割长度')]!.text()).toBe('500 mm')
     expect(preview.text()).toContain('8 根')
     expect(preview.text()).toContain('2 根')
     expect(preview.text()).not.toContain('12 支')

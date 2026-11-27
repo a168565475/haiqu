@@ -9,7 +9,7 @@ export const glassFormRouteNames = [
   'packaging-purchase-create', 'packaging-purchase-batch',
   'supplier-purchase-sheet-editor',
   'material-purchase-inbound', 'material-quality-confirmation',
-  'internal-semi-receipt', 'assembly-finished-receipt',
+  'internal-semi-receipt',
   'finished-goods-outbound-new',
   'access-management', 'theme-settings', 'inquiry-handling-settings',
   'material-issue-new', 'material-issue-edit',

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { AxiosError } from 'axios'
 
 import {
   completeSchedule,
@@ -63,7 +64,7 @@ describe('生产排产 API', () => {
     mockedPost.mockResolvedValueOnce({ data: { data: { id: 'schedule-1' } }, headers: { etag: '"v1"' } })
     const result = await createSchedule(payload)
     expect(result.etag).toBe('"v1"')
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-schedules/', payload)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-schedules/', payload, { timeout: 60_000 })
   })
 
   it('批量生成使用单次事务接口并保留每张任务单的独立请求', async () => {
@@ -92,7 +93,7 @@ describe('生产排产 API', () => {
     expect(result.data).toHaveLength(2)
     expect(payload.schedules.map(item => item.client_request_id)).toEqual(['request-1', 'request-2'])
     expect(payload.schedules.map(item => item.source_revision_hash)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-schedules/batch/', payload)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-schedules/batch/', payload, { timeout: 60_000 })
   })
 
   it('编辑和整单作废都发送 If-Match 防并发覆盖', async () => {
@@ -102,12 +103,64 @@ describe('生产排产 API', () => {
     await updateSchedule('schedule-1', update, '"v1"')
     await voidSchedule('schedule-1', '录入错误', '"v2"')
     expect(mockedPatch).toHaveBeenCalledWith(
-      '/api/v1/production-schedules/schedule-1/', update, { headers: { 'If-Match': '"v1"' } },
+      '/api/v1/production-schedules/schedule-1/', update, { headers: { 'If-Match': '"v1"' }, timeout: 60_000 },
     )
     expect(mockedPost).toHaveBeenCalledWith(
       '/api/v1/production-schedules/schedule-1/void/', { reason: '录入错误' },
       { headers: { 'If-Match': '"v2"' } },
     )
+  })
+
+  const item = { product_line_id: 'p1', planned_quantity: 1200, material_inbound_date: '2026-11-28',
+    metal_return_date: '2026-11-28', sewing_return_date: '2026-11-30', finished_inbound_date: '2026-12-05', craft_ids: ['cut', 'print'] }
+  const request = { production_task_id: 'task-1', source_revision_hash: 'revision', client_request_id: 'one-write', items: [item] }
+  const saved = { id: 's1', production_task_id: 'task-1', record_status: 'ACTIVE',
+    products: [{ ...item, crafts: [{ id: 'print' }, { id: 'cut' }] }] }
+  const timeout = () => new AxiosError('timeout', 'ECONNABORTED')
+  const candidateReply = { data: { data: { id: 'task-1', existing_schedule_id: 's1' } } }
+  const detailReply = (data: unknown) => ({ data: { data }, headers: { etag: '"confirmed"' } })
+
+  it('新建超时后只读核对同一任务的有效排产和全部所填产品信息', async () => {
+    mockedPost.mockRejectedValueOnce(timeout())
+    mockedGet.mockResolvedValueOnce(candidateReply).mockResolvedValueOnce(detailReply(saved))
+    expect((await createSchedule(request)).data.id).toBe('s1')
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+    expect(mockedGet.mock.calls.map(call => call[0])).toEqual(['/api/v1/production-schedules/task-candidates/task-1/', '/api/v1/production-schedules/s1/'])
+  })
+
+  it.each([
+    { ...saved, production_task_id: 'other-task' }, { ...saved, record_status: 'VOID' },
+    { ...saved, products: [] }, { ...saved, products: [...saved.products, ...saved.products] },
+    ...Object.entries({ product_line_id: 'other', planned_quantity: 1199, material_inbound_date: '2026-11-29',
+      metal_return_date: '2026-11-29', sewing_return_date: '2026-12-01', finished_inbound_date: '2026-12-06',
+      crafts: [{ id: 'cut' }] }).map(([key, value]) => ({ ...saved, products: [{ ...saved.products[0], [key]: value }] })),
+  ])('任务、状态、产品或填写内容不符时不确认已保存', async actual => {
+    mockedPost.mockRejectedValueOnce(timeout())
+    mockedGet.mockResolvedValueOnce(candidateReply).mockResolvedValueOnce(detailReply(actual))
+    await expect(createSchedule(request)).rejects.toThrow('填写已保留')
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('批量创建须逐张全部核实，编辑只回读自己修改的排产', async () => {
+    mockedPost.mockRejectedValueOnce(timeout())
+    mockedGet.mockResolvedValueOnce(candidateReply).mockResolvedValueOnce(detailReply(saved))
+      .mockResolvedValueOnce({ data: { data: { id: 'task-2', existing_schedule_id: null } } })
+    await expect(createSchedulesBatch({ schedules: [request, { ...request, production_task_id: 'task-2' }] })).rejects.toThrow('填写已保留')
+    mockedGet.mockReset().mockResolvedValueOnce(detailReply(saved))
+    mockedPatch.mockRejectedValueOnce(timeout())
+    expect((await updateSchedule('s1', request, '"old"')).etag).toBe('"confirmed"')
+    expect(mockedGet.mock.calls.map(call => call[0])).toEqual(['/api/v1/production-schedules/s1/'])
+    expect(mockedPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('服务端明确拒绝时保留原错误，回读失败保留填写', async () => {
+    const denied = new AxiosError('无权限', undefined, undefined, undefined, {status: 403, data: {detail:'无权限'}} as never)
+    mockedPost.mockRejectedValueOnce(denied)
+    await expect(createSchedule(request)).rejects.toBe(denied)
+    expect(mockedGet).not.toHaveBeenCalled()
+    mockedPost.mockRejectedValueOnce(timeout())
+    mockedGet.mockRejectedValueOnce(timeout())
+    await expect(createSchedule(request)).rejects.toThrow('填写已保留')
   })
 
   it('四类计划查询保留分类和来源上下文筛选', async () => {

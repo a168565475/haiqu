@@ -3,20 +3,20 @@ import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, ref } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { confirmMaterialIssue, fetchMaterialIssue, materialIssueProductImageUrl, previewMaterialIssue, returnMaterialIssue } from '@/api/materialIssues'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
-import { isRawIssuePipe, issueLineQuantityText, issueQuantityText, issueQuantityUnit } from '@/utils/materialIssueQuantities'
+import { isRawIssuePipe, issueLineQuantityText, issuePipeLengthText, issueQuantityText, issueQuantityUnit } from '@/utils/materialIssueQuantities'
 import { materialAttributeFields } from '@/utils/materialAttributes'
-import { router } from '@/router'
 import { canOpenPage } from '@/router/pageAccess'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialIssue, MaterialIssueLine, MaterialIssuePreviewLine, MaterialIssueStatus } from '@/types/materialIssue'
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const canOpenList = computed(() => canOpenPage('material-issues', auth))
 const issueId = computed(() => String(route.params.issueId || ''))
@@ -41,6 +41,8 @@ const canEdit = computed(() => auth.user?.is_superuser === true || (
 const rawLines = computed(() => issue.value?.lines.filter((item) => item.line_type === 'RAW') || [])
 const semiLines = computed(() => issue.value?.lines.filter((item) => item.line_type === 'SEMI') || [])
 const pipeInRoots = computed(() => issue.value?.workshop?.name === '金工车间')
+const showSemiDetails = computed(() => semiLines.value.length > 0)
+const showPipeLength = computed(() => pipeInRoots.value && rawLines.value.some(isRawIssuePipe))
 const rootPipe = (row: MaterialIssueLine) => pipeInRoots.value && isRawIssuePipe(row)
 const lineQuantity = (row: MaterialIssueLine, value: string | null | undefined, withUnit = false) =>
   issueLineQuantityText(value, row, pipeInRoots.value, withUnit)
@@ -75,6 +77,8 @@ const publicAllocations = computed(() => (issue.value?.lines || []).flatMap(line
     specification: specificationValue(line),
     color: line.line_type === 'SEMI' ? colorValue(line, true) : colorValue(line),
     line_type: line.line_type, request_unit: rootPipe(line) ? allocation.stock_unit : line.unit,
+    pipe_length_text: issuePipeLengthText(line, 'raw_bar_length_m'),
+    cutting_length_text: issuePipeLengthText(line, 'cutting_length_mm'),
   }))))
 const canOpenMetalProcessing = computed(() => isIssued.value && issue.value?.workshop?.name === '金工车间'
   && rawLines.value.some(line => line.conversion_snapshot?.kind === 'PIPE')
@@ -114,7 +118,10 @@ const colorValue = (row: MaterialIssueLine, preferActual = false) => {
   if (preferActual && String(row.color || '').trim()) return row.color
   return attributeValue(row, ['color', 'hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'], row.color || '')
 }
-const overStock = (line: MaterialIssueLine) => Number(line.requested_quantity) > Number(isDirectLine(line) ? line.direct_available_quantity ?? line.max_issue_quantity : line.max_issue_quantity)
+function overStock(line: MaterialIssueLine) {
+  const available = isDirectLine(line) ? line.direct_available_quantity ?? line.max_issue_quantity : line.max_issue_quantity
+  return available != null && Number(line.requested_quantity) > Number(available)
+}
 function isPublicLine(line: MaterialIssueLine): boolean { return line.stock_mode === 'PUBLIC_V2' || isPublicIssue.value }
 
 async function load() {
@@ -125,7 +132,7 @@ async function load() {
   finally { loading.value = false }
 }
 async function openConfirmation() {
-  if (!issue.value || acting.value) return
+  if (!issue.value || issue.value.stock_quantities_unavailable || acting.value) return
   acting.value = true; previewError.value = ''; previewReady.value = false; previewLines.value = []
   try {
     const preview = await previewMaterialIssue(issue.value.id)
@@ -190,6 +197,7 @@ onMounted(load)
 
       <ElAlert v-if="loadError" :title="loadError" type="error" :closable="false"><ElButton @click="load">重新加载</ElButton></ElAlert>
       <template v-if="issue">
+        <ElAlert v-if="issue.stock_quantities_unavailable" title="该单保存的库存标识与当前规则不一致，已显示原申请明细。请核对库存后再出库。" type="warning" :closable="false" />
         <section v-if="isReturned" class="return-banner">
           <strong>退回原因：{{ returnEvent?.reason || '请修改后重新提交。' }}</strong>
           <p>退回人　{{ returnEvent?.actor.name || '—' }}　·　退回时间　{{ dateText(returnEvent?.created_at) }}</p>
@@ -206,8 +214,8 @@ onMounted(load)
           <h2>基本信息</h2>
           <div class="detail-fields">
             <div class="field-column">
+              <label><span>生产任务单号</span><b>{{ issue.production_task?.task_number || '—' }}</b></label>
               <label><span>领料单号</span><b>{{ issue.issue_number }}</b></label>
-              <label><span>生产订单</span><b>{{ issue.production_task?.task_number || '—' }}</b></label>
               <label><span>产品颜色</span><b>{{ issue.product?.color || '—' }}</b></label>
             </div>
             <div class="field-column">
@@ -235,6 +243,10 @@ onMounted(load)
             <ElTableColumn label="物料 / 部位" min-width="160"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+            <template v-if="showPipeLength">
+              <ElTableColumn label="原管长度" width="112" align="center"><template #default="{ row }">{{ issuePipeLengthText(row, 'raw_bar_length_m') }}</template></ElTableColumn>
+              <ElTableColumn label="切割长度" width="128" align="center"><template #default="{ row }">{{ issuePipeLengthText(row, 'cutting_length_mm') }}</template></ElTableColumn>
+            </template>
             <ElTableColumn v-if="!pipeInRoots && rawLines.some(isRawIssuePipe)" label="管材扣库换算" min-width="230"><template #default="{ row }"><span v-if="isDirectLine(row)">{{ numberText(row.requested_quantity) }} {{ row.unit }} · 裁剪车间直交，不扣库存</span><span v-else-if="isRawIssuePipe(row)">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根</span><span v-else>—</span></template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="90" align="center"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="单位" width="76" align="center"><template #default="{ row }">{{ issueQuantityUnit(row, pipeInRoots) }}</template></ElTableColumn>
@@ -256,9 +268,9 @@ onMounted(load)
           </ElTable>
         </section>
 
-        <section class="mi-surface detail-table">
+        <section v-if="showSemiDetails" class="mi-surface detail-table">
           <h2>外发回库半成品领料</h2>
-          <ElTable :data="semiLines" border row-key="id" empty-text="本次没有半成品领料明细">
+          <ElTable :data="semiLines" border row-key="id">
             <ElTableColumn label="半成品 / 部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
@@ -285,6 +297,10 @@ onMounted(load)
             <ElTableColumn label="分区 / 物料部位" min-width="210"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn prop="material" label="材质" min-width="110" />
             <ElTableColumn prop="specification" label="规格" min-width="180" class-name="specification-cell" />
+            <template v-if="showPipeLength">
+              <ElTableColumn prop="pipe_length_text" label="原管长度" width="112" align="center" />
+              <ElTableColumn prop="cutting_length_text" label="切割长度" width="128" align="center" />
+            </template>
             <ElTableColumn prop="color" label="颜色" min-width="100" />
             <ElTableColumn prop="warehouse_zone" label="扣库库区" min-width="200" />
             <ElTableColumn label="实际领用" min-width="130"><template #default="{ row }">{{ numberText(row.requested_quantity) }} {{ row.request_unit }}</template></ElTableColumn>
@@ -306,7 +322,15 @@ onMounted(load)
     </div>
 
     <footer v-if="issue" class="detail-footer">
-      <span><b>共 {{ issue.line_count }} 项</b><i></i>{{ hasDirectLines ? '车间直交记录实物交接；库存来源按明细扣库。' : isIssued ? (isPublicIssue ? '已从公共库存扣减；半成品领用不重复扣原料。' : '已扣减库存；半成品领用不重复扣原料。') : isReturned ? '已退回，未扣库存。' : '本次可领按扣除其他占用后的合格库存计算。' }}</span>
+      <span>
+        <b>共 {{ issue.line_count }} 项</b><i></i>
+        <template v-if="hasDirectLines">车间直交记录实物交接；库存来源按明细扣库。</template>
+        <template v-else-if="isIssued">
+          {{ isPublicIssue ? '已从公共库存扣减' : '已扣减库存' }}{{ showSemiDetails ? '；半成品领用不重复扣原料。' : '。' }}
+        </template>
+        <template v-else-if="isReturned">已退回，未扣库存。</template>
+        <template v-else>本次可领按扣除其他占用后的合格库存计算。</template>
+      </span>
       <div>
         <ElButton @click="back">{{ canOpenList ? '返回列表' : issue.production_task?.id ? '返回生产任务' : '返回排产' }}</ElButton>
         <ElButton v-if="canOpenMetalProcessing" data-testid="issue-metal-processing-entry" @click="openMetalProcessing">金工完成登记</ElButton>
@@ -314,7 +338,7 @@ onMounted(load)
         <ElButton v-else-if="issue.status === 'DRAFT' && canEdit" type="primary" @click="edit">修改领料单</ElButton>
         <template v-else-if="issue.status === 'PENDING_REVIEW' && canReview">
           <ElButton :disabled="acting" @click="returnVisible = true">退回修改</ElButton>
-          <ElButton type="primary" :loading="acting" :disabled="Boolean(conflictLine)" @click="openConfirmation">审核通过并出库</ElButton>
+          <ElButton type="primary" :loading="acting" :disabled="Boolean(conflictLine) || issue.stock_quantities_unavailable" @click="openConfirmation">审核通过并出库</ElButton>
         </template>
       </div>
     </footer>
@@ -326,6 +350,10 @@ onMounted(load)
         <ElTableColumn label="分区 / 物料部位" min-width="220"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
         <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="规格" min-width="220"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+        <template v-if="showPipeLength">
+          <ElTableColumn label="原管长度" width="112" align="center"><template #default="{ row }">{{ issuePipeLengthText(row, 'raw_bar_length_m') }}</template></ElTableColumn>
+          <ElTableColumn label="切割长度" width="128" align="center"><template #default="{ row }">{{ issuePipeLengthText(row, 'cutting_length_mm') }}</template></ElTableColumn>
+        </template>
         <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ row.line_type === 'SEMI' ? colorValue(row, true) : colorValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="申请数量" width="150"><template #default="{ row }">{{ lineQuantity(row, row.requested_quantity, true) }}</template></ElTableColumn>
         <ElTableColumn label="来源可用量" min-width="120"><template #default="{ row }">{{ lineQuantity(row, isDirectLine(row) ? row.direct_available_quantity ?? row.max_issue_quantity : row.available_stock, true) }}</template></ElTableColumn>
@@ -336,7 +364,7 @@ onMounted(load)
       <template #footer><ElButton :disabled="acting" @click="confirmVisible = false">取消</ElButton><ElButton :disabled="acting" @click="openConfirmation">重新核对</ElButton><ElButton type="primary" :loading="acting" :disabled="acting || !previewReady || Boolean(previewError)" @click="confirmIssue">确认出库</ElButton></template>
     </AppWindowDialog>
     <AppWindowDialog v-model="returnVisible" title="退回修改" :width="560" :height="380" :close-on-click-modal="!acting" :close-on-press-escape="!acting" :show-close="!acting" destroy-on-close>
-      <dl class="return-summary"><div><dt>领料单号</dt><dd>{{ issue?.issue_number }}</dd></div><div><dt>生产订单</dt><dd>{{ issue?.production_task?.task_number || '—' }}</dd></div></dl>
+      <dl class="return-summary"><div><dt>生产任务单号</dt><dd>{{ issue?.production_task?.task_number || '—' }}</dd></div><div><dt>领料单号</dt><dd>{{ issue?.issue_number }}</dd></div></dl>
       <ElForm label-position="top"><ElFormItem label="退回原因" required><ElInput v-model="returnReason" type="textarea" :rows="5" maxlength="1000" show-word-limit autofocus placeholder="说明需要申请人核对或修改的内容" /></ElFormItem></ElForm>
       <p class="return-tip">退回后由申请人修改并重新提交，本次不会扣减库存。</p>
       <template #footer><ElButton :disabled="acting" @click="returnVisible = false">取消</ElButton><ElButton type="primary" :loading="acting" @click="submitReturn">确认退回</ElButton></template>
@@ -367,7 +395,7 @@ onMounted(load)
 .submission-meta { margin: 18px 0 0; padding-top: 12px; border-top: 1px solid var(--erp-color-border-subtle); color: var(--erp-color-text-regular); font-size: 14px; }
 .detail-footer { @include detail.surface; display: flex; flex-wrap: wrap; min-height: 58px; flex: none; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; font-size: 13px; }.detail-footer > span { display: flex; flex: 1 1 320px; min-width: 0; align-items: center; }.detail-footer b { flex: none; font-size: 16px; }.detail-footer i { width: 1px; height: 22px; margin: 0 18px; background: var(--erp-color-border); }.detail-footer > div { display: flex; flex-wrap: wrap; gap: 12px; }.detail-footer :deep(.el-button) { min-width: 110px; height: 32px; min-height: 32px; margin: 0; }.detail-footer :deep(.el-button--primary) { min-width: 140px; }
 .detail-footer :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); color: var(--erp-color-text-inverse); }.detail-footer :deep(.el-button--primary:hover) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-hover-surface); }
-.return-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 14px; }.return-summary div { display: grid; grid-template-columns: 80px 1fr; }.return-summary dt { color: var(--erp-color-text-secondary); }.return-summary dd { margin: 0; }.return-tip { margin: -8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; }
+.return-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 14px; }.return-summary div { display: grid; grid-template-columns: 92px 1fr; }.return-summary dt { color: var(--erp-color-text-secondary); }.return-summary dd { margin: 0; }.return-tip { margin: -8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; }
 @container (max-width: 1400px) { .detail-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }.product-preview { grid-column: 1 / -1; }.product-preview img { width: 72px; height: 72px; } }
 @container (max-width: 1000px) { .detail-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (max-width: 650px) { .detail-fields { grid-template-columns: minmax(0, 1fr); }.audit-timeline { flex-direction: column; gap: 14px; margin: 14px 0 0; }.audit-timeline::before { display: none; }.audit-timeline article { width: auto; align-items: flex-start; text-align: left; }.audit-timeline article i { display: none; }.audit-timeline article time { white-space: normal; }.error-banner { flex-wrap: wrap; } }

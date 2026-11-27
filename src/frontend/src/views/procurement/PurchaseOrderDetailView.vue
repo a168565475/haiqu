@@ -266,10 +266,11 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
     <template v-else-if="order">
       <ElAlert v-if="groupError" :title="groupError" type="warning" :closable="false" />
       <dl class="order-metadata">
-        <div v-if="order.purchase_group_id"><dt>所属采购需求 / 批次</dt><dd>{{ groupNumber || '已关联采购需求' }} · 第 {{ order.batch_number }} 批 · {{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</dd></div>
+        <div v-if="order.source_type === 'SAMPLE'"><dt>打样单号</dt><dd :title="order.source_number"><strong>{{ order.source_number || '—' }}</strong></dd></div>
+        <div v-else><dt>生产任务单号</dt><dd :title="order.production_task_number"><strong>{{ order.production_task_number || '—' }}</strong></dd></div>
         <div><dt>采购单号</dt><dd :title="order.order_number">{{ order.order_number }}</dd></div>
+        <div v-if="order.purchase_group_id"><dt>所属采购需求 / 批次</dt><dd>{{ groupNumber || '已关联采购需求' }} · 第 {{ order.batch_number }} 批 · {{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</dd></div>
         <div><dt>采购来源</dt><dd>{{ order.source_type_display || (order.source_type === 'SAMPLE' ? '打样采购' : '生产订单') }}</dd></div>
-        <div><dt>{{ order.source_type === 'SAMPLE' ? '打样单号' : '生产单号' }}</dt><dd :title="order.source_number || order.production_task_number">{{ order.source_number || order.production_task_number || '—' }}</dd></div>
         <div><dt>关联订单</dt><dd :title="order.sales_order_number">{{ order.sales_order_number || '—' }}</dd></div>
         <div><dt>产品</dt><dd :title="productLabel">{{ productLabel }}</dd></div>
         <div><dt>下单日期</dt><dd>{{ formatTime(order.created_at, true) }}</dd></div>

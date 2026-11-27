@@ -13,6 +13,7 @@ import ProductCreateDialog from '@/components/products/ProductCreateDialog.vue'
 import ProductPickerDialog from '@/components/products/ProductPickerDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
+import { taskWriteResultNotice } from './productionTaskDisplay'
 import type { ProductInformation } from '@/types/product'
 import {
   createProductionTask,
@@ -581,7 +582,7 @@ function applyExisting(task: ProductionTask) {
      customer_color: item.customer_color ?? item.color_name ?? '', material: item.material || '',
     unit_label: `${item.unit_code} · ${item.unit_name}`, color_card: item.color_card || '', color_name: item.color_name || '',
     product_color_id: item.product_color_id || '', color_code: item.color_code, quantity: String(item.quantity),
-    unit_id: item.unit_id || '', currency_id: form.currency_id, unit_price: item.unit_price,
+    unit_id: item.unit_id || '', currency_id: form.currency_id, unit_price: item.unit_price ?? '',
     exchange_rate: Number(item.exchange_rate).toFixed(8),
     existingImages: item.images || [], newImages: [],
   })) : [blankProduct()]
@@ -763,7 +764,7 @@ function imageMaps() {
 }
 
 async function save(shouldSubmit = false) {
-  if (isReadOnly.value) return
+  if (isReadOnly.value || saving.value) return
   const message = validate()
   if (message) { ElMessage.warning(message); return }
   saving.value = true
@@ -778,11 +779,19 @@ async function save(shouldSubmit = false) {
       ? await updateWithBomConfirmation(taskPayload, images.productImages, images.detailImages)
       : await createProductionTask(taskPayload as ProductionTaskInput, images.productImages, images.detailImages)
     if (!result) return
-    if (shouldSubmit) result = await submitProductionTask(result.data.id, result.etag)
+    if (shouldSubmit) {
+      try {
+        result = await submitProductionTask(result.data.id, result.etag)
+      } catch (error) {
+        ElMessage.warning(taskWriteResultNotice(error, result.data.task_number, '提交 PMC') ?? apiError(error))
+        await router.replace({ name: 'production-task-detail', params: { taskId: result.data.id } })
+        return
+      }
+    }
     ElMessage.success(shouldSubmit ? '生产任务单已提交校验。' : canSubmitTask.value ? '生产任务单草稿已保存。' : '生产任务单已保存。')
     await router.replace({ name: 'production-task-detail', params: { taskId: result.data.id } })
   } catch (error) {
-    ElMessage.error(apiError(error))
+    ElMessage.error(taskWriteResultNotice(error, `HT${form.task_number_suffix}`, '保存') ?? apiError(error))
   } finally {
     saving.value = false
   }
@@ -806,7 +815,7 @@ async function submitCurrentTask() {
     applyExisting(result.data)
     ElMessage.success('生产任务单已提交，等待 PMC 确认。')
   } catch (error) {
-    ElMessage.error(apiError(error))
+    ElMessage.error(taskWriteResultNotice(error, existing.value.task_number, '提交 PMC') ?? apiError(error))
   } finally {
     workflowLoading.value = false
   }

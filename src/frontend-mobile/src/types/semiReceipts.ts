@@ -24,7 +24,7 @@ export interface SemiReceiptPreview {
   metal_processing?: { future_blockers: string[]; blockers: string[]; as_of: string }
 }
 export interface SemiReceiptPayload {
-  request_id: string; schedule_product_id: string; plan_category: SemiReceiptCategory; zone_id: string
+  request_id: string; schedule_product_id: string; plan_category: SemiReceiptCategory; zone_id?: string
   receipt_date: string; remark: string; lines: { bom_line_id: string; quantity: string | number }[]
 }
 export interface PendingSemiReceipt { payload: SemiReceiptPayload; etag: string; conflict?: boolean }

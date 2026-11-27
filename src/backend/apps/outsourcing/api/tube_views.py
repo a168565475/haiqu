@@ -161,16 +161,20 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
                     raise serializers.ValidationError('该发料来源与委外总单记录的工艺不符。')
             elif context.get('screen_print_pieces'):
                 raise serializers.ValidationError('请选择对应的委外建单入口。')
-            if data.get('plan_id') and data['source_kind'] == 'CUTTING' and context.get('sewing_inputs'):
-                from ..part_flow_sources import add_cut_piece_stock_zones
-                from ..source_access import allowed_source_kinds
-                if 'PUBLIC_PIECE' in allowed_source_kinds(request, permission):
-                    add_cut_piece_stock_zones(product, plan, context['inputs'])
         elif data['source_kind'] in CUTTING_SOURCES:
             from ..cutting_sources import cutting_source_context
             context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)
         else:
             context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
+        if plan is not None and not data.get('is_plan') and data['source_kind'] in {'CUTTING', 'PUBLIC_PIECE'}:
+            from ..source_access import allowed_source_kinds
+            kinds = allowed_source_kinds(request, permission)
+            if saved_printing and data['source_kind'] == 'CUTTING' and 'PUBLIC_PIECE' in kinds:
+                from ..part_flow_sources import add_cut_piece_stock_zones
+                add_cut_piece_stock_zones(plan, context['rows'])
+            elif plan.source_snapshot.get('sewing_inputs') and context.get('sewing_inputs'):
+                from ..part_flow_sources import add_sewing_print_sources
+                add_sewing_print_sources(plan, context, request, kinds)
         options = tube_options(request, permission=permission, category='screen_printing' if self.printing
                                else source_category(data['source_kind'])) if not data.get('plan_id') else {}
         skip_materials = context.get('screen_print_pieces') or (data.get('is_plan') and craft.outsourcing_code == 'SEWING')

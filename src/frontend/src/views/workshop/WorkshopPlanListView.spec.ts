@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElDropdownItem } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WorkshopPlanListView from './WorkshopPlanListView.vue'
+import AssemblyFinishedReceiptDialog from '@/views/inventory/AssemblyFinishedReceiptDialog.vue'
 
 const api = vi.hoisted(() => ({ items: vi.fn(), categories: vi.fn(), wages: vi.fn(), push: vi.fn(), replace: vi.fn() }))
 const state = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ async function createPlan(status: string | undefined) {
     production_task_status: status, job_status: 'IN_PROGRESS', job_status_display: '进行中',
   }], meta: { total: 1 } })
   const wrapper = mount(WorkshopPlanListView, { global: {
-    plugins: [ElementPlus], stubs: { WageSchemeDetailDialog: true },
+    plugins: [ElementPlus], stubs: { WageSchemeDetailDialog: true, AssemblyFinishedReceiptDialog: true },
   } })
   wrappers.push(wrapper)
   await flushPromises()
@@ -52,9 +53,18 @@ describe('内部计划入库入口的订单状态', () => {
     const entry = wrapper.findAllComponents(ElDropdownItem).find(item => item.text() === (category === 'ASSEMBLY' ? '成品入库' : '半成品入库'))!
     expect(entry.props('disabled')).toBe(false)
     await entry.get('[role="menuitem"]').trigger('click')
-    expect(api.push).toHaveBeenCalledWith({ name: category === 'ASSEMBLY' ? 'assembly-finished-receipt' : 'internal-semi-receipt', query: {
-      schedule_product_id: 'plan-1', ...(category === 'ASSEMBLY' ? {} : { plan_category: category }),
-    } })
+    if (category === 'ASSEMBLY') {
+      const dialog = wrapper.getComponent(AssemblyFinishedReceiptDialog)
+      expect(dialog.props('scheduleProductId')).toBe('plan-1')
+      expect(api.push).not.toHaveBeenCalled()
+      dialog.vm.$emit('closed')
+      await flushPromises()
+      expect(wrapper.findComponent(AssemblyFinishedReceiptDialog).exists()).toBe(false)
+    } else {
+      expect(api.push).toHaveBeenCalledWith({
+        name: 'internal-semi-receipt', query: { schedule_product_id: 'plan-1', plan_category: category },
+      })
+    }
   })
 
   it.each(['READY', 'COMPLETED', 'PAUSED', 'CANCELLED', undefined])('任务状态 %s 即使作业显示进行中也不能新入库', async status => {
@@ -72,6 +82,7 @@ describe('内部计划入库入口的订单状态', () => {
     const entry = wrapper.findAllComponents(ElDropdownItem).find(item => item.text() === '成品入库')!
     expect(entry.props('disabled')).toBe(true)
     await entry.get('[role="menuitem"]').trigger('click')
+    expect(wrapper.findComponent(AssemblyFinishedReceiptDialog).exists()).toBe(false)
     expect(api.push).not.toHaveBeenCalled()
   })
 
@@ -84,7 +95,10 @@ describe('内部计划入库入口的订单状态', () => {
     const entry = wrapper.findAllComponents(ElDropdownItem).find(item => item.text() === (category === 'ASSEMBLY' ? '成品入库' : '半成品入库'))!
     expect(entry.props('disabled')).toBe(false)
     await entry.get('[role="menuitem"]').trigger('click')
-    expect(api.push).toHaveBeenCalledOnce()
+    if (category === 'ASSEMBLY') {
+      expect(wrapper.getComponent(AssemblyFinishedReceiptDialog).props('scheduleProductId')).toBe('plan-1')
+      expect(api.push).not.toHaveBeenCalled()
+    } else expect(api.push).toHaveBeenCalledOnce()
     expect(sessionStorage.getItem(key)).toBe(saved)
   })
 

@@ -145,6 +145,10 @@ class NotificationQuerySerializer(serializers.Serializer):
     page_size = serializers.IntegerField(min_value=1, max_value=50, default=20)
 
 
+class NotificationInboxQuerySerializer(NotificationQuerySerializer):
+    unread_only = serializers.BooleanField(default=False)
+
+
 class NotificationDeliveryQuerySerializer(NotificationQuerySerializer):
     status = serializers.ChoiceField(choices=NotificationDelivery.Status.choices, required=False)
 

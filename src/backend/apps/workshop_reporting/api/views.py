@@ -35,20 +35,22 @@ from ..models import (
 )
 from ..mobile_wage_options import mobile_wage_change_targets, mobile_wage_form, mobile_wage_target_data, mobile_wage_targets
 from ..selectors import (
-    accessible_wage_schemes, accessible_work_reports, allowed_workshop_ids, search_wage_schemes,
+    accessible_wage_schemes, accessible_work_reports, allowed_workshop_ids, search_wage_schemes, last_work_report_employees,
+    schedule_wage_line_prefetch,
     wage_scheme_line_metrics, wage_schemes_with_context, work_report_cumulative_quantities, work_report_cutting_lengths,
-    work_report_selection_sources, work_report_task_cards, work_report_task_products, work_report_tasks,
+    work_report_filter_options, work_report_filter_workshops, work_report_selection_sources,
+    work_report_task_cards, work_report_task_products, work_report_tasks, work_reports_in_plan_category,
     work_reports_with_context,
 )
 from ..schedule_progress import schedule_progress_statuses
 from ..schedule_stage_progress import schedule_stage_progress_statuses
 from ..services import (
     approve_scheme, create_change_scheme, create_scheme, create_work_report, price_scheme_for, return_scheme, submit_scheme, update_scheme,
-    update_work_report, active_report_requirements, bom_options_for_product_line, wage_scheme_progress,
+    update_work_report, active_report_requirements, bom_options_for_product_line, wage_scheme_progress, withdraw_scheme,
 )
 from .serializers import (
     MobileWageFormQuerySerializer, MobileWageTargetQuerySerializer,
-    WorkReportDeleteSerializer,
+    WorkReportDeleteSerializer, WorkReportFilterOptionsSerializer, WorkReportListFiltersSerializer,
     CommentSerializer, WageSchemeApprovalSerializer, WageSchemeListFilterSerializer, WageSchemeWriteSerializer, WorkReportUpdateSerializer,
     WorkReportWriteSerializer,
     wage_scheme_data, work_report_data,
@@ -268,7 +270,7 @@ class PlanWageStatusView(generics.GenericAPIView):
             product_line_id__in=[key[0] for key in scope_keys],
             workshop_id__in=[key[1] for key in scope_keys],
             scope_craft_id__in=[key[2] for key in scope_keys],
-        ).prefetch_related("lines").order_by("-created_at", "-id")
+        ).prefetch_related(schedule_wage_line_prefetch()).order_by("-created_at", "-id")
         schemes_by_scope = {}
         for scheme in schemes:
             schemes_by_scope.setdefault(
@@ -426,6 +428,7 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
         "list": "workshop_reporting.view_wagescheme", "retrieve": "workshop_reporting.view_wagescheme",
         "history": "workshop_reporting.view_wagescheme", "create": "workshop_reporting.add_wagescheme",
         "partial_update": "workshop_reporting.change_wagescheme", "submit": "workshop_reporting.submit_wagescheme",
+        "withdraw": "workshop_reporting.submit_wagescheme",
         "change": "workshop_reporting.change_wagescheme",
         "approve": "workshop_reporting.approve_wagescheme", "return_scheme": "workshop_reporting.approve_wagescheme",
         "mobile_targets": "workshop_reporting.view_wagescheme", "mobile_form": "workshop_reporting.view_wagescheme",
@@ -496,7 +499,7 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
         if ordering not in {"updated_at", "-updated_at", "created_at", "-created_at", "scheme_number", "-scheme_number", "effective_from", "-effective_from"}:
             raise ValidationError({"ordering": "排序参数不正确。"})
         page = self.paginate_queryset(queryset.order_by(ordering, "-id"))
-        data = [wage_scheme_data(item, detail=False) for item in page]
+        data = [wage_scheme_data(item, detail=False, request=request) for item in page]
         if submitted_by_me:
             change_targets = mobile_wage_change_targets(request, page)
             for record in data:
@@ -506,7 +509,7 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         scheme = get_object_or_404(self.get_queryset(), pk=pk)
         response = Response({"data": wage_scheme_data(
-            scheme, line_metrics=wage_scheme_line_metrics(request, scheme),
+            scheme, line_metrics=wage_scheme_line_metrics(request, scheme), request=request,
         )})
         response["ETag"] = etag_for_instance(scheme)
         return response
@@ -567,7 +570,20 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
             comment=serializer.validated_data.get("comment", ""),
         )
         scheme = self.get_queryset().get(pk=scheme.pk)
-        response = Response({"data": wage_scheme_data(scheme)}); response["ETag"] = etag_for_instance(scheme)
+        response = Response({"data": wage_scheme_data(scheme, request=request)}); response["ETag"] = etag_for_instance(scheme)
+        return response
+
+    @extend_schema(
+        request=None, responses=OpenApiTypes.OBJECT,
+        parameters=[OpenApiParameter("If-Match", str, location="header", required=True)],
+    )
+    @action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        current = get_object_or_404(accessible_wage_schemes(request), pk=pk)
+        scheme = withdraw_scheme(scheme_id=current.pk, actor=request.employee, request=request)
+        scheme = self.get_queryset().get(pk=scheme.pk)
+        response = Response({"data": wage_scheme_data(scheme, request=request)})
+        response["ETag"] = etag_for_instance(scheme)
         return response
 
     @action(detail=True, methods=["post"])
@@ -611,6 +627,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
     serializer_class = WorkReportWriteSerializer
     action_permission_map = {
         "list": "workshop_reporting.view_workreport",
+        "filter_options": "workshop_reporting.view_workreport",
         "create": "workshop_reporting.add_workreport", "retrieve": "workshop_reporting.view_workreport",
         "partial_update": "workshop_reporting.change_workreport",
         "destroy": "workshop_reporting.delete_workreport",
@@ -623,14 +640,20 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         return work_reports_with_context(accessible_work_reports(self.request))
 
     @extend_schema(operation_id="workshop_reporting_work_report_list", responses=OpenApiTypes.OBJECT,
-                   parameters=[OpenApiParameter("plan_category", OpenApiTypes.STR, enum=PlanCategory.values)])
+                   parameters=[WorkReportListFiltersSerializer, OpenApiParameter("plan_category", OpenApiTypes.STR, enum=PlanCategory.values)])
     def list(self, request):
+        serializer = WorkReportListFiltersSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
         queryset = self.get_queryset()
         production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
         schedule_product_id = _uuid(request.query_params.get("schedule_product_id"), "schedule_product_id")
         workshop_id = _uuid(request.query_params.get("workshop_id"), "workshop_id")
         craft_id = _uuid(request.query_params.get("craft_id"), "craft_id")
         if production_task_id: queryset = queryset.filter(product_line__production_task_id=production_task_id)
+        if task_ids := serializer.validated_data.get("production_task_ids"):
+            queryset = queryset.filter(product_line__production_task_id__in=task_ids)
+        if product_ids := serializer.validated_data.get("product_line_ids"):
+            queryset = queryset.filter(product_line_id__in=product_ids)
         if schedule_product_id: queryset = queryset.filter(schedule_product_id=schedule_product_id)
         if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
         if craft_id: queryset = queryset.filter(scheme__scope_craft_id=craft_id)
@@ -638,13 +661,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         if plan_category:
             if plan_category not in PlanCategory.values:
                 raise ValidationError({"plan_category": "计划分类参数不正确。"})
-            # 历史报工按排产工艺快照归类，不随当前工艺配置修改或移除而变化。
-            category_link = ProductionScheduleProductCraft.objects.filter(
-                schedule_product_id=OuterRef("schedule_product_id"),
-                craft_id=OuterRef("scheme__scope_craft_id"),
-                craft_type_snapshot="INTERNAL", plan_category=plan_category,
-            )
-            queryset = queryset.filter(Exists(category_link))
+            queryset = work_reports_in_plan_category(queryset, plan_category)
         page = list(self.paginate_queryset(queryset.order_by("-production_date", "-created_at", "-id")))
         cumulative = work_report_cumulative_quantities(queryset)
         cutting_lengths = work_report_cutting_lengths(page) if plan_category in ("", PlanCategory.METAL) else {}
@@ -660,6 +677,17 @@ class WorkReportViewSet(viewsets.GenericViewSet):
                 report, line_metrics=line_metrics, cutting_lengths=cutting_lengths.get(report.scheme_id), request=request,
             ))
         return self.get_paginated_response(payload)
+
+    @extend_schema(operation_id="workshop_reporting_work_report_filter_options",
+                   parameters=[WorkReportFilterOptionsSerializer], responses=OpenApiTypes.OBJECT)
+    @action(detail=False, methods=["get"], url_path="filter-options")
+    def filter_options(self, request):
+        serializer = WorkReportFilterOptionsSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        filters = serializer.validated_data
+        if filters["kind"] == "workshops":
+            return Response({"data": list(work_report_filter_workshops(request))})
+        return self.get_paginated_response(list(self.paginate_queryset(work_report_filter_options(request, filters))))
 
     @transaction.atomic
     def create(self, request):
@@ -709,6 +737,11 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         production_date = _date(request.query_params.get("production_date"), "production_date")
         if not all((product_line_id, workshop_id, craft_id, production_date)):
             raise ValidationError("product_line_id、workshop_id、craft_id、production_date 均为必填项。")
+        if schedule_product_id:
+            get_object_or_404(
+                reporting_source_products(request, "workshop_reporting.view_workreport"),
+                pk=schedule_product_id, product_line_id=product_line_id,
+            )
         sources = reporting_source_crafts(request, 'workshop_reporting.view_workreport').filter(
             schedule_product__product_line_id=product_line_id, craft_id=craft_id, craft__workshop_id=workshop_id,
         )
@@ -734,10 +767,6 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             product_line_id=product_line_id, workshop_id=workshop_id
         )
         if schedule_product_id:
-            get_object_or_404(
-                reporting_source_products(request, "workshop_reporting.view_workreport"),
-                pk=schedule_product_id, product_line_id=product_line_id,
-            )
             visible_reports = visible_reports.filter(schedule_product_id=schedule_product_id)
         line_queryset = WorkReportLine.objects.filter(report__in=visible_reports)
         cumulative = {
@@ -749,20 +778,12 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             for row in line_queryset.filter(report__production_date=production_date)
             .values("work_item_id").annotate(quantity=Sum("quantity"))
         }
-        latest_employee_by_work_item = {}
+        rosters = {}
         if schedule_product_id:
-            latest_lines = WorkReportLine.objects.filter(
-                report__in=visible_reports,
-                report__schedule_product_id=schedule_product_id,
-                report__scheme__scope_craft_id=craft_id,
-                workshop_employee__in=active_employees(Employee.objects.all()),
-            ).order_by("-report__updated_at", "-line_number", "-id").values(
-                "work_item_id", "workshop_employee_id"
+            rosters = last_work_report_employees(
+                line_queryset.filter(report__scheme__scope_craft_id=craft_id),
+                work_item_ids=[line.work_item_id for line in scheme.lines.all()], workshop_id=workshop_id,
             )
-            for row in latest_lines:
-                latest_employee_by_work_item.setdefault(
-                    row["work_item_id"], str(row["workshop_employee_id"])
-                )
         data = wage_scheme_data(scheme)
         if assigned is not None:
             data["lines"] = [line for line in data["lines"] if line["bom_component_identity"] in assigned]
@@ -772,7 +793,9 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             work_item_id = UUID(line["work_item_id"])
             line["cumulative_quantity"] = str(cumulative.get(work_item_id, 0))
             line["production_date_quantity"] = str(day_quantities.get(work_item_id, 0))
-            line["last_workshop_employee_id"] = latest_employee_by_work_item.get(work_item_id)
+            roster = rosters.get(work_item_id, [])
+            line["last_employees"] = roster
+            line["last_workshop_employee_id"] = roster[0]["workshop_employee_id"] if roster else None
         return Response({"data": data})
 
 

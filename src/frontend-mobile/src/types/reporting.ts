@@ -1,3 +1,5 @@
+import type { CuttingGroupComponent } from './wageSchemes'
+
 export interface ReportingScope {
   schedule_product_id: string
   plan_category: 'METAL' | 'CUTTING' | 'SEWING' | 'ASSEMBLY'
@@ -48,6 +50,8 @@ export interface ReportingSchemeLine {
   required_quantity: string | null
   cumulative_quantity: string
   declared_price: string
+  cutting_components?: CuttingGroupComponent[]
+  last_employees?: { workshop_employee_id: string; production_line: number | null }[]
   status: 'ACTIVE' | 'VOID'
 }
 

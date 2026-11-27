@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
-import { Cell, DatePicker } from 'vant'
+import { DatePicker } from 'vant'
 import SemiReceiptPage from './semi-receipt.vue'
 import type { PendingSemiReceipt, SemiReceiptCategory, SemiReceiptPreview, SemiReceiptResult } from '@/types/semiReceipts'
 
@@ -42,8 +42,7 @@ let wrapper: VueWrapper | undefined
 function cleanup() { for (const category of ['METAL', 'CUTTING', 'SEWING']) for (const key of [storageKey(category), storageKey(category, 2), `internal-receipt-pending:${planId}:${category}`]) sessionStorage.removeItem(key) }
 async function openPage() { wrapper = mount(SemiReceiptPage); await flushPromises(); return wrapper }
 async function button(view: VueWrapper, text: string) { const target = view.findAll('button').find(item => item.text() === text); expect(target).toBeTruthy(); await target!.trigger('click'); await flushPromises() }
-async function selectZone(view: VueWrapper, name = '一区') { await view.get('.semi-zone').trigger('click'); await flushPromises(); await view.findAllComponents(Cell).find(cell => cell.props('title') === name)!.trigger('click'); await flushPromises() }
-async function prepare() { const view = await openPage(); await view.get(`[data-line-id="${lineId}"] input`).setValue('10'); await selectZone(view); return view }
+async function prepare() { const view = await openPage(); await view.get(`[data-line-id="${lineId}"] input`).setValue('10'); return view }
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); vi.resetAllMocks(); cleanup()
   mocks.route = reactive({ query: { schedule_product_id: planId, plan_category: 'METAL' } })
@@ -89,14 +88,14 @@ describe('手机金工和车缝半成品入库', () => {
     expect(view.find('.semi-footer-note').exists()).toBe(true)
     expect(view.findAll('.semi-material')).toHaveLength(2)
   })
-  it.each(['METAL', 'SEWING'] as const)('%s按真实预览列出全部候选、单位和属性，产品折叠且唯一仓默认选中', async category => {
+  it.each(['METAL', 'SEWING'] as const)('%s按真实预览列出全部候选、单位和属性，产品折叠且申请时隐藏仓库和库区', async category => {
     mocks.route.query.plan_category = category; mocks.preview.mockResolvedValue(fixture(category))
     const view = await openPage()
     expect(mocks.preview).toHaveBeenCalledWith(planId, category, expect.any(AbortSignal))
     expect(view.findAll('.semi-material')).toHaveLength(2)
     expect(view.get('.semi-product').attributes('open')).toBeUndefined()
-    expect(view.get('.semi-warehouse').text()).toContain('半成品一仓')
-    expect(view.get('.semi-zone').text()).toContain('请选择库区')
+    expect(view.find('.semi-warehouse').exists()).toBe(false)
+    expect(view.find('.semi-zone').exists()).toBe(false)
     expect(view.text()).toContain('测试材料 · 蓝色'); expect(view.text()).toContain('测试规格')
     expect(view.text()).toContain('排除部位'); expect(view.text()).toContain(category === 'METAL' ? '累计已提交' : '累计入库/待确认')
     expect(view.get('.semi-quantity .van-field__button').text()).toBe(category === 'METAL' ? '支' : '套')
@@ -105,6 +104,7 @@ describe('手机金工和车缝半成品入库', () => {
   })
   it('裁剪按片入库并显示所属部位，超过实际额度不能提交', async () => {
     const data = fixture('CUTTING')
+    data.zones = []
     for (const line of data.lines) {
       line.component_kind = 'CUT_PIECE'; line.parent_part_name = '床面'; line.attributes.unit_name = '片'; line.stage = '裁剪完成'
     }
@@ -113,7 +113,8 @@ describe('手机金工和车缝半成品入库', () => {
     expect(mocks.preview).toHaveBeenCalledWith(planId, 'CUTTING', expect.any(AbortSignal))
     expect(view.text()).toContain('所属部位：床面')
     expect(view.get('.semi-quantity .van-field__button').text()).toBe('片')
-    await selectZone(view)
+    expect(view.find('.semi-warehouse').exists()).toBe(false)
+    expect(view.find('.semi-zone').exists()).toBe(false)
     await view.get(`[data-line-id="${lineId}"] input`).setValue('31')
     await button(view, '提交入库申请')
     expect(mocks.create).not.toHaveBeenCalled()
@@ -122,6 +123,20 @@ describe('手机金工和车缝半成品入库', () => {
     expect(view.get('.semi-footer-note').text()).toContain('本次 1 项 · 10 片')
     await button(view, '提交入库申请')
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ plan_category: 'CUTTING', lines: [{ bom_line_id: lineId, quantity: '10' }] }), '"semi-one"')
+    expect(mocks.create.mock.calls[0]![0]).not.toHaveProperty('zone_id')
+  })
+  it.each(['METAL', 'CUTTING', 'SEWING'] as const)('%s 无库区的待核对记录重开后沿用原请求', async category => {
+    const original = pendingValue()
+    original.payload.plan_category = category
+    delete original.payload.zone_id
+    sessionStorage.setItem(storageKey(category), JSON.stringify(original))
+    mocks.route.query.plan_category = category
+    mocks.preview.mockResolvedValue(fixture(category))
+    mocks.find.mockRejectedValueOnce({ response: { status: 404 } })
+    const view = await openPage()
+    await button(view, '核对本次提交')
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith(original.payload, original.etag)
+    expect(view.text()).toContain('SEMI-TEST')
   })
   it('车缝部位分别保留单位，汇总不把不同部位单位加成套数', async () => {
     const data = fixture('SEWING')
@@ -134,26 +149,12 @@ describe('手机金工和车缝半成品入库', () => {
     expect(view.get('.semi-footer-note').text()).toContain('本次 2 项 · 10 张、20 个')
     expect(view.get('.semi-footer-note').text()).not.toContain('30 套')
   })
-  it('库区只列当前仓库，改仓清空库区，不会自动选择入库位置', async () => {
-    const data = fixture(); data.zones.push({ id: '88888888-8888-4888-8888-888888888888', warehouse: '半成品二仓', name: '独立区' }); mocks.preview.mockResolvedValue(data)
-    const view = await openPage()
-    expect(view.get('.semi-zone').attributes('disabled')).toBeDefined()
-    await view.get('.semi-warehouse').trigger('click'); await flushPromises()
-    await view.findAllComponents(Cell).find(cell => cell.props('title') === '半成品一仓')!.trigger('click'); await flushPromises()
-    await selectZone(view)
-    await view.get('.semi-warehouse').trigger('click'); await flushPromises()
-    await view.findAllComponents(Cell).find(cell => cell.props('title') === '半成品二仓')!.trigger('click'); await flushPromises()
-    expect(view.get('.semi-zone').text()).toContain('请选择库区')
-    await view.get('.semi-zone').trigger('click'); await flushPromises()
-    const zoneTitles = view.findAllComponents(Cell).map(cell => cell.props('title'))
-    expect(zoneTitles).toContain('独立区'); expect(zoneTitles).not.toContain('一区')
-  })
-  it.each(['METAL', 'SEWING'] as const)('%s仅提交正数量行、日期和真实库区，带原ETag，成功显示待仓库确认', async category => {
-    mocks.route.query.plan_category = category; mocks.preview.mockResolvedValue(fixture(category))
+  it.each(['METAL', 'SEWING'] as const)('%s 无库区也能提交正数量行和日期，带原ETag并显示待仓库确认', async category => {
+    mocks.route.query.plan_category = category; mocks.preview.mockResolvedValue({ ...fixture(category), zones: [] })
     const view = await prepare(); await view.get(`[data-line-id="${secondLineId}"] input`).setValue('0')
     await button(view, '提交入库申请')
     expect(mocks.auth.refresh).toHaveBeenCalledWith(true)
-    expect(mocks.create).toHaveBeenCalledExactlyOnceWith({ request_id: '77777777-7777-4777-8777-777777777777', schedule_product_id: planId, plan_category: category, zone_id: zoneId, receipt_date: '2026-11-02', remark: '', lines: [{ bom_line_id: lineId, quantity: '10' }] }, '"semi-one"')
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith({ request_id: '77777777-7777-4777-8777-777777777777', schedule_product_id: planId, plan_category: category, receipt_date: '2026-11-02', remark: '', lines: [{ bom_line_id: lineId, quantity: '10' }] }, '"semi-one"')
     expect(mocks.find).not.toHaveBeenCalled(); expect(view.text()).toContain('申请已提交，待仓库确认'); expect(view.text()).toContain('SEMI-TEST')
     expect(sessionStorage.getItem(storageKey(category))).toBeNull()
     await button(view, '返回生产入库')

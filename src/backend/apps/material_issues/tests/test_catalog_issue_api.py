@@ -103,6 +103,18 @@ class CatalogIssueApiTests(PublicStockFixture, APITestCase):
         self.assertEqual(Decimal(row["available_stock"]), 3 * self.bom_line.pieces_per_bar)
         self.assertEqual(before, OrderMaterialRequirement.objects.count())
 
+    def test_candidates_hide_external_catalog_material_with_available_stock(self):
+        self.credit(3, identity=self.identity)
+        self.bom_line.raw_values["purchase_required"] = False
+        self.bom_line.save(update_fields=["raw_values"])
+        response = self.client.get("/api/v1/material-issues/requirements/", {
+            "production_task_id": self.task.pk, "product_line_id": self.product_line.pk,
+            "workshop_id": self.workshop.pk, "plan_category": "METAL",
+        })
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotIn(str(self.spec["id"]), {row["requirement_id"] for row in response.data["data"]["items"]})
+        self.assertEqual(response.data["data"]["blockers"], [])
+
     def test_preview_detects_changed_catalog_demand_without_rewriting_requirements(self):
         self.credit(10, identity=self.identity)
         created = self.create()

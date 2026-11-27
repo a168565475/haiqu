@@ -1,11 +1,76 @@
 from apps.workshop_config.tests.factories import production_employee
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 
+from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
+from apps.audit.models import AuditLog
 from apps.organizations.models import Employee
+from apps.reference_data.models import ProductionUnit
 
 from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployeeStatus
+
+
+@override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=True,
+                   ACCESS_RESOURCE_SCOPES_ENABLED=True)
+class WorkshopOperationScopeTests(ScopedActorMixin, APITestCase):
+    base = '/api/v1/workshop-config/'
+
+    def test_operation_access_and_craft_choices_are_limited_to_the_granted_workshop(self):
+        self.scoped_actor()
+        metal = Workshop.objects.get(name='金工车间')
+        assembly = Workshop.objects.get(name='装配车间')
+        own_craft = Craft.objects.create(name='本车间工艺', craft_type=CraftType.INTERNAL, workshop=metal,
+                                         plan_category=PlanCategory.METAL)
+        other_craft = Craft.objects.create(name='其他车间工艺', craft_type=CraftType.INTERNAL, workshop=assembly,
+                                           plan_category=PlanCategory.ASSEMBLY)
+        own = Operation.objects.create(operation_number='GX-SCOPE-OWN', name='本车间工序', craft=own_craft)
+        other = Operation.objects.create(operation_number='GX-SCOPE-OTHER', name='其他车间工序',
+                                         craft=other_craft, product_name='测试品名')
+        for action in ('view_craft', 'view_operation', 'add_operation', 'change_operation'):
+            self.grant(f'workshop_config.{action}', 'WORKSHOP', [metal])
+
+        operations = self.client.get(self.base + 'operations/')
+        self.assertEqual(operations.status_code, 200, operations.data)
+        self.assertEqual([row['id'] for row in operations.data['data']], [str(own.pk)])
+        crafts = self.client.get(self.base + 'crafts/')
+        self.assertEqual([row['id'] for row in crafts.data['data']], [str(own_craft.pk)])
+        self.assertEqual(self.client.get(self.base + 'operations/summary/').data['data']['total'], 1)
+        self.assertEqual(self.client.get(self.base + 'crafts/summary/').data['data']['total'], 1)
+        self.assertEqual(self.client.get(self.base + f'operations/{other.pk}/').status_code, 404)
+
+        created = self.client.post(self.base + 'operations/', {'name': '本车间新增', 'craft': own_craft.pk})
+        self.assertEqual(created.status_code, 201, created.data)
+        blocked = self.client.post(self.base + 'operations/', {
+            'name': '其他车间新增', 'craft': other_craft.pk, 'product_name': '测试品名',
+        })
+        self.assertEqual(blocked.status_code, 403, blocked.data)
+
+        own_url = self.base + f'operations/{own.pk}/'
+        current = self.client.get(own_url)
+        blocked = self.client.patch(own_url, {'craft': other_craft.pk, 'product_name': '测试品名'}, HTTP_IF_MATCH=current['ETag'])
+        self.assertEqual(blocked.status_code, 403, blocked.data)
+        edited = self.client.patch(own_url, {'name': '本车间编辑'}, HTTP_IF_MATCH=current['ETag'])
+        self.assertEqual(edited.status_code, 200, edited.data)
+        self.assertEqual(self.client.patch(self.base + f'operations/{other.pk}/', {'name': '不能修改'}).status_code, 404)
+        self.assertEqual(self.client.patch(self.base + f'crafts/{own_craft.pk}/', {'name': '不能维护工艺'}).status_code, 403)
+
+    def test_copy_scheme_requires_view_and_add_scope_for_its_workshop(self):
+        self.scoped_actor()
+        assembly = Workshop.objects.get(name='装配车间')
+        sewing = Workshop.objects.get(name='车缝车间')
+        self.grant('workshop_config.view_operation', 'WORKSHOP', [assembly])
+        self.grant('workshop_config.add_operation', 'WORKSHOP', [sewing])
+
+        for workshop in (assembly, sewing):
+            craft = Craft.objects.create(name=f'{workshop.name}测试工艺', craft_type=CraftType.INTERNAL, workshop=workshop)
+            Operation.objects.create(operation_number=f'OP-COPY-{craft.pk.hex[:8]}', name='定位', craft=craft, product_name='原方案')
+            response = self.client.post(self.base + 'operations/copy-scheme/', {
+                'craft': str(craft.pk), 'source_name': '原方案', 'target_name': '新方案',
+            }, format='json')
+            self.assertEqual(response.status_code, 403, response.data)
+            self.assertFalse(Operation.objects.filter(craft=craft, product_name='新方案').exists())
 
 
 class WorkshopConfigApiTests(APITestCase):
@@ -155,6 +220,52 @@ class WorkshopConfigApiTests(APITestCase):
         operation_number = response.data["data"]["operation_number"]
         self.assertTrue(operation_number.startswith("OP-"))
         self.assertEqual(Operation.objects.filter(operation_number=operation_number).count(), 1)
+
+    def test_copy_scheme_keeps_all_operations_units_and_statuses_with_new_ids(self):
+        craft = Craft.objects.create(craft_type=CraftType.INTERNAL, workshop=self.fixed_workshop(), name="装配复制配置")
+        unit = ProductionUnit.objects.create(unit_code="SCHEME-COPY", unit_name="方案复制测试件")
+        first = Operation.objects.create(
+            craft=craft, product_name="原方案", name="定位", operation_number="OP-COPY-01", reporting_unit=unit,
+        )
+        second = Operation.objects.create(
+            craft=craft, product_name="原方案", name="复检", operation_number="OP-COPY-02", status=RecordStatus.INACTIVE,
+        )
+        response = self.client.post("/api/v1/workshop-config/operations/copy-scheme/", {
+            "craft": str(craft.pk), "source_name": "原方案", "target_name": "新方案",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["data"]["copied_count"], 2)
+        copied = Operation.objects.filter(craft=craft, product_name="新方案")
+        self.assertCountEqual(copied.values_list("name", "status", "reporting_unit_id"), [
+            (first.name, first.status, unit.pk), (second.name, second.status, None),
+        ])
+        self.assertFalse(copied.filter(operation_number__in=[first.operation_number, second.operation_number]).exists())
+        self.assertEqual(Operation.objects.filter(craft=craft, product_name="原方案").count(), 2)
+        self.assertEqual(AuditLog.objects.filter(object_type="WORKSHOP_OPERATION", object_id__in=copied.values("pk"), action="CREATED").count(), 2)
+
+    def test_copy_scheme_rejects_same_name_and_existing_target(self):
+        craft = Craft.objects.create(craft_type=CraftType.INTERNAL, workshop=self.fixed_workshop(), name="装配复制验重")
+        Operation.objects.create(craft=craft, product_name="原方案", name="定位", operation_number="OP-ORIGINAL")
+        Operation.objects.create(craft=craft, product_name="目标方案", name="复检", operation_number="OP-EXISTING")
+        url = "/api/v1/workshop-config/operations/copy-scheme/"
+        for name, code in [("原方案", 400), ("目标方案", 409)]:
+            response = self.client.post(url, {"craft": str(craft.pk), "source_name": "原方案", "target_name": name}, format="json")
+            self.assertEqual(response.status_code, code, response.data)
+        self.assertEqual(Operation.objects.filter(craft=craft).count(), 2)
+
+    def test_copy_scheme_rolls_back_when_a_legacy_operation_cannot_be_copied(self):
+        craft = Craft.objects.create(craft_type=CraftType.INTERNAL, workshop=self.fixed_workshop(), name="装配复制回滚")
+        Operation.objects.create(craft=craft, product_name="原方案", name="定位", operation_number="OP-ROLLBACK-01")
+        Operation.objects.create(craft=craft, product_name="原方案", name="", operation_number="OP-ROLLBACK-02")
+
+        response = self.client.post("/api/v1/workshop-config/operations/copy-scheme/", {
+            "craft": str(craft.pk), "source_name": "原方案", "target_name": "新方案",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(Operation.objects.filter(craft=craft, product_name="新方案").exists())
+        self.assertFalse(AuditLog.objects.filter(object_type="WORKSHOP_OPERATION", after_data__product_name="新方案").exists())
 
     def test_operation_update_keeps_internal_number(self):
         workshop = self.fixed_workshop("金工车间")

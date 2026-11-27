@@ -25,7 +25,7 @@ describe('身份确认失败时的导航', () => {
     await router.push('/purchase-orders/new')
     expect(router.currentRoute.value.name).toBe('purchase-order-create')
     await router.push('/boms')
-    expect(router.currentRoute.value.name).toBe('home')
+    expect(router.currentRoute.value.name).toBe('purchase-workbench')
     expect(ElMessage.warning).toHaveBeenCalledWith('当前岗位没有此页面的访问权限。')
   })
   it.each([
@@ -38,7 +38,7 @@ describe('身份确认失败时的导航', () => {
     await router.push(allowed)
     expect(router.currentRoute.value.name).toBe(expected)
     await router.push(blocked)
-    expect(router.currentRoute.value.name).toBe('home')
+    expect(router.currentRoute.value.name).toBe(permission === 'procurement.view_purchaseorder' ? 'purchase-workbench' : 'home')
     expect(ElMessage.warning).toHaveBeenCalledWith('当前岗位没有此页面的访问权限。')
   })
   it('身份已失去验证时允许停留登录页，不反跳首页形成重试循环', async () => {

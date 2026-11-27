@@ -1,4 +1,4 @@
-import type { FinishedReceiptOptions, FinishedReceiptPreview, PendingFinishedReceipt } from '@/types/finishedReceipts'
+import type { FinishedReceiptPreview, PendingFinishedReceipt } from '@/types/finishedReceipts'
 import { validProductionDate } from '@/utils/reporting'
 
 export const receiptUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -17,8 +17,7 @@ export function receiptBlocker(preview: FinishedReceiptPreview): string {
   return ''
 }
 export function validateFinishedReceipt(
-  preview: FinishedReceiptPreview, options: FinishedReceiptOptions,
-  values: { quantity: string; perBox: string; date: string; locationId: string },
+  preview: FinishedReceiptPreview, values: { quantity: string; date: string },
 ): string {
   const blocked = receiptBlocker(preview)
   if (blocked) return blocked
@@ -26,15 +25,6 @@ export function validateFinishedReceipt(
   if (quantity === null) return '入库数量必须为正整数，且不能超过安全整数范围。'
   if (quantity > preview.remaining_receivable) return `剩余可入库 ${preview.remaining_receivable} ${preview.unit_name}，不能超量。`
   if (!validProductionDate(values.date)) return '请选择有效的收货日期。'
-  const location = options.locations.find(item => item.id === values.locationId && item.status === 'ACTIVE')
-  const zone = options.zones.find(item => item.id === location?.zone && item.warehouse === location?.warehouse_id && item.status === 'ACTIVE')
-  const warehouse = options.warehouses.find(item => item.id === location?.warehouse_id && item.status === 'ACTIVE' && item.warehouse_type === 'FINISHED')
-  if (!location || !zone || !warehouse) return '请选择有效的成品仓、库区和库位。'
-  const pack = values.perBox === '' ? null : positiveReceiptQuantity(values.perBox)
-  if (values.perBox !== '' && pack === null) return '每箱数量必须为正整数，或留空。'
-  if (pack !== null && location.remaining_box_slots !== null && Math.ceil(quantity / pack) > location.remaining_box_slots) {
-    return `库位剩余 ${location.remaining_box_slots} 箱位，本次需要 ${Math.ceil(quantity / pack)} 箱位。`
-  }
   return ''
 }
 export function parsePendingFinishedReceipt(raw: string, planId: string): PendingFinishedReceipt {
@@ -44,12 +34,13 @@ export function parsePendingFinishedReceipt(raw: string, planId: string): Pendin
   const payload = value?.payload
   if (!value || typeof value.etag !== 'string' || !value.etag || !payload
     || typeof payload.request_id !== 'string' || !receiptUuid.test(payload.request_id)
-    || payload.schedule_product_id !== planId || typeof payload.location_id !== 'string' || !receiptUuid.test(payload.location_id)
+    || payload.schedule_product_id !== planId
+    || (payload.location_id !== undefined && (typeof payload.location_id !== 'string' || !receiptUuid.test(payload.location_id)))
     || typeof payload.receipt_date !== 'string' || !validProductionDate(payload.receipt_date)
     || !Number.isSafeInteger(payload.received_quantity) || payload.received_quantity <= 0
-    || !(payload.quantity_per_box === null || Number.isSafeInteger(payload.quantity_per_box) && payload.quantity_per_box > 0)
-    || typeof payload.actual_color !== 'string' || payload.actual_color.length > 200
-    || typeof payload.remark !== 'string' || payload.remark.length > 3000) {
+    || (payload.quantity_per_box != null && (!Number.isSafeInteger(payload.quantity_per_box) || payload.quantity_per_box <= 0))
+    || (payload.actual_color !== undefined && (typeof payload.actual_color !== 'string' || payload.actual_color.length > 200))
+    || (payload.remark !== undefined && (typeof payload.remark !== 'string' || payload.remark.length > 3000))) {
     throw new Error('原提交记录无法读取，已保留并暂停提交，请联系管理员核对。')
   }
   return value as PendingFinishedReceipt
@@ -57,5 +48,5 @@ export function parsePendingFinishedReceipt(raw: string, planId: string): Pendin
 export function receiptFailureIsDefinitive(error: unknown): boolean {
   const response = (error as { response?: { status?: number; data?: { error?: { code?: string } } } })?.response
   return [400, 412, 428].includes(response?.status ?? 0)
-    || response?.status === 409 && ['CONFLICT', 'RECEIPT_REQUEST_DELETED'].includes(response.data?.error?.code ?? '')
+    || response?.status === 409 && ['CONFLICT', 'RECEIPT_REQUEST_DELETED', 'DATABASE_MIGRATION_REQUIRED'].includes(response.data?.error?.code ?? '')
 }

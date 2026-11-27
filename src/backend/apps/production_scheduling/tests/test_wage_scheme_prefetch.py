@@ -3,12 +3,15 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.db import connection
 from django.db.models.query import ModelIterable
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.workshop_reporting.models import WageScheme, WageSchemeLine, WageSchemeStatus
+from apps.workshop_reporting.schedule_progress import schedule_progress_statuses
 
 from ..list_amounts import schedule_list_amounts
 from . import test_detail_reporting as detail_fixtures
@@ -112,6 +115,21 @@ class WageSchemePrefetchTests(APITestCase):
     def test_open_ended_effective_version_keeps_its_lines_in_list_and_detail(self):
         current, schemes = self.version_chain(open_ended=True)
         self.assert_current_version_loads(current, schemes)
+
+    def test_schedule_amounts_and_progress_do_not_read_cutting_components(self):
+        self.version_chain(open_ended=True)
+        reads = {
+            "list": self.list_summary,
+            "detail": self.summary,
+            "progress": lambda: schedule_progress_statuses([self.schedule.pk]),
+        }
+        for name, read in reads.items():
+            with self.subTest(read=name):
+                with CaptureQueriesContext(connection) as queries:
+                    read()
+                line_queries = [row["sql"] for row in queries if 'FROM "workshop_wage_scheme_line"' in row["sql"]]
+                self.assertTrue(line_queries)
+                self.assertTrue(all('"cutting_components"' not in sql for sql in line_queries))
 
     def test_detail_keeps_latest_scheme_metadata_without_loading_inapplicable_lines(self):
         latest = self.expired_scheme()

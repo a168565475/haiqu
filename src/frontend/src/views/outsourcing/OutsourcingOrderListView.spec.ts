@@ -111,6 +111,19 @@ describe('统一外发列表及来源入口', () => {
     expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props()).toMatchObject({ record: { id: 'order-1', is_plan: true }, action: 'return' })
     expect(api.push).not.toHaveBeenCalled()
   })
+  it('丝印厂待交为零时保留发料，不能从列表进入回仓', async () => {
+    route.meta = { outsourcingWorkspace: 'warehouse' }
+    const printing = { ...row, record_type: 'TUBE', is_plan: true, warehouse_actions: ['dispatch', 'return'],
+      plan_summary: { receivable_quantity: '0', receipt_progress: 0, dispatch_progress: 0 } }
+    const wrapper = await createView(printing)
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    await vi.waitFor(() => expect(document.querySelector('.el-dropdown-menu')?.textContent).toContain('材料发出'))
+    expect(document.querySelector('.el-dropdown-menu')?.textContent).not.toContain('外发入库')
+    await (wrapper.vm as any).openWarehouseAction(printing, 'return')
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).exists()).toBe(false)
+    await (wrapper.vm as any).openWarehouseAction({ ...printing, plan_summary: { receivable_quantity: '1' } }, 'return')
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props('action')).toBe('return')
+  })
   it('仓库一个状态列表按服务端动作显示办理入口，隐藏页签和创建入口', async () => {
     route.meta = { outsourcingWorkspace: 'warehouse' }
     permissions.superuser = false
@@ -245,6 +258,9 @@ describe('统一外发列表及来源入口', () => {
   it('产品材质替代品号，保留缺值和多款边界', async () => {
     const wrapper = await createView()
     const headers = wrapper.findAll('.el-table__header th').map(cell => cell.text())
+    expect(headers.slice(0, 2)).toEqual(['生产任务单', '外发单号'])
+    expect(wrapper.get('.el-table__body tbody tr td:first-child strong').text()).toBe('HT-001')
+    expect(wrapper.get('.el-table__body tbody tr td:nth-child(2) .order-number-link').attributes('to')).toBe('/workshop/outsourcing/order-1')
     expect(headers).toContain('产品材质')
     expect(headers).not.toContain('品号')
     expect(wrapper.find('.el-table__body .outsourcing-product-material').text()).toBe('PE')

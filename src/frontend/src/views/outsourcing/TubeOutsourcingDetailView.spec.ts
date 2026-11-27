@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/tubeOutsourcing'
 import * as receiptApi from '@/api/tubeReceipts'
+import * as printApi from '@/api/cutPiecePrinting'
 import type { TubeOrderDetail, TubePendingAction } from '@/types/tubeOutsourcing'
 import TubeOutsourcingDetailView from './TubeOutsourcingDetailView.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
@@ -59,7 +60,7 @@ interface ViewModel {
   loadDetail: () => Promise<void>; openBasis: (row: TubeOrderDetail['lines'][number]) => void; recreate: () => void
 }
 const wrappers: ReturnType<typeof mount>[] = []
-async function mountPage(props: { orderId?: string; entryAction?: string; actionOnly?: boolean } = {}) {
+async function mountPage(props: { orderId?: string; entryAction?: string; actionOnly?: boolean; printTracking?: boolean } = {}) {
   const wrapper = mount(TubeOutsourcingDetailView, { props, global: { plugins: [ElementPlus], stubs: { AppWindowDialog: { props: ['modelValue', 'title'], template: '<div v-if="modelValue" :aria-label="title"><slot /><slot name="footer" /></div>' } } } })
   wrappers.push(wrapper); await flushPromises()
   return { wrapper, vm: wrapper.vm as unknown as ViewModel }
@@ -75,6 +76,23 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('管材外发详情与整单动作', () => {
+  it('跟单丝印入口复用外发详情和表格，刷新只走跟单接口', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
+    const printOrder = { ...base, is_plan: true, screen_print_pieces: true, part_flow: true, craft_name: '丝印', source_kind: 'CUTTING' as const }
+    const fetchPrint = vi.spyOn(printApi, 'fetchPrintOrder').mockResolvedValue(printOrder)
+    localStorage.setItem(key, '仓库操作缓存')
+    const { wrapper } = await mountPage({ printTracking: true })
+    expect(wrapper.get('h1').text()).toBe('裁片丝印外发单')
+    expect(wrapper.get('.tube-outsourcing-detail-page .plan-parts-table table').text()).toContain('丝印单价')
+    expect(wrapper.text()).not.toContain(printOrder.schedule_number)
+    expect(wrapper.findAll('button').map(button => button.text())).not.toContain('材料发出')
+    await wrapper.findAll('button').find(button => button.text() === '刷新')!.trigger('click')
+    await flushPromises()
+    expect(fetchPrint).toHaveBeenCalledTimes(2)
+    expect(receiptApi.fetchTubeReceiptPreview).not.toHaveBeenCalled()
+    expect(api.fetchTubeOrder).not.toHaveBeenCalled()
+    expect(localStorage.getItem(key)).toBe('仓库操作缓存')
+  })
   it('跟单关联管材详情返回已有排产入口，不跳独立委外列表', async () => {
     routing.route.meta.outsourcingWorkspace = 'workshop'
     permission.followed = true
@@ -389,6 +407,7 @@ describe('管材外发详情与整单动作', () => {
     const completed = { ...structuredClone(base), status: 'COMPLETED' }
     vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue({ order: completed, etag: completed.etag, can_receive: false, blockers: [], actor_name: '', today: '2026-09-30', warehouses: [], zones: [], receipt: null })
     const { wrapper, vm } = await mountPage(); expect(wrapper.text()).toContain('已结束'); expect(wrapper.text()).toContain('WF-real')
+    expect(wrapper.findAll('.d4-ended-context strong').map(value => value.text())).toEqual([completed.task_number, completed.order_number])
     expect(vm.canDispatch).toBe(false); expect(vm.canCancel).toBe(false)
     expect(wrapper.findAll('button').some(item => ['喷塑入库', '确认实际发出', '取消待发单', '查看入库记录'].includes(item.text()))).toBe(false)
     expect(wrapper.findAll('button').find(item => item.text() === '查看入库凭证')!.attributes('disabled')).toBeDefined()
@@ -397,7 +416,10 @@ describe('管材外发详情与整单动作', () => {
   it('原材料支根米在同一只读表，独立规格颜色厚度且不含勾选', async () => {
     const { wrapper, vm } = await mountPage()
     expect(wrapper.find('.d4-material-panel').exists()).toBe(false)
-    expect(wrapper.findAll('.d4-context .info-cell')).toHaveLength(12)
+    const info = wrapper.findAll('.d4-context .info-cell')
+    expect(info).toHaveLength(13)
+    expect(info.slice(0, 2).map(field => field.get('strong').text())).toEqual([base.task_number, base.order_number])
+    expect(wrapper.get('.page-heading').text()).not.toContain(base.order_number)
     expect(wrapper.findAll('.d4-lines th').map(cell => cell.text())).toEqual(['部位', '材质', '形状', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '切割支数 支/根', '原材料长度 m/根', '待发支数（支）', '待扣（根）', '待扣（米）'])
     expect(wrapper.find('.d4-lines input').exists()).toBe(false)
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)

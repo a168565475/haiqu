@@ -22,6 +22,10 @@
   font-weight: 500;
 }
 
+.erp-layout .el-loading-mask.el-loading-fade-leave-active {
+  pointer-events: none;
+}
+
 .el-loading-spinner .circular {
   display: none;
 }

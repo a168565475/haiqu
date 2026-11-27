@@ -4,13 +4,15 @@ export interface AssemblyPreview {
   product_number:string; product_name:string; item_number:string; specification:string; actual_color:string
   unit_id:string; unit_name:string; order_quantity:number; tolerance_percent:string; maximum_receivable:number
   received_total:number; remaining_receivable:number; order_maximum:number; reported_minimum:number
+  confirmed_received_total?:number
   reporting_basis_ready:boolean; reporting_operations:{work_item_id:string;operation:string;reported_quantity:string}[]
   receipt_date:string; actor_name:string; etag:string
 }
 export interface AssemblyPayload {
-  request_id:string; schedule_product_id:string; location_id:string; receipt_date:string; received_quantity:number
-  quantity_per_box:number|null; actual_color:string; remark:string
+  request_id:string; schedule_product_id:string; receipt_date:string; received_quantity:number
+  location_id?:string; quantity_per_box?:number|null; actual_color?:string; remark?:string
 }
+export interface AssemblyConfirmation { location_id: string; quantity_per_box: number | null }
 export type FinishedRecord = Omit<FinishedGoodsReceipt,'source_type'> & {
   source_type:'PRODUCTION_ORDER'|'SAMPLE_INVENTORY'|'ASSEMBLY'; receipt_date:string; schedule_number:string; status?: 'PENDING'|'CONFIRMED'
   confirmed_by_name?: string; confirmed_at?: string | null

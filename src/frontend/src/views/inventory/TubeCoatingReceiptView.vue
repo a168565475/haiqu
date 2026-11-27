@@ -76,7 +76,7 @@ const totalReceived = computed(() => rows.value.reduce((sum, row) => sum + (rece
 const totalDifference = computed(() => totalSent.value - totalReceived.value)
 const positiveRows = computed(() => rows.value.filter(row => (receivedValue(row) || 0) > 0))
 const info = computed<Array<[string, unknown]>>(() => [
-  ['生产任务单', order.value?.task_number], ['订单号', order.value?.task_order_number], ['排产单号', order.value?.schedule_number],
+  ['生产任务单', order.value?.task_number], ['外发单号', order.value?.order_number], ['订单号', order.value?.task_order_number], ['排产单号', order.value?.schedule_number],
   ['订单量', order.value ? `${format(order.value.quantity)} ${order.value.unit || ''}` : '—'], ['实际发出日', order.value?.actual_dispatch_date], ['预计回货日', order.value?.expected_return_date],
   ['产品名称', order.value?.product_name], ['品号', order.value?.product_number], ['货号', order.value?.item_number],
   ['材料来源', sourceLabel.value], ['加工厂', `${new Set(rows.value.map(row => row.factory_id)).size} 家`], ['入库状态', receivedStage.value],
@@ -345,7 +345,7 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1 })
 <template>
   <section class="tube-coating-receipt-page d3-page" :class="{ 'is-embedded': embedded, 'warehouse-compact': warehouseWorkspace }">
     <header v-if="!embedded" class="page-heading">
-      <div class="title-row"><h1>{{ receiptTitle }}</h1><span class="status">外发入库</span><template v-if="order"><span class="status" :class="isEnded ? 'success' : inapplicable ? 'neutral' : 'info'">{{ isEnded ? '已结束' : order.status === 'PENDING_DISPATCH' ? '待外发' : order.status === 'CANCELLED' ? '已取消' : '加工中' }}</span><span class="d3-order-code">{{ order.order_number }}</span></template></div>
+      <div class="title-row"><h1>{{ receiptTitle }}</h1><span class="status">外发入库</span><span v-if="order" class="status" :class="isEnded ? 'success' : inapplicable ? 'neutral' : 'info'">{{ isEnded ? '已结束' : order.status === 'PENDING_DISPATCH' ? '待外发' : order.status === 'CANCELLED' ? '已取消' : '加工中' }}</span></div>
       <div class="actions"><ElButton :icon="ArrowLeft" :disabled="saving || Boolean(pending)" @click="returnToSource">{{ orderId ? '返回外发单' : '返回委外管理' }}</ElButton></div>
     </header>
     <ElAlert v-if="pending && !showDetails" title="提交结果尚未确认，请核对本次原请求结果，避免重复入库或结束。当前填写内容已锁定。" type="warning" :closable="false" show-icon />
@@ -389,9 +389,9 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1 })
     </footer>
   </section>
 
-  <AppWindowDialog :model-value="dialog === 'confirm'" :title="totalReceived ? `确认${receiptTitle}并结束外发单` : '确认整单0回货并结束外发单'" :width="warehouseWorkspace ? 1800 : 1640" class="tube-coating-receipt-dialog" :before-close="beforeClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
+  <AppWindowDialog :model-value="dialog === 'confirm'" :title="totalReceived ? `确认${receiptTitle}并结束外发单` : '确认整单0回货并结束外发单'" :fullscreen="warehouseWorkspace" :width="warehouseWorkspace ? 1800 : 1640" class="tube-coating-receipt-dialog" :before-close="beforeClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
     <div class="d3-confirm">
-      <div class="info-grid d3-confirm-context"><div class="info-cell"><span>外发单号</span><strong>{{ order?.order_number || '—' }}</strong></div><div class="info-cell"><span>生产任务单</span><strong>{{ order?.task_number || '—' }}</strong></div><div class="info-cell"><span>产品名称</span><strong>{{ order?.product_name || '—' }}</strong></div><div class="info-cell"><span>材料来源</span><strong>{{ sourceLabel }}</strong></div><div class="info-cell"><span>收货日期</span><strong>{{ receiptDate }}</strong></div><div class="info-cell"><span>经办人</span><strong>{{ actorName }}</strong></div><div class="info-cell"><span>目标仓库</span><strong>{{ totalReceived ? warehouseLabel : '无实收，不增加库存' }}</strong></div><div class="info-cell"><span>入库状态</span><strong>{{ receivedStage }}</strong></div></div>
+      <div class="info-grid d3-confirm-context"><div class="info-cell"><span>生产任务单</span><strong>{{ order?.task_number || '—' }}</strong></div><div class="info-cell"><span>外发单号</span><strong>{{ order?.order_number || '—' }}</strong></div><div class="info-cell"><span>产品名称</span><strong>{{ order?.product_name || '—' }}</strong></div><div class="info-cell"><span>材料来源</span><strong>{{ sourceLabel }}</strong></div><div class="info-cell"><span>收货日期</span><strong>{{ receiptDate }}</strong></div><div class="info-cell"><span>经办人</span><strong>{{ actorName }}</strong></div><div class="info-cell"><span>目标仓库</span><strong>{{ totalReceived ? warehouseLabel : '无实收，不增加库存' }}</strong></div><div class="info-cell"><span>入库状态</span><strong>{{ receivedStage }}</strong></div></div>
       <TubeOutsourcingDetailTable :columns="columns" :rows="rows" class="d3-confirm-lines" :class="{ 'warehouse-compact': warehouseWorkspace }">
         <template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="orderLinesById.get(row.order_line_id) || {}"><strong>{{ row.part_name }}</strong></ProcessingMaterialDetails></template>
         <template #cell-shape="{ row }">{{ tubeMaterialColumn(orderLinesById.get(row.order_line_id) || {}, 'shape') }}</template>

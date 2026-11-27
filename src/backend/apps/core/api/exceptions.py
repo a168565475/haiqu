@@ -18,6 +18,10 @@ class Conflict(APIException):
     default_code = "conflict"
 
 
+class DatabaseMigrationRequired(Conflict):
+    api_error_code = "DATABASE_MIGRATION_REQUIRED"
+
+
 class BuyerAddressRequired(ValidationError):
     """销售订单确认时买方地址缺失或已经失效。"""
 

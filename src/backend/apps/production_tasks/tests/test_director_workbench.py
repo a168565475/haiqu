@@ -162,7 +162,7 @@ class DirectorWorkbenchTests(APITestCase):
     def test_two_reported_operations_keep_their_own_requirements_and_units(self):
         report = self.create_report()
         first = report.lines.get()
-        unit = ProductionUnit.objects.create(unit_code="DIRECTOR-SET", unit_name="套")
+        unit = ProductionUnit.objects.get(unit_name="套")
         operation = self.copy_row(self.operation, name="配套", operation_number="DIR-OP-02", reporting_unit_id=unit.pk)
         work_item = self.copy_row(first.work_item, identity_key="director-set", operation_id=operation.pk, unit_id=unit.pk)
         scheme_line = self.copy_row(first.scheme_line, line_number=2, work_item_id=work_item.pk,

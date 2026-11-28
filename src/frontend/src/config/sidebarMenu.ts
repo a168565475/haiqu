@@ -66,6 +66,7 @@ export const sidebarMenuItems: MenuItem[] = [
     children: [
       { key: 'purchase-orders', label: '采购需求', to: { name: 'purchase-orders' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.view_supplier'] },
       { key: 'packaging-purchases', label: '包材采购', to: { name: 'packaging-purchases' }, permission: 'procurement.manage_packagingpurchase' },
+      { key: 'purchase-plans', label: '采购计划表', to: { name: 'purchase-plans' }, permission: 'procurement.view_purchaseorder' },
       { key: 'purchase-tracking', label: '采购跟踪', to: { name: 'purchase-tracking' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'] },
       { key: 'purchase-alerts', label: '采购提醒', to: { name: 'purchase-alerts' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'] },
       { key: 'purchase-return-records', label: '退货记录', to: { name: 'purchase-return-records' }, anyPermissions: ['access_control.confirm_purchasereturn', 'procurement.submit_purchaseorder', 'procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'] },
@@ -77,10 +78,14 @@ export const sidebarMenuItems: MenuItem[] = [
     children: [
       { key: 'workshop-scheduling', label: '计划排产', to: { name: 'workshop-scheduling' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-internal-plan', label: '作业计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
+      { key: 'workshop-material-tracking', label: '材料跟踪', to: { name: 'workshop-material-tracking' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-outsourcing', label: '委外加工', to: { name: 'workshop-outsourcing' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource', 'outsourcing.manage_cutpieceprinting'] },
       { key: 'workshop-powder-coating', label: '喷塑收发', to: { name: 'workshop-powder-coating' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource'] },
+      { key: 'workshop-outsourcing-movements', label: '外协收发', to: { name: 'workshop-outsourcing-movements' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'outsourcing.manage_cutpieceprinting', 'outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder'] },
+        { key: 'workshop-sewing-tracking', label: '布面跟踪单', to: { name: 'workshop-sewing-tracking' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'outsourcing.manage_cutpieceprinting'] },
       { key: 'wage-schemes', label: '工价方案', to: { name: 'wage-schemes' }, permission: 'workshop_reporting.view_wagescheme' },
       { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport'] },
+      { key: 'workshop-daily-report', label: '车间日报', to: { name: 'workshop-daily-report' }, anyPermissions: ['material_issues.view_metalprocessingsource', 'workshop_reporting.view_workreport'] },
       { key: 'workshop-semi-receipt-records', label: '半成品入库记录', to: { name: 'workshop-semi-receipt-records' }, allPermissions: ['production_scheduling.view_productionschedule', 'inventory.view_internalsemifinishedreceipt'] },
       { key: 'workshop-finished-receipt-records', label: '成品入库记录', to: { name: 'workshop-finished-receipt-records' }, allPermissions: ['production_scheduling.view_productionschedule', 'inventory.view_finishedgoodsreceipt'] },
       { key: 'workshop-configuration', label: '生产配置', to: { name: 'workshop-configuration' }, anyPermissions: ['workshop_config.view_workshop', 'workshop_config.view_workshopemployee', 'workshop_config.view_operation'] },

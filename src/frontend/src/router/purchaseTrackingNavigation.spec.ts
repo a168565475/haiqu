@@ -14,6 +14,16 @@ describe('采购跟踪入口', () => {
     expect(route.name).toBe('purchase-alerts')
     expect(route.meta.activeMenu).toBe('purchase-alerts')
   })
+  it('采购计划表使用普通采购查看权限，并支持任务号和分类直达', () => {
+    const route = router.resolve('/purchase-plans?task_number=HT26170&category=FABRIC')
+    expect(route.meta.activeMenu).toBe('purchase-plans')
+    expect(route.query).toEqual({ task_number: 'HT26170', category: 'FABRIC' })
+    const reader = (permission: string) => ({
+      user: { is_superuser: false }, canReadAccessDirectory: false, hasPermission: (code: string) => code === permission,
+    })
+    expect(canOpenPage('purchase-plans', reader('procurement.view_purchaseorder'))).toBe(true)
+    expect(canOpenPage('purchase-plans', reader('procurement.manage_packagingpurchase'))).toBe(false)
+  })
   it('采购查看权允许跟踪，只有创建权不能绕过查看权', () => {
     const reader = (permissions: string[]) => ({ user: { is_superuser: false }, canReadAccessDirectory: false, hasPermission: (code: string) => permissions.includes(code) })
     expect(canOpenPage('purchase-tracking', reader([]))).toBe(false)

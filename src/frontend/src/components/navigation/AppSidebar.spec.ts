@@ -43,16 +43,16 @@ const secondaryIconKeys: Record<string, string[]> = {
   'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
-  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'workshop-powder-coating', 'wage-schemes', 'work-report-days', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
+  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-material-tracking', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'workshop-sewing-tracking', 'wage-schemes', 'work-report-days', 'workshop-daily-report', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
 
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
-  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts',
+  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'packaging-purchases', 'purchase-plans', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
-  'workshop-outsourcing', 'workshop-powder-coating', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
+  'workshop-material-tracking', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'workshop-sewing-tracking', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'workshop-daily-report', 'finished-goods-inventory',
   'workshop-semi-receipt-records', 'workshop-finished-receipt-records',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
@@ -144,9 +144,15 @@ describe('全局悬停侧栏', () => {
       'product_catalog.view_productcatalog', 'material_catalog.view_materialcatalog'] }
     await nextTick()
     const renderedKeys: string[] = []
+    const menuOrder: Record<string, string[]> = {
+      'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-plans', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
+    }
     for (const [groupKey, keys] of Object.entries(secondaryIconKeys)) {
       await wrapper.get(`[data-menu-key="${groupKey}"]`).trigger('focus')
-      expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(keys)
+      expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(menuOrder[groupKey] ?? keys)
+      if (groupKey === 'procurement-management') {
+        expect(panel().get('[data-menu-key="purchase-plans"] .app-sidebar__flyout-label').text()).toBe('采购计划表')
+      }
       for (const key of keys) {
         const entry = panel().get(`[data-menu-key="${key}"]`)
         expect(entry.findAll('[data-confirmed-secondary-sidebar-icon]')).toHaveLength(1)
@@ -496,7 +502,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     await group('workshop').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '计划排产', '作业计划', '委外加工', '喷塑收发', '工价方案', '报工记录', '半成品入库记录', '成品入库记录', '生产配置',
+      '计划排产', '作业计划', '材料跟踪', '委外加工', '喷塑收发', '外协收发', '布面跟踪单', '工价方案', '报工记录', '车间日报', '半成品入库记录', '成品入库记录', '生产配置',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('workshop-scheduling')
   })
@@ -527,6 +533,7 @@ describe('全局悬停侧栏', () => {
     expect(wrapper.find('[data-menu-key="warehouse-management"]').exists()).toBe(showWarehouse)
     await group('workshop').trigger('click')
     expect(panel().find('[data-menu-key="workshop-scheduling"]').exists()).toBe(showScheduling)
+    expect(panel().get('[data-menu-key="workshop-material-tracking"]').text()).toContain('材料跟踪')
     expect(panel().find('[data-menu-key="work-report-days"]').exists()).toBe(true)
     expect(panel().find('[data-menu-key="workshop-semi-receipt-records"]').exists()).toBe(true)
     expect(panel().find('[data-menu-key="workshop-finished-receipt-records"]').exists()).toBe(false)
@@ -574,14 +581,23 @@ describe('全局悬停侧栏', () => {
     expect(group('procurement').attributes('aria-expanded')).toBe('false')
   })
 
-  it.each(['outsourcing.confirm_return_outsourcingorder', 'material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff'])('仅有委外操作权限 %s 时可以从仓库进入委外管理', async permission => {
+  it.each([
+    ['outsourcing.confirm_dispatch_outsourcingorder', true],
+    ['outsourcing.confirm_return_outsourcingorder', true],
+    ['material_issues.create_metalprocessingoriginalhandoff', false],
+    ['material_issues.confirm_metalprocessingexternalhandoff', false],
+  ] as const)('仅有委外操作权限 %s 时可以从仓库进入委外管理', async (permission, movementAccess) => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, username: 'warehouse-receiver', is_superuser: false,
       permissions: [permission] }
     await nextTick()
     await group('warehouse').trigger('focus')
     expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['warehouse-outsourcing'])
-    expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(false)
+    expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(movementAccess)
+    if (movementAccess) {
+      await group('workshop').trigger('focus')
+      expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['workshop-outsourcing-movements'])
+    }
   })
 
   it('进入子页面仍默认收起，一级名称精简且唯一', async () => {

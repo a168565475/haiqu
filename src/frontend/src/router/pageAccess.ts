@@ -27,7 +27,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'merchandiser-workbench'
     && !auth.user?.effective_access?.roles.some(role => role.code === 'MERCHANDISER')) return false
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'sewing-outsourcing-workbench'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'sewing-outsourcing-workbench', 'workshop-sewing-tracking'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly && permission !== 'outsourcing.manage_cutpieceprinting') {
@@ -56,6 +56,7 @@ const pagePermissions: Record<string, string[]> = {
   'cut-piece-printing-detail': ['outsourcing.manage_cutpieceprinting'],
   'packaging-purchase-batch': ['procurement.manage_packagingpurchase'],
   'packaging-purchase-detail': ['procurement.manage_packagingpurchase'],
+  'purchase-plans': ['procurement.view_purchaseorder'],
   'purchase-tracking': ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'],
   'purchase-alerts': ['procurement.view_purchaseorder', 'procurement.manage_packagingpurchase'],
   'purchase-inbound-detail': ['inventory.receive_material', 'inventory.quality_confirm_material'],

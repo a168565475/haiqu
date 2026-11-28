@@ -93,6 +93,7 @@ const WorkshopConfigurationView = () => import('@/views/workshop/WorkshopConfigu
 const ProductionSchedulingDetailView = () => import('@/views/workshop/ProductionSchedulingDetailView.vue')
 const ProductionSchedulingFormView = () => import('@/views/workshop/ProductionSchedulingFormView.vue')
 const ProductionSchedulingListView = () => import('@/views/workshop/ProductionSchedulingListView.vue')
+const MaterialTrackingView = () => import('@/views/workshop/MaterialTrackingView.vue')
 const WorkshopPlanListView = () => import('@/views/workshop/WorkshopPlanListView.vue')
 const MaterialIssueListView = () => import('@/views/workshop/material-issues/MaterialIssueListView.vue')
 const MaterialIssueFormView = () => import('@/views/workshop/material-issues/MaterialIssueFormView.vue')
@@ -102,6 +103,7 @@ const WageSchemeFormView = () => import('@/views/workshop/wage-schemes/WageSchem
 const WageSchemeDetailView = () => import('@/views/workshop/wage-schemes/WageSchemeDetailView.vue')
 const WorkReportFormView = () => import('@/views/workshop/work-reports/WorkReportFormView.vue')
 const WorkReportDayListView = () => import('@/views/workshop/work-reports/WorkReportDayListView.vue')
+const WorkshopDailyReportView = () => import('@/views/workshop/WorkshopDailyReportView.vue')
 const WorkReportDayDetailView = () => import('@/views/workshop/work-reports/WorkReportDayDetailView.vue')
 const FactoryDetailView = () => import('@/views/outsourcing/FactoryDetailView.vue')
 const FactoryListView = () => import('@/views/outsourcing/FactoryListView.vue')
@@ -1104,6 +1106,16 @@ export const router = createRouter({
       },
     },
     {
+      path: '/workshop/material-tracking',
+      name: 'workshop-material-tracking',
+      component: MaterialTrackingView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-material-tracking',
+        headerTitle: '车间 / 材料跟踪', breadcrumbs: [{ label: '车间' }, { label: '材料跟踪' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/workshop/scheduling',
       name: 'workshop-scheduling',
       component: ProductionSchedulingListView,
@@ -1201,6 +1213,16 @@ export const router = createRouter({
       name: 'wage-scheme-detail',
       component: WageSchemeDetailView,
       meta: { requiresAuth: true, layout: 'erp', activeMenu: 'wage-schemes', headerTitle: '生产车间 / 工价方案 / 详情', breadcrumbs: [{ label: '生产车间' }, { label: '工价方案', to: '/workshop/wage-schemes' }, { label: '详情' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/workshop/daily-report',
+      name: 'workshop-daily-report',
+      component: WorkshopDailyReportView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-daily-report',
+        headerTitle: '车间 / 车间日报', breadcrumbs: [{ label: '车间' }, { label: '车间日报' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
     },
     {
       path: '/workshop/work-reports',
@@ -1414,12 +1436,32 @@ export const router = createRouter({
       },
     },
     {
+      path: '/workshop/outsourcing-movements',
+      name: 'workshop-outsourcing-movements',
+      component: () => import('@/views/workshop/OutsourcingMovementsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing-movements',
+        headerTitle: '车间 / 外协收发', breadcrumbs: [{ label: '车间' }, { label: '外协收发' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/workshop/powder-coating',
       name: 'workshop-powder-coating',
       component: () => import('@/views/workshop/PowderCoatingMovementsView.vue'),
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'workshop-powder-coating',
         headerTitle: '车间 / 喷塑收发', breadcrumbs: [{ label: '车间' }, { label: '喷塑收发' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workshop/sewing-tracking',
+      name: 'workshop-sewing-tracking',
+      component: () => import('@/views/workshop/SewingTrackingView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-sewing-tracking',
+        headerTitle: '车间 / 布面跟踪单', breadcrumbs: [{ label: '车间' }, { label: '布面跟踪单' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1751,6 +1793,17 @@ export const router = createRouter({
         requiresAuth: true, layout: 'erp', activeMenu: 'packaging-purchases',
         headerTitle: '采购管理 / 包材采购详情',
         breadcrumbs: [{ label: '采购管理' }, { label: '包材采购', to: '/packaging-purchases' }, { label: '详情' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-plans',
+      name: 'purchase-plans',
+      component: () => import('@/views/procurement/PurchasePlansView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-plans',
+        headerTitle: '采购管理 / 采购计划表',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购计划表' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },

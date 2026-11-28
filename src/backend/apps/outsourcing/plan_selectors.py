@@ -14,6 +14,7 @@ from .models import TubeOutsourcingLine, TubeOutsourcingInput, TubePlanReceiptLi
 from .tube_kinds import CUTTING_SOURCES
 from .tube_prices import line_area_data, line_price_data
 from .part_flow_prices import receipt_price_data, receipt_amount_summary
+from .printed_pieces import processor_transfer_quantities
 from .sewing_assignments import internal_sewing_assignment_in_use
 from .component_source_snapshots import frozen_component_source_materials
 from .tube_selectors import (CANCEL_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION,
@@ -32,9 +33,7 @@ def plan_quantities(orders):
     received = {str(row['order_line_id']): row['total'] for row in TubePlanReceiptLine.objects.filter(
         receipt__order_id__in=ids, receipt__voided_at__isnull=True).values('order_line_id').annotate(total=Sum('received_quantity'))}
     print_ids = [order.pk for order in orders if order.source_snapshot.get('screen_print_pieces')]
-    transferred = dict(TubeOutsourcingInput.objects.filter(print_order_line__order_id__in=print_ids,
-        order__status__in=['PROCESSING', 'COMPLETED']).values('print_order_line_id')
-        .annotate(total=Sum('quantity')).values_list('print_order_line_id', 'total')) if print_ids else {}
+    transferred = processor_transfer_quantities(print_ids)
     input_plan_ids = [order.pk for order in orders if order.source_snapshot.get('sewing_inputs')]
     input_totals = {}
     if input_plan_ids:

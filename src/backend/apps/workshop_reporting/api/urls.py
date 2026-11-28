@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework.routers import SimpleRouter
 
+from .daily_reports import DailyReportView
 from .views import (
     ReportingContextView,
     PlanWageStatusView,
@@ -19,6 +20,7 @@ router.register("wage-schemes", WageSchemeViewSet, basename="wage-scheme")
 router.register("work-reports", WorkReportViewSet, basename="work-report")
 
 urlpatterns = [
+    path("daily-reports/", DailyReportView.as_view(), name="workshop-daily-reports"),
     path("context/", ReportingContextView.as_view(), name="workshop-reporting-context"),
     path("plan-wage-statuses/", PlanWageStatusView.as_view(), name="workshop-reporting-plan-wage-statuses"),
     path("schedule-progress-statuses/", ScheduleProgressStatusView.as_view(), name="workshop-reporting-schedule-progress-statuses"),

@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 
 BEIJING = ZoneInfo('Asia/Shanghai')
+PIPE_ARRIVAL_WINDOW = 5
+OTHER_ARRIVAL_WINDOW = 3
 RISK_DEFINITIONS = {
     'NEAR_DUE': ('临近交期', 'warning', 60),
     'DUE_TODAY': ('今天到期', 'warning', 70),
@@ -91,7 +93,7 @@ def arrival_risks(*, status, archived, unreceived, delivery_date, is_pipe, today
                 elif days == 0:
                     rows.append(risk('DUE_TODAY'))
                 elif is_pipe is not None:
-                    rows.append(risk('NEAR_DUE', f'{days} 天后到期') if days <= (5 if is_pipe else 3)
+                    rows.append(risk('NEAR_DUE', f'{days} 天后到期') if days <= (PIPE_ARRIVAL_WINDOW if is_pipe else OTHER_ARRIVAL_WINDOW)
                                 else risk('OUTSIDE_WINDOW'))
     if return_pending:
         rows.append(risk('RETURN_PENDING'))

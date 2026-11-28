@@ -13,6 +13,7 @@ from .group_views import PurchaseGroupViewSet
 from .packaging_views import PackagingPurchaseGroupViewSet
 from .tracking_views import PurchaseTrackingViewSet
 from .tracking_policy_views import PurchaseTrackingPolicyView
+from .purchase_plan_views import PurchasePlanViewSet
 
 
 router = DefaultRouter()
@@ -21,6 +22,7 @@ router.register("purchase-orders", PurchaseOrderViewSet, basename="purchase-orde
 router.register("purchase-groups", PurchaseGroupViewSet, basename="purchase-group")
 router.register("packaging-purchase-groups", PackagingPurchaseGroupViewSet, basename="packaging-purchase-group")
 router.register("purchase-tracking", PurchaseTrackingViewSet, basename="purchase-tracking")
+router.register("purchase-plans", PurchasePlanViewSet, basename="purchase-plan")
 router.register("purchase-returns", PurchaseReturnViewSet, basename="purchase-return")
 router.register("purchase-requests", PurchaseRequestViewSet, basename="purchase-request")
 router.register(

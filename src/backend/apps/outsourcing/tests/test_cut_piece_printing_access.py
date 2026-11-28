@@ -41,6 +41,8 @@ class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(self.client.get(PRINT + 'source-context/', self.source).status_code, 404)
 
     def test_create_list_detail_retry_and_warehouse_are_independently_authorized(self):
+        tracker = '/api/v1/sewing-tracking/'
+        self.assertEqual(self.client.get(tracker).status_code, 403)
         self.grant(CUT_PIECE_PRINTING, 'FOLLOWED')
         self.task.followers.add(self.scope_employee)
         resp = self.client.get(PRINT + 'source-context/', self.source)
@@ -62,6 +64,9 @@ class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(self.client.get(PRINT + pk + '/').status_code, 200)
         self.assertEqual(self.client.get(PRINT + 'by-request/' + payload['client_request_id'] + '/').status_code, 200)
         self.assertEqual(self.client.get(PRINT).data['meta']['total'], 1)
+        tracked = self.client.get(tracker, {'task_number': self.task.task_number})
+        self.assertEqual(tracked.status_code, 200, tracked.data)
+        self.assertEqual([row['process'] for row in tracked.data['data']], ['SCREEN_PRINTING'])
         unified = '/api/v1/unified-outsourcing-orders/'
         options = self.client.get(unified + 'options/')
         self.assertEqual(options.status_code, 200, options.data)
@@ -78,6 +83,7 @@ class CutPiecePrintingAccessTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(self.client.post(BASE, payload, format='json').status_code, 403)
         self.task.followers.remove(self.scope_employee)
         self.assertEqual(self.client.get(unified).data['meta']['total'], 0)
+        self.assertEqual(self.client.get(tracker).data['meta']['total'], 0)
         for path in (pk + '/', 'by-request/' + payload['client_request_id'] + '/'):
             self.assertEqual(self.client.get(PRINT + path).status_code, 404)
         self.assertEqual(self.client.post(PRINT, payload, format='json').status_code, 404)

@@ -16,10 +16,12 @@ async function setup(isSuperuser: boolean, permissions: string[]) {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { name: 'home', path: '/', component: { template: '<div />' } },
     { name: 'work-report-days', path: '/workshop/work-reports', component: { template: '<div />' } },
+    { name: 'workshop-daily-report', path: '/workshop/daily-report', component: { template: '<div />' } },
     { name: 'system-settings', path: '/settings', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
     { name: 'reference-data-settings', path: '/settings/reference-data', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
     { name: 'theme-settings', path: '/settings/theme', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
-    ...['workshop-scheduling', 'workshop-metalworking-plan', 'workshop-outsourcing', 'workshop-powder-coating', 'material-issues', 'wage-schemes', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration']
+    ...['workshop-scheduling', 'workshop-metalworking-plan', 'workshop-material-tracking', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'workshop-sewing-tracking',
+      'material-issues', 'wage-schemes', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration']
       .map(name => ({ name, path: `/${name}`, component: { template: '<div />' } })),
   ] })
   await router.push('/')
@@ -28,14 +30,18 @@ async function setup(isSuperuser: boolean, permissions: string[]) {
   return { wrapper, router }
 }
 
-it('只有报工查看权限时可打开报工记录，无需内部计划权限', async () => {
+it('只有报工查看权限时可打开报工记录和车间日报', async () => {
   const { wrapper, router } = await setup(false, ['workshop_reporting.view_workreport'])
   await wrapper.get('[data-menu-key="workshop-management"]').trigger('focus')
   const panel = wrapper.get('[data-sidebar-flyout]')
-  expect(panel.findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['work-report-days'])
+  expect(panel.findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['work-report-days', 'workshop-daily-report'])
   await panel.get('[data-menu-key="work-report-days"]').trigger('click')
   await flushPromises()
   expect(router.currentRoute.value.name).toBe('work-report-days')
+  await wrapper.get('[data-menu-key="workshop-management"]').trigger('focus')
+  await wrapper.get('[data-menu-key="workshop-daily-report"]').trigger('click')
+  await flushPromises()
+  expect(router.currentRoute.value.name).toBe('workshop-daily-report')
 })
 
 it('超级管理员保留报工菜单入口', async () => {
@@ -48,4 +54,5 @@ it('没有报工查看权限时不展示报工入口', async () => {
   const { wrapper } = await setup(false, [])
   expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(false)
   expect(wrapper.find('[data-menu-key="work-report-days"]').exists()).toBe(false)
+  expect(wrapper.find('[data-menu-key="workshop-daily-report"]').exists()).toBe(false)
 })

@@ -11,6 +11,7 @@ const inboundIconTitles: Record<string, string> = {
   'material-inbound-details': '一般入库',
   'material-transfers': '材料收发',
   'workshop-powder-coating': '喷塑收发',
+  'workshop-outsourcing-movements': '外协收发',
   'semi-receipt-records': '车间入库',
   'workshop-semi-receipt-records': '半成品入库记录',
   'workshop-finished-receipt-records': '成品入库记录',
@@ -273,12 +274,25 @@ const inboundIconTitles: Record<string, string> = {
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M18 15.5V18l2 1"/></g>
     </g>
 
+    <g v-else-if="name === 'workshop-material-tracking'">
+      <title>材料跟踪</title>
+      <rect x="4" y="3" width="14" height="18" rx="2" style="fill:var(--icon-muted,#e7e9e4)" />
+      <path d="M7 8h7m-7 4h3m-3 4h2" />
+      <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><circle cx="16" cy="15" r="3.5"/><path d="m18.5 17.5 3 3"/></g>
+    </g>
 
     <g v-else-if="name === 'workshop-outsourcing' || name === 'warehouse-outsourcing' || name === 'sewing-outsourcing-workbench'">
       <title>{{ name === 'sewing-outsourcing-workbench' ? '车缝外协工作台' : '委外加工' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M2 21V11h3V7h3v6l4-3v11Zm14-8h6v8h-6Z"/></g>
       <path d="M6 17h2m11-1v2"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M8 3h11v6m-3-3 3 3 3-3"/></g>
+    </g>
+
+    <g v-else-if="name === 'workshop-sewing-tracking'">
+      <title>布面跟踪单</title>
+      <rect x="3" y="4" width="18" height="16" rx="2" style="fill:var(--icon-muted,#e7e9e4)" />
+      <path d="M3 9h18m-13 0v11m7-11v11M3 14h18" />
+      <path class="accent part" d="M10 6.5h6" style="stroke:var(--icon-accent,#c84e28)" />
     </g>
 
     <g v-else-if="name === 'material-issues'">
@@ -295,8 +309,8 @@ const inboundIconTitles: Record<string, string> = {
       <path d="M7.5 13h.1m4.4 0h.1m4.4 0h.1M7.5 18h.1m4.4 0h.1m4.4 0h.1" stroke-width="2.7"/>
     </g>
 
-    <g v-else-if="name === 'work-report-days'">
-      <title>报工记录</title>
+    <g v-else-if="name === 'work-report-days' || name === 'workshop-daily-report'">
+      <title>{{ name === 'workshop-daily-report' ? '车间日报' : '报工记录' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><rect x="3" y="4" width="18" height="17" rx="1.5"/></g>
       <path d="M7 2v4m10-4v4M3 9h18m-15 4h2m-2 4h2"/>
       <g style="fill:var(--icon-muted,#e7e9e4)"><circle cx="16.5" cy="16.5" r="5.5"/></g>

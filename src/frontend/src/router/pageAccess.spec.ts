@@ -126,6 +126,8 @@ describe('岗位菜单与独立页面权限', () => {
     const menu = items.find(item => item.key === 'workshop-outsourcing')!
     expect(canOpenMenu(menu, follower)).toBe(true)
     expect(canOpenPage('workshop-outsourcing', follower)).toBe(true)
+    expect(canOpenPage('workshop-sewing-tracking', follower)).toBe(true)
+    expect(canOpenPage('workshop-outsourcing-movements', follower)).toBe(true)
     expect(canOpenPage('workshop-powder-coating', follower)).toBe(false)
     for (const route of ['cut-piece-printing-new', 'cut-piece-printing-detail']) {
       expect(canOpenPage(route, follower)).toBe(true)
@@ -137,7 +139,7 @@ describe('岗位菜单与独立页面权限', () => {
       'production_tasks.view_productiontask', 'material_issues.view_materialissue',
       'outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource',
     ])
-    for (const key of ['material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'sewing-outsourcing-workbench']) {
+    for (const key of ['material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'sewing-outsourcing-workbench', 'workshop-sewing-tracking']) {
       const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
       expect(canOpenMenu(item, auth), key).toBe(false)
       expect(canOpenPage(key, auth), key).toBe(false)

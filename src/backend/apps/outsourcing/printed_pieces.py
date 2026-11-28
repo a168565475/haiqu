@@ -25,6 +25,12 @@ def planned_print_lines(product_line_id):
     ).exclude(order__status='CANCELLED')
 
 
+def processor_transfer_quantities(print_order_ids):
+    return dict(TubeOutsourcingInput.objects.filter(
+        print_order_line__order_id__in=print_order_ids, order__status__in=['PROCESSING', 'COMPLETED'],
+    ).values('print_order_line_id').annotate(total=Sum('quantity')).values_list('print_order_line_id', 'total'))
+
+
 def _reported_cut_pieces(product_line_id):
     from apps.workshop_reporting.models import WageSchemeLine, WorkReportLine
     today = timezone.localdate()

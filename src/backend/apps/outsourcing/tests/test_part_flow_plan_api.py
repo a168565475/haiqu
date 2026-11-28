@@ -7,6 +7,7 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from apps.access_control.module_operations import CUT_PIECE_PRINTING
 from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
 from apps.boms.models import BomLine, BomSection
 from apps.inventory.models import PublicStockMovement, WarehouseZone
@@ -23,6 +24,7 @@ from apps.workshop_config.models import Craft, Workshop
 from apps.outsourcing.models import OutsourcingFactoryCraft, TubeOutsourcingInput, TubeOutsourcingOrder
 
 BASE = '/api/v1/tube-outsourcing-orders/'
+MOVEMENTS = '/api/v1/outsourcing-movements/'
 
 
 class PartFlowPlanFixture(ScopedActorMixin, D1Fixture):
@@ -60,6 +62,12 @@ class PartFlowPlanFixture(ScopedActorMixin, D1Fixture):
     PUBLIC_STOCK_ISSUES_ENABLED=True, MODULE_ACCESS_ENABLED=False, SALES_ACCESS_ENABLED=False,
     ACCESS_RESOURCE_SCOPES_ENABLED=False)
 class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
+    def movements(self, direction='dispatch', process=''):
+        response = self.client.get(MOVEMENTS, {'task_number': self.task.task_number.lower(),
+                                               'direction': direction, 'process': process})
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data['data']
+
     def part_context(self, source='CUTTING', craft=None, order=None):
         query = {'schedule_product_id': str(self.schedule_product.pk), 'source_kind': source,
             'craft_id': str((craft or self.external_sewing).pk),
@@ -134,6 +142,8 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         balance.refresh_from_db()
         self.assertEqual(balance.quantity, 3)
+        self.assertCountEqual([(row['item_name'], Decimal(row['quantity']), row['unit']) for row in self.movements()],
+            [(self.parts[0].part_name, 1, '片'), (accessory.part_name, 2, self.part_unit.unit_name)])
 
     def dispatch_part(self, order, quantity, source='CUTTING', piece=None):
         row = {'component_identity': str((piece or self.parts[0]).component_identity), 'quantity': str(quantity)}
@@ -317,6 +327,10 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         order = self.receive_part(order, 1)
         self.assertEqual(order['lines'][0]['received_quantity'], '10002')
         self.assertEqual(order['lines'][0]['dispatched_quantity'], '0')
+        self.assertCountEqual([(row['voucher_number'], row['item_name'], row['quantity'], row['unit'])
+                               for row in self.movements('receipt', 'SEWING')],
+                              [(row['receipt_number'], self.part.part_name, row['total_received_quantity'], '个')
+                               for row in order['receipt_records']])
         returns = PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_RETURN')
         self.assertEqual(returns.count(), 2)
         self.assertEqual({row.balance.identity_snapshot['semi_kind'] for row in returns}, {'SEWN_PART'})
@@ -403,6 +417,17 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         returned = PublicStockMovement.objects.get(source_type='TUBE_OUTSOURCING_RETURN')
         self.assertEqual(returned.balance.identity_snapshot['completed_craft']['code'], 'SCREEN_PRINTING')
         self.assertEqual(order['receipt_records'][0]['received_amount'], '12001.20')
+        for direction, quantity in (('dispatch', '10'), ('receipt', '10001')):
+            row, = self.movements(direction, 'SCREEN_PRINTING')
+            self.assertEqual((row['item_name'], row['quantity'], row['unit'], row['direct_transfer']),
+                             (self.part.part_name, quantity, '个', False))
+        with self.settings(MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True):
+            self.scoped_actor()
+            self.grant('outsourcing.confirm_dispatch_outsourcingorder', 'CRAFT', [self.print_craft])
+            self.assertEqual([row['quantity'] for row in self.movements()], ['10'])
+            self.assertEqual(self.client.get(MOVEMENTS, {'direction': 'receipt'}).status_code, 403)
+            self.grant('outsourcing.confirm_return_outsourcingorder', 'CRAFT', [self.print_craft])
+            self.assertEqual([row['quantity'] for row in self.movements('receipt')], ['10001'])
 
     def test_catalog_reference_attributes_freeze_without_fake_processing_materials(self):
         from apps.boms.component_catalog import apply_component_catalog_selection
@@ -457,6 +482,8 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
             order = response.data['data']
         self.assertEqual(order['plan_summary']['received_amount'], '32500.00')
         self.assertFalse(order['plan_summary']['has_unknown_receipt_amount'])
+        row, = self.movements('receipt')
+        self.assertEqual((row['voucher_number'], row['quantity']), (first['receipt_number'], '10000'))
 
     def test_historical_unknown_receipts_stay_unknown_after_parent_price_is_filled(self):
         from apps.outsourcing.models import TubePlanReceiptLine
@@ -839,6 +866,54 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         printing = self.client.get(f"{BASE}{printing['id']}/").data['data']
         self.assertEqual(printing['lines'][0]['receivable_quantity'], '8')
 
+    def test_movement_rows_show_direct_transfer_on_dispatch_only(self):
+        from apps.outsourcing.models import OutsourcingFactory
+
+        printer = OutsourcingFactory.objects.create(name='直送丝印厂', factory_number='MOVEMENT-PRINT',
+            created_by_employee=self.employee, updated_by_employee=self.employee)
+        OutsourcingFactoryCraft.objects.create(factory=printer, craft=self.print_craft, craft_name_snapshot=self.print_craft.name)
+        sewing = self.create_part_plan()
+        printing = self.create_print_plan(printer)
+        self.assertEqual(self.movements(), [])
+        printing = self.send_to_printer(printing, printer, 100)
+        printing = self.receive_part(printing, 60)
+        today = str(timezone.localdate())
+        response = self.client.post(BASE + sewing['id'] + '/plan-dispatch/', {
+            'client_request_id': str(uuid.uuid4()), 'source_kind': 'PROCESSOR', 'actual_dispatch_date': today,
+            'inputs': [{'component_identity': str(self.parts[0].component_identity), 'quantity': 40,
+                        'print_order_line_id': printing['lines'][0]['id']}],
+        }, format='json', HTTP_IF_MATCH=sewing['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        sewing = response.data['data']
+        sent = self.movements()
+        self.assertCountEqual([(row['process'], row['factory_name'], row['quantity'], row['unit'], row['direct_transfer'])
+                               for row in sent],
+                              [('SCREEN_PRINTING', printer.name, '100', '片', False),
+                               ('SEWING', self.factory.name, '40', '片', True)])
+        self.assertTrue(all(row['item_name'] == self.parts[0].part_name and row['business_date'] == today for row in sent))
+        row, = self.movements('receipt')
+        self.assertEqual((row['process'], row['factory_name'], row['quantity'], row['unit'], row['voucher_number']),
+                         ('SCREEN_PRINTING', printer.name, '60', '片', printing['receipt_records'][0]['receipt_number']))
+        self.assertEqual(self.movements('receipt', 'SEWING'), [])
+        sewing = self.receive_part(sewing, 8)
+        sewing = self.receive_part(sewing, 4)
+        self.assertCountEqual([(row['item_name'], row['quantity'], row['unit']) for row in self.movements('receipt', 'SEWING')],
+                              [(self.part.part_name, '8', '个'), (self.part.part_name, '4', '个')])
+        self.assertEqual(self.client.get(MOVEMENTS, {'process': 'CUTTING'}).status_code, 400)
+        self.assertEqual(self.client.post(MOVEMENTS, {}, format='json').status_code, 405)
+        with self.settings(MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True):
+            self.scoped_actor()
+            self.task.followers.add(self.scope_employee)
+            self.grant('outsourcing.view_outsourcingorder', 'FOLLOWED')
+            self.assertEqual(self.client.get(MOVEMENTS).status_code, 403)
+            self.grant(CUT_PIECE_PRINTING, 'FOLLOWED')
+            self.assertEqual([row['quantity'] for row in self.movements()], ['100'])
+            self.assertEqual([row['quantity'] for row in self.movements('receipt')], ['60'])
+            self.task.followers.remove(self.scope_employee)
+            self.assertEqual(self.movements(), [])
+            self.grant('outsourcing.view_outsourcingorder', 'CRAFT', [self.external_sewing])
+            self.assertEqual([row['quantity'] for row in self.movements()], ['40'])
+
     def test_printer_transfers_and_warehouse_receipts_share_one_remaining_quantity(self):
         from apps.outsourcing.models import OutsourcingFactory
         from apps.production_tasks.cost_selectors import task_cost_summary
@@ -869,6 +944,24 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         self.assertEqual([printing['lines'][0][key] for key in
             ('dispatched_quantity', 'received_quantity', 'transferred_quantity', 'receivable_quantity')], ['100','30','50','20'])
         self.assertEqual(PublicStockMovement.objects.count(), count + 1)
+
+        def tracked_printing():
+            result = self.client.get('/api/v1/sewing-tracking/', {'task_number': self.task.task_number})
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual({row['process'] for row in result.data['data']}, {'SEWING', 'SCREEN_PRINTING'})
+            row, = [row for row in result.data['data'] if row['process'] == 'SCREEN_PRINTING']
+            self.assertEqual(row['last_receipt_date'], today)
+            by_owner = self.client.get('/api/v1/sewing-tracking/', {'task_number': self.task.task_number, 'owner': printer.name})
+            self.assertEqual(by_owner.status_code, 200, by_owner.data)
+            reminder, = [item['reminder'] for item in by_owner.data['data']]
+            self.assertEqual(reminder['action'], '催回厂')
+            self.assertEqual(reminder['quantity'], row['factory_remaining'][0]['quantity'])
+            return row
+
+        tracked = tracked_printing()
+        for field, amount in (('sent', '100'), ('received', '30'), ('transferred', '50'),
+                              ('factory_remaining', '20'), ('not_sent', '100')):
+            self.assertEqual(tracked[field], [{'quantity': amount, 'unit': '片'}])
         items = [row for group in task_cost_summary(task=self.task)['categories'] for row in group['items']
                  if row['id'] == f'TUBE_OUTSOURCING:PRINT_TRANSFER:{transfer.pk}']
         self.assertEqual([row['amount_cny'] for row in items], ['25.00'])
@@ -883,9 +976,16 @@ class PartFlowPlanApiTests(PartFlowPlanFixture, APITestCase):
         updated = correct(60)
         self.assertEqual(updated.status_code, 200, updated.data)
         self.assertEqual(self.client.get(print_url).data['data']['lines'][0]['receivable_quantity'], '10')
+        self.assertEqual(tracked_printing()['factory_remaining'], [{'quantity': '10', 'unit': '片'}])
+        row, = self.movements('dispatch', 'SEWING')
+        self.assertEqual((row['quantity'], row['direct_transfer']), ('60', True))
         deleted = self.client.post(BASE + sewing['id'] + '/plan-record-correction/', {'client_request_id': str(uuid.uuid4()),
             'record_kind': 'DISPATCH', 'record_id': str(transfer.order_id), 'operation': 'DELETE'},
             format='json', HTTP_IF_MATCH=updated.data['data']['etag'])
         self.assertEqual(deleted.status_code, 200, deleted.data)
         self.assertEqual(self.client.get(print_url).data['data']['lines'][0]['receivable_quantity'], '70')
+        tracked = tracked_printing()
+        self.assertEqual(tracked['transferred'], [])
+        self.assertEqual(tracked['factory_remaining'], [{'quantity': '70', 'unit': '片'}])
         self.assertEqual(PublicStockMovement.objects.count(), count + 1)
+        self.assertEqual(self.movements('dispatch', 'SEWING'), [])

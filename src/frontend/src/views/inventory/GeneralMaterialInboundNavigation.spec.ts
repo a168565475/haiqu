@@ -34,14 +34,11 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('材料收发页面', () => {
-  it('有查看权限时通过页头按钮打开收发记录', async () => {
+  it('材料收发操作页移除通用记录入口', async () => {
     identity.permissions.push('inventory.view_material_receipt')
     const { wrapper, router } = await render()
-    const records = wrapper.get('header.transfer-header button')
-    expect(records.text()).toBe('收发记录')
-    await records.trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.name).toBe('material-inbound-records')
+    expect(wrapper.find('header.transfer-header button').exists()).toBe(false)
+    expect(router.currentRoute.value.name).toBe('material-transfers')
   })
 
   it('直接展示筛选区和无弹窗的入库/出库共用表格', async () => {

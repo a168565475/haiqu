@@ -220,7 +220,7 @@ class HardwareWeightFlowTests(APITestCase):
         self.assertEqual(remaining.status_code, 200, remaining.data)
         self.assertEqual(Decimal(remaining.data["data"][0]["remaining_quantity"]), Decimal("1.1"))
 
-    def issue_pieces(self, *, catalog):
+    def issue_pieces(self, *, catalog, issue_count="300"):
         native_kg = self.piece_unit.unit_name == "KG"
         workshop = Workshop.objects.get(name="金工车间", status="ACTIVE")
         recipient = production_employee(workshop=workshop, position="领料员", name="五金重量验收领料员", status="ACTIVE")
@@ -242,7 +242,7 @@ class HardwareWeightFlowTests(APITestCase):
         self.assertEqual(Decimal(rows[0]["required_quantity"]), 1000)
         body = {**scope, "client_request_id": str(uuid4()), "schedule_product_id": str(schedule_product.pk),
             "recipient_workshop_employee_id": str(recipient.pk), "issue_at": timezone.now().isoformat(),
-            "lines": [{"requirement_id": rows[0]["requirement_id"], "requested_quantity": "1.3" if native_kg else "300"}]}
+            "lines": [{"requirement_id": rows[0]["requirement_id"], "requested_quantity": "1.3" if native_kg else issue_count}]}
         created = self.client.post("/api/v1/material-issues/", body, format="json")
         self.assertEqual(created.status_code, 201, created.data)
         issue_url = f"/api/v1/material-issues/{created.data['data']['id']}/"
@@ -257,7 +257,7 @@ class HardwareWeightFlowTests(APITestCase):
         self.assertEqual(issued.status_code, 200, issued.data)
         self.assertEqual(MaterialIssue.objects.get(pk=created.data["data"]["id"]).lines.get().unit_snapshot, self.piece_unit.unit_name)
         self.balance.refresh_from_db()
-        issued_quantity = Decimal("1.3") if native_kg else Decimal("300")
+        issued_quantity = Decimal("1.3") if native_kg else Decimal(issue_count)
         issued_weight = (Decimal("1.3") if native_kg else
             (Decimal("3.9") * issued_quantity / self.accepted_quantity).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
         self.assertEqual((self.balance.quantity, self.balance.weight_quantity),
@@ -272,6 +272,21 @@ class HardwareWeightFlowTests(APITestCase):
             self.create_purchase_and_sheet()
             self.receive_and_inspect(catalog=catalog, forged_counts=forged_counts)
             self.issue_pieces(catalog=catalog)
+
+    def test_piece_issue_preserves_count_when_the_stock_also_tracks_weight(self):
+        with self.settings(PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True):
+            self.prepare_bom(washer=False, catalog=True)
+            self.create_purchase_and_sheet()
+            self.receive_and_inspect(catalog=True)
+            self.issue_pieces(catalog=True, issue_count="10")
+            movement = PublicStockMovement.objects.get(source_type="MATERIAL_ISSUE")
+            self.assertGreater(movement.weight_quantity, 0)
+            ledger = self.client.get("/api/v1/material-stock-records/", {
+                "direction": "OUT", "section": "HARDWARE", "task_number": self.task.task_number,
+            })
+            self.assertEqual(ledger.status_code, 200, ledger.data)
+            row, = [item for item in ledger.data["data"] if item["movement_label"] == "车间实发"]
+            self.assertEqual((Decimal(row["actual_quantity"]), row["stock_unit"]), (Decimal("10"), self.piece_unit.unit_name))
 
     def test_catalog_rivet_weight_flow_preserves_piece_count(self):
         self.run_flow(washer=False, catalog=True)
@@ -324,6 +339,11 @@ class HardwareWeightFlowTests(APITestCase):
             movement = PublicStockMovement.objects.get(source_line_id=returned.pk, source_type="PURCHASE_RETURN")
             self.assertEqual((movement.quantity, movement.weight_quantity), (Decimal("0"), Decimal("0.0001")))
             self.assertEqual(movement.balance.weight_quantity, Decimal("3.9649"))
+            ledger = self.client.get("/api/v1/material-stock-records/", {"direction": "OUT", "section": "HARDWARE"})
+            self.assertEqual(ledger.status_code, 200, ledger.data)
+            row, = ledger.data["data"]
+            self.assertEqual((row["voucher_number"], Decimal(row["actual_quantity"]), row["stock_unit"]),
+                             (returned.return_order.return_number, Decimal("0.0001"), "kg"))
             for status, expected_ids in (("NONE", []), ("QUALITY_GENERATED", [self.order_id]), ("MISSING", [])):
                 response = self.client.get("/api/v1/purchase-orders/", {"return_status": status})
                 self.assertEqual(response.status_code, 200, response.data)

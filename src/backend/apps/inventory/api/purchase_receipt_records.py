@@ -14,6 +14,7 @@ SECTION_NAMES = {**PURCHASE_INBOUND_SECTION_NAMES, UNASSIGNED_SECTION: '未登�
 class PurchaseReceiptRecordQuerySerializer(serializers.Serializer):
     section = serializers.ChoiceField(choices=SECTION_NAMES, required=False)
     status = serializers.ChoiceField(choices=RECEIPT_STATUSES, required=False)
+    quality = serializers.ChoiceField(choices=("PENDING", "CHECKED"), required=False)
     q = serializers.CharField(max_length=200, allow_blank=True, default='')
     page = serializers.IntegerField(min_value=1, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=100, default=20)

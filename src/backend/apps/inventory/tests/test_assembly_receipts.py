@@ -9,6 +9,7 @@ from apps.production_scheduling.models import ProductionSchedule, ProductionSche
 from apps.workshop_config.models import Craft, Workshop
 from apps.inventory.models import FinishedGoodsReceipt, AssemblyReceiptSource, WarehouseLocation
 from apps.inventory.assembly_receipts import assembly_progress_for_plans
+from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
 from .test_inventory_api import FinishedGoodsInventoryApiTests
 from .finished_receipt_fixture import historical_finished_receipt
 
@@ -61,6 +62,49 @@ class AssemblyFixture:
             f"/api/v1/assembly-finished-receipts/{response.data['data']['id']}/confirm/", format='json')
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         return confirmed
+
+
+class WarehouseFinishedRecordTests(AssemblyFixture, APITestCase):
+    def setUp(self):
+        self.prepare(quantity=100)
+        WarehouseLocation.objects.filter(pk=self.location_id).update(capacity_box_slots=10)
+        department, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_WAREHOUSE", defaults={"unit_name": "测试仓库部门"},
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=department, effective_from=timezone.now() - timedelta(days=1),
+        )
+
+    def test_confirmed_receipt_and_two_shipments_keep_original_batch(self):
+        pending = self.post(self.payload(received_quantity=100, quantity_per_box=10))
+        self.assertEqual(pending.status_code, 201, pending.data)
+        receipt_id = pending.data["data"]["id"]
+        records = "/api/v1/finished-goods-records/"
+        scope = {"q": self.task.task_number, "product_line_id": self.line.pk, "schedule_product_id": self.plan.pk, "page_size": 1}
+        read = self.client.get(records, {**scope, "warehouse_history": True, "status": "CONFIRMED"})
+        self.assertEqual(read.status_code, 200, read.data)
+        self.assertEqual(read.data["data"]["total"], 0)
+        pending_list = self.client.get(records, {**scope, "status": "PENDING"})
+        self.assertEqual(pending_list.data["data"]["total"], 1)
+        confirmed = self.confirm(pending).data["data"]
+        outbounds = "/api/v1/finished-goods-inventory/outbounds/"
+        for quantity, remaining in ((40, 100), (60, 60)):
+            shipment = self.client.post(outbounds, {
+                "responsible_employee_id": str(self.employee.pk), "shipment_date": str(timezone.localdate()),
+                "items": [{"receipt_id": receipt_id, "expected_remaining_quantity": remaining,
+                           "outbound_quantity": quantity, "quantity_per_box": 10}],
+            }, format="json")
+            self.assertEqual(shipment.status_code, 201, shipment.data)
+        receipt = self.client.get(records, {**scope, "warehouse_history": True, "status": "CONFIRMED"})
+        row, = receipt.data["data"]["items"]
+        self.assertEqual((row["receipt_number"], row["received_quantity"], row["received_by_name"]),
+                         (confirmed["receipt_number"], 100, self.employee.display_name))
+        shipments = self.client.get(outbounds, {**scope, "page_size": 10})
+        self.assertEqual(shipments.status_code, 200, shipments.data)
+        self.assertEqual(shipments.data["data"]["total"], 2)
+        self.assertCountEqual([(line["receipt_number"], line["outbound_quantity"])
+                               for doc in shipments.data["data"]["items"] for line in doc["lines"]],
+                              [(confirmed["receipt_number"], 40), (confirmed["receipt_number"], 60)])
 
 
 class AssemblyReceiptTests(AssemblyFixture,APITestCase):

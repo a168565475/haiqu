@@ -103,6 +103,13 @@ class SampleAllPipeIssueTests(AllIssueApiHelpers, APITestCase):
         self.assertEqual(duplicate.status_code, 409, duplicate.data)
         self.assertEqual(PublicStockMovement.objects.filter(source_type="SAMPLE_MATERIAL_ISSUE").count(), 1)
         self.assertFalse(MaterialStockMovement.objects.filter(source_type="SAMPLE_MATERIAL_ISSUE").exists())
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label="inventory", codename="view_material_receipt"))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        ledger = self.client.get("/api/v1/material-stock-records/", {"direction": "OUT", "section": "TUBE"})
+        self.assertEqual(ledger.status_code, 200, ledger.data)
+        row, = ledger.data["data"]
+        self.assertEqual((row["voucher_number"], row["movement_label"], Decimal(row["actual_quantity"])),
+                         (self.sample.request_number, "样品领料", Decimal("2")))
 
     def test_existing_supply_and_arrival_share_balance_without_double_counting(self):
         self.set_demand("14", "6")

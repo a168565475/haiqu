@@ -186,6 +186,7 @@ def accessible_production_tasks(request, permission=None):
             'purchase_receipt_records', 'purchase_receipt_record',
             'receipts', 'batch_receipts',
         }
+        or view_name == 'MaterialStockRecordsView'
         or view_name == 'PurchaseOrderViewSet' and view.action == 'details'
         or view_name == 'WarehouseWorkbenchViewSet'
         or view_name == 'PurchaseReturnViewSet' and view.action in {'list', 'retrieve', 'stats', 'filter_options'}

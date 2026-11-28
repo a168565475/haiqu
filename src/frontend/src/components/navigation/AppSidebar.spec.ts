@@ -44,7 +44,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-material-tracking', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'workshop-sewing-tracking', 'wage-schemes', 'work-report-days', 'workshop-daily-report', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
-  'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
+  'warehouse-management': ['finished-goods-inventory', 'finished-goods-inbound-records', 'finished-goods-outbounds', 'material-inventory', 'material-receipt-records', 'material-outbound-records', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
@@ -54,6 +54,7 @@ const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-
   'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-material-tracking', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'workshop-sewing-tracking', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'workshop-daily-report', 'finished-goods-inventory',
   'workshop-semi-receipt-records', 'workshop-finished-receipt-records',
+  'finished-goods-inbound-records', 'finished-goods-outbounds', 'material-receipt-records', 'material-outbound-records',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
@@ -548,7 +549,7 @@ describe('全局悬停侧栏', () => {
     const { router } = await setup()
     await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '成品库存', '材料库存', '材料收发', '采购入库', '入库记录', '退货明细', '车间领料', '车间入库', '委外管理',
+      '成品汇总', '成品入库记录', '成品出库记录', '材料汇总', '材料入库记录', '材料出库记录', '材料收发', '采购入库', '品质检验', '退货明细', '车间领料', '车间入库', '委外管理',
     ])
     const inboundIcon = panel().get('[data-menu-key="purchase-receipt-records"] svg')
     expect(inboundIcon.find('rect').exists()).toBe(true)
@@ -564,7 +565,7 @@ describe('全局悬停侧栏', () => {
     auth.user = { ...auth.user!, is_superuser: false, permissions: ['inventory.view_material_receipt'] }
     await nextTick()
     await group('warehouse').trigger('focus')
-    expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['purchase-receipt-records'])
+    expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['material-receipt-records', 'material-outbound-records', 'purchase-receipt-records'])
     expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
   })
 

@@ -16,7 +16,6 @@ interface QualityRow { line: MaterialInboundLine; included: boolean; returnQuant
 const auth = useAuthStore()
 const router = useRouter()
 const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
-const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
 const recordsQuery = computed(() => router.currentRoute?.value.query)
 const recordId = computed(() => typeof recordsQuery.value?.receipt === 'string' ? recordsQuery.value.receipt : '')
 const batches = ref<MaterialInbound[]>([])
@@ -277,8 +276,7 @@ async function confirmInbound() {
     if (disposed) return
     ElMessage.success('品质确认完成，库存和采购应付已按质检结果更新。')
     try {
-      if (recordId.value) await openReceiptRecords()
-      else await router.push({ name: canViewInventory.value ? 'material-inventory' : 'purchase-inbounds' })
+      await openReceiptRecords()
     }
     catch { if (owned.isCurrent()) ElMessage.warning('入库已成功，请从采购入库列表继续。') }
   } catch (error) {
@@ -296,7 +294,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
   <section class="inventory-workflow quality-page erp-glass-form" data-testid="material-quality-confirmation-page">
     <div v-if="!canConfirm" class="empty-state"><h1>无权进行品质确认</h1><p>请联系管理员开通材料品质确认权限。</p></div>
     <template v-else>
-      <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><div><ElButton v-if="recordId" :disabled="confirming" @click="openReceiptRecords">返回入库记录</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></div></header>
+      <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><div><ElButton :disabled="confirming" @click="openReceiptRecords">返回品质检验</ElButton><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></div></header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
       <section class="surface bulk-card erp-flat-form">
         <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>{{ bulkUnit }}</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>

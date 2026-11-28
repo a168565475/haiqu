@@ -77,12 +77,12 @@ it('材料库存旧响应和卸载后的响应失效', async () => {
   vi.mocked(api.fetchMaterialInventory).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
   const late = vm.loadRows(); wrapper.unmount(); finish({ count: 3, results: [] } as never); await late; expect(vm.total).toBe(2)
 })
-it('材料库存遵循紧凑列表字段规范', async () => {
+it('材料汇总遵循紧凑列表字段规范', async () => {
   const wrapper = shallowMount(MaterialInventoryView, { global: {
     plugins: [ElementPlus], stubs: { ElTable: { template: '<div><slot /></div>' } },
   } }); await flushPromises()
   expect(wrapper.find('.summary-grid').exists()).toBe(false)
-  expect(wrapper.find('.page-heading').text()).toContain('材料库存')
+  expect(wrapper.find('.page-heading').text()).toContain('材料汇总')
   expect(wrapper.get('.inventory-table').find('.erp-list-toolbar').exists()).toBe(false)
   const sections = wrapper.get('nav[aria-label="BOM 分区"]').findAll('button')
   expect(sections.map(button => button.text())).toEqual(['管材', '面料'])

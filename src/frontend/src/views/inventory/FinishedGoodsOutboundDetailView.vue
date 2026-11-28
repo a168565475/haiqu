@@ -29,7 +29,7 @@ watch(() => route.params.outboundId, () => { void load() }, { immediate: true })
       <h1>出货单详情</h1>
       <div class="heading-actions">
         <button type="button" class="detail-button erp-list-button erp-button-motion" @click="load">刷新</button>
-        <button type="button" class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="router.push({ name: 'finished-goods-outbounds' })"><ArrowLeft aria-hidden="true" />返回出库记录</button>
+        <button type="button" class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="router.push({ name: 'finished-goods-outbounds', query: route.query })"><ArrowLeft aria-hidden="true" />返回出库记录</button>
       </div>
     </header>
     <div v-if="loading" class="detail-state" role="status">正在加载出货单详情…</div>

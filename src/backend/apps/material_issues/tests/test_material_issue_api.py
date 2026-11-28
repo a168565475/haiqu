@@ -799,6 +799,11 @@ class MaterialIssueApiTests(APITestCase):
         balance = MaterialStockBalance.objects.get(raw_material=self.raw_material)
         self.assertEqual(balance.quantity, Decimal("600"))
 
+        warehouse_user = get_user_model().objects.create_user(username="material_issue_warehouse")
+        warehouse_actor = Employee.objects.create(user=warehouse_user, employee_code="MATERIAL_ISSUE_WAREHOUSE",
+                                                  display_name="发料测试员工")
+        warehouse_user.user_permissions.set(self.user.user_permissions.all())
+        self.client.force_authenticate(warehouse_user)
         request_id = str(uuid.uuid4())
         confirmed = self.client.post(
             f"/api/v1/material-issues/{issue_id}/confirm-issue/",
@@ -815,6 +820,15 @@ class MaterialIssueApiTests(APITestCase):
         self.assertEqual(issue_history.status_code, 200, issue_history.data)
         self.assertEqual(issue_history.data["data"][0]["material_issue_id"], issue_id)
         self.assertEqual(issue_history.data["data"][0]["issued_quantity"], "120.0000")
+        ledger = self.client.get("/api/v1/material-stock-records/", {
+            "direction": "OUT", "section": "TUBE", "task_number": self.task.task_number,
+        })
+        self.assertEqual(ledger.status_code, 200, ledger.data)
+        row, = ledger.data["data"]
+        self.assertEqual((row["voucher_number"], row["movement_label"], Decimal(row["actual_quantity"])),
+                         (confirmed.data["data"]["issue_number"], "车间实发", Decimal("120")))
+        self.assertEqual(row["recipient_name"], confirmed.data["data"]["recipient"]["name"])
+        self.assertEqual(row["actor_name"], warehouse_actor.display_name)
 
         retried = self.client.post(
             f"/api/v1/material-issues/{issue_id}/confirm-issue/",
@@ -848,6 +862,7 @@ class MaterialIssueApiTests(APITestCase):
             key: confirmed.data["data"]["lines"][0][key]
             for key in snapshot_keys
         }
+        self.client.force_authenticate(self.user)
         second_created = self._create_issue(quantity="50")
         second_submitted = self.client.post(
             f"/api/v1/material-issues/{second_created.data['data']['id']}/submit/",
@@ -856,6 +871,7 @@ class MaterialIssueApiTests(APITestCase):
             HTTP_IF_MATCH=second_created["ETag"],
         )
         self.assertEqual(second_submitted.status_code, 200, second_submitted.data)
+        self.client.force_authenticate(warehouse_user)
         second_confirmed = self.client.post(
             f"/api/v1/material-issues/{second_created.data['data']['id']}/confirm-issue/",
             {"request_id": str(uuid.uuid4())},

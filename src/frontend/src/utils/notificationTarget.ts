@@ -117,7 +117,8 @@ export function notificationRoute(eventCode: string, target: NotificationTarget)
       return { name: allowed[0], params: {}, query: { receipt: target.object_id } }
     }
     // 只由此已登记事件构造现有记录页签；后端/消息输入不支持任意query。
-    if (['SEMI_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_CONFIRMED'].includes(eventCode)) return { name: allowed[0], params: {}, query: { tab: 'records' } }
+    if (eventCode === 'ASSEMBLY_FINISHED_RECEIPT_SUBMITTED') return { name: allowed[0], params: {}, query: { tab: 'pending' } }
+    if (['SEMI_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_CONFIRMED'].includes(eventCode)) return { name: allowed[0], params: {}, query: { tab: 'records' } }
     return { name: allowed[0], params: {} }
   }
   // 旧管材通知误用了 orderId，真实详情路由参数为 id；仅兼容这两个已登记事件。

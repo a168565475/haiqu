@@ -169,7 +169,7 @@ watch(() => [direction.value, route.query.product_line_id], () => { visible.valu
     <header class="receipt-heading erp-list-heading">
       <h1>{{ readOnly ? '半成品入库记录' : outgoing ? '半成品出库记录' : '车间入库' }}</h1>
       <span v-if="outgoing" class="muted">共 {{ total }} 条{{ actionLabel }}明细</span>
-      <ElButton v-if="outgoing" class="erp-button-motion" @click="router.push({name:'material-inventory'})">材料库存</ElButton>
+      <ElButton v-if="outgoing" class="erp-button-motion" @click="router.push({name:'material-inventory'})">材料汇总</ElButton>
     </header>
     <div class="receipt-filters erp-list-filters"><ElInput v-model="search" clearable :placeholder="`搜索${actionLabel}单号、生产订单、产品或部位`" @keyup.enter="load(true)" @clear="load(true)" /><ElSelect v-if="!readOnly" v-model="source" placeholder="全部来源" aria-label="入库来源" @change="load(true)"><ElOption label="全部来源" value=""/><ElOption :label="outgoing ? '生产领用出库' : '厂内入库'" value="INTERNAL"/><ElOption :label="outgoing ? '其他出库' : '外发入库'" value="EXTERNAL"/></ElSelect><ElDatePicker v-model="dates" type="daterange" value-format="YYYY-MM-DD" :start-placeholder="`${actionLabel}开始日期`" :end-placeholder="`${actionLabel}结束日期`" @change="load(true)"/><ElButton class="erp-button-motion" @click="load()">刷新</ElButton><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="search=''; source=''; dates=[]; load(true)">重置</ElButton><ElButton class="erp-button-motion" type="primary" :loading="loading" @click="load(true)">应用筛选</ElButton></div></div>
     <ElPagination v-if="!outgoing && !error && total > pageSize" v-model:current-page="page" class="receipt-page-controls" :page-size="pageSize" :total="total" :disabled="loading" layout="prev, pager, next" @current-change="load()" />

@@ -73,6 +73,13 @@ class GeneralTransferWeightApiTests(APITestCase):
             self.assertEqual(line.raw_bar_length_m, Decimal('6.053'))
         self.assertEqual(PublicStockBalance.objects.get().quantity, 0)
         self.assertFalse(self.catalog.attribute_values.filter(field_key='length').exists())
+        for direction, label in [('IN', '普通收进'), ('OUT', '普通发出')]:
+            ledger = self.client.get('/api/v1/material-stock-records/', {'direction': direction, 'section': 'TUBE'})
+            self.assertEqual(ledger.status_code, 200, ledger.data)
+            row, = ledger.data['data']
+            self.assertEqual((row['movement_label'], Decimal(row['actual_quantity']), row['stock_unit']), (label, Decimal('3'), '根'))
+        quality = self.client.get('/api/v1/material-inventory/purchase-receipt-records/', {'quality': 'CHECKED'})
+        self.assertEqual(quality.data['total'], 0)
 
     def test_conflicting_pipe_lengths_do_not_create_stock(self):
         payload = self.payload()

@@ -168,17 +168,22 @@ class PurchaseReceivingSectionTests(ScopedActorMixin, APITestCase):
         self.assertFalse(MaterialInbound.objects.exists())
 
     def test_quality_keeps_complete_historical_b_record(self):
+        from apps.inventory.stock_services import credit_material_stock
+
         self.grant('inventory.quality_confirm_material')
         inbound = MaterialInbound.objects.create(
             inbound_number='RECEIVING-OLD-B', purchase_order=self.order, received_by_employee=self.employee,
             material_section='B',
         )
         for line in (self.hardware, self.packaging):
-            MaterialInboundLine.objects.create(
+            received = MaterialInboundLine.objects.create(
                 inbound=inbound, purchase_order_line=line, raw_material_information=self.raw_material,
                 zone=self.zone, section_title_snapshot=line.section_title_snapshot,
                 received_quantity=2, accepted_quantity=2, purchased_quantity_snapshot=line.actual_purchase_quantity,
             )
+            credit_material_stock(raw_material=self.raw_material, unit=self.raw_material.unit, zone=self.zone,
+                                  quantity=2, source_type='MATERIAL_INBOUND', source_id=inbound.pk,
+                                  source_line_id=received.pk, actor_employee=self.employee)
         root = self.root + 'purchase-receipt-records/'
         row = self.client.get(root, {'section': 'B'}).data['data'][0]
         self.assertEqual(row['material_section_display'], '五金件、塑料件、包材（历史）')
@@ -189,6 +194,12 @@ class PurchaseReceivingSectionTests(ScopedActorMixin, APITestCase):
         self.assertEqual(detail.data['data']['material_section'], 'B')
         self.assertEqual(len(detail.data['data']['lines']), 2)
         self.assertFalse(self.client.get(root, {'section': 'D'}).data['data'])
+        for section in ('HARDWARE', 'PACKAGING'):
+            listing = self.client.get('/api/v1/material-stock-records/', {'direction': 'IN', 'section': section})
+            self.assertEqual(listing.status_code, 200, listing.data)
+            material, = listing.data['data']
+            self.assertEqual(material['voucher_number'], inbound.inbound_number)
+            self.assertEqual(material['origin_section_display'], '五金件、塑料件、包材（历史）')
 
 
 @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
@@ -209,6 +220,7 @@ class AuthorizedSectionReceiptTests(ScopedActorMixin, APITestCase):
             line_number=2, quantity_parse_status='READY', section_type_snapshot='ACCESSORY',
             section_title_snapshot='包材', category_snapshot='包材', part_name_snapshot=material.material_name,
             raw_material_snapshot=material.material_number, source_unit_text=self.purchase_line.source_unit_text,
+            supplier=self.supplier, supplier_name_snapshot=self.supplier.supplier_name, unit_price=2, amount=10,
             actual_purchase_quantity=5, calculation_snapshot={
                 'schema_version': 1, 'source': 'PRODUCTION_PURCHASE', 'raw_material_id': str(material.pk),
                 'unit_id': str(material.unit_id),

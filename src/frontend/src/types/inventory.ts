@@ -155,7 +155,8 @@ export interface EligibleMaterialPurchaseOrder {
 export interface ProcurementInboundProductSummary {
   product_line_id: string; product_name: string; item_number: string; specification: string; color_name: string; material: string
 }
-export type PurchaseReceivingSection = 'A' | 'B' | 'C' | 'D'
+export type WarehouseMaterialSection = 'TUBE' | 'FABRIC' | 'HARDWARE' | 'PLASTIC' | 'AUXILIARY' | 'PACKAGING'
+export type PurchaseReceivingSection = WarehouseMaterialSection | 'A' | 'B' | 'C' | 'D'
 
 export interface ProcurementInboundOrder {
   id: string; order_number: string; source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string; sales_order_number: string

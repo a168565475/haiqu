@@ -183,11 +183,22 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         self.assertEqual((self.public_balance.quantity, self.pipe_balance.quantity), (98, 100))
 
     def test_pipe_partial_raw_return_and_revoke_restore_once(self):
+        from django.contrib.auth.models import Permission
+
         order_id = self.create(amount="12")
         dispatched, source = self.dispatch(order_id, amount="12")
         self.post(order_id, "confirm-dispatch", dispatched)
         returned = self.raw_return(order_id, source, 1)
         self.post(order_id, "confirm-raw-return", returned)
+        self.f.user.user_permissions.add(Permission.objects.get(content_type__app_label="inventory", codename="view_material_receipt"))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.f.user.pk))
+        for direction, label, amount in (("OUT", "委外发料", 2), ("IN", "委外退回原料", 1)):
+            ledger = self.client.get("/api/v1/material-stock-records/", {
+                "direction": direction, "section": "TUBE", "task_number": self.f.product_line.production_task.task_number,
+            })
+            self.assertEqual(ledger.status_code, 200, ledger.data)
+            row, = [item for item in ledger.data["data"] if item["movement_label"] == label]
+            self.assertEqual((Decimal(row["actual_quantity"]), row["stock_unit"]), (Decimal(amount), "根"))
         payload, _ = self.revoke(order_id)
         self.revoke(order_id, request_id=payload["request_id"])
         self.public_balance.refresh_from_db()

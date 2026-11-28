@@ -131,7 +131,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
     <template v-else>
       <section v-glass-spotlight class="erp-list-filter">
       <header class="page-heading erp-list-heading">
-        <h1>材料库存</h1><ElRadioGroup v-model="stockKind" class="stock-kind-switch" aria-label="库存性质" @change="stockKindChanged"><ElRadioButton value="RAW">原材料</ElRadioButton><ElRadioButton value="SEMI">半成品</ElRadioButton></ElRadioGroup>
+        <h1>材料汇总</h1><ElRadioGroup v-model="stockKind" class="stock-kind-switch" aria-label="库存性质" @change="stockKindChanged"><ElRadioButton value="RAW">原材料</ElRadioButton><ElRadioButton value="SEMI">半成品</ElRadioButton></ElRadioGroup>
         <span class="total-count">共 {{ total }} 条</span>
       </header>
 

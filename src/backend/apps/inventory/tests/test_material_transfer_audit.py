@@ -198,6 +198,8 @@ class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase)
         self.assertFalse(MaterialTransfer.objects.exists())
 
     def test_same_color_name_with_distinct_color_cards_keeps_separate_stock(self):
+        from apps.access_control.models import MaterialSectionGrant
+
         fabric = MaterialCatalog.objects.create(category_key="FABRIC", template_key="FABRIC", name="审核布料", base_warehouse=self.warehouse)
         meter, _ = ProductionUnit.objects.get_or_create(unit_name="米", defaults={"unit_code": "TAM"})
         colors = [ProductColor.objects.create(color_card="审核色卡", color_code=code, color_name="同名蓝") for code in ("A", "B")]
@@ -216,6 +218,20 @@ class MaterialTransferAuditTests(TransferFixture, ScopedActorMixin, APITestCase)
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(PublicStockBalance.objects.count(), 2)
         self.assertEqual({line.material_selection_snapshot["product_color_id"] for line in MaterialTransferLine.objects.all()}, {str(color.pk) for color in colors})
+        outbound = self.post(self.payload(items[0], direction="OUT"))
+        self.assertEqual(outbound.status_code, 201, outbound.data)
+        self.scoped_actor()
+        self.grant("inventory.view_material_receipt", "MODULE")
+        grant = self.grant("inventory.receive_material", "MATERIAL")
+        MaterialSectionGrant.objects.create(grant=grant, sections=["HARDWARE"])
+        original = self.client.get("/api/v1/material-transfers/", {"direction": "OUT"})
+        self.assertEqual(original.status_code, 200, original.data)
+        self.assertEqual(len(original.data["data"]), 1)
+        ledger = self.client.get("/api/v1/material-stock-records/", {"direction": "OUT", "section": "FABRIC", "q": "600D"})
+        self.assertEqual(ledger.status_code, 200, ledger.data)
+        row, = ledger.data["data"]
+        self.assertEqual((row["voucher_number"], row["specification"], row["stock_unit"]),
+                         (original.data["data"][0]["transfer_number"], "600D", "米"))
 
 
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True, MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=False)

@@ -9,13 +9,13 @@ import { vHorizontalOverflow } from '@/directives/horizontalOverflow'
 import type { FinishedGoodsOutbound, MaterialReceivingOptions } from '@/types/inventory'
 
 const route = useRoute(), router = useRouter()
-const emit = defineEmits<{ 'select-stock': [] }>()
 const rows = ref<FinishedGoodsOutbound[]>([]), total = ref(0), loading = ref(false), errorMessage = ref(''), optionsError = ref('')
-const page = ref(1), pageSize = ref(50), keyword = ref(''), warehouse = ref('')
-const applied = ref({ q: '', warehouseId: '' })
+const page = ref(1), pageSize = ref(50), keyword = ref(String(route.query.q || '')), warehouse = ref(String(route.query.warehouse_id || ''))
+const applied = ref({ q: keyword.value, warehouseId: warehouse.value })
 const options = ref<MaterialReceivingOptions>({ warehouses: [], zones: [] })
 const taskId = computed(() => String(route.query.production_task_id || ''))
 const productLineId = computed(() => String(route.query.product_line_id || ''))
+const planId = computed(() => String(route.query.schedule_product_id || ''))
 const money = (value: string | number | null | undefined) => compactDecimal(Number(value || 0).toFixed(2))
 const quantity = (value: number | null | undefined) => value == null ? '—' : Number(value).toLocaleString()
 const displayLines = (row: FinishedGoodsOutbound) => row.lines.length ? row.lines : [null]
@@ -27,6 +27,7 @@ async function load() {
   try {
     const result = await fetchFinishedGoodsOutbounds({
       production_task_id: taskId.value || undefined, product_line_id: productLineId.value || undefined,
+      schedule_product_id: planId.value || undefined,
       q: applied.value.q || undefined, warehouse_id: applied.value.warehouseId || undefined,
       page: page.value, page_size: pageSize.value,
     })
@@ -39,15 +40,18 @@ async function load() {
 function search() { applied.value = { q: keyword.value.trim(), warehouseId: warehouse.value }; page.value = 1; void load() }
 function reset() { keyword.value = ''; warehouse.value = ''; search() }
 function resizePage() { page.value = 1; void load() }
-function goDetail(id: string) { void router.push({ name: 'finished-goods-outbound-detail', params: { outboundId: id } }) }
-watch(() => [taskId.value, productLineId.value], () => { page.value = 1; void load() }, { immediate: true })
+function goDetail(id: string) {
+  void router.push({ name: 'finished-goods-outbound-detail', params: { outboundId: id },
+    query: { ...route.query, q: applied.value.q || undefined, warehouse_id: applied.value.warehouseId || undefined } })
+}
+watch(() => [taskId.value, productLineId.value, planId.value], () => { page.value = 1; void load() }, { immediate: true })
 onMounted(async () => {
   try { options.value = await fetchFinishedGoodsFilterOptions() }
   catch (error) { optionsError.value = message(error) }
 })
 const columns = [
   ['生产任务单号', 140], ['出货单号', 155], ['产品编码', 130], ['产品名称', 160], ['货号', 100],
-  ['材质', 100], ['规格', 160], ['颜色', 100], ['订单数量', 110], ['入库数量', 110], ['出库数量', 110],
+  ['材质', 100], ['规格', 160], ['颜色', 100], ['来源入库批次', 155], ['订单数量', 110], ['入库数量', 110], ['出库数量', 110],
   ['单位', 65], ['出库仓库', 120], ['库位', 110], ['出货日期', 120], ['出库负责人', 115],
   ['装卸费用', 100], ['其他费用', 100], ['操作', 120],
 ] as const
@@ -56,7 +60,7 @@ const columns = [
 <template>
   <section class="outbound-list-page erp-glass-list">
     <section v-glass-spotlight class="erp-list-filter">
-      <header class="erp-list-heading"><h1>成品库存</h1></header>
+      <header class="erp-list-heading"><h1>成品出库记录</h1></header>
       <div class="outbound-filters erp-list-filters">
         <ElInput v-model="keyword" clearable placeholder="搜索出货单号、生产任务单号或产品信息" @keyup.enter="search" @clear="search" />
         <ElSelect v-model="warehouse" clearable placeholder="全部仓库" @change="search">
@@ -65,12 +69,10 @@ const columns = [
         <div class="erp-list-filter-actions">
           <ElButton class="erp-button-motion" @click="reset">重置</ElButton>
           <ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton>
-          <ElButton class="erp-button-motion" type="primary" @click="emit('select-stock')">从库存选择出库</ElButton>
         </div>
       </div>
     </section>
     <section class="erp-list-data">
-      <div class="fg-toolbar erp-list-toolbar"><slot /></div>
       <ElAlert v-if="errorMessage || optionsError" :title="errorMessage || optionsError" type="error" :closable="false" show-icon />
       <div v-loading="loading" class="erp-list-table-frame">
         <div v-horizontal-overflow class="erp-list-table-scroll scroll-actions-container">
@@ -86,6 +88,7 @@ const columns = [
                   <td :title="line?.product_name_snapshot">{{ line?.product_name_snapshot || '—' }}</td>
                   <td>{{ line?.item_number_snapshot || '—' }}</td><td :title="line?.material_snapshot">{{ line?.material_snapshot || '—' }}</td>
                   <td :title="line?.specification_snapshot">{{ line?.specification_snapshot || '—' }}</td><td>{{ line?.actual_color || '—' }}</td>
+                  <td :title="line?.receipt_number">{{ line?.receipt_number || '—' }}</td>
                   <td class="num">{{ quantity(line?.order_quantity) }}</td><td class="num">{{ quantity(line?.received_quantity) }}</td><td class="num">{{ quantity(line?.outbound_quantity) }}</td>
                   <td>{{ line?.unit_name || '—' }}</td><td :title="line?.warehouse_name">{{ line?.warehouse_name || '—' }}</td><td>{{ line?.location_number || '—' }}</td>
                   <template v-if="index === 0">

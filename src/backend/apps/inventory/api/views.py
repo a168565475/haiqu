@@ -465,12 +465,18 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                 raise ValidationError({"q": "搜索内容不能超过300字。"})
             task_id = request.query_params.get("production_task_id", "").strip()
             product_line_id = request.query_params.get("product_line_id", "").strip()
+            plan_id = request.query_params.get("schedule_product_id", "").strip()
             warehouse_id = request.query_params.get("warehouse_id", "").strip()
+            plans = None
+            if plan_id:
+                from apps.production_scheduling.selectors import schedule_items_for_category
+                plans = schedule_items_for_category(request, "ASSEMBLY").filter(pk=uuid_value(plan_id, "schedule_product_id"))
             queryset = finished_goods_outbounds(
                 keyword=keyword,
                 production_task_id=uuid_value(task_id, "production_task_id") if task_id else None,
                 product_line_id=uuid_value(product_line_id, "product_line_id") if product_line_id else None,
                 warehouse_id=uuid_value(warehouse_id, "warehouse_id") if warehouse_id else None,
+                schedule_products=plans,
             )
             queryset = scoped_finished_outbounds(queryset, request)
             page = positive_int(request.query_params.get("page"), "page", 1)
@@ -1422,6 +1428,12 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         allowed = receipt_record_permissions(request)
         records, purchase_lines, sections = purchase_receipt_scope(request, allowed)
         transfers, _ = transfer_receipt_scope(request, allowed)
+        if quality := filters.get('quality'):
+            transfers = transfers.none()
+            if quality == 'PENDING':
+                records = records.filter(status='PENDING_QUALITY')
+            else:
+                records = records.filter(status='CONFIRMED', quality_confirmed_at__isnull=False)
         if records.filter(material_section='').exists() or transfers.filter(material_section='').exists():
             sections.append({'id': UNASSIGNED_SECTION, 'name': '未登记'})
         available = {entry['id'] for entry in sections}

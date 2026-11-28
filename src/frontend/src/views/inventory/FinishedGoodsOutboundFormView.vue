@@ -65,7 +65,7 @@ onMounted(() => { void load() })
 
 <template>
   <section class="outbound-form-page" v-loading="loading">
-    <header class="page-heading"><div><p class="breadcrumb">仓库管理 / 成品库存 / 新建出库</p><h1>新建成品出库</h1><p class="sub-title">按选中的生产任务库存批次生成出货单，库存数量提交时再次校验。</p></div><ElButton @click="router.back()">返回</ElButton></header>
+    <header class="page-heading"><div><p class="breadcrumb">仓库管理 / 成品汇总 / 新建出库</p><h1>新建成品出库</h1><p class="sub-title">按选中的生产任务库存批次生成出货单，库存数量提交时再次校验。</p></div><ElButton @click="router.push({ name: 'finished-goods-inventory' })">返回成品汇总</ElButton></header>
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon />
     <section v-else class="form-card">
       <div class="card-heading"><h2>出库明细</h2><span>已选择 {{ selectedRows.length }} 条</span></div>

@@ -1296,8 +1296,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'finished-goods-inventory',
-        headerTitle: '仓库管理 / 成品库存',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存' }],
+        headerTitle: '仓库管理 / 成品汇总',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '成品汇总' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1306,18 +1306,26 @@ export const router = createRouter({
       path: '/inventory/finished-goods/outbound/new',
       name: 'finished-goods-outbound-new',
       component: FinishedGoodsOutboundFormView,
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 新建出库', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '新建出库' }], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品汇总 / 新建出库', breadcrumbs: [{ label: '仓库管理' }, { label: '成品汇总', to: '/inventory/finished-goods' }, { label: '新建出库' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/inventory/finished-goods/inbounds',
+      name: 'finished-goods-inbound-records',
+      component: () => import('@/views/inventory/FinishedReceiptRecordsPanel.vue'),
+      props: { warehouseStatus: 'CONFIRMED' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inbound-records', headerTitle: '仓库管理 / 成品入库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '成品入库记录' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/finished-goods/outbounds',
       name: 'finished-goods-outbounds',
-      redirect: to => ({ name: 'finished-goods-inventory', query: { ...to.query, tab: 'outbounds' } }),
+      component: () => import('@/views/inventory/FinishedGoodsOutboundListView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-outbounds', headerTitle: '仓库管理 / 成品出库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '成品出库记录' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/finished-goods/outbounds/:outboundId',
       name: 'finished-goods-outbound-detail',
       component: FinishedGoodsOutboundDetailView,
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 出货单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '出货单详情' }], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-outbounds', headerTitle: '仓库管理 / 成品出库记录 / 出货单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '成品出库记录', to: '/inventory/finished-goods/outbounds' }, { label: '出货单详情' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/materials',
@@ -1327,8 +1335,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 材料库存',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '材料库存' }],
+        headerTitle: '仓库管理 / 材料汇总',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '材料汇总' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1355,11 +1363,25 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-receipt-records',
-        headerTitle: '仓库管理 / 入库记录',
-        breadcrumbs: [{ label: '仓库管理' }, { label: '入库记录' }],
+        headerTitle: '仓库管理 / 品质检验',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '品质检验' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
+    },
+    {
+      path: '/inventory/materials/inbounds',
+      name: 'material-receipt-records',
+      component: () => import('@/views/inventory/MaterialStockRecordsView.vue'),
+      props: { direction: 'IN' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-receipt-records', headerTitle: '仓库管理 / 材料入库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '材料入库记录' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/inventory/materials/outbounds',
+      name: 'material-outbound-records',
+      component: () => import('@/views/inventory/MaterialStockRecordsView.vue'),
+      props: { direction: 'OUT' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-outbound-records', headerTitle: '仓库管理 / 材料出库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '材料出库记录' }], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/materials/:stockItemId',
@@ -1367,7 +1389,7 @@ export const router = createRouter({
       component: MaterialInventoryDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory',
-        headerTitle: '仓库管理 / 材料库存 / 订单追溯', breadcrumbs: [{ label: '仓库管理' }, { label: '材料库存', to: '/inventory/materials' }, { label: '订单追溯' }],
+        headerTitle: '仓库管理 / 材料汇总 / 订单追溯', breadcrumbs: [{ label: '仓库管理' }, { label: '材料汇总', to: '/inventory/materials' }, { label: '订单追溯' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -2233,9 +2255,13 @@ router.beforeEach(async (to, from) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
+  if (to.name === 'finished-goods-inventory' && (to.query.tab === 'records' || to.query.tab === 'outbounds')) {
+    const { tab, ...query } = to.query
+    return { name: tab === 'records' ? 'finished-goods-inbound-records' : 'finished-goods-outbounds', query, replace: true }
+  }
   if (hasWorkshopOnlyPlanAccess(authStore) && !authStore.hasPermission('inventory.receive_material')) {
     const workshopRecords = to.name === 'semi-receipt-records' ? 'workshop-semi-receipt-records'
-      : to.name === 'finished-goods-inventory' ? 'workshop-finished-receipt-records' : ''
+      : to.name === 'finished-goods-inventory' || to.name === 'finished-goods-inbound-records' ? 'workshop-finished-receipt-records' : ''
     if (workshopRecords && canOpenPage(workshopRecords, authStore)) {
       return { name: workshopRecords, query: to.query, replace: true }
     }

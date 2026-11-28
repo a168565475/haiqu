@@ -53,7 +53,7 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
-it('真实路由切换三个页签保留父页面实例以及库存关键词和页码', async () => {
+it('真实路由切换待确认页签保留父页面实例以及汇总关键词和页码', async () => {
   const router = await openPage()
   const inventoryId = wrapper!.getComponent(FinishedGoodsInventoryView).vm.$.uid
   const keyword = 'input[placeholder="搜索生产任务单号、品号、品名、货号、规格或颜色"]'
@@ -66,13 +66,12 @@ it('真实路由切换三个页签保留父页面实例以及库存关键词和�
   expect(api.stock).toHaveBeenLastCalledWith(expect.objectContaining({ q: '保留的库存关键词', page: 2 }))
   const stockCalls = api.stock.mock.calls.length
 
-  for (const [label, tab] of [['出库记录', 'outbounds'], ['入库记录', 'records']] as const) {
-    await click(label)
-    expect(router.currentRoute.value.query.tab).toBe(tab)
-    expect(wrapper!.get('nav button.active').text()).toBe(label)
-    expect(wrapper!.getComponent(FinishedGoodsInventoryView).vm.$.uid).toBe(inventoryId)
-    expect(api.stock).toHaveBeenCalledTimes(stockCalls)
-  }
+  await click('待确认入库')
+  expect(router.currentRoute.value.query.tab).toBe('pending')
+  expect(wrapper!.get('nav button.active').text()).toBe('待确认入库')
+  expect(wrapper!.getComponent(FinishedGoodsInventoryView).vm.$.uid).toBe(inventoryId)
+  expect(api.stock).toHaveBeenCalledTimes(stockCalls)
+  expect(api.records).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'PENDING' }))
 
   await click('库存汇总')
   expect(router.currentRoute.value.query.tab).toBe('stock')
@@ -84,7 +83,7 @@ it('真实路由切换三个页签保留父页面实例以及库存关键词和�
 })
 
 it('入库来源或通知查询变化只重建入库面板并读取新的范围', async () => {
-  const router = await openPage({ tab: 'records', schedule_product_id: 'schedule-1', product_line_id: 'line-1' })
+  const router = await openPage({ tab: 'pending', schedule_product_id: 'schedule-1', product_line_id: 'line-1' })
   const inventoryId = wrapper!.getComponent(FinishedGoodsInventoryView).vm.$.uid
   let receiptPanelId = wrapper!.getComponent(FinishedReceiptRecordsPanel).vm.$.uid
   expect(api.stock).not.toHaveBeenCalled()
@@ -96,7 +95,7 @@ it('入库来源或通知查询变化只重建入库面板并读取新的范围'
     {},
   ]
   for (const scope of scopes) {
-    await router.push({ name: 'finished-goods-inventory', query: { tab: 'records', ...scope } })
+    await router.push({ name: 'finished-goods-inventory', query: { tab: 'pending', ...scope } })
     await flushPromises()
     expect(wrapper!.getComponent(FinishedGoodsInventoryView).vm.$.uid).toBe(inventoryId)
     const nextPanelId = wrapper!.getComponent(FinishedReceiptRecordsPanel).vm.$.uid

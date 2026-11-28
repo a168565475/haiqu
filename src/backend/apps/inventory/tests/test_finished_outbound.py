@@ -1,6 +1,7 @@
 import copy
 import json
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -14,7 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.files.models import BusinessFile
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from apps.inventory.models import (
     FinishedGoodsOutbound, FinishedGoodsReceipt, PublicStockBalance, PublicStockMovement,
     Warehouse, WarehouseLocation, WarehouseZone,
@@ -237,7 +238,14 @@ class FinishedOutboundTests(APITestCase):
             self.assertEqual(result['lines'][0]['received_quantity'], 6)
 
     def test_read_filter_validation_and_permissions(self):
+        department, _ = OrganizationUnit.objects.get_or_create(
+            unit_code='DEPT_WAREHOUSE', defaults={'unit_name': '测试仓库部门'},
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=department, effective_from=timezone.now() - timedelta(days=1),
+        )
         response = self.client.post(self.url, self.payload(), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
         detail_url = self.url + response.data['data']['id'] + '/'
         for filters in [{'warehouse_id': 'invalid'}, {'q': 'x' * 301}, {'page_size': '-1'}]:
             self.assertEqual(self.client.get(self.url, filters).status_code, 400)

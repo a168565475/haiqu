@@ -34,7 +34,7 @@ beforeEach(() => {
 })
 afterEach(() => wrapper?.unmount())
 
-it('保留成品入库入口，库存汇总、入库记录、出库记录在同一页面切换', async () => {
+it('成品汇总保留成品入库和待确认入口', async () => {
   wrapper = mount(FinishedGoodsInventoryView, { global: {
     plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, AssemblyFinishedReceiptDialog: true,
       FinishedReceiptRecordsPanel: { template: '<section data-testid="receipt-panel"><slot/></section>' },
@@ -54,41 +54,31 @@ it('保留成品入库入口，库存汇总、入库记录、出库记录在同�
   dialog.vm.$emit('closed')
   await flushPromises()
   expect(wrapper.findComponent(AssemblyFinishedReceiptDialog).exists()).toBe(false)
-  await wrapper.findAll('button').find(button => button.text() === '出库记录')!.trigger('click')
-  await flushPromises()
-  expect(router.push).not.toHaveBeenCalled()
-  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
-  expect(wrapper.findAll('nav[aria-label="成品库存视图"]')).toHaveLength(1)
-  expect(wrapper.text()).toContain('暂无出库记录')
-  expect(route.query.tab).toBe('outbounds')
-  await wrapper.findAll('button').find(button => button.text() === '从库存选择出库')!.trigger('click')
-  await flushPromises()
-  expect(wrapper.get('nav button.active').text()).toBe('库存汇总')
-  expect(route.query.tab).toBe('stock')
-  await wrapper.findAll('button').find(button => button.text() === '入库记录')!.trigger('click')
+  expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['库存汇总', '待确认入库'])
+  await wrapper.findAll('button').find(button => button.text() === '待确认入库')!.trigger('click')
   expect(wrapper.find('[data-testid="receipt-panel"]').exists()).toBe(true)
-  expect(wrapper.get('nav button.active').text()).toBe('入库记录')
-  await wrapper.findAll('button').find(button => button.text() === '出库记录')!.trigger('click')
-  await flushPromises()
-  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
+  expect(wrapper.get('nav button.active').text()).toBe('待确认入库')
+  expect(route.query.tab).toBe('pending')
   expect(router.push).not.toHaveBeenCalled()
 })
 
-it('出库页签直达、刷新及已有页面内的地址变化保留选中视图和产品筛选', async () => {
-  route.query = { tab: 'outbounds', production_task_id: 'task-1', product_line_id: 'line-1' }
+it('待确认直达、刷新及已有页面内的地址变化保留产品筛选', async () => {
+  route.query = { tab: 'pending', production_task_id: 'task-1', product_line_id: 'line-1' }
   wrapper = mount(FinishedGoodsInventoryView, { global: {
-    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, FinishedReceiptRecordsPanel: true },
+    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true,
+      FinishedReceiptRecordsPanel: { props: ['warehouseStatus'],
+        template: '<section data-testid="pending-panel" :data-status="warehouseStatus"><slot/></section>' } },
   } })
   await flushPromises()
-  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
-  expect(api.outbounds).toHaveBeenLastCalledWith(expect.objectContaining({ production_task_id: 'task-1', product_line_id: 'line-1' }))
+  expect(wrapper.get('nav button.active').text()).toBe('待确认入库')
+  expect(wrapper.get('[data-testid="pending-panel"]').attributes('data-status')).toBe('PENDING')
   expect(api.stock).not.toHaveBeenCalled()
   await wrapper.findAll('button').find(button => button.text() === '库存汇总')!.trigger('click')
   await flushPromises()
   expect(route.query).toEqual({ tab: 'stock', production_task_id: 'task-1', product_line_id: 'line-1' })
-  reactive(route).query = { tab: 'records' }
+  reactive(route).query = { tab: 'pending' }
   await flushPromises()
-  expect(wrapper.find('finished-receipt-records-panel-stub').exists()).toBe(true)
+  expect(wrapper.find('[data-testid="pending-panel"]').exists()).toBe(true)
 })
 
 it('保留已有库存选择并携带入库批次进入成品出库', async () => {
@@ -107,8 +97,8 @@ it('保留已有库存选择并携带入库批次进入成品出库', async () =
   expect(router.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-new', query: { receipt_ids: 'receipt-1' } })
 })
 
-it('通知固定tab=records时显示入库记录面板', async () => {
-  route.query = { tab: 'records' }
+it('待确认通知打开待确认入库面板', async () => {
+  route.query = { tab: 'pending' }
   wrapper = mount(FinishedGoodsInventoryView, { global: {
     plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, FinishedReceiptRecordsPanel: true },
   } })
@@ -137,7 +127,7 @@ it('库存首次加载、搜索、重置和翻页都在服务端排除样品', a
   expect(api.stock).toHaveBeenLastCalledWith(expect.objectContaining({ exclude_sample: true, page: 2 }))
 })
 
-it.each(['stock', 'records'])('%s 页签使用成品仓配置，成功保存只刷新筛选选项', async tab => {
+it.each(['stock', 'pending'])('%s 页签使用成品仓配置，成功保存只刷新筛选选项', async tab => {
   route.query = { tab }
   wrapper = mount(FinishedGoodsInventoryView, { global: {
     plugins: [ElementPlus], stubs: {

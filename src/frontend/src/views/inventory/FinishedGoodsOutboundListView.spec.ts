@@ -12,7 +12,7 @@ let wrapper: ReturnType<typeof mount> | undefined
 const fixture = () => ({ total: 1, items: [{
   id: 'out-1', outbound_number: 'CK-001', shipment_date: '2026-10-21', responsible_employee_name: '负责人', loading_fee: '12.50', other_fee: '2.00',
   lines: [
-    { id: 'line-1', task_number_snapshot: 'HT-001', product_code_snapshot: 'CODE-A', product_name_snapshot: '产品A', specification_snapshot: '10×20', actual_color: '红', order_quantity: 2000, received_quantity: 800, outbound_quantity: 300, unit_name: '箱', warehouse_name: '成品仓A' },
+    { id: 'line-1', task_number_snapshot: 'HT-001', receipt_number: 'CPRK-001', product_code_snapshot: 'CODE-A', product_name_snapshot: '产品A', specification_snapshot: '10×20', actual_color: '红', order_quantity: 2000, received_quantity: 800, outbound_quantity: 300, unit_name: '箱', warehouse_name: '成品仓A' },
     { id: 'line-2', task_number_snapshot: 'HT-002', product_code_snapshot: 'CODE-B', product_name_snapshot: '产品B', specification_snapshot: '20×30', actual_color: '蓝', order_quantity: 1500, received_quantity: 600, outbound_quantity: 200, unit_name: '个', warehouse_name: '成品仓B' },
   ],
 }] })
@@ -42,7 +42,8 @@ it('同单不同产品逐行保留各自数量、单位和仓库，整单费用�
   expect(wrapper.find('.breadcrumb').exists()).toBe(false)
   expect(wrapper.find('.sub-title').exists()).toBe(false)
   await wrapper.findAll('button').find(button => button.text() === '查看出货单')!.trigger('click')
-  expect(api.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-detail', params: { outboundId: 'out-1' } })
+  expect(api.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-detail', params: { outboundId: 'out-1' },
+    query: { product_line_id: 'task-line', q: undefined, warehouse_id: undefined } })
 })
 
 it('应用与重置向服务端传递筛选，翻页使用已应用值并保留产品范围', async () => {
@@ -70,7 +71,7 @@ it('失败后清除旧明细；来源数量缺失显示未知，真实零值保�
   api.list.mockResolvedValue(data)
   wrapper = mount(FinishedGoodsOutboundListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  expect(wrapper.findAll('tbody tr')[0].findAll('td').slice(8, 11).map(cell => cell.text())).toEqual(['—', '0', '300'])
+  expect(wrapper.findAll('tbody tr')[0].findAll('td').slice(8, 12).map(cell => cell.text())).toEqual(['CPRK-001', '—', '0', '300'])
   api.list.mockRejectedValueOnce(new Error('unavailable'))
   await wrapper.findAll('button').find(button => button.text() === '应用筛选')!.trigger('click')
   await flushPromises()
@@ -78,19 +79,11 @@ it('失败后清除旧明细；来源数量缺失显示未知，真实零值保�
   expect(wrapper.text()).not.toContain('CODE-A')
 })
 
-it('出库记录保留成品库存标题和页签位置，选择库存通知父页面切换', async () => {
-  wrapper = mount(FinishedGoodsOutboundListView, {
-    global: { plugins: [ElementPlus] },
-    slots: { default: '<nav aria-label="成品库存视图">库存汇总 入库记录 出库记录</nav>' },
-  })
+it('独立出库记录显示来源批次，选货出库留在成品汇总', async () => {
+  wrapper = mount(FinishedGoodsOutboundListView, { global: { plugins: [ElementPlus] } })
   await flushPromises()
-  expect(wrapper.get('h1').text()).toBe('成品库存')
-  expect(wrapper.get('.erp-list-data .erp-list-toolbar nav').text()).toContain('出库记录')
-  expect(wrapper.text()).not.toContain('返回库存')
-  await wrapper.findAll('button').find(button => button.text() === '查看出货单')!.trigger('click')
-  expect(api.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-detail', params: { outboundId: 'out-1' } })
-  api.push.mockClear()
-  await wrapper.findAll('button').find(button => button.text() === '从库存选择出库')!.trigger('click')
-  expect(wrapper.emitted('select-stock')).toHaveLength(1)
-  expect(api.push).not.toHaveBeenCalled()
+  expect(wrapper.get('h1').text()).toBe('成品出库记录')
+  expect(wrapper.text()).toContain('来源入库批次')
+  expect(wrapper.text()).toContain('CPRK-001')
+  expect(wrapper.text()).not.toContain('从库存选择出库')
 })

@@ -86,7 +86,7 @@ function openInventoryRecords(kind: 'finished-inbound' | 'finished-outbound' | '
   if (!props.summary) return
   const scheduleProductId = props.summary.schedule_product_id
   if (kind === 'finished-inbound') {
-    void router.push({ name: 'finished-goods-inventory', query: { tab: 'records', product_line_id: props.productLineId } })
+    void router.push({ name: 'finished-goods-inbound-records', query: { product_line_id: props.productLineId } })
   } else if (kind === 'finished-outbound') {
     void router.push({ name: 'finished-goods-outbounds', query: { production_task_id: props.productionTaskId, product_line_id: props.productLineId, schedule_product_id: scheduleProductId } })
   } else if (kind === 'semi-inbound') {

@@ -104,6 +104,7 @@ class WorkshopReceiptRecordTests(AssemblyFixture, APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual([row['id'] for row in response.data['data']['items']], [receipt_id])
+        self.assertEqual(self.client.get(url, {'warehouse_history': True, 'status': 'CONFIRMED'}).status_code, 403)
         self.assertEqual(self.client.get('/api/v1/finished-goods-inventory/').status_code, 403)
         self.assertEqual(self.client.post(f'/api/v1/assembly-finished-receipts/{receipt_id}/confirm/', {},
                                           format='json').status_code, 403)
@@ -116,4 +117,5 @@ class WorkshopReceiptRecordTests(AssemblyFixture, APITestCase):
 
         self.sign_in_reader(None, 'view_finishedgoodsreceipt')
         self.assertEqual(self.client.get(f'{url}{receipt_id}/').status_code, 200)
+        self.assertEqual(self.client.get(url, {'warehouse_history': True, 'status': 'CONFIRMED'}).data['data']['total'], 0)
         self.assertEqual(self.client.get('/api/v1/finished-goods-inventory/').status_code, 200)

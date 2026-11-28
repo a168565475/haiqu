@@ -30,7 +30,7 @@ function closeWhileIdle(done: () => void) { if (!saving.value) done() }
 function viewRecords() {
  visible.value = false
  void router.push(props.warehouseEntry
-  ? { name:'finished-goods-inventory', query:{ tab:'records', schedule_product_id:planId } }
+  ? { name:'finished-goods-inventory', query:{ tab:'pending', schedule_product_id:planId } }
   : { name:'workshop-finished-receipt-records', query:{ schedule_product_id:planId } })
 }
 let pendingRaw:string|null=null

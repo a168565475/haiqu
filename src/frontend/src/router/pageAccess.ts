@@ -27,13 +27,16 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'merchandiser-workbench'
     && !auth.user?.effective_access?.roles.some(role => role.code === 'MERCHANDISER')) return false
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'sewing-outsourcing-workbench', 'workshop-sewing-tracking'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'material-receipt-records', 'material-outbound-records', 'purchase-receipt-records', 'finished-goods-inventory', 'finished-goods-inbound-records', 'finished-goods-outbounds', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'workshop-outsourcing-movements', 'sewing-outsourcing-workbench', 'workshop-sewing-tracking'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly && permission !== 'outsourcing.manage_cutpieceprinting') {
       const access = auth.user?.effective_access
       const scopes = access?.actions[permission]?.scopes
       if (scopes?.length && scopes.every(scope => scope === 'FOLLOWED')
+        && !access?.legacy_sources.some(source => source.permission === permission)) return false
+      if (['finished-goods-inventory', 'finished-goods-inbound-records'].includes(item.key)
+        && scopes?.length && scopes.every(scope => scope === 'WORKSHOP')
         && !access?.legacy_sources.some(source => source.permission === permission)) return false
     }
     return true
@@ -64,6 +67,7 @@ const pagePermissions: Record<string, string[]> = {
   'manual-material-inbound': ['inventory.receive_material'],
   'material-inbound-details': ['inventory.view_material_receipt'],
   'material-inbound-records': ['inventory.view_material_receipt'],
+  'finished-goods-outbound-detail': ['inventory.view_finishedgoodsoutbound'],
   // 跟单和通知仍可打开原记录页，接口按当前账号的数据范围返回单据。
   'semi-receipt-records': ['inventory.view_internalsemifinishedreceipt'],
   'material-quality-confirmation': ['inventory.quality_confirm_material'],

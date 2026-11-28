@@ -68,7 +68,7 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         first_line, second_line = self.first.lines.get(), self.second.lines.get()
         body = {"material_section": "D", "client_request_id": str(uuid4()), "items": [{
             "purchase_order_line_id": str(first_line.pk), "zone_id": str(self.zone.pk),
-            "received_quantity": "240", "expected_remaining_quantity": "500",
+            "received_quantity": "100", "expected_remaining_quantity": "500",
         }]}
         self.assertEqual(self.section_rows(), {})
         response = self.client.post(INVENTORY + "receivings/", body, format="json")
@@ -86,18 +86,27 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         self.assertEqual(received.status_code, 201, received.data)
         inbound = MaterialInbound.objects.get(pk=received.data["data"]["id"])
         self.assertEqual(inbound.material_section, "D")
+        self.assertEqual(received.data["data"]["material_section"], "D")
         self.assertEqual(inbound.purchase_order_id, self.first.pk)
         replay = self.client.post(INVENTORY + "receivings/", body, format="json")
         self.assertEqual(replay.status_code, 201, replay.data)
         self.assertEqual(replay.data["data"]["id"], received.data["data"]["id"])
-        modified = {**body, "items": [{**body["items"][0], "received_quantity": "241"}]}
+        modified = {**body, "items": [{**body["items"][0], "received_quantity": "101"}]}
         conflicting = self.client.post(INVENTORY + "receivings/", modified, format="json")
         self.assertEqual(conflicting.status_code, 409, conflicting.data)
         self.assertIn("同一提交标识", str(conflicting.data))
         self.assertEqual(MaterialInbound.objects.count(), 1)
         self.assertEqual(inbound.status, 'PENDING_QUALITY')
-        self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('240'))
-        self.assertEqual(MaterialStockMovement.objects.get(source_id=inbound.pk, direction='IN').quantity, Decimal('240'))
+        self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('100'))
+        self.assertEqual(MaterialStockMovement.objects.get(source_id=inbound.pk, direction='IN').quantity, Decimal('100'))
+        ledger_url = "/api/v1/material-stock-records/"
+        filters = {"section": "PACKAGING", "task_number": self.first.production_task_number_snapshot}
+        inbound_rows = self.client.get(ledger_url, {**filters, "direction": "IN"})
+        self.assertEqual(inbound_rows.status_code, 200, inbound_rows.data)
+        self.assertEqual([(row["voucher_number"], Decimal(row["actual_quantity"])) for row in inbound_rows.data["data"]],
+                         [(inbound.inbound_number, Decimal("100"))])
+        pending = self.client.get(INVENTORY + "purchase-receipt-records/", {"quality": "PENDING", "q": inbound.inbound_number})
+        self.assertEqual(pending.data["total"], 1)
         rows = self.section_rows()
         self.assertEqual(rows[str(self.first.pk)]["pending_quality_count"], 1)
         self.assertEqual(rows[str(self.second.pk)]["pending_quality_count"], 0)
@@ -107,24 +116,36 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
         self.scope_user = quality
         self.scope_employee = Employee.objects.create(user=quality, employee_code="QA-PACKAGING-QUALITY", display_name="包材品质验收")
         self.grant("inventory.quality_confirm_material")
+        self.grant("inventory.view_material_receipt")
         record = self.client.get(INVENTORY + f"purchase-receipt-records/{inbound.pk}/")
         self.assertEqual(record.status_code, 200, record.data)
         self.assertEqual(record.data["data"]["material_section_display"], "包材")
-        confirmed = self.confirm_quality(received, return_quantity="40")
+        confirmed = self.confirm_quality(received, return_quantity="5")
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
-        repeat_quality = self.confirm_quality(received, return_quantity="40")
+        repeat_quality = self.confirm_quality(received, return_quantity="5")
         self.assertEqual(repeat_quality.status_code, 409, repeat_quality.data)
         line = inbound.lines.get()
-        self.assertEqual((line.accepted_quantity, line.return_quantity), (Decimal("200"), Decimal("40")))
+        self.assertEqual((line.accepted_quantity, line.return_quantity), (Decimal("95"), Decimal("5")))
         credit = MaterialStockMovement.objects.select_related('balance').get(source_line_id=line.pk)
-        self.assertEqual(credit.balance.quantity, Decimal('200'))
-        self.assertEqual(MaterialStockMovement.objects.get(balance=credit.balance, source_type='PURCHASE_RETURN').quantity, Decimal('40'))
+        self.assertEqual(credit.balance.quantity, Decimal('95'))
+        self.assertEqual(MaterialStockMovement.objects.get(balance=credit.balance, source_type='PURCHASE_RETURN').quantity, Decimal('5'))
         payable = inbound.purchase_payables.get().lines.get()
-        self.assertEqual(payable.accepted_quantity, Decimal("200"))
+        self.assertEqual(payable.accepted_quantity, Decimal("95"))
         self.assertFalse(MaterialInbound.objects.filter(lines__purchase_order_line=second_line).exists())
         returned = PurchaseReturn.objects.get(inbound=inbound)
         self.assertEqual(returned.purchase_order_id, self.first.pk)
-        self.assertEqual(returned.lines.get().quantity, Decimal("40"))
+        self.assertEqual(returned.lines.get().quantity, Decimal("5"))
+        history = self.client.get(INVENTORY + "purchase-receipt-records/", {"quality": "CHECKED", "q": inbound.inbound_number})
+        self.assertEqual(history.data["total"], 1)
+        self.assertEqual(history.data["data"][0]["quality_confirmed_by_name"], self.scope_employee.display_name)
+        self.assertIsNotNone(history.data["data"][0]["quality_confirmed_at"])
+        after = self.client.get(ledger_url, {**filters, "direction": "IN"})
+        self.assertEqual(after.data["data"], inbound_rows.data["data"])
+        debits = self.client.get(ledger_url, {**filters, "direction": "OUT"})
+        self.assertEqual(debits.status_code, 200, debits.data)
+        deduction, = debits.data["data"]
+        self.assertEqual((deduction["voucher_number"], deduction["movement_label"], Decimal(deduction["actual_quantity"])),
+                         (returned.return_number, "采购退货扣库", Decimal("5")))
 
         self.client.force_authenticate(self.user)
         for order, total in ((self.first, 1), (self.second, 0)):
@@ -138,6 +159,7 @@ class PackagingReceivingFlowTests(ScopedActorMixin, APITestCase):
             detail = self.client.post(RETURNS + f"{returned.pk}/{operation}/", {}, format="json", HTTP_IF_MATCH=detail["ETag"])
             self.assertEqual(detail.status_code, 200, detail.data)
         self.assertEqual(detail.data["data"]["status"], "COMPLETED")
+        self.assertEqual(MaterialStockMovement.objects.filter(source_type="PURCHASE_RETURN", source_id=returned.pk).count(), 1)
 
     def test_full_packaging_delivery_reports_returns_separately(self):
         self.scoped_actor()

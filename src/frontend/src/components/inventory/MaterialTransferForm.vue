@@ -512,7 +512,6 @@ onBeforeUnmount(() => { sourceVersion += 1 })
         <h1>材料收发</h1>
         <p>采购之外的盘点、调整和其他材料收发。</p>
       </div>
-      <slot name="actions" />
     </header>
     <form class="erp-list-filters" aria-label="材料收发筛选" @submit.prevent>
         <div class="filter-field filter-date" aria-label="收发日期">

@@ -36,7 +36,6 @@ function fetchReceivingLines(orderId: string) {
     : fetchEligibleMaterialLinesWithVersion(orderId)
 }
 const canReceive = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.receive_material'))
-const canQuality = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const baseLoading = ref(false)
 const linesLoading = ref(false)
 const loading = computed(() => baseLoading.value || linesLoading.value)
@@ -404,17 +403,17 @@ async function submitReceiving() {
     if (isCancel(error) || !owned.isCurrent()) return
     if (!isSample.value && receiptResponseUncertain(error)) {
       historyRefreshKey.value += 1
-      ElMessage.warning('暂未收到收货结果，请先查看入库记录。')
+      ElMessage.warning('暂未收到收货结果，请先核对这张采购单的收货明细。')
     } else {
-      ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交收货失败，请核对入库记录后重试。'))
+      ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对收货明细后重试。' : '提交收货失败，请核对收货明细后重试。'))
     }
     submitting.value = false
     return
   }
   // 收货成功后，草稿清理或跳转失败都不能再次提交同一批次。
   try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('收货已登记，但当前用户草稿已变化，已保留后写入的内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('收货已登记，但当前用户草稿未能清理。') }
-  ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '收货已登记，可在入库记录查看待质检状态。')
-  try { await router.push({ name: !isSample.value && canQuality.value ? 'purchase-receipt-records' : 'purchase-inbounds' }) }
+  ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '收货已登记。待检批次可在「品质检验」查看。')
+  try { await router.push({ name: 'purchase-inbounds' }) }
   catch { if (owned.isCurrent()) ElMessage.warning('收货已登记，请从采购入库列表继续处理。') }
   finally { if (owned.isCurrent()) submitting.value = false }
 }

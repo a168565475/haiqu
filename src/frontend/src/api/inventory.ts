@@ -53,7 +53,7 @@ export async function fetchFinishedGoodsFilterOptions() {
 }
 export async function fetchEligibleMaterialPurchaseOrders(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<EligibleMaterialPurchaseOrder[]>>(`${root}material-inventory/eligible-purchase-orders/`, { params }); return data.data }
 export async function fetchProcurementInboundOrders(params: Record<string, unknown> = {}) { const { data } = await apiClient.get<DataResponse<ProcurementInboundOrder[]>>(`${root}material-inventory/procurement-inbound-orders/`, { params }); return data.data }
-export async function fetchPurchaseReceiptRecords(params: { status?: PurchaseReceiptStatus; q?: string; page: number }) {
+export async function fetchPurchaseReceiptRecords(params: { status?: PurchaseReceiptStatus; quality?: 'PENDING' | 'CHECKED'; q?: string; page: number }) {
   const { data } = await apiClient.get<PurchaseReceiptRecordsPage>(`${root}material-inventory/purchase-receipt-records/`, { params })
   return data
 }

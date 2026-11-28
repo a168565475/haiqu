@@ -83,7 +83,7 @@ describe('入库记录只读明细', () => {
     wrapper.unmount()
   })
 
-  it('材料收发显示原入库数量、实重和库区，库位明确显示未登记', async () => {
+  it('材料收发按根显示管材，其他分区保留原入库数量、实重和库区', async () => {
     const line: MaterialTransferLineRecord = {
       line_key: 'line', material_catalog_id: 'catalog', catalog_name: '牛津布', unit_name: '米', zone_id: 'zone',
       warehouse_name: '面料仓', zone_name: '货架一', direction: 'IN', quantity: '15.5', weight_quantity: '2.25', raw_bar_length_m: null,
@@ -91,15 +91,21 @@ describe('入库记录只读明细', () => {
         category_key: 'FABRIC', template_key: 'FABRIC', scope: 'BASE', processing_state: 'RAW', processing_stage: '',
         name: '牛津布', display_name: '牛津布', unit_id: 'm', unit_name: '米', attributes: { fabric_spec: '600D', color: '藏青' } },
     }
+    const tube: MaterialTransferLineRecord = { ...line, line_key: 'tube', catalog_name: '方管', unit_name: '根', quantity: '2', raw_bar_length_m: '6', weight_quantity: '4.75',
+      material_selection_snapshot: { ...line.material_selection_snapshot, category_key: 'TUBE', template_key: 'TUBE', name: '方管', unit_name: '根', attributes: { shape: '方管' } } }
     const wrapper = mount(ReceiptRecordMaterialTables, { props: { receipt: { source: 'TRANSFER', data: {
       id: 'transfer', transfer_number: 'RK02', transfer_date: '2026-11-21', created_at: '2026-11-21',
-      direction: 'IN', direction_display: '入库', operated_by_name: '仓管', remark: '', lines: [line],
+      direction: 'IN', direction_display: '入库', operated_by_name: '仓管', remark: '', lines: [line, tube],
     } } } })
     await flushPromises()
-    expect(wrapper.get('[data-material-category="FABRIC"]').get('h3').text()).toBe('面料')
-    expect(wrapper.findAll('thead th').slice(-2).map(cell => cell.text())).toEqual(['库区', '库位'])
+    const fabricTable = wrapper.get('[data-material-category="FABRIC"]')
+    const tubeTable = wrapper.get('[data-material-category="TUBE"]')
+    expect(tubeTable.text()).toContain('2 根')
+    expect(tubeTable.text()).not.toMatch(/实际重量|4\.75/)
+    expect(fabricTable.get('h3').text()).toBe('面料')
+    expect(fabricTable.findAll('thead th').slice(-2).map(cell => cell.text())).toEqual(['库区', '库位'])
     expect(wrapper.findAll('.el-table-fixed-column--right')).toHaveLength(0)
-    expect(wrapper.findAll('tbody td').map(cell => cell.text())).toEqual(['1', '牛津布', '600D', '藏青', '15.5 米', '2.25', '面料仓', '货架一', '未登记'])
+    expect(fabricTable.findAll('tbody td').slice(1).map(cell => cell.text())).toEqual(['牛津布', '600D', '藏青', '15.5 米', '2.25', '面料仓', '货架一', '未登记'])
     wrapper.unmount()
   })
 })

@@ -227,6 +227,12 @@ class PurchaseSavedMaterialReceiptsTests(APITestCase):
         movement = MaterialStockMovement.objects.get()
         self.assertEqual((movement.direction, movement.quantity), ('IN', Decimal('3')))
         self.assertEqual(inbound.purchase_payables.get().lines.get().accepted_quantity, Decimal('3'))
+        url = '/api/v1/material-stock-records/'
+        filters = {'section': 'HARDWARE', 'q': inbound.inbound_number}
+        ledger = self.client.get(url, {'direction': 'IN', **filters})
+        self.assertEqual(ledger.status_code, 200, ledger.data)
+        self.assertEqual([Decimal(row['actual_quantity']) for row in ledger.data['data']], [Decimal('3')])
+        self.assertEqual(self.client.get(url, {'direction': 'OUT', 'section': 'HARDWARE'}).data['total'], 0)
 
     def test_legacy_saved_material_number_works_without_bom(self):
         PurchaseOrderLine.objects.filter(pk=self.purchase_line.pk).update(

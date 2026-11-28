@@ -19,7 +19,7 @@ from ..assembly_receipts import (
     delete_pending_assembly_receipt,
 )
 from ..receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category, receipt_record_workshops
-from ..models import FinishedGoodsReceipt
+from ..models import FinishedGoodsReceipt, FinishedGoodsReceiptStatus
 from ..selectors import receipt_batches, require_inventory_overview, scoped_finished_receipts
 from .serializers import FinishedGoodsReceiptSerializer, FinishedGoodsInventoryScopeSerializer
 
@@ -48,10 +48,13 @@ class Filters(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True, max_length=150, default='')
     source = serializers.ChoiceField(choices=['','ASSEMBLY','PRODUCTION_ORDER','SAMPLE_INVENTORY'], default='')
     exclude_sample = serializers.BooleanField(default=False)
+    status = serializers.ChoiceField(choices=FinishedGoodsReceiptStatus.values, required=False)
+    warehouse_history = serializers.BooleanField(default=False)
     warehouse_id = serializers.UUIDField(required=False)
     zone_id = serializers.UUIDField(required=False)
     schedule_product_id = serializers.UUIDField(required=False)
     product_line_id = serializers.UUIDField(required=False)
+    production_task_id = serializers.UUIDField(required=False)
     page = serializers.IntegerField(min_value=1, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=100, default=50)
 
@@ -144,7 +147,12 @@ class FinishedRecordViewSet(viewsets.ViewSet):
 
     @extend_schema(parameters=[Filters])
     def list(self,request):
-        data=read_data(Filters,request.query_params); rows=record_queryset(request)
+        data=read_data(Filters,request.query_params)
+        if data['warehouse_history']:
+            require_inventory_overview(request, 'inventory.view_finishedgoodsreceipt')
+        rows=record_queryset(request)
+        if 'status' in data:
+            rows=rows.filter(status=data['status'])
         if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
         if data['q']:
             rows=rows.filter(Q(receipt_number__icontains=data['q'])|Q(task_number_snapshot__icontains=data['q'])|
@@ -158,6 +166,8 @@ class FinishedRecordViewSet(viewsets.ViewSet):
             rows=rows.filter(production_task_product_id=plan.product_line_id)
         if 'product_line_id' in data:
             rows=rows.filter(production_task_product_id=data['product_line_id'])
+        if 'production_task_id' in data:
+            rows=rows.filter(production_task_product__production_task_id=data['production_task_id'])
         total=rows.count();start=(data['page']-1)*data['page_size']
         return Response({'data':{'items':[record_payload(r, request) for r in rows.order_by('-business_date','-received_at','-id')[start:start+data['page_size']]],'total':total}})
 

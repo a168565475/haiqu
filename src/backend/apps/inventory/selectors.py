@@ -122,14 +122,14 @@ def require_inventory_overview(request, permission='inventory.view_materialinbou
         raise PermissionDenied('当前权限仅可在关联任务中读取库存来源和出入库记录。')
 
 
-def finished_goods_outbounds(*, keyword="", warehouse_id=None, production_task_id=None, product_line_id=None):
+def finished_goods_outbounds(*, keyword="", warehouse_id=None, production_task_id=None, product_line_id=None, schedule_products=None):
     lines = FinishedGoodsOutboundLine.objects.select_related(
         "receipt__unit", "receipt__production_task_product", "receipt__location__zone__warehouse",
     )
     queryset = FinishedGoodsOutbound.objects.select_related(
         "outbound_by_employee", "responsible_employee",
     ).prefetch_related(Prefetch("lines", queryset=lines), "attachments__business_file")
-    if keyword or warehouse_id or production_task_id or product_line_id:
+    if keyword or warehouse_id or production_task_id or product_line_id or schedule_products is not None:
         # 所有条件必须命中同一条出库明细；命中后仍返回整张单据的全部明细。
         matching_lines = FinishedGoodsOutboundLine.objects.filter(outbound_id=OuterRef("pk"))
         if keyword:
@@ -148,6 +148,8 @@ def finished_goods_outbounds(*, keyword="", warehouse_id=None, production_task_i
             matching_lines = matching_lines.filter(receipt__production_task_product__production_task_id=production_task_id)
         if product_line_id:
             matching_lines = matching_lines.filter(receipt__production_task_product_id=product_line_id)
+        if schedule_products is not None:
+            matching_lines = matching_lines.filter(receipt__production_task_product_id__in=schedule_products.order_by().values("product_line_id"))
         queryset = queryset.filter(Exists(matching_lines))
     return queryset
 

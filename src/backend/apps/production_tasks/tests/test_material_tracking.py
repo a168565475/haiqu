@@ -114,6 +114,8 @@ class WorkshopTrackingTests(AssemblyFixture, APITestCase):
     def test_workshop_scope_is_applied_to_list_and_detail(self):
         other = ProductionTaskProduct.objects.create(
             production_task=self.task, line_number=2, product_name_snapshot="同单其他产品", quantity=20,
+            currency=self.line.currency, unit_price=self.line.unit_price, total_amount=20 * self.line.unit_price,
+            exchange_rate=self.line.exchange_rate,
         )
         viewer, _, _ = director("TRACKING_ASSEMBLY", self.craft.workshop, [SCHEDULE])
         response = viewer.get(URL, {"task_number": self.task.task_number})

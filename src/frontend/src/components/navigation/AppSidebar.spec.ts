@@ -43,7 +43,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
-  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
+  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'workshop-powder-coating', 'wage-schemes', 'work-report-days', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
@@ -52,7 +52,7 @@ const secondaryIconKeys: Record<string, string[]> = {
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'purchase-workbench', 'sewing-outsourcing-workbench', 'merchandiser-workbench', 'warehouse-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'packaging-purchases', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-receipt-records', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
-  'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
+  'workshop-outsourcing', 'workshop-powder-coating', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
   'workshop-semi-receipt-records', 'workshop-finished-receipt-records',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
@@ -496,7 +496,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     await group('workshop').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '计划排产', '作业计划', '委外加工', '工价方案', '报工记录', '半成品入库记录', '成品入库记录', '生产配置',
+      '计划排产', '作业计划', '委外加工', '喷塑收发', '工价方案', '报工记录', '半成品入库记录', '成品入库记录', '生产配置',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('workshop-scheduling')
   })

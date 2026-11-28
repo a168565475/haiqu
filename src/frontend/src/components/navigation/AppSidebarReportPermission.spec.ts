@@ -19,7 +19,7 @@ async function setup(isSuperuser: boolean, permissions: string[]) {
     { name: 'system-settings', path: '/settings', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
     { name: 'reference-data-settings', path: '/settings/reference-data', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
     { name: 'theme-settings', path: '/settings/theme', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
-    ...['workshop-scheduling', 'workshop-metalworking-plan', 'workshop-outsourcing', 'material-issues', 'wage-schemes', 'workshop-configuration']
+    ...['workshop-scheduling', 'workshop-metalworking-plan', 'workshop-outsourcing', 'workshop-powder-coating', 'material-issues', 'wage-schemes', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'workshop-configuration']
       .map(name => ({ name, path: `/${name}`, component: { template: '<div />' } })),
   ] })
   await router.push('/')

@@ -126,6 +126,7 @@ describe('岗位菜单与独立页面权限', () => {
     const menu = items.find(item => item.key === 'workshop-outsourcing')!
     expect(canOpenMenu(menu, follower)).toBe(true)
     expect(canOpenPage('workshop-outsourcing', follower)).toBe(true)
+    expect(canOpenPage('workshop-powder-coating', follower)).toBe(false)
     for (const route of ['cut-piece-printing-new', 'cut-piece-printing-detail']) {
       expect(canOpenPage(route, follower)).toBe(true)
       expect(canOpenPage(route, workshop)).toBe(false)
@@ -136,7 +137,7 @@ describe('岗位菜单与独立页面权限', () => {
       'production_tasks.view_productiontask', 'material_issues.view_materialissue',
       'outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource',
     ])
-    for (const key of ['material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench']) {
+    for (const key of ['material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'sewing-outsourcing-workbench']) {
       const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
       expect(canOpenMenu(item, auth), key).toBe(false)
       expect(canOpenPage(key, auth), key).toBe(false)
@@ -150,6 +151,8 @@ describe('岗位菜单与独立页面权限', () => {
     ['material_issues.view_materialissue', 'WORKSHOP', 'material-issues'],
     ['outsourcing.view_outsourcingorder', 'MODULE', 'workshop-outsourcing'],
     ['material_issues.view_metalprocessingsource', 'CRAFT', 'workshop-outsourcing'],
+    ['outsourcing.view_outsourcingorder', 'MODULE', 'workshop-powder-coating'],
+    ['material_issues.view_metalprocessingsource', 'CRAFT', 'workshop-powder-coating'],
   ] as const)('兼岗的独立 %s %s 授权仍可进入 %s', (permission, scope, page) => {
     const auth = followedReader(['material_issues.view_materialissue', 'outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource'])
     auth.user!.effective_access!.actions[permission]!.scopes.push(scope)

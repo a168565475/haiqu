@@ -10,6 +10,7 @@ const inboundIconTitles: Record<string, string> = {
   'purchase-inbounds': '采购入库',
   'material-inbound-details': '一般入库',
   'material-transfers': '材料收发',
+  'workshop-powder-coating': '喷塑收发',
   'semi-receipt-records': '车间入库',
   'workshop-semi-receipt-records': '半成品入库记录',
   'workshop-finished-receipt-records': '成品入库记录',

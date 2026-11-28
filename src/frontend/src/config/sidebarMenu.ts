@@ -78,6 +78,7 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'workshop-scheduling', label: '计划排产', to: { name: 'workshop-scheduling' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-internal-plan', label: '作业计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-outsourcing', label: '委外加工', to: { name: 'workshop-outsourcing' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource', 'outsourcing.manage_cutpieceprinting'] },
+      { key: 'workshop-powder-coating', label: '喷塑收发', to: { name: 'workshop-powder-coating' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource'] },
       { key: 'wage-schemes', label: '工价方案', to: { name: 'wage-schemes' }, permission: 'workshop_reporting.view_wagescheme' },
       { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport'] },
       { key: 'workshop-semi-receipt-records', label: '半成品入库记录', to: { name: 'workshop-semi-receipt-records' }, allPermissions: ['production_scheduling.view_productionschedule', 'inventory.view_internalsemifinishedreceipt'] },

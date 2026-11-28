@@ -14,6 +14,7 @@ from .tube_selectors import VIEW_PERMISSION, saved_orders_for_permission
 
 SEND = ('send', 'late_send', 'today_send', 'partial')
 RETURN = ('working', 'soon', 'today', 'overdue', 'upcoming')
+RETURN_REMINDER_DAYS = 3
 
 
 def visible_sewing_orders(request):
@@ -109,7 +110,7 @@ def open_orders(request, today, *, for_dispatch=False):
                 flags.add('overdue')
             elif days == 0:
                 flags.add('today')
-            elif days <= 3:
+            elif days <= RETURN_REMINDER_DAYS:
                 flags.add('soon')
             if 0 <= days < 7:
                 flags.add('upcoming')

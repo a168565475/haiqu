@@ -75,7 +75,10 @@ def _source_lines(request, filters):
 
 
 def workshop_regular_access(request):
-    permission = VIEW_PERMISSIONS[0]
+    return workshop_list_access(request, VIEW_PERMISSIONS[0])
+
+
+def workshop_list_access(request, permission):
     if not has_permission(request, permission):
         return False
     access = access_for(request)

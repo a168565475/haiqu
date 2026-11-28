@@ -1,9 +1,11 @@
+from django.urls import path
 from rest_framework.routers import SimpleRouter
 
 from .views import OutsourcingFactoryViewSet, OutsourcingOrderViewSet
 from .unified_views import UnifiedOutsourcingOrderViewSet
 from .tube_views import TubeOutsourcingOrderViewSet
 from .cut_piece_printing import urlpatterns as cut_piece_printing_urls
+from .powder_coating import PowderCoatingRemindersView, PowderCoatingView
 from .sewing_workbench import SewingWorkbenchViewSet
 
 
@@ -14,5 +16,9 @@ router.register("unified-outsourcing-orders", UnifiedOutsourcingOrderViewSet, ba
 router.register("tube-outsourcing-orders", TubeOutsourcingOrderViewSet, basename="tube-outsourcing-order")
 router.register("sewing-outsourcing-workbench", SewingWorkbenchViewSet, basename="sewing-outsourcing-workbench")
 
-urlpatterns = router.urls + cut_piece_printing_urls
+urlpatterns = [
+    path("powder-coating-movements/", PowderCoatingView.as_view(), name="powder-coating-movements"),
+    path("powder-coating-reminders/", PowderCoatingRemindersView.as_view(), name="powder-coating-reminders"),
+    *router.urls, *cut_piece_printing_urls,
+]
 

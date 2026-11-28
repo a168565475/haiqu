@@ -27,7 +27,7 @@ export function canOpenMenu(item: MenuItem, auth: PageAccessReader): boolean {
   if (item.key === 'merchandiser-workbench'
     && !auth.user?.effective_access?.roles.some(role => role.code === 'MERCHANDISER')) return false
   // 跟单关联读取不开放独立列表；兼岗的独立授权仍逐项生效。
-  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'sewing-outsourcing-workbench'].includes(item.key)
+  const relatedReadOnly = ['material-inventory', 'material-inbound-details', 'material-inbound-records', 'material-transfers', 'purchase-receipt-records', 'finished-goods-inventory', 'semi-receipt-records', 'workshop-semi-receipt-records', 'workshop-finished-receipt-records', 'material-issues', 'workshop-outsourcing', 'workshop-powder-coating', 'sewing-outsourcing-workbench'].includes(item.key)
   const canUsePermission = (permission: string) => {
     if (!auth.hasPermission(permission)) return false
     if (relatedReadOnly && permission !== 'outsourcing.manage_cutpieceprinting') {

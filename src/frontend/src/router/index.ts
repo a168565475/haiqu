@@ -1414,6 +1414,16 @@ export const router = createRouter({
       },
     },
     {
+      path: '/workshop/powder-coating',
+      name: 'workshop-powder-coating',
+      component: () => import('@/views/workshop/PowderCoatingMovementsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-powder-coating',
+        headerTitle: '车间 / 喷塑收发', breadcrumbs: [{ label: '车间' }, { label: '喷塑收发' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/workshop/outsourcing/tube/new',
       name: 'workshop-outsourcing-tube-new',
       component: () => import('@/views/outsourcing/TubeOutsourcingFormView.vue'),
